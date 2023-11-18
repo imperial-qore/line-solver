@@ -1,5 +1,5 @@
 # LINE Solver for Python 
-This package is the official python wrapper for the [LINE](https://github.com/imperial-qore/line-solver-matlab) queueing solver. In particular, the tool relies on the [Java API](https://github.com/imperial-qore/line-solver-java) library.
+This package is the official python wrapper for the LINE queueing solver. 
 
 ## Installation
 Requirements: Python 3.10 or later versions; a Java Virtual Machine, either Sun/Oracle JDK/JRE Variant or OpenJDK. 
