@@ -1,5 +1,7 @@
 ## LINE: Queueing Theory Algorithms for MATLAB
 
+This repository includes the MATLAB version of the [LINE solver](https://github.com/imperial-qore/line-solver).
+
 [![View LINE on File Exchange](https://www.mathworks.com/matlabcentral/images/matlab-file-exchange.svg)](https://www.mathworks.com/matlabcentral/fileexchange/71486-line)
 
 ### Getting started
