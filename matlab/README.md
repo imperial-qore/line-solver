@@ -42,7 +42,7 @@ AvgTable =
     myQueue     myClass      4      0.8       4        4        1       1  
 ```    
 
-A [getting started](https://github.com/imperial-qore/line-solver/wiki/Getting-started) walkthrough is available.
+A [getting started](https://github.com/imperial-qore/line-solver/wiki/Getting-started) walkthrough and a [Wiki](https://github.com/imperial-qore/line-solver/wiki) are available.
 
 
 ### License
