@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: jline.solvers.ssa.SolverSSAClosedExamplesTest
--------------------------------------------------------------------------------
-Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.053 s - in jline.solvers.ssa.SolverSSAClosedExamplesTest
