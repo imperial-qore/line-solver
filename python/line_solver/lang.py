@@ -12,7 +12,6 @@ class RoutingMatrix:
     def set(self, class_source, class_dest, stat_source, stat_dest, prob):
         return self.obj.set(class_source.obj, class_dest.obj, stat_source.obj, stat_dest.obj, prob)
 
-
 class Network:
     def __init__(self, name):
         self.obj = jpype.JPackage('jline').lang.Network(name)
