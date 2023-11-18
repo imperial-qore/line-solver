@@ -36,7 +36,12 @@ class Network:
     def initRoutingMatrix(self):
         rt = self.obj.initRoutingMatrix()
         return RoutingMatrix(rt)
-        return RoutingMatrix(rt)
+
+    def getNumberOfStations(self):
+        return self.obj.getNumberOfStations()
+
+    def getNumberOfClasses(self):
+        return self.obj.getNumberOfClasses()
 
     def jsimgView(self):
         self.obj.jsimgView()
@@ -186,8 +191,8 @@ class Router:
         self.obj.setRouting(jobclass.obj, strategy.value)
 
 class OpenClass:
-    def __init__(self, model, name):
-        self.obj = jpype.JPackage('jline').lang.OpenClass(model.obj, name)
+    def __init__(self, model, name, prio=0):
+        self.obj = jpype.JPackage('jline').lang.OpenClass(model.obj, name, prio)
         self.completes = False
 
     def __setattr__(self, name, value):
