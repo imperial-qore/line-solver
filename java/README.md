@@ -12,4 +12,4 @@ Generate the Javadoc documentation with:
 ```
 mvn javadoc:javadoc
 ```
-You can browse the Java class hierarchy at [this page](https://htmlpreview.github.io/?https://raw.githubusercontent.com/imperial-qore/line-solver-java/main/docs/javadoc/index.html).
+You can browse the Java class hierarchy at [this page](https://htmlpreview.github.io/?https://raw.githubusercontent.com/imperial-qore/line-solver/java/main/docs/javadoc/index.html).
