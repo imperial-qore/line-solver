@@ -16,3 +16,4 @@ JMT.jar
 *.class
 __pycache__/
 .idea/
+console.out
