@@ -1,6 +1,6 @@
 # LINE Solver for Java 
 
-This repository includes the Java API of the [LINE solver](https://github.com/imperial-qore/line-solver-matlab).
+This repository includes the Java API of the [LINE solver](https://github.com/imperial-qore/line-solver).
 
 ## Getting started
 Generate jline.jar under the target/ folder with:
