@@ -26,14 +26,14 @@ def jlineStart():
     with GlobalImport() as gi:
         jpype.startJVM()
         jpype.addClassPath('jline.jar')
-        from jline.lang import Chain, Element, Ensemble
+        from jline.lang import Chain, Element, Ensemble, Metric
         from jline.lang import Env, FeatureSet, FiniteCapacityRegion, InputBinding
         from jline.lang import Model, NetworkAttribute, NetworkElement, NetworkEvent, NetworkStruct
         from jline.lang import ItemSet, JobClass, NodeAttribute, OutputStrategy, ServiceBinding
         from jline.lang.layerednetworks import ActivityPrecedence, CacheTask, LayeredNetworkElement
         from jline.lang.layerednetworks import LayeredNetworkStruct, ItemEntry, Host
         from jline.lang.constant import ActivityPrecedenceType, CallType, DropStrategy, EventType, GlobalConstants
-        from jline.lang.constant import JobClassType, JoinStrategy, Metric, MetricType, NodeType, ProcessType
+        from jline.lang.constant import JobClassType, JoinStrategy, MetricType, NodeType, ProcessType
         from jline.lang.constant import ReplacementStrategy, RoutingStrategy, SchedStrategyType
         from jline.lang.constant import ServiceStrategy, SolverType, TimingStrategy, VerboseLevel
         from jline.lang.distributions import APH, Binomial, ContinuousDistribution, Coxian, CumulativeDistribution

@@ -1,8 +1,8 @@
 -------------------------------------------------------------------------------
 Test set: jline.api.PFQNTest
 -------------------------------------------------------------------------------
-Tests run: 98, Failures: 2, Errors: 0, Skipped: 0, Time elapsed: 1.855 s <<< FAILURE! - in jline.api.PFQNTest
-pfqn_comomrmTest3  Time elapsed: 0.005 s  <<< FAILURE!
+Tests run: 98, Failures: 2, Errors: 0, Skipped: 0, Time elapsed: 2.948 s <<< FAILURE! - in jline.api.PFQNTest
+pfqn_comomrmTest3  Time elapsed: 0.017 s  <<< FAILURE!
 org.opentest4j.AssertionFailedError: expected: <17.144180853879238> but was: <16.4554454552605>
 	at jline.api.PFQNTest.pfqn_comomrmTest3(PFQNTest.java:668)
 

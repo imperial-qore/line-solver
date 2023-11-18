@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: jline.util.MatrixTest
 -------------------------------------------------------------------------------
-Tests run: 34, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.014 s - in jline.util.MatrixTest
+Tests run: 34, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s - in jline.util.MatrixTest
