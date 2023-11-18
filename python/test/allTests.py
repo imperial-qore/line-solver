@@ -20,6 +20,7 @@ class test_getting_started_ex1(unittest.TestCase):
 
         solver = SolverJMT(model, 'seed', 23000)
         self.table = solver.getAvgTable()  # pandas.DataFrame
+        model.getStruct()
 
     def test_table(self):
         print(self.table)

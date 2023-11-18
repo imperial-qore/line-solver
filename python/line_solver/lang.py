@@ -1,7 +1,7 @@
 import jpype
 import jpype.imports
 
-from line_solver import jlineToArray
+from line_solver import jlineMatrixToArray, jlineMapMatrixToArray
 from .constants import NodeType
 
 
@@ -25,6 +25,9 @@ class Network:
             ctr += 1
         return RoutingMatrix(jpype.JPackage('jline').lang.Network.serialRouting(rtlist))
 
+    def reset(self, hard=True):
+        self.obj.reset(hard)
+
     def link(self, routing):
         self.obj.link(routing.obj)
 
@@ -34,9 +37,14 @@ class Network:
     def initRoutingMatrix(self):
         rt = self.obj.initRoutingMatrix()
         return RoutingMatrix(rt)
+        return RoutingMatrix(rt)
 
     def jsimgView(self):
         self.obj.jsimgView()
+
+    def addLinks(self, linkPairs):
+        for i in range(len(linkPairs)):
+            self.obj.addLink(linkPairs[i][0].obj,linkPairs[i][1].obj)
 
     def getStruct(self, force=True):
         jsn = self.obj.getStruct(force)
@@ -46,42 +54,44 @@ class Network:
                   nclasses=int(jsn.nclasses),
                   nclosedjobs=int(jsn.nclosedjobs),
                   nchains=int(jsn.nchains),
-                  refstat=jlineToArray(jsn.refstat),
-                  njobs=jlineToArray(jsn.njobs),
-                  nservers=jlineToArray(jsn.nservers),
-                  connmatrix=jlineToArray(jsn.connmatrix),
-                  scv=jlineToArray(jsn.scv),
-                  isstation=jlineToArray(jsn.isstation),
-                  isstateful=jlineToArray(jsn.isstateful),
-                  isstatedep=jlineToArray(jsn.isstatedep),
-                  nodeToStateful=jlineToArray(jsn.nodeToStateful),
-                  nodeToStation=jlineToArray(jsn.nodeToStation),
-                  stationToNode=jlineToArray(jsn.stationToNode),
-                  stationToStateful=jlineToArray(jsn.stationToStateful),
-                  statefulToNode=jlineToArray(jsn.statefulToNode),
-                  rates=jlineToArray(jsn.rates),
-                  classprio=jlineToArray(jsn.classprio),
-                  phases=jlineToArray(jsn.phases),
-                  phasessz=jlineToArray(jsn.phasessz),
-                  phaseshift=jlineToArray(jsn.phaseshift),
-                  schedparam=jlineToArray(jsn.schedparam),
-                  chains=jlineToArray(jsn.chains),
-                  rt=jlineToArray(jsn.rt),
-                  nvars=jlineToArray(jsn.nvars),
-                  rtnodes=jlineToArray(jsn.rtnodes),
-                  csmask=jlineToArray(jsn.csmask),
-                  isslc=jlineToArray(jsn.isslc),
-                  cap=jlineToArray(jsn.cap),
-                  refclass=jlineToArray(jsn.refclass),
-                  lldscaling=jlineToArray(jsn.lldscaling),
-                  fj=jlineToArray(jsn.fj),
-                  classcap=jlineToArray(jsn.classcap),
+                  refstat=jlineMatrixToArray(jsn.refstat),
+                  njobs=jlineMatrixToArray(jsn.njobs),
+                  nservers=jlineMatrixToArray(jsn.nservers),
+                  connmatrix=jlineMatrixToArray(jsn.connmatrix),
+                  scv=jlineMatrixToArray(jsn.scv),
+                  isstation=jlineMatrixToArray(jsn.isstation),
+                  isstateful=jlineMatrixToArray(jsn.isstateful),
+                  isstatedep=jlineMatrixToArray(jsn.isstatedep),
+                  nodeToStateful=jlineMatrixToArray(jsn.nodeToStateful),
+                  nodeToStation=jlineMatrixToArray(jsn.nodeToStation),
+                  stationToNode=jlineMatrixToArray(jsn.stationToNode),
+                  stationToStateful=jlineMatrixToArray(jsn.stationToStateful),
+                  statefulToNode=jlineMatrixToArray(jsn.statefulToNode),
+                  rates=jlineMatrixToArray(jsn.rates),
+                  classprio=jlineMatrixToArray(jsn.classprio),
+                  phases=jlineMatrixToArray(jsn.phases),
+                  phasessz=jlineMatrixToArray(jsn.phasessz),
+                  phaseshift=jlineMatrixToArray(jsn.phaseshift),
+                  schedparam=jlineMatrixToArray(jsn.schedparam),
+                  chains=jlineMatrixToArray(jsn.chains),
+                  rt=jlineMatrixToArray(jsn.rt),
+                  nvars=jlineMatrixToArray(jsn.nvars),
+                  rtnodes=jlineMatrixToArray(jsn.rtnodes),
+                  csmask=jlineMatrixToArray(jsn.csmask),
+                  isslc=jlineMatrixToArray(jsn.isslc),
+                  cap=jlineMatrixToArray(jsn.cap),
+                  refclass=jlineMatrixToArray(jsn.refclass),
+                  lldscaling=jlineMatrixToArray(jsn.lldscaling),
+                  fj=jlineMatrixToArray(jsn.fj),
+                  classcap=jlineMatrixToArray(jsn.classcap),
+                  inchain = jlineMapMatrixToArray(jsn.inchain),
+                  visits = jlineMapMatrixToArray(jsn.visits),
+                  nodevisits = jlineMapMatrixToArray(jsn.nodevisits),
                   classnames=tuple(jsn.classnames),
                   nodetypes=tuple(map(lambda x: NodeType.fromJava(x), jsn.nodetypes)),
                   nodenames=tuple(jsn.nodenames))
 
         # SerializableFunction<Pair<Map<Node, Matrix>, Map<Node, Matrix>>, Matrix> rtfun;
-        #
         # public Map<JobClass, Map<JobClass, Matrix>> rtorig;
         # public Map<Station, Map<JobClass, SerializableFunction<Double, Double>>> lst;
         # public Map<StatefulNode, Matrix> state;
@@ -94,9 +104,6 @@ class Network:
         # public Map<Station, Map<JobClass, Map<Integer, Matrix>>> proc;
         # public Map<Station, Map<JobClass, Matrix>> pie;
         # public Map<Station, SchedStrategy> sched;
-        # public Map<Integer, Matrix> inchain;
-        # public Map<Integer, Matrix> visits;	//The integer represents the chain's ID (inchain)
-        # public Map<Integer, Matrix> nodevisits; //The integer represents the chain's ID (inchain)
         # public Map<Station, Map<JobClass, DropStrategy>> droprule;	//This represents dropid in LINE
         # public Map<Node, NodeParam> nodeparam;
         # public Map<Integer, Sync> sync;
@@ -176,7 +183,8 @@ class Delay:
 class Router:
     def __init__(self, model, name):
         self.obj = jpype.JPackage('jline').lang.nodes.Router(model.obj, name)
-
+    def setRouting(self, jobclass, strategy):
+        self.obj.setRouting(jobclass.obj, strategy.value)
 
 class OpenClass:
     def __init__(self, model, name):

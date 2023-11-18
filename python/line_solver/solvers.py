@@ -4,7 +4,7 @@ import jpype.imports
 import numpy as np
 import pandas as pd
 
-from . import jlineToArray
+from . import jlineMatrixToArray
 from .constants import SolverType, VerboseLevel
 
 
@@ -89,7 +89,7 @@ class Solver:
             CdfRespT = []
             for i in range(distribC.length):
                 for c in range(distribC[i].length):
-                    F = jlineToArray(distribC[i][c])
+                    F = jlineMatrixToArray(distribC[i][c])
                     CdfRespT.append(F)
             return np.asarray(CdfRespT)
         except:

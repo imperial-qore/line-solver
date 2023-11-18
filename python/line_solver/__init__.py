@@ -34,7 +34,7 @@ def jlineStart():
         from jline.lang.layerednetworks import LayeredNetworkStruct, ItemEntry, Host
         from jline.lang.constant import ActivityPrecedenceType, CallType, DropStrategy, EventType, GlobalConstants
         from jline.lang.constant import JobClassType, JoinStrategy, MetricType, NodeType, ProcessType
-        from jline.lang.constant import ReplacementStrategy, RoutingStrategy, SchedStrategyType
+        from jline.lang.constant import ReplacementStrategy, SchedStrategyType
         from jline.lang.constant import ServiceStrategy, SolverType, TimingStrategy, VerboseLevel
         from jline.lang.distributions import APH, Binomial, ContinuousDistribution, Coxian, CumulativeDistribution
         from jline.lang.distributions import DiscreteDistribution, DiscreteSampler, Distribution
@@ -53,7 +53,13 @@ def jlineStart():
         gi()
 
 
-def jlineToArray(matrix):
+def jlineMapMatrixToArray(mapmatrix):
+    d = dict(mapmatrix)
+    for i in range(len(d)):
+        d[i] = jlineMatrixToArray(d[i])
+    return d
+
+def jlineMatrixToArray(matrix):
     return np.array(list(matrix.toArray2D()))
 
 jlineStart()
