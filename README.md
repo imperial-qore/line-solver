@@ -6,7 +6,7 @@ LINE is an open source package to analyze queueing models via analytical methods
 
 Additional information is available on the [LINE website](https://line-solver.sourceforge.net/) and in the [LINE wiki](https://github.com/imperial-qore/line-solver/wiki).
 
-Please refer to the individual subfolder README files for getting started information.
+Please refer to the individual subfolder README files for getting started information. Past releases can be found on [Sourceforge](https://sourceforge.net/projects/line-solver/files/).
 
 ### License
 LINE is released as open source under the [BSD-3 license](https://raw.githubusercontent.com/line-solver/line/master/LICENSE).
