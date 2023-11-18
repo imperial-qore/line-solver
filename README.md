@@ -9,7 +9,7 @@ Additional information is available on the [LINE website](https://line-solver.so
 Please refer to the individual subfolder README files for getting started information. Past releases can be found on [Sourceforge](https://sourceforge.net/projects/line-solver/files/).
 
 ### License
-LINE is released as open source under the [BSD-3 license](https://raw.githubusercontent.com/line-solver/line/master/LICENSE).
+LINE is released as open source under the [BSD-3 license](https://raw.githubusercontent.com/imperial-qore/line-solver/main/matlab/LICENSE).
 
 ### Acknowledgement
 The development of LINE has been partially funded by the European Commission grants FP7-318484 ([MODAClouds](http://multiclouddevops.com/)), H2020-644869 ([DICE](http://www.dice-h2020.eu/)), H2020-825040 ([RADON](http://radon-h2020.eu)), and by the EPSRC grant EP/M009211/1 ([OptiMAM](https://wp.doc.ic.ac.uk/optimam/)).
