@@ -1,5 +1,5 @@
 # LINE Solver for Python 
-This package is the official python wrapper for the LINE queueing solver. 
+This folder includes the Python version of the [LINE solver](https://github.com/imperial-qore/line-solver).
 
 ## Installation
 Requirements: Python 3.10 or later versions; a Java Virtual Machine, either Sun/Oracle JDK/JRE Variant or OpenJDK. 
