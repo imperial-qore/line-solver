@@ -20,7 +20,7 @@ Solve a simple M/M/1 model with 50% utilization running: ```python3 mm1.py```. Y
 Alternatively, you can open and run mm1.ipynb in Jupyter.
 
 ## License
-This package is released as open source under the [BSD-3 license](https://github.com/imperial-qore/line-solver-python/blob/main/LICENSE).
+This package is released as open source under the [BSD-3 license](https://raw.githubusercontent.com/imperial-qore/line-solver/main/python/LICENSE).
 
 ## Version
 Version: 0.0.1-alpha. This version has support for basic models with open and closed classes.
