@@ -164,6 +164,13 @@ class Sink:
     def __init__(self, model, name):
         self.obj = jpype.JPackage('jline').lang.nodes.Sink(model.obj, name)
 
+class Fork:
+    def __init__(self, model, name):
+        self.obj = jpype.JPackage('jline').lang.nodes.Fork(model.obj, name)
+
+class Join:
+    def __init__(self, model, name, forknode):
+        self.obj = jpype.JPackage('jline').lang.nodes.Join(model.obj, name, forknode.obj)
 
 class Queue:
     def __init__(self, model, name, strategy):

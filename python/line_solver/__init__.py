@@ -40,9 +40,9 @@ def jlineStart():
         from jline.lang.distributions import DiscreteDistribution, DiscreteSampler, Distribution
         from jline.lang.distributions import Gamma, Geometric, LogNormal, MarkovianDistribution
         from jline.lang.distributions import Pareto, PH, Poisson, Uniform, Weibull
-        from jline.lang.nodes import ClassSwitch, Fork, Join, Logger, Node, Place
+        from jline.lang.nodes import ClassSwitch, Logger, Node, Place
         from jline.lang.nodes import StatefulNode, Station, Transition
-        from jline.lang.processes import MAP, Process
+        from jline.lang.processes import MMAP, MAP, Process
         from jline.lang.sections import Buffer, CacheClassSwitcher, ClassSwitcher, ClassSwitchOutputSection, Dispatcher
         from jline.lang.sections import Forker, InfiniteServer, InputSection, Joiner, OutputSection, PreemptiveServer
         from jline.lang.sections import RandomSource, Section, Server, ServiceSection, ServiceTunnel, SharedServer
