@@ -1,4 +1,10 @@
 ## LINE Solver: Queueing Theory Algorithms 
+Website: http://line-solver.sourceforge.net/
+
+Latest stable release: https://sourceforge.net/projects/line-solver/files/latest/download
+
+[![License](https://img.shields.io/badge/License-BSD%203--Clause-red.svg)](https://github.com/imperial-qore/line-solver/blob/master/LICENSE)
+[![Hits](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Fimperial-qore%2Fline-solver&count_bg=%23FFC401&title_bg=%23555555&icon=&icon_color=%23E7E7E7&title=hits&edge_flat=false)](https://hits.seeyoufarm.com)
 
 Main distribution of the LINE solver for [MATLAB](https://github.com/imperial-qore/line-solver/tree/main/matlab) (stable version), [Java](https://github.com/imperial-qore/line-solver/tree/main/java) (alpha version), and [Python](https://github.com/imperial-qore/line-solver/tree/main/python) (alpha version).
 
