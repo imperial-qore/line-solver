@@ -7,7 +7,7 @@ Requirements: Python 3.10 or later versions; a Java Virtual Machine, either Sun/
 Windows: make sure that JAVA_HOME is correctly configured and java.exe is available on the system path.
 
 ## Documentation
-The Python syntax is nearly identical to the MATLAB version, see for example the scripts in the [Python gettingstarted/](https://github.com/imperial-qore/line-solver-python/tree/master/gettingstarted) folder compared to the ones in the corresponding [MATLAB gettingstarted/](https://github.com/imperial-qore/line-solver/tree/master/gettingstarted) folder.
+The Python syntax is nearly identical to the MATLAB version, see for example the scripts in the [Python gettingstarted/](https://github.com/imperial-qore/line-solver-python/tree/master/python/gettingstarted) folder compared to the ones in the corresponding [MATLAB gettingstarted/](https://github.com/imperial-qore/line-solver/tree/master/matlab/gettingstarted) folder.
 For documentation of the MATLAB version check the [Wiki](https://github.com/imperial-qore/line-solver/wiki).
 
 ## Example
