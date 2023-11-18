@@ -1,11 +1,7 @@
 ## LINE: Queueing Theory Algorithms for MATLAB
 
-Website: http://line-solver.sourceforge.net/
+This repository includes the MATLAB version of the [LINE solver](https://github.com/imperial-qore/line-solver).
 
-Latest stable release: https://sourceforge.net/projects/line-solver/files/latest/download
-
-[![License](https://img.shields.io/badge/License-BSD%203--Clause-red.svg)](https://github.com/imperial-qore/line-solver/blob/master/LICENSE)
-[![Hits](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Fimperial-qore%2Fline-solver&count_bg=%23FFC401&title_bg=%23555555&icon=&icon_color=%23E7E7E7&title=hits&edge_flat=false)](https://hits.seeyoufarm.com)
 [![View LINE on File Exchange](https://www.mathworks.com/matlabcentral/images/matlab-file-exchange.svg)](https://www.mathworks.com/matlabcentral/fileexchange/71486-line)
 
 ### Getting started
@@ -46,11 +42,11 @@ AvgTable =
     myQueue     myClass      4      0.8       4        4        1       1  
 ```    
 
-A [getting started](https://github.com/imperial-qore/line-solver/wiki/Getting-started) walkthrough, [examples](https://github.com/imperial-qore/line-solver/wiki/Examples) and detailed instructions on how to use LINE can be found in the [User Manual](https://github.com/imperial-qore/line-solver/blob/master/doc/LINE.pdf) and on the [Wiki](https://github.com/line-solver/line/wiki). A [model gallery](https://github.com/imperial-qore/line-solver/wiki/Getting-started#model-gallery) is also available.
+A [getting started](https://github.com/imperial-qore/line-solver/wiki/Getting-started) walkthrough is available.
 
 
 ### License
-LINE is released as open source under the [BSD-3 license](https://raw.githubusercontent.com/line-solver/line/master/LICENSE).
+LINE is released as open source under the [BSD-3 license](https://raw.githubusercontent.com/imperial-qore/line-solver/main/matlab/LICENSE).
 
 ### Acknowledgement
 The development of LINE has been partially funded by the European Commission grants FP7-318484 ([MODAClouds](http://multiclouddevops.com/)), H2020-644869 ([DICE](http://www.dice-h2020.eu/)), H2020-825040 ([RADON](http://radon-h2020.eu)), and by the EPSRC grant EP/M009211/1 ([OptiMAM](https://wp.doc.ic.ac.uk/optimam/)).
