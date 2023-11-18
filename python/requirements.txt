@@ -1,0 +1,6 @@
+enum_tools
+jpype1
+numpy
+pandas
+matplotlib
+scipy

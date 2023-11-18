@@ -1,0 +1,7 @@
+Manifest-Version: 1.0
+Main-Class: jline.io.DockerClient
+Class-Path: ejml-simple-0.41.jar ejml-core-0.41.jar ejml-ddense-0.41.jar
+  ejml-dsparse-0.41.jar lineclient.jar commons-lang3-3.9.jar ejml-fspars
+ e-0.41.jar ejml-cdense-0.41.jar ejml-fdense-0.41.jar ejml-zdense-0.41.j
+ ar kpc-toolbox-java-1.0.0-jar-with-dependencies.jar ejml-all-0.41.jar
+

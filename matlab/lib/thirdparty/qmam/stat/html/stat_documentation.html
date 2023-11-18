@@ -1,0 +1,152 @@
+
+<!DOCTYPE html
+  PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html><head>
+      <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+   <!--
+This HTML was auto-generated from MATLAB code.
+To make changes, update the MATLAB code and republish this document.
+      --><title>stat</title><meta name="generator" content="MATLAB 8.0"><link rel="schema.DC" href="http://purl.org/dc/elements/1.1/"><meta name="DC.date" content="2014-11-01"><meta name="DC.source" content="stat_documentation.m"><style type="text/css">
+html,body,div,span,applet,object,iframe,h1,h2,h3,h4,h5,h6,p,blockquote,pre,a,abbr,acronym,address,big,cite,code,del,dfn,em,font,img,ins,kbd,q,s,samp,small,strike,strong,sub,sup,tt,var,b,u,i,center,dl,dt,dd,ol,ul,li,fieldset,form,label,legend,table,caption,tbody,tfoot,thead,tr,th,td{margin:0;padding:0;border:0;outline:0;font-size:100%;vertical-align:baseline;background:transparent}body{line-height:1}ol,ul{list-style:none}blockquote,q{quotes:none}blockquote:before,blockquote:after,q:before,q:after{content:'';content:none}:focus{outine:0}ins{text-decoration:none}del{text-decoration:line-through}table{border-collapse:collapse;border-spacing:0}
+
+html { min-height:100%; margin-bottom:1px; }
+html body { height:100%; margin:0px; font-family:Arial, Helvetica, sans-serif; font-size:10px; color:#000; line-height:140%; background:#fff none; overflow-y:scroll; }
+html body td { vertical-align:top; text-align:left; }
+
+h1 { padding:0px; margin:0px 0px 25px; font-family:Arial, Helvetica, sans-serif; font-size:1.5em; color:#d55000; line-height:100%; font-weight:normal; }
+h2 { padding:0px; margin:0px 0px 8px; font-family:Arial, Helvetica, sans-serif; font-size:1.2em; color:#000; font-weight:bold; line-height:140%; border-bottom:1px solid #d6d4d4; display:block; }
+h3 { padding:0px; margin:0px 0px 5px; font-family:Arial, Helvetica, sans-serif; font-size:1.1em; color:#000; font-weight:bold; line-height:140%; }
+
+a { color:#005fce; text-decoration:none; }
+a:hover { color:#005fce; text-decoration:underline; }
+a:visited { color:#004aa0; text-decoration:none; }
+
+p { padding:0px; margin:0px 0px 20px; }
+img { padding:0px; margin:0px 0px 20px; border:none; }
+p img, pre img, tt img, li img { margin-bottom:0px; } 
+
+ul { padding:0px; margin:0px 0px 20px 23px; list-style:square; }
+ul li { padding:0px; margin:0px 0px 7px 0px; }
+ul li ul { padding:5px 0px 0px; margin:0px 0px 7px 23px; }
+ul li ol li { list-style:decimal; }
+ol { padding:0px; margin:0px 0px 20px 0px; list-style:decimal; }
+ol li { padding:0px; margin:0px 0px 7px 23px; list-style-type:decimal; }
+ol li ol { padding:5px 0px 0px; margin:0px 0px 7px 0px; }
+ol li ol li { list-style-type:lower-alpha; }
+ol li ul { padding-top:7px; }
+ol li ul li { list-style:square; }
+
+.content { font-size:1.2em; line-height:140%; padding: 20px; }
+
+pre, tt, code { font-size:12px; }
+pre { margin:0px 0px 20px; }
+pre.error { color:red; }
+pre.codeinput { padding:10px; border:1px solid #d3d3d3; background:#f7f7f7; }
+pre.codeoutput { padding:10px 11px; margin:0px 0px 20px; color:#4c4c4c; }
+
+@media print { pre.codeinput, pre.codeoutput { word-wrap:break-word; width:100%; } }
+
+span.keyword { color:#0000FF }
+span.comment { color:#228B22 }
+span.string { color:#A020F0 }
+span.untermstring { color:#B20000 }
+span.syscmd { color:#B28C00 }
+
+.footer { width:auto; padding:10px 0px; margin:25px 0px 0px; border-top:1px dotted #878787; font-size:0.8em; line-height:140%; font-style:italic; color:#878787; text-align:left; float:none; }
+.footer p { margin:0px; }
+.footer a { color:#878787; }
+.footer a:hover { color:#878787; text-decoration:underline; }
+.footer a:visited { color:#878787; }
+
+table th { padding:7px 5px; text-align:left; vertical-align:middle; border: 1px solid #d6d4d4; font-weight:bold; }
+table td { padding:7px 5px; text-align:left; vertical-align:top; border:1px solid #d6d4d4; }
+
+
+
+
+
+  </style></head><body><div class="content"><h1><tt>stat</tt></h1><!--introduction--><p>This function prints some quick statistics about a variable in the command window.</p><!--/introduction--><h2>Contents</h2><div><ul><li><a href="#1">Syntax and Description</a></li><li><a href="#2">Examples</a></li><li><a href="#6">Author Info</a></li></ul></div><h2>Syntax and Description<a name="1"></a></h2><p><tt>stat(variable)</tt> prints the following properties of a variable in the command window:</p><div><ul><li><tt>size</tt>: size of variable.</li><li><tt>numel</tt>: number of elements in variable.</li><li><tt>NaNs</tt>: number of not-a-number values in variable.</li><li><tt>maximum</tt>: maximum value in variable across all dimensions.</li><li><tt>minimum</tt>: minimum value in variable across all dimensions.</li><li><tt>mean</tt>: mean value of variable across all dimensions.</li><li><tt>median</tt>: median value of variable across all dimensions.</li><li><tt>mode</tt>: most frequent value in variable across all dimensions.</li><li><tt>std dev</tt>: standard deviation of variable across all dimensions.</li><li><tt>variance</tt>: variance of variable across all dimensions.</li></ul></div><h2>Examples<a name="2"></a></h2><pre class="codeinput">A = magic(5)
+</pre><pre class="codeoutput">A =
+    17    24     1     8    15
+    23     5     7    14    16
+     4     6    13    20    22
+    10    12    19    21     3
+    11    18    25     2     9
+</pre><pre class="codeinput">stat(A)
+</pre><pre class="codeoutput"> 
+ Properties of A:
+ size     = 5  5
+ numel    = 25
+ NaNs     = 0
+ maximum  = 25
+ minimum  = 1
+ mean     = 13
+ median   = 13
+ mode     = 1
+ std dev  = 7.3598
+ variance = 54.1667
+ 
+</pre><p>This function also works with <tt>NaN</tt> values:</p><pre class="codeinput">A(2:4)=NaN
+</pre><pre class="codeoutput">A =
+    17    24     1     8    15
+   NaN     5     7    14    16
+   NaN     6    13    20    22
+   NaN    12    19    21     3
+    11    18    25     2     9
+</pre><pre class="codeinput">stat(A)
+</pre><pre class="codeoutput"> 
+ Properties of A:
+ size     = 5  5
+ numel    = 25
+ NaNs     = 3
+ maximum  = 25
+ minimum  = 1
+ mean     = 13.0909
+ median   = 13.5
+ mode     = 1
+ std dev  = 7.2697
+ variance = 52.8485
+ 
+</pre><h2>Author Info<a name="6"></a></h2><p>This function was written by <a href="http://www.chadagreene.com">Chad A. Greene</a> of the University of Texas Institute for Geophysics (<a href="http://www.ig.utexas.edu/people/students/cgreene/">UTIG</a>), October 2014.</p><p class="footer"><br><a href="http://www.mathworks.com/products/matlab/">Published with MATLAB&reg; R2012b</a><br></p></div><!--
+##### SOURCE BEGIN #####
+%% |stat| 
+% This function prints some quick statistics about a variable in the
+% command window.
+% 
+%% Syntax and Description
+% 
+% |stat(variable)| prints the following properties of a variable in the
+% command window: 
+% 
+% * |size|: size of variable.
+% * |numel|: number of elements in variable.
+% * |NaNs|: number of not-a-number values in variable.
+% * |maximum|: maximum value in variable across all dimensions.
+% * |minimum|: minimum value in variable across all dimensions.
+% * |mean|: mean value of variable across all dimensions.
+% * |median|: median value of variable across all dimensions.
+% * |mode|: most frequent value in variable across all dimensions.
+% * |std dev|: standard deviation of variable across all dimensions. 
+% * |variance|: variance of variable across all dimensions. 
+%
+%% Examples 
+
+A = magic(5)
+
+%% 
+stat(A)
+
+%%
+% This function also works with |NaN| values: 
+
+A(2:4)=NaN
+
+%% 
+
+stat(A)
+
+%% Author Info
+% This function was written by <http://www.chadagreene.com Chad A. Greene> of the
+% University of Texas Institute for Geophysics (<http://www.ig.utexas.edu/people/students/cgreene/ UTIG>), October 2014. 
+##### SOURCE END #####
+--></body></html>

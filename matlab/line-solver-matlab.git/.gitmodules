@@ -1,0 +1,9 @@
+[submodule "lib/thirdparty/butools"]
+	path = lib/thirdparty/butools
+	url = https://github.com/ghorvath78/butools
+[submodule "lib/m3a"]
+	path = lib/m3a
+	url = https://github.com/imperial-qore/M3A
+[submodule "lib/kpctoolbox"]
+	path = lib/kpctoolbox
+	url = https://github.com/kpctoolboxteam/kpc-toolbox

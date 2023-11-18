@@ -1,0 +1,183 @@
+import os
+import jpype
+import jpype.imports
+import numpy as np
+import pandas as pd
+
+from . import jlineToArray
+from .constants import SolverType, VerboseLevel
+
+
+class Solver:
+    def __init__(self, options, args):
+        self.solveropt = options
+        if len(args) > 1:
+            ctr = 0
+            for ctr in range(len(args) - 1):
+                match args[ctr]:
+                    case 'seed':
+                        self.solveropt.obj.seed = args[ctr + 1]
+                    case 'samples':
+                        self.solveropt.obj.samples = args[ctr + 1]
+                    case 'verbose':
+                        if isinstance(args[ctr + 1], bool):
+                            if args[ctr + 1]:
+                                self.solveropt.obj.verbose = VerboseLevel.STD.value
+                            else:
+                                self.solveropt.obj.verbose = VerboseLevel.SILENT.value
+                        else:
+                            self.solveropt.obj.verbose = args[ctr + 1].value
+                ctr += 2
+
+    def getName(self):
+        return self.obj.getName()
+
+    def getAvgTable(self):
+        table = self.obj.getAvgTable()
+        # convert to NumPy
+
+        QLen = np.array(list(table.getQLen()))
+        Util = np.array(list(table.getUtil()))
+        RespT = np.array(list(table.getRespT()))
+        ResidT = np.array(list(table.getResidT()))
+        Tput = np.array(list(table.getTput()))
+
+        cols = ['QLen', 'Util', 'RespT', 'ResidT', 'Tput']
+        stations = list(table.getStationNames())
+        statnames = []
+        for i in range(len(stations)):
+            statnames.append(str(stations[i]))
+        jobclasses = list(table.getClassNames())
+        classnames = []
+        for i in range(len(jobclasses)):
+            classnames.append(str(jobclasses[i]))
+        AvgTable = pd.DataFrame(np.concatenate([[QLen, Util, RespT, ResidT, Tput]]).T, columns=cols)
+        AvgTable.insert(0, "JobClass", classnames)
+        AvgTable.insert(0, "Station", statnames)
+        return AvgTable
+
+    def getAvgSysRespT(self):
+        # TODO: this should call the native Java method not getAvgSysTable
+        table = self.obj.getAvgSysTable()
+        SysRespT = np.array(list(table.getSysRespT()))
+        return SysRespT
+
+    def getAvgSysTable(self):
+        table = self.obj.getAvgSysTable()
+        # convert to NumPy
+        SysRespT = np.array(list(table.getSysRespT()))
+        SysTput = np.array(list(table.getSysTput()))
+
+        cols = ['SysRespT', 'SysTput']
+        jobchains = list(table.getChainNames())
+        chains = []
+        for i in range(len(jobchains)):
+            chains.append(str(jobchains[i]))
+        jobinchains = list(table.getInChainNames())
+        inchains = []
+        for i in range(len(jobinchains)):
+            inchains.append(str(jobinchains[i]))
+        AvgSysTable = pd.DataFrame(np.concatenate([[SysRespT, SysTput]]).T, columns=cols)
+        AvgSysTable.insert(0, "JobClasses", inchains)
+        AvgSysTable.insert(0, "Chain", chains)
+        return AvgSysTable
+
+    def getCdfRespT(self):
+        try:
+            table = self.obj.getCdfRespT()
+            distribC = self.obj.fluidResult.distribC
+            CdfRespT = []
+            for i in range(distribC.length):
+                for c in range(distribC[i].length):
+                    F = jlineToArray(distribC[i][c])
+                    CdfRespT.append(F)
+            return np.asarray(CdfRespT)
+        except:
+            return [[]]
+
+
+class SolverCTMC(Solver):
+    def __init__(self, *args):
+        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.CTMC)
+        super().__init__(options, args)
+        model = args[0]
+        self.obj = jpype.JPackage('jline').solvers.ctmc.SolverCTMC(model.obj)
+
+    def getStateSpace(self):
+        return self.obj.getStateSpace()
+
+    def getGenerator(self):
+        return self.obj.getGenerator()
+
+
+class SolverEnv(Solver):
+    def __init__(self, *args):
+        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.Env)
+        super().__init__(options, args)
+        model = args[0]
+        self.obj = jpype.JPackage('jline').solvers.env.SolverEnv(model.obj)
+
+
+class SolverFluid(Solver):
+    def __init__(self, *args):
+        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.Fluid)
+        super().__init__(options, args)
+        model = args[0]
+        self.obj = jpype.JPackage('jline').solvers.fluid.SolverFluid(model.obj)
+
+
+class SolverJMT(Solver):
+    def __init__(self, *args):
+        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.JMT)
+        super().__init__(options, args)
+        model = args[0]
+        jmtPath = jpype.JPackage('java').lang.String(os.path.dirname(os.path.abspath(__file__)) + "/JMT.jar")
+        self.obj = jpype.JPackage('jline').solvers.jmt.SolverJMT(model.obj, self.solveropt.obj, jmtPath)
+
+    def jsimgView(self):
+        self.obj.jsimgView()
+
+
+class SolverMAM(Solver):
+    def __init__(self, *args):
+        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.MAM)
+        super().__init__(options, args)
+        model = args[0]
+        self.obj = jpype.JPackage('jline').solvers.mam.SolverMAM(model.obj)
+
+
+class SolverMVA(Solver):
+    def __init__(self, *args):
+        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.MVA)
+        super().__init__(options, args)
+        model = args[0]
+        self.obj = jpype.JPackage('jline').solvers.mva.SolverMVA(model.obj)
+
+
+class SolverLN(Solver):
+    def __init__(self, *args):
+        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.LN)
+        super().__init__(options, args)
+        model = args[0]
+        self.obj = jpype.JPackage('jline').solvers.ln.SolverLN(model.obj)
+
+
+class SolverNC(Solver):
+    def __init__(self, *args):
+        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.NC)
+        super().__init__(options, args)
+        model = args[0]
+        self.obj = jpype.JPackage('jline').solvers.nc.SolverNC(model.obj)
+
+
+class SolverSSA(Solver):
+    def __init__(self, *args):
+        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.SSA)
+        super().__init__(options, args)
+        model = args[0]
+        self.obj = jpype.JPackage('jline').solvers.ssa.SolverSSA(model.obj)
+
+
+class SolverOptions():
+    def __init__(self, solvertype):
+        self.obj = jpype.JPackage('jline').solvers.SolverOptions(solvertype)

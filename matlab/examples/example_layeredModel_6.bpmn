@@ -1,0 +1,729 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+             xmlns:signavio="http://www.signavio.com"
+             xmlns:inspire="http://bpminspire.com/bpmn2/extension/inspire"
+             xmlns:activiti="http://activiti.org/bpmn"
+             xmlns:adonis="http://www.boc-group.com"
+             xmlns:semantic="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             exporter="ADONIS CE 3.0"
+             exporterVersion="3.0.0.0"
+             expressionLanguage="http://www.w3.org/1999/XPath"
+             targetNamespace="http://www.omg.org/bpmn20"
+             typeLanguage="http://www.w3.org/2001/XMLSchema"
+             xsi:schemaLocation="http://www.omg.org/spec/BPMN/20100524/MODEL http://www.omg.org/spec/BPMN/2.0/20100501/BPMN20.xsd"
+             name="ex">
+   <message id="obj.22473" name="M1"/>
+   <message id="obj.22476" name="M2"/>
+   <message id="obj.22541" name="M3"/>
+   <message id="obj.22545" name="M4"/>
+   <message id="messageEventDefinition_obj.22404"
+            name="messageEventDefinition_obj.22404"/>
+   <message id="messageEventDefinition_obj.22434"
+            name="messageEventDefinition_obj.22434"/>
+   <message id="messageEventDefinition_obj.22443"
+            name="messageEventDefinition_obj.22443"/>
+   <collaboration id="mod.22403_Collaboration">
+      <extensionElements>
+         <adonis:modelstate>In process</adonis:modelstate>
+         <adonis:modelversion/>
+         <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+      </extensionElements>
+      <participant processRef="obj.22410_process" id="obj.22410" name="R1"/>
+      <participant processRef="obj.22416_process" id="obj.22416" name="R2"/>
+      <participant processRef="obj.22528_process" id="obj.22528" name="R3"/>
+      <messageFlow id="con.22508"
+                   name=""
+                   sourceRef="obj.22413"
+                   targetRef="obj.22419">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </messageFlow>
+      <messageFlow id="con.22509"
+                   name=""
+                   sourceRef="obj.22428"
+                   targetRef="obj.22473">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </messageFlow>
+      <messageFlow id="con.22510"
+                   name=""
+                   sourceRef="obj.22446"
+                   targetRef="obj.22476">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </messageFlow>
+      <messageFlow id="con.22513"
+                   name=""
+                   sourceRef="obj.22440"
+                   targetRef="obj.22458">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </messageFlow>
+      <messageFlow id="con.22523"
+                   name=""
+                   sourceRef="obj.22473"
+                   targetRef="obj.22446">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </messageFlow>
+      <messageFlow id="con.22525"
+                   name=""
+                   sourceRef="obj.22476"
+                   targetRef="obj.22428">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </messageFlow>
+      <messageFlow id="con.22535"
+                   name=""
+                   sourceRef="obj.22437"
+                   targetRef="obj.22541">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </messageFlow>
+      <messageFlow id="con.22536"
+                   name=""
+                   sourceRef="obj.22531"
+                   targetRef="obj.22545">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </messageFlow>
+      <messageFlow id="con.22544"
+                   name=""
+                   sourceRef="obj.22541"
+                   targetRef="obj.22531">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </messageFlow>
+      <messageFlow id="con.22548"
+                   name=""
+                   sourceRef="obj.22545"
+                   targetRef="obj.22437">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </messageFlow>
+   </collaboration>
+   <process id="obj.22410_process" name="R1" isExecutable="false">
+      <extensionElements>
+         <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+      </extensionElements>
+      <startEvent id="obj.22404" name="E1">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </startEvent>
+      <task id="obj.22407" name="A1" isForCompensation="false">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </task>
+      <task id="obj.22413" name="A2" isForCompensation="false">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </task>
+      <task id="obj.22428" name="A5" isForCompensation="false">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </task>
+      <task id="obj.22431" name="A6" isForCompensation="false">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </task>
+      <endEvent id="obj.22434" name="E3">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </endEvent>
+      <intermediateCatchEvent id="obj.22458" name="E2">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+         <messageEventDefinition id="messageEventDefinition_obj.22458"/>
+      </intermediateCatchEvent>
+      <task id="obj.22461" name="A3" isForCompensation="false">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </task>
+      <exclusiveGateway id="obj.22464" name="Exclusive Gateway-21235">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </exclusiveGateway>
+      <task id="obj.22467" name="A4" isForCompensation="false">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </task>
+      <exclusiveGateway id="obj.22470" name="Exclusive Gateway-21245">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </exclusiveGateway>
+      <sequenceFlow id="con.22479"
+                    name=""
+                    sourceRef="obj.22404"
+                    targetRef="obj.22407">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22482"
+                    name=""
+                    sourceRef="obj.22407"
+                    targetRef="obj.22413">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22486"
+                    name=""
+                    sourceRef="obj.22419"
+                    targetRef="obj.22422">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22488"
+                    name=""
+                    sourceRef="obj.22422"
+                    targetRef="obj.22452">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22492"
+                    name=""
+                    sourceRef="obj.22428"
+                    targetRef="obj.22431">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22493"
+                    name=""
+                    sourceRef="obj.22431"
+                    targetRef="obj.22434">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22494"
+                    name=""
+                    sourceRef="obj.22452"
+                    targetRef="obj.22425">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22496"
+                    name=""
+                    sourceRef="obj.22452"
+                    targetRef="obj.22437">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22497"
+                    name=""
+                    sourceRef="obj.22425"
+                    targetRef="obj.22455">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22498"
+                    name=""
+                    sourceRef="obj.22437"
+                    targetRef="obj.22449">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22501"
+                    name=""
+                    sourceRef="obj.22455"
+                    targetRef="obj.22440">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22502"
+                    name=""
+                    sourceRef="obj.22446"
+                    targetRef="obj.22443">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22504"
+                    name=""
+                    sourceRef="obj.22449"
+                    targetRef="obj.22455">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22512"
+                    name=""
+                    sourceRef="obj.22458"
+                    targetRef="obj.22464">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22514"
+                    name=""
+                    sourceRef="obj.22461"
+                    targetRef="obj.22470">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22516"
+                    name=""
+                    sourceRef="obj.22464"
+                    targetRef="obj.22461">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22519"
+                    name=""
+                    sourceRef="obj.22464"
+                    targetRef="obj.22467">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22520"
+                    name=""
+                    sourceRef="obj.22470"
+                    targetRef="obj.22428">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+      <sequenceFlow id="con.22522"
+                    name=""
+                    sourceRef="obj.22467"
+                    targetRef="obj.22470">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         </extensionElements>
+      </sequenceFlow>
+   </process>
+   <process id="obj.22416_process" name="R2" isExecutable="false">
+      <extensionElements>
+         <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+      </extensionElements>
+      <intermediateCatchEvent id="obj.22419" name="E4">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+         <messageEventDefinition id="messageEventDefinition_obj.22419"/>
+      </intermediateCatchEvent>
+      <task id="obj.22422" name="A7" isForCompensation="false">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </task>
+      <task id="obj.22425" name="A8" isForCompensation="false">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </task>
+      <task id="obj.22437" name="A9" isForCompensation="false">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </task>
+      <task id="obj.22440" name="A11" isForCompensation="false">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </task>
+      <endEvent id="obj.22443" name="E5">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </endEvent>
+      <task id="obj.22446" name="A12" isForCompensation="false">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </task>
+      <task id="obj.22449" name="A10" isForCompensation="false">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </task>
+      <parallelGateway id="obj.22452" name="Exclusive Gateway-21114">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </parallelGateway>
+      <parallelGateway id="obj.22455" name="Exclusive Gateway-21114-21149">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </parallelGateway>
+   </process>
+   <process id="obj.22528_process" name="R3" isExecutable="false">
+      <extensionElements>
+         <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+         <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+      </extensionElements>
+      <task id="obj.22531" name="A13" isForCompensation="false">
+         <extensionElements>
+            <adonis:ATTRIBUTE name="Comment" type="STRING"/>
+            <adonis:ATTRIBUTE name="Open questions" type="STRING"/>
+         </extensionElements>
+      </task>
+   </process>
+   <process id="mod.22403" name="ex" isExecutable="false">
+      <laneSet id="mod.22403_LaneSet"/>
+   </process>
+   <bpmndi:BPMNDiagram id="Diagram_mod.22403">
+      <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="mod.22403">
+         <bpmndi:BPMNShape bpmnElement="obj.22404" id="BPMN_Shape_obj.22404">
+            <omgdc:Bounds width="53" height="53" x="181" y="125"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22407" id="BPMN_Shape_obj.22407">
+            <omgdc:Bounds height="68" width="127" x="311" y="117"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22410" id="BPMN_Shape_obj.22410">
+            <omgdc:Bounds width="1894" height="290" x="28" y="76"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22413" id="BPMN_Shape_obj.22413">
+            <omgdc:Bounds height="68" width="127" x="520" y="115"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22416" id="BPMN_Shape_obj.22416">
+            <omgdc:Bounds width="1894" height="297" x="31" y="432"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22419" id="BPMN_Shape_obj.22419">
+            <omgdc:Bounds width="53" height="53" x="197" y="492"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22422" id="BPMN_Shape_obj.22422">
+            <omgdc:Bounds height="68" width="127" x="327" y="485"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22425" id="BPMN_Shape_obj.22425">
+            <omgdc:Bounds height="68" width="127" x="742" y="485"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22428" id="BPMN_Shape_obj.22428">
+            <omgdc:Bounds height="68" width="127" x="1385" y="115"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22431" id="BPMN_Shape_obj.22431">
+            <omgdc:Bounds height="68" width="127" x="1582" y="115"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22434" id="BPMN_Shape_obj.22434">
+            <omgdc:Bounds width="53" height="53" x="1775" y="123"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22437" id="BPMN_Shape_obj.22437">
+            <omgdc:Bounds height="68" width="127" x="666" y="608"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22440" id="BPMN_Shape_obj.22440">
+            <omgdc:Bounds height="68" width="127" x="1194" y="486"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22443" id="BPMN_Shape_obj.22443">
+            <omgdc:Bounds width="53" height="53" x="1585" y="492"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22446" id="BPMN_Shape_obj.22446">
+            <omgdc:Bounds height="68" width="127" x="1382" y="482"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22449" id="BPMN_Shape_obj.22449">
+            <omgdc:Bounds height="68" width="127" x="870" y="608"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22452" id="BPMN_Shape_obj.22452">
+            <omgdc:Bounds width="53" height="53" x="531" y="490"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22455" id="BPMN_Shape_obj.22455">
+            <omgdc:Bounds width="53" height="53" x="1046" y="490"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22458" id="BPMN_Shape_obj.22458">
+            <omgdc:Bounds width="53" height="53" x="721" y="124"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22461" id="BPMN_Shape_obj.22461">
+            <omgdc:Bounds height="68" width="127" x="1013" y="118"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22464" id="BPMN_Shape_obj.22464">
+            <omgdc:Bounds width="53" height="53" x="866" y="123"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22467" id="BPMN_Shape_obj.22467">
+            <omgdc:Bounds height="68" width="127" x="1010" y="229"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22470" id="BPMN_Shape_obj.22470">
+            <omgdc:Bounds width="53" height="53" x="1223" y="123"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22473" id="BPMN_Shape_obj.22473">
+            <omgdc:Bounds width="53" height="30" x="1394" y="313"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22476" id="BPMN_Shape_obj.22476">
+            <omgdc:Bounds width="53" height="30" x="1466" y="311"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22528" id="BPMN_Shape_obj.22528">
+            <omgdc:Bounds width="1885" height="166" x="34" y="848"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22531" id="BPMN_Shape_obj.22531">
+            <omgdc:Bounds height="68" width="127" x="672" y="893"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22541" id="BPMN_Shape_obj.22541">
+            <omgdc:Bounds width="53" height="30" x="662" y="762"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNShape bpmnElement="obj.22545" id="BPMN_Shape_obj.22545">
+            <omgdc:Bounds width="53" height="30" x="748" y="764"/>
+         </bpmndi:BPMNShape>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22479"
+                          bpmnElement="con.22479"
+                          sourceElement="BPMN_Shape_obj.22404"
+                          targetElement="BPMN_Shape_obj.22407">
+            <omgdi:waypoint x="208" y="151"/>
+            <omgdi:waypoint x="374" y="151"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22482"
+                          bpmnElement="con.22482"
+                          sourceElement="BPMN_Shape_obj.22407"
+                          targetElement="BPMN_Shape_obj.22413">
+            <omgdi:waypoint x="374" y="151"/>
+            <omgdi:waypoint x="584" y="149"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22486"
+                          bpmnElement="con.22486"
+                          sourceElement="BPMN_Shape_obj.22419"
+                          targetElement="BPMN_Shape_obj.22422">
+            <omgdi:waypoint x="224" y="519"/>
+            <omgdi:waypoint x="390" y="519"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22488"
+                          bpmnElement="con.22488"
+                          sourceElement="BPMN_Shape_obj.22422"
+                          targetElement="BPMN_Shape_obj.22452">
+            <omgdi:waypoint x="390" y="519"/>
+            <omgdi:waypoint x="557" y="517"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22492"
+                          bpmnElement="con.22492"
+                          sourceElement="BPMN_Shape_obj.22428"
+                          targetElement="BPMN_Shape_obj.22431">
+            <omgdi:waypoint x="1448" y="149"/>
+            <omgdi:waypoint x="1645" y="149"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22493"
+                          bpmnElement="con.22493"
+                          sourceElement="BPMN_Shape_obj.22431"
+                          targetElement="BPMN_Shape_obj.22434">
+            <omgdi:waypoint x="1645" y="149"/>
+            <omgdi:waypoint x="1802" y="149"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22494"
+                          bpmnElement="con.22494"
+                          sourceElement="BPMN_Shape_obj.22452"
+                          targetElement="BPMN_Shape_obj.22425">
+            <omgdi:waypoint x="557" y="517"/>
+            <omgdi:waypoint x="806" y="519"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22496"
+                          bpmnElement="con.22496"
+                          sourceElement="BPMN_Shape_obj.22452"
+                          targetElement="BPMN_Shape_obj.22437">
+            <omgdi:waypoint x="557" y="517"/>
+            <omgdi:waypoint x="557" y="642"/>
+            <omgdi:waypoint x="730" y="642"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22497"
+                          bpmnElement="con.22497"
+                          sourceElement="BPMN_Shape_obj.22425"
+                          targetElement="BPMN_Shape_obj.22455">
+            <omgdi:waypoint x="806" y="519"/>
+            <omgdi:waypoint x="916" y="517"/>
+            <omgdi:waypoint x="1072" y="516"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22498"
+                          bpmnElement="con.22498"
+                          sourceElement="BPMN_Shape_obj.22437"
+                          targetElement="BPMN_Shape_obj.22449">
+            <omgdi:waypoint x="730" y="642"/>
+            <omgdi:waypoint x="933" y="642"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22501"
+                          bpmnElement="con.22501"
+                          sourceElement="BPMN_Shape_obj.22455"
+                          targetElement="BPMN_Shape_obj.22440">
+            <omgdi:waypoint x="1072" y="516"/>
+            <omgdi:waypoint x="1258" y="520"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22502"
+                          bpmnElement="con.22502"
+                          sourceElement="BPMN_Shape_obj.22446"
+                          targetElement="BPMN_Shape_obj.22443">
+            <omgdi:waypoint x="1445" y="516"/>
+            <omgdi:waypoint x="1612" y="518"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22504"
+                          bpmnElement="con.22504"
+                          sourceElement="BPMN_Shape_obj.22449"
+                          targetElement="BPMN_Shape_obj.22455">
+            <omgdi:waypoint x="933" y="642"/>
+            <omgdi:waypoint x="1072" y="646"/>
+            <omgdi:waypoint x="1072" y="516"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22512"
+                          bpmnElement="con.22512"
+                          sourceElement="BPMN_Shape_obj.22458"
+                          targetElement="BPMN_Shape_obj.22464">
+            <omgdi:waypoint x="748" y="150"/>
+            <omgdi:waypoint x="892" y="150"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22514"
+                          bpmnElement="con.22514"
+                          sourceElement="BPMN_Shape_obj.22461"
+                          targetElement="BPMN_Shape_obj.22470">
+            <omgdi:waypoint x="1077" y="152"/>
+            <omgdi:waypoint x="1250" y="150"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22516"
+                          bpmnElement="con.22516"
+                          sourceElement="BPMN_Shape_obj.22464"
+                          targetElement="BPMN_Shape_obj.22461">
+            <omgdi:waypoint x="892" y="150"/>
+            <omgdi:waypoint x="1077" y="152"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22519"
+                          bpmnElement="con.22519"
+                          sourceElement="BPMN_Shape_obj.22464"
+                          targetElement="BPMN_Shape_obj.22467">
+            <omgdi:waypoint x="892" y="150"/>
+            <omgdi:waypoint x="892" y="263"/>
+            <omgdi:waypoint x="1074" y="263"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22520"
+                          bpmnElement="con.22520"
+                          sourceElement="BPMN_Shape_obj.22470"
+                          targetElement="BPMN_Shape_obj.22428">
+            <omgdi:waypoint x="1250" y="150"/>
+            <omgdi:waypoint x="1448" y="149"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22522"
+                          bpmnElement="con.22522"
+                          sourceElement="BPMN_Shape_obj.22467"
+                          targetElement="BPMN_Shape_obj.22470">
+            <omgdi:waypoint x="1074" y="263"/>
+            <omgdi:waypoint x="1250" y="263"/>
+            <omgdi:waypoint x="1250" y="150"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22508"
+                          bpmnElement="con.22508"
+                          sourceElement="BPMN_Shape_obj.22413"
+                          targetElement="BPMN_Shape_obj.22419">
+            <omgdi:waypoint x="584" y="149"/>
+            <omgdi:waypoint x="584" y="336"/>
+            <omgdi:waypoint x="224" y="336"/>
+            <omgdi:waypoint x="224" y="519"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22509"
+                          bpmnElement="con.22509"
+                          sourceElement="BPMN_Shape_obj.22428"
+                          targetElement="BPMN_Shape_obj.22473">
+            <omgdi:waypoint x="1448" y="149"/>
+            <omgdi:waypoint x="1420" y="328"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22510"
+                          bpmnElement="con.22510"
+                          sourceElement="BPMN_Shape_obj.22446"
+                          targetElement="BPMN_Shape_obj.22476">
+            <omgdi:waypoint x="1445" y="516"/>
+            <omgdi:waypoint x="1493" y="326"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22513"
+                          bpmnElement="con.22513"
+                          sourceElement="BPMN_Shape_obj.22440"
+                          targetElement="BPMN_Shape_obj.22458">
+            <omgdi:waypoint x="1258" y="520"/>
+            <omgdi:waypoint x="1258" y="329"/>
+            <omgdi:waypoint x="748" y="329"/>
+            <omgdi:waypoint x="748" y="150"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22523"
+                          bpmnElement="con.22523"
+                          sourceElement="BPMN_Shape_obj.22473"
+                          targetElement="BPMN_Shape_obj.22446">
+            <omgdi:waypoint x="1420" y="328"/>
+            <omgdi:waypoint x="1445" y="516"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22525"
+                          bpmnElement="con.22525"
+                          sourceElement="BPMN_Shape_obj.22476"
+                          targetElement="BPMN_Shape_obj.22428">
+            <omgdi:waypoint x="1493" y="326"/>
+            <omgdi:waypoint x="1448" y="149"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22535"
+                          bpmnElement="con.22535"
+                          sourceElement="BPMN_Shape_obj.22437"
+                          targetElement="BPMN_Shape_obj.22541">
+            <omgdi:waypoint x="730" y="642"/>
+            <omgdi:waypoint x="689" y="778"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22536"
+                          bpmnElement="con.22536"
+                          sourceElement="BPMN_Shape_obj.22531"
+                          targetElement="BPMN_Shape_obj.22545">
+            <omgdi:waypoint x="736" y="927"/>
+            <omgdi:waypoint x="775" y="779"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22544"
+                          bpmnElement="con.22544"
+                          sourceElement="BPMN_Shape_obj.22541"
+                          targetElement="BPMN_Shape_obj.22531">
+            <omgdi:waypoint x="689" y="778"/>
+            <omgdi:waypoint x="736" y="927"/>
+         </bpmndi:BPMNEdge>
+         <bpmndi:BPMNEdge id="BPMN_Edge_con.22548"
+                          bpmnElement="con.22548"
+                          sourceElement="BPMN_Shape_obj.22545"
+                          targetElement="BPMN_Shape_obj.22437">
+            <omgdi:waypoint x="775" y="779"/>
+            <omgdi:waypoint x="730" y="642"/>
+         </bpmndi:BPMNEdge>
+      </bpmndi:BPMNPlane>
+   </bpmndi:BPMNDiagram>
+</definitions>

@@ -1,0 +1,43 @@
+<!-- edited with XMLSPY v2004 rel. 3 U (http://www.xmlspy.com) by C Smith (L&S)-->
+<QueueingNetworkModel xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+	xsi:noNamespaceSchemaLocation="D:\PMIF\pmifSchema.xsd" Name="ATM Orig PMIF Example">
+	<Node>
+		<Server Name="DelayWithdrawal" Quantity="1" SchedulingPolicy="IS"/>
+		<Server Name="DelayGetBalance" Quantity="1" SchedulingPolicy="IS"/>
+		<Server Name="CPU" Quantity="1" SchedulingPolicy="PS"/>
+		<WorkUnitServer Name="ATM" Quantity="1" SchedulingPolicy="IS" TimeUnits="sec" ServiceTime="1"/>
+		<WorkUnitServer Name="DISKS" Quantity="1" SchedulingPolicy="FCFS" TimeUnits="sec" ServiceTime="0.05"/>
+	</Node>
+	<Workload>
+		<ClosedWorkload WorkloadName="Withdrawal" NumberOfJobs="1" ThinkTime="10" ThinkDevice="DelayWithdrawal" TimeUnits="sec">
+			<Transit To="CPU" Probability="1"/>
+		</ClosedWorkload>
+		<ClosedWorkload WorkloadName="Get_balance" NumberOfJobs="1" ThinkTime="10" ThinkDevice="DelayGetBalance" TimeUnits="sec">
+			<Transit To="CPU" Probability="1"/>
+		</ClosedWorkload>
+	</Workload>
+	<ServiceRequest>
+		<DemandServiceRequest WorkloadName="Withdrawal" ServerID="CPU" ServiceDemand="0.0063" TimeUnits="sec" NumberOfVisits="20">
+			<Transit To="ATM" Probability="0.55"/>
+			<Transit To="DISKS" Probability="0.4"/>
+			<Transit To="DelayWithdrawal" Probability="0.05"/>
+		</DemandServiceRequest>
+		<WorkUnitServiceRequest WorkloadName="Withdrawal" ServerID="ATM" NumberOfVisits="11">
+			<Transit To="CPU" Probability="1"/>
+		</WorkUnitServiceRequest>
+		<WorkUnitServiceRequest WorkloadName="Withdrawal" ServerID="DISKS" NumberOfVisits="8">
+			<Transit To="CPU" Probability="1"/>
+		</WorkUnitServiceRequest>
+		<DemandServiceRequest WorkloadName="Get_balance" ServerID="CPU" ServiceDemand="0.0025" TimeUnits="sec" NumberOfVisits="10">
+			<Transit To="ATM" Probability="0.6"/>
+			<Transit To="DISKS" Probability="0.3"/>
+			<Transit To="DelayGetBalance" Probability="0.1"/> 
+		</DemandServiceRequest>
+		<WorkUnitServiceRequest WorkloadName="Get_balance" ServerID="ATM" NumberOfVisits="6">
+			<Transit To="CPU" Probability="1"/>
+		</WorkUnitServiceRequest>
+		<WorkUnitServiceRequest WorkloadName="Get_balance" ServerID="DISKS" NumberOfVisits="3">
+			<Transit To="CPU" Probability="1"/>
+		</WorkUnitServiceRequest>
+	</ServiceRequest>
+</QueueingNetworkModel>
