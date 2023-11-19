@@ -159,6 +159,18 @@ class Cache:
     def setMissClass(self, jobclass1, jobclass2):
         self.obj.setMissClass(jobclass1.obj, jobclass2.obj)
 
+class Env:
+    def __init__(self, name, nstages):
+        self.obj = jpype.JPackage('jline').lang.Env(name, nstages)
+
+    def addStage(self, stage, envname, envtype, envmodel):
+        self.obj.addStage(stage, envname, envtype, envmodel.obj)
+
+    def addTransition(self, envname0, envname1, rate):
+        self.obj.addTransition(envname0, envname1, rate.obj)
+
+    def getStageTable(self):
+        return self.obj.getStageTable()
 
 class Source:
     def __init__(self, model, name):

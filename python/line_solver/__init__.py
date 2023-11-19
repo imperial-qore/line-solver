@@ -28,7 +28,7 @@ def jlineStart():
         jpype.addClassPath('jline.jar')
         from jline.lang.constant import GlobalConstants
         from jline.lang import Chain, Element, Ensemble, Metric
-        from jline.lang import Env, FeatureSet, FiniteCapacityRegion, InputBinding
+        from jline.lang import FeatureSet, FiniteCapacityRegion, InputBinding
         from jline.lang import Model, NetworkAttribute, NetworkElement, NetworkEvent, NetworkStruct
         from jline.lang import ItemSet, JobClass, NodeAttribute, OutputStrategy, ServiceBinding
         from jline.lang.layerednetworks import ActivityPrecedence, CacheTask, LayeredNetworkElement
