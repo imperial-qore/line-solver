@@ -3,6 +3,7 @@ import jpype
 import jpype.imports
 import numpy as np
 import pandas as pd
+from jpype import JArray
 
 from . import jlineMatrixToArray
 from .constants import SolverType, VerboseLevel
@@ -123,7 +124,14 @@ class SolverEnv(Solver):
         options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.Env)
         super().__init__(options, args)
         model = args[0]
-        self.obj = jpype.JPackage('jline').solvers.env.SolverEnv(model.obj)
+        solvers = jpype.JPackage('jline').solvers.NetworkSolver[len(args[1])]
+        for i in range(len(solvers)):
+            solvers[i] = args[1][i].obj
+        self.obj = jpype.JPackage('jline').solvers.env.SolverEnv(model.obj, solvers)
+    def getEnsembleAvg(self):
+        return self.obj.getEnsembleAvg()
+    def printAvgTable(self):
+        self.obj.printAvgTable()
 
 
 class SolverFluid(Solver):
