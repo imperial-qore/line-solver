@@ -15,6 +15,10 @@ class Solver:
             ctr = 0
             for ctr in range(len(args) - 1):
                 match args[ctr]:
+                    case 'cutoff':
+                        self.solveropt.obj.cutoff = args[ctr + 1]
+                    case 'keep':
+                        self.solveropt.obj.keep = args[ctr + 1]
                     case 'seed':
                         self.solveropt.obj.seed = args[ctr + 1]
                     case 'samples':
