@@ -30,6 +30,27 @@ public class SolverEnv extends EnsembleSolver {
   private final Env.ResetQueueLengthsFunction[][] resetFromMarginal;
   private final Env.ResetEnvRatesFunction[][] resetEnvRates;
 
+  public SolverEnv(Env renv, NetworkSolver[] solvers) {
+    super(renv, "SolverEnv", new SolverOptions(SolverType.Env));
+    int E = getNumberOfModels();
+    this.envObj = renv;
+    this.ensemble = renv.getEnsemble().toArray(new Network[0]);
+    this.solvers = solvers;
+    this.sn = new NetworkStruct[E];
+    this.resetFromMarginal = new Env.ResetQueueLengthsFunction[E][E];
+    this.resetEnvRates = new Env.ResetEnvRatesFunction[E][E];
+
+    for (int e = 0; e < E; e++) {
+      this.sn[e] = this.ensemble[e].getStruct(true);
+      // TODO: implement the below method and then uncomment
+      // if (!solvers[e].supports(ensemble[e])) {
+      //   throw new RuntimeException("Model is not supported by the solver.");
+      // }
+      System.arraycopy(renv.resetQLFun[e], 0, resetFromMarginal[e], 0, E);
+      System.arraycopy(renv.resetEnvRatesFun[e], 0, resetEnvRates[e], 0, E);
+    }
+  }
+
   public SolverEnv(Env renv, NetworkSolver[] solvers, SolverOptions options) {
     super(renv, "SolverEnv", options);
     int E = getNumberOfModels();
@@ -348,6 +369,7 @@ public class SolverEnv extends EnsembleSolver {
   }
 
   // Return table of average station metrics
+  // TODO: this method should be based on getAvgTable and return an appropriate table class
   public void printAvgTable() {
 
     // TODO: add polymorphic version where 'keepDisabled' is a parameter
