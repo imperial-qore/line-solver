@@ -26,6 +26,7 @@ def jlineStart():
     with GlobalImport() as gi:
         jpype.startJVM()
         jpype.addClassPath('jline.jar')
+        from jline.lang.constant import GlobalConstants
         from jline.lang import Chain, Element, Ensemble, Metric
         from jline.lang import Env, FeatureSet, FiniteCapacityRegion, InputBinding
         from jline.lang import Model, NetworkAttribute, NetworkElement, NetworkEvent, NetworkStruct

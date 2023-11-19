@@ -12,6 +12,11 @@ class RoutingMatrix:
     def set(self, class_source, class_dest, stat_source, stat_dest, prob):
         return self.obj.set(class_source.obj, class_dest.obj, stat_source.obj, stat_dest.obj, prob)
 
+    def setRoutingMatrix(self, jobclass, node, pmatrix):
+        for i in range(len(node)):
+            for j in range(len(node)):
+                for k in range(len(jobclass)):
+                    self.set(jobclass[k], jobclass[k], node[i], node[j], pmatrix[k][i][j])
 class Network:
     def __init__(self, name):
         self.obj = jpype.JPackage('jline').lang.Network(name)
@@ -36,6 +41,9 @@ class Network:
     def initRoutingMatrix(self):
         rt = self.obj.initRoutingMatrix()
         return RoutingMatrix(rt)
+
+    def getNumberOfNodes(self):
+        return self.obj.getNumberOfNodes()
 
     def getNumberOfStations(self):
         return self.obj.getNumberOfStations()

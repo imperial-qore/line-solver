@@ -52,8 +52,10 @@ class Solver:
         for i in range(len(jobclasses)):
             classnames.append(str(jobclasses[i]))
         AvgTable = pd.DataFrame(np.concatenate([[QLen, Util, RespT, ResidT, Tput]]).T, columns=cols)
+        tokeep = ~(AvgTable<=0.0).all(axis=1)
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
+        AvgTable = AvgTable.loc[tokeep] # eliminate zero rows
         return AvgTable
 
     def getAvgSysRespT(self):
@@ -78,8 +80,10 @@ class Solver:
         for i in range(len(jobinchains)):
             inchains.append(str(jobinchains[i]))
         AvgSysTable = pd.DataFrame(np.concatenate([[SysRespT, SysTput]]).T, columns=cols)
+        tokeep = ~(AvgSysTable<=0.0).all(axis=1)
         AvgSysTable.insert(0, "JobClasses", inchains)
         AvgSysTable.insert(0, "Chain", chains)
+        AvgSysTable = AvgSysTable.loc[tokeep] # eliminate zero rows
         return AvgSysTable
 
     def getCdfRespT(self):
