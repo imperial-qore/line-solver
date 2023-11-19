@@ -30,7 +30,7 @@ def jlineStart():
         from jline.lang import Chain, Element, Ensemble, Metric
         from jline.lang import FeatureSet, FiniteCapacityRegion, InputBinding
         from jline.lang import Model, NetworkAttribute, NetworkElement, NetworkEvent, NetworkStruct
-        from jline.lang import ItemSet, JobClass, NodeAttribute, OutputStrategy, ServiceBinding
+        from jline.lang import ItemSet, NodeAttribute, OutputStrategy, ServiceBinding
         from jline.lang.layerednetworks import ActivityPrecedence, CacheTask, LayeredNetworkElement
         from jline.lang.layerednetworks import LayeredNetworkStruct, ItemEntry, Host
         from jline.lang.constant import ActivityPrecedenceType, CallType, DropStrategy, EventType, GlobalConstants
@@ -64,10 +64,15 @@ def jlineMatrixToArray(matrix):
     return np.array(list(matrix.toArray2D()))
 
 def jlineArrayToMatrix(array):
-    ret = jpype.JPackage('jline').util.Matrix(np.size(array,0), np.size(array,1), array.size)
-    for i in range(np.size(array,0)):
-        for j in range(np.size(array,1)):
-            ret.set(i,j,array[i][j])
+    if len(np.shape(array))>1:
+        ret = jpype.JPackage('jline').util.Matrix(np.size(array,0), np.size(array,1), array.size)
+        for i in range(np.size(array,0)):
+            for j in range(np.size(array,1)):
+                ret.set(i,j,array[i][j])
+    else:
+        ret = jpype.JPackage('jline').util.Matrix(1, np.size(array,0), array.size)
+        for i in range(np.size(array,0)):
+                ret.set(0,i,array[i])
     return ret
 
 

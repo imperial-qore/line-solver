@@ -18,6 +18,8 @@ class Solver:
                 match args[ctr]:
                     case 'cutoff':
                         self.solveropt.obj.cutoff = args[ctr + 1]
+                    case 'method':
+                        self.solveropt.obj.method = args[ctr + 1]
                     case 'keep':
                         self.solveropt.obj.keep = args[ctr + 1]
                     case 'seed':
@@ -110,7 +112,7 @@ class SolverCTMC(Solver):
         options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.CTMC)
         super().__init__(options, args)
         model = args[0]
-        self.obj = jpype.JPackage('jline').solvers.ctmc.SolverCTMC(model.obj)
+        self.obj = jpype.JPackage('jline').solvers.ctmc.SolverCTMC(model.obj, self.solveropt.obj)
 
     def getStateSpace(self):
         return self.obj.getStateSpace()
@@ -127,7 +129,7 @@ class SolverEnv(Solver):
         solvers = jpype.JPackage('jline').solvers.NetworkSolver[len(args[1])]
         for i in range(len(solvers)):
             solvers[i] = args[1][i].obj
-        self.obj = jpype.JPackage('jline').solvers.env.SolverEnv(model.obj, solvers)
+        self.obj = jpype.JPackage('jline').solvers.env.SolverEnv(model.obj, solvers, self.solveropt.obj)
     def getEnsembleAvg(self):
         return self.obj.getEnsembleAvg()
     def printAvgTable(self):
@@ -139,8 +141,7 @@ class SolverFluid(Solver):
         options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.Fluid)
         super().__init__(options, args)
         model = args[0]
-        self.obj = jpype.JPackage('jline').solvers.fluid.SolverFluid(model.obj)
-
+        self.obj = jpype.JPackage('jline').solvers.fluid.SolverFluid(model.obj, self.solveropt.obj)
 
 class SolverJMT(Solver):
     def __init__(self, *args):
@@ -159,7 +160,7 @@ class SolverMAM(Solver):
         options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.MAM)
         super().__init__(options, args)
         model = args[0]
-        self.obj = jpype.JPackage('jline').solvers.mam.SolverMAM(model.obj)
+        self.obj = jpype.JPackage('jline').solvers.mam.SolverMAM(model.obj, self.solveropt.obj)
 
 
 class SolverMVA(Solver):
@@ -167,7 +168,7 @@ class SolverMVA(Solver):
         options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.MVA)
         super().__init__(options, args)
         model = args[0]
-        self.obj = jpype.JPackage('jline').solvers.mva.SolverMVA(model.obj)
+        self.obj = jpype.JPackage('jline').solvers.mva.SolverMVA(model.obj, self.solveropt.obj)
 
 
 class SolverLN(Solver):
@@ -175,7 +176,7 @@ class SolverLN(Solver):
         options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.LN)
         super().__init__(options, args)
         model = args[0]
-        self.obj = jpype.JPackage('jline').solvers.ln.SolverLN(model.obj)
+        self.obj = jpype.JPackage('jline').solvers.ln.SolverLN(model.obj, self.solveropt.obj)
 
 
 class SolverNC(Solver):
@@ -183,7 +184,7 @@ class SolverNC(Solver):
         options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.NC)
         super().__init__(options, args)
         model = args[0]
-        self.obj = jpype.JPackage('jline').solvers.nc.SolverNC(model.obj)
+        self.obj = jpype.JPackage('jline').solvers.nc.SolverNC(model.obj, self.solveropt.obj)
 
 
 class SolverSSA(Solver):
@@ -191,7 +192,7 @@ class SolverSSA(Solver):
         options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.SSA)
         super().__init__(options, args)
         model = args[0]
-        self.obj = jpype.JPackage('jline').solvers.ssa.SolverSSA(model.obj)
+        self.obj = jpype.JPackage('jline').solvers.ssa.SolverSSA(model.obj, self.solveropt.obj)
 
 
 class SolverOptions():

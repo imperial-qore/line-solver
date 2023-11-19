@@ -1,6 +1,7 @@
 import jpype
 import jpype.imports
 
+import line_solver.lang
 from line_solver import jlineMatrixToArray, jlineMapMatrixToArray, jlineArrayToMatrix
 from .constants import NodeType
 
@@ -13,20 +14,34 @@ class RoutingMatrix:
         return self.obj.set(class_source.obj, class_dest.obj, stat_source.obj, stat_dest.obj, prob)
 
     def setRoutingMatrix(self, jobclass, node, pmatrix):
-        for i in range(len(node)):
-            for j in range(len(node)):
-                for k in range(len(jobclass)):
-                    self.set(jobclass[k], jobclass[k], node[i], node[j], pmatrix[k][i][j])
+        if isinstance(jobclass, line_solver.lang.JobClass):
+            for i in range(len(node)):
+                for j in range(len(node)):
+                    self.set(jobclass, jobclass, node[i], node[j], pmatrix[i][j])
+        else:
+            for i in range(len(node)):
+                for j in range(len(node)):
+                    for k in range(len(jobclass)):
+                        self.set(jobclass[k], jobclass[k], node[i], node[j], pmatrix[k][i][j])
+
+
 class Network:
     def __init__(self, name):
         self.obj = jpype.JPackage('jline').lang.Network(name)
 
     def serialRouting(*argv):
-        rtlist = jpype.JPackage('jline').lang.nodes.Node[len(argv)]
         ctr = 0
-        for arg in argv:
-            rtlist[ctr] = jpype.JObject(arg.obj, 'jline.lang.nodes.Node')
-            ctr += 1
+        if len(argv) == 1:
+            rtlist = jpype.JPackage('jline').lang.nodes.Node[len(argv[0])]
+            for arg in argv[0]:
+                rtlist[ctr] = jpype.JObject(arg.obj, 'jline.lang.nodes.Node')
+                ctr += 1
+        else:
+            rtlist = jpype.JPackage('jline').lang.nodes.Node[len(argv)]
+            for arg in argv:
+                rtlist[ctr] = jpype.JObject(arg.obj, 'jline.lang.nodes.Node')
+                ctr += 1
+
         return RoutingMatrix(jpype.JPackage('jline').lang.Network.serialRouting(rtlist))
 
     def reset(self, hard=True):
@@ -51,12 +66,16 @@ class Network:
     def getNumberOfClasses(self):
         return self.obj.getNumberOfClasses()
 
+    def getTranHandles(self):
+        Qt, Ut, Tt = self.obj.getTranHandles()
+        return Qt, Ut, Tt
+
     def jsimgView(self):
         self.obj.jsimgView()
 
     def addLinks(self, linkPairs):
         for i in range(len(linkPairs)):
-            self.obj.addLink(linkPairs[i][0].obj,linkPairs[i][1].obj)
+            self.obj.addLink(linkPairs[i][0].obj, linkPairs[i][1].obj)
 
     def getStruct(self, force=True):
         jsn = self.obj.getStruct(force)
@@ -96,9 +115,9 @@ class Network:
                   lldscaling=jlineMatrixToArray(jsn.lldscaling),
                   fj=jlineMatrixToArray(jsn.fj),
                   classcap=jlineMatrixToArray(jsn.classcap),
-                  inchain = jlineMapMatrixToArray(jsn.inchain),
-                  visits = jlineMapMatrixToArray(jsn.visits),
-                  nodevisits = jlineMapMatrixToArray(jsn.nodevisits),
+                  inchain=jlineMapMatrixToArray(jsn.inchain),
+                  visits=jlineMapMatrixToArray(jsn.visits),
+                  nodevisits=jlineMapMatrixToArray(jsn.nodevisits),
                   classnames=tuple(jsn.classnames),
                   nodetypes=tuple(map(lambda x: NodeType.fromJava(x), jsn.nodetypes)),
                   nodenames=tuple(jsn.nodenames))
@@ -159,6 +178,7 @@ class Cache:
     def setMissClass(self, jobclass1, jobclass2):
         self.obj.setMissClass(jobclass1.obj, jobclass2.obj)
 
+
 class Env:
     def __init__(self, name, nstages):
         self.obj = jpype.JPackage('jline').lang.Env(name, nstages)
@@ -172,6 +192,7 @@ class Env:
     def getStageTable(self):
         return self.obj.getStageTable()
 
+
 class Source:
     def __init__(self, model, name):
         self.obj = jpype.JPackage('jline').lang.nodes.Source(model.obj, name)
@@ -179,26 +200,32 @@ class Source:
     def setArrival(self, jobclass, distribution):
         self.obj.setArrival(jobclass.obj, distribution.obj)
 
+
 class ClassSwitch:
     def __init__(self, model, name):
         self.obj = jpype.JPackage('jline').lang.nodes.ClassSwitch(model.obj, name)
 
     def initClassSwitchMatrix(self):
         return jlineMatrixToArray(self.obj.initClassSwitchMatrix())
+
     def setClassSwitchingMatrix(self, csmatrix):
         self.obj.setClassSwitchingMatrix(jlineArrayToMatrix(csmatrix))
+
 
 class Sink:
     def __init__(self, model, name):
         self.obj = jpype.JPackage('jline').lang.nodes.Sink(model.obj, name)
 
+
 class Fork:
     def __init__(self, model, name):
         self.obj = jpype.JPackage('jline').lang.nodes.Fork(model.obj, name)
 
+
 class Join:
     def __init__(self, model, name, forknode):
         self.obj = jpype.JPackage('jline').lang.nodes.Join(model.obj, name, forknode.obj)
+
 
 class Queue:
     def __init__(self, model, name, strategy):
@@ -210,6 +237,8 @@ class Queue:
     def setNumberOfServers(self, nservers):
         self.obj.setNumberOfServers(nservers)
 
+    def setLoadDependence(self, ldscaling):
+        self.obj.setLoadDependence(jlineArrayToMatrix(ldscaling))
 
 class Delay:
     def __init__(self, model, name):
@@ -222,10 +251,17 @@ class Delay:
 class Router:
     def __init__(self, model, name):
         self.obj = jpype.JPackage('jline').lang.nodes.Router(model.obj, name)
+
     def setRouting(self, jobclass, strategy):
         self.obj.setRouting(jobclass.obj, strategy.value)
 
-class OpenClass:
+
+class JobClass:
+    def __init__(self):
+        pass
+
+
+class OpenClass(JobClass):
     def __init__(self, model, name, prio=0):
         self.obj = jpype.JPackage('jline').lang.OpenClass(model.obj, name, prio)
         self.completes = False
@@ -239,7 +275,7 @@ class OpenClass:
                 self.obj.setCompletes(False)
 
 
-class ClosedClass:
+class ClosedClass(JobClass):
     def __init__(self, model, name, njobs, refstat, prio=0):
         self.obj = jpype.JPackage('jline').lang.ClosedClass(model.obj, name, njobs, refstat.obj, prio)
         self.completes = False
