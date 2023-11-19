@@ -442,7 +442,7 @@ public class SolverMAM extends NetworkSolver {
         }
         return a2_new.mult(lambda_new.transpose()).get(0)/lambda_new.elementSum();
     }
-    public SolverResult solver_mam_basic(NetworkStruct sn){
+    public SolverMAMResult solver_mam_basic(NetworkStruct sn){
         SolverOptions.Config conifg = options.config;
         double tol = options.tol;
 
@@ -902,7 +902,7 @@ public class SolverMAM extends NetworkSolver {
                 }
             }
         }
-        SolverResult result = new SolverResult();
+        SolverMAMResult result = new SolverMAMResult();
         result.QN = QN;
         result.UN = UN;
         result.RN = RN;
@@ -914,7 +914,7 @@ public class SolverMAM extends NetworkSolver {
         return result;
     }
 
-    public SolverResult solver_mam(NetworkStruct sn){
+    public SolverMAMResult solver_mam(NetworkStruct sn){
         SolverOptions.Config config = options.config;
         Map<Station, Map<JobClass, Map<Integer, Matrix>>> PH = sn.proc;
         int M = sn.nstations;
@@ -1092,7 +1092,7 @@ public class SolverMAM extends NetworkSolver {
         }else {
             System.out.println("This model is not supported by SolverMAM yet. Returning with no result.");
         }
-        SolverResult result = new SolverResult();
+        SolverMAMResult result = new SolverMAMResult();
         result.QN = QN;
         result.UN = UN;
         result.RN = RN;
@@ -1103,7 +1103,7 @@ public class SolverMAM extends NetworkSolver {
         result.XN = XN;
         return result;
     }
-    public SolverResult solver_qna_mam_closed(NetworkStruct sn){
+    public SolverMAMResult solver_qna_mam_closed(NetworkStruct sn){
         SolverOptions.Config config = options.config;
         config.space_max = 1;
 
