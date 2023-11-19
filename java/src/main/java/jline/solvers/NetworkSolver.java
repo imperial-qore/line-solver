@@ -374,6 +374,8 @@ public abstract class NetworkSolver extends Solver {
     throw new RuntimeException("getAvgNode() has not yet been implemented in JLINE.");
   }
 
+  // TODO: getStageTable missing
+
   // Return table of average station metrics
   public final NetworkAvgTable getAvgTable() {
 

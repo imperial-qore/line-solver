@@ -4,13 +4,11 @@
 package jline.solvers.env;
 
 
+import jline.lang.constant.GlobalConstants;
+import jline.solvers.*;
 import jline.util.Maths;
 import jline.lang.*;
 import jline.lang.constant.SolverType;
-import jline.solvers.EnsembleSolver;
-import jline.solvers.NetworkSolver;
-import jline.solvers.SolverOptions;
-import jline.solvers.SolverResult;
 import jline.solvers.fluid.smoothing.PStarSearcher;
 import jline.util.Matrix;
 import jline.util.Utils;
@@ -365,6 +363,58 @@ public class SolverEnv extends EnsembleSolver {
   public void getEnsembleAvg() {
     if (this.result.QN == null || this.result.QN.isEmpty() || this.options.force) {
       iterate();
+    }
+  }
+
+  public final NetworkAvgTable getAvgTable() {
+
+    // TODO: add polymorphic version where 'keepDisabled' is a parameter
+    boolean keepDisabled = false;
+
+    this.getAvg();
+    Matrix QN = this.result.QN;
+    Matrix UN = this.result.UN;
+    Matrix TN = this.result.TN;
+
+    int M = QN.getNumRows();
+    int K = QN.getNumCols();
+
+    if (QN.isEmpty()) {
+      throw new RuntimeException(
+              "Unable to compute results and therefore unable to print AvgTable.");
+    }
+
+    if (!keepDisabled) {
+      List<Double> Qval = new ArrayList<>();
+      List<Double> Uval = new ArrayList<>();
+      List<Double> Residval = new ArrayList<>();
+      List<Double> Tval = new ArrayList<>();
+      List<Double> respTVal = new ArrayList<>();
+      List<String> className = new ArrayList<>();
+      List<String> stationName = new ArrayList<>();
+      for (int i = 0; i < M; i++) {
+        for (int k = 0; k < K; k++) {
+          if (QN.get(i, k) + UN.get(i, k) + TN.get(i, k) > 0) {
+            Qval.add(QN.get(i, k));
+            Uval.add(UN.get(i, k));
+            Residval.add(0.0);
+            Tval.add(TN.get(i, k));
+            respTVal.add(QN.get(i, k) / TN.get(i, k));
+            className.add(sn[0].jobclasses.get(k).getName());
+            stationName.add(sn[0].stations.get(i).getName());
+          }
+        }
+      }
+
+      NetworkAvgTable avgTable = new NetworkAvgTable(Qval, Uval, respTVal, Residval, Tval);
+      avgTable.setOptions(this.options);
+      avgTable.setClassNames(className);
+      avgTable.setStationNames(stationName);
+      return avgTable;
+    } else {
+      // TODO: implementation if keepDisabled is set to true
+      System.out.println("Warning: unimplemented code reached in SolverEnv.getAvgTable.");
+      return null;
     }
   }
 

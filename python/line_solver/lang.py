@@ -1,7 +1,7 @@
 import jpype
 import jpype.imports
 
-from line_solver import jlineMatrixToArray, jlineMapMatrixToArray
+from line_solver import jlineMatrixToArray, jlineMapMatrixToArray, jlineArrayToMatrix
 from .constants import NodeType
 
 
@@ -179,6 +179,14 @@ class Source:
     def setArrival(self, jobclass, distribution):
         self.obj.setArrival(jobclass.obj, distribution.obj)
 
+class ClassSwitch:
+    def __init__(self, model, name):
+        self.obj = jpype.JPackage('jline').lang.nodes.ClassSwitch(model.obj, name)
+
+    def initClassSwitchMatrix(self):
+        return jlineMatrixToArray(self.obj.initClassSwitchMatrix())
+    def setClassSwitchingMatrix(self, csmatrix):
+        self.obj.setClassSwitchingMatrix(jlineArrayToMatrix(csmatrix))
 
 class Sink:
     def __init__(self, model, name):

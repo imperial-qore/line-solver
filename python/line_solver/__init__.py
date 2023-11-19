@@ -41,7 +41,7 @@ def jlineStart():
         from jline.lang.distributions import DiscreteDistribution, DiscreteSampler, Distribution
         from jline.lang.distributions import Gamma, Geometric, LogNormal, MarkovianDistribution
         from jline.lang.distributions import Pareto, PH, Poisson, Uniform, Weibull
-        from jline.lang.nodes import ClassSwitch, Logger, Node, Place
+        from jline.lang.nodes import Logger, Node, Place
         from jline.lang.nodes import StatefulNode, Station, Transition
         from jline.lang.processes import MMAP, MAP, Process
         from jline.lang.sections import Buffer, CacheClassSwitcher, ClassSwitcher, ClassSwitchOutputSection, Dispatcher
@@ -62,6 +62,14 @@ def jlineMapMatrixToArray(mapmatrix):
 
 def jlineMatrixToArray(matrix):
     return np.array(list(matrix.toArray2D()))
+
+def jlineArrayToMatrix(array):
+    ret = jpype.JPackage('jline').util.Matrix(np.size(array,0), np.size(array,1), array.size)
+    for i in range(np.size(array,0)):
+        for j in range(np.size(array,1)):
+            ret.set(i,j,array[i][j])
+    return ret
+
 
 jlineStart()
 from .constants import *
