@@ -6,10 +6,7 @@ import jline.lang.distributions.MarkovianDistribution;
 import jline.lang.distributions.CumulativeDistribution;
 
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
+import java.util.*;
 
 import static jline.lib.KPCToolbox.*;
 
@@ -119,7 +116,7 @@ public class MAP extends MarkovianDistribution implements Serializable {
     }
 
     public double getRate() {
-        throw new RuntimeException("Not Implemented!");
+        return 1.0 / this.getMean();
     }
 
     public double getDepartureRate(int phase) {
@@ -166,8 +163,14 @@ public class MAP extends MarkovianDistribution implements Serializable {
         throw new RuntimeException("Not Implemented!");
     }
 
+    @Override
     public Map<Integer, Matrix> getPH() {
-        throw new RuntimeException("Not Implemented!");
+        Map<Integer, Matrix> res = new HashMap<Integer, Matrix>();
+        Matrix D0 = this.getD0();
+        Matrix D1 = this.getD1();
+        res.put(0,D0);
+        res.put(1,D1);
+        return res;
     }
 
     public double evalLST(double s) {

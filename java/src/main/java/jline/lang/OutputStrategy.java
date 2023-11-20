@@ -17,7 +17,7 @@ public class OutputStrategy implements Serializable {
     private Node destination;
 
 
-    public static List<RoutingStrategy> legalStrategies = Arrays.asList(RoutingStrategy.DISABLED, RoutingStrategy.PROB, RoutingStrategy.RAND);
+    public static List<RoutingStrategy> legalStrategies = Arrays.asList(RoutingStrategy.DISABLED, RoutingStrategy.PROB, RoutingStrategy.RAND, RoutingStrategy.RROBIN, RoutingStrategy.WRROBIN);
 
     public OutputStrategy (JobClass jobClass, RoutingStrategy routingStrategy, Node destination, double probability) {
         this.jobClass = jobClass;

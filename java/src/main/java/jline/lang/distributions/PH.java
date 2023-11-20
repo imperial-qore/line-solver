@@ -52,7 +52,7 @@ public class PH extends MarkovianDistribution {
 
     @Override
     public double getRate() {
-        return 1/getMean();
+        return 1.0/getMean();
     }
 
     @Override

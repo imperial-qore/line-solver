@@ -128,7 +128,7 @@ public class MMAP extends MarkovianDistribution implements Serializable {
     }
 
     public double getRate() {
-        throw new RuntimeException("Not Implemented!");
+        return 1.0 / this.getMean();
     }
 
     public double getDepartureRate(int phase) {
