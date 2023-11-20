@@ -23,5 +23,5 @@ Alternatively, you can open and run mm1.ipynb in Jupyter.
 This package is released as open source under the [BSD-3 license](https://raw.githubusercontent.com/imperial-qore/line-solver/main/python/LICENSE).
 
 ## Version
-Version: alpha. This version has support for basic models with open and closed classes. MVA, Fluid, and JMT solvers are mostly functional.
+This version is an early alpha release with support for basic models with open and closed classes. MVA, Fluid, MAM, and JMT solvers are mostly functional. Examples that have still some missing functionalities are marked as incomplete by a warning in the header.
 
