@@ -8,6 +8,7 @@ import jline.lang.constant.SchedStrategy;
 import jline.lang.nodes.*;
 import jline.solvers.SolverOptions;
 import jline.solvers.fluid.SolverFluid;
+import jline.solvers.jmt.SolverJMT;
 import jline.util.Maths;
 import jline.util.Matrix;
 import jline.solvers.NetworkAvgTable;
@@ -678,15 +679,19 @@ public class ClosedModel {
 //        NetworkAvgTable t = solver.getAvgTable();
 //        t.print(options);
 
-        Network model = ex9();
+        Network model = ex6_line();
         NetworkStruct sn = model.getStruct(false);
         sn.rt.print();
-        SolverOptions options = new SolverOptions(SolverType.Fluid);
-        options.iter_max = 200;
-        SolverFluid solver = new SolverFluid(model,options);
+        // SolverOptions options = new SolverOptions(SolverType.Fluid);
+        // options.iter_max = 200;
+        // SolverFluid solver = new SolverFluid(model,options);
+
+        SolverOptions options = new SolverOptions(SolverType.JMT);
+        SolverJMT solver = new SolverJMT(model,options);
+
 
         solver.options.stiff = true;
-        solver.runAnalyzer();
+        //solver.runAnalyzer();
         NetworkAvgTable t = solver.getAvgTable();
         t.print(options);
     }

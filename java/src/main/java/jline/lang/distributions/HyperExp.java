@@ -73,21 +73,21 @@ public class HyperExp extends MarkovianDistribution implements Serializable {
         D0.set(0, 0, -mu1);
         D0.set(1, 1, -mu2);
         D1.set(0, 0, mu1 * p);
-        D1.set(0, 1, mu1 * (1 - p));
+        D1.set(0, 1, mu1 * (1.0 - p));
         D1.set(1, 0, mu2 * p);
-        D1.set(1, 1, mu2 * (1 - p));
+        D1.set(1, 1, mu2 * (1.0 - p));
         res.put(0, D0);
         res.put(1, D1);
 
         return res;
 //	NOT USED (FOR N-PHASES)
-//    		JLineMatrix D0 = new JLineMatrix(nPhases, nPhases, nPhases);
+//    		Matrix D0 = new Matrix(nPhases, nPhases, nPhases);
 //    		for(int i = 0; i < nPhases; i++) 
 //    			D0.set(i, i, -lambda.get(i));
 //    		
-//    		JLineMatrix D1 = new JLineMatrix(nPhases, nPhases);
-//    		JLineMatrix temP = new JLineMatrix(nPhases, 1, nPhases);
-//    		JLineMatrix ones = new JLineMatrix(1, nPhases, nPhases);
+//    		Matrix D1 = new Matrix(nPhases, nPhases);
+//    		Matrix temP = new Matrix(nPhases, 1, nPhases);
+//    		Matrix ones = new Matrix(1, nPhases, nPhases);
 //    		CommonOps_DSCC.fill(ones, 1.0);
 //    		for(int i = 0; i < nPhases; i++)
 //    			temP.set(i, 0, p.get(i));
@@ -154,8 +154,8 @@ public class HyperExp extends MarkovianDistribution implements Serializable {
         Map<Integer,Matrix> D = map_hyperexp(mean, scv, 0);
         mu1 = -D.get(0).get(0,0);
         mu2 = -D.get(0).get(1,1);
-        p = -D.get(1).get(0,0)/mu1;
-        HyperExp he = new HyperExp(mu1,mu2,p);
+        p = D.get(1).get(0,0)/mu1;
+        HyperExp he = new HyperExp(p,mu1,mu2);
         he.immediate = mean < GlobalConstants.CoarseTol;
         return he;
     }

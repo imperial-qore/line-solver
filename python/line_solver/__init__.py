@@ -33,14 +33,9 @@ def jlineStart():
         from jline.lang import ItemSet, NodeAttribute, OutputStrategy, ServiceBinding
         from jline.lang.layerednetworks import ActivityPrecedence, CacheTask, LayeredNetworkElement
         from jline.lang.layerednetworks import LayeredNetworkStruct, ItemEntry, Host
-        from jline.lang.constant import ActivityPrecedenceType, CallType, DropStrategy, EventType, GlobalConstants
-        from jline.lang.constant import JobClassType, JoinStrategy, MetricType, NodeType, ProcessType
-        from jline.lang.constant import ReplacementStrategy, SchedStrategyType
-        from jline.lang.constant import ServiceStrategy, SolverType, TimingStrategy, VerboseLevel
-        from jline.lang.distributions import APH, Binomial, ContinuousDistribution, Coxian, CumulativeDistribution
+        from jline.lang.distributions import Binomial, ContinuousDistribution, Coxian, CumulativeDistribution
         from jline.lang.distributions import DiscreteDistribution, DiscreteSampler, Distribution
-        from jline.lang.distributions import Gamma, Geometric, LogNormal, MarkovianDistribution
-        from jline.lang.distributions import Pareto, PH, Poisson, Uniform, Weibull
+        from jline.lang.distributions import Geometric, MarkovianDistribution, Pareto, Poisson
         from jline.lang.nodes import Logger, Node, Place
         from jline.lang.nodes import StatefulNode, Station, Transition
         from jline.lang.processes import MMAP, MAP, Process

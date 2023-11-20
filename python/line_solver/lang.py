@@ -1,10 +1,13 @@
 import jpype
 import jpype.imports
 
-import line_solver.lang
-from line_solver import jlineMatrixToArray, jlineMapMatrixToArray, jlineArrayToMatrix
+from . import jlineMatrixToArray, jlineMapMatrixToArray, jlineArrayToMatrix
 from .constants import NodeType
 
+
+class JobClass:
+    def __init__(self):
+        pass
 
 class RoutingMatrix:
     def __init__(self, rt):
@@ -14,7 +17,7 @@ class RoutingMatrix:
         return self.obj.set(class_source.obj, class_dest.obj, stat_source.obj, stat_dest.obj, prob)
 
     def setRoutingMatrix(self, jobclass, node, pmatrix):
-        if isinstance(jobclass, line_solver.lang.JobClass):
+        if isinstance(jobclass, JobClass):
             for i in range(len(node)):
                 for j in range(len(node)):
                     self.set(jobclass, jobclass, node[i], node[j], pmatrix[i][j])
@@ -266,11 +269,6 @@ class Router(Node):
     def __init__(self, model, name):
         super().__init__()
         self.obj = jpype.JPackage('jline').lang.nodes.Router(model.obj, name)
-
-class JobClass:
-    def __init__(self):
-        pass
-
 
 class OpenClass(JobClass):
     def __init__(self, model, name, prio=0):

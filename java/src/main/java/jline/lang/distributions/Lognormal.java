@@ -8,8 +8,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
-public class LogNormal extends ContinuousDistribution implements Serializable {
-    public LogNormal(double mu, double sigma) {
+public class Lognormal extends ContinuousDistribution implements Serializable {
+    public Lognormal(double mu, double sigma) {
         super("LogNormal", 2, new Pair<Double,Double>(0.0, Double.POSITIVE_INFINITY));
         if (sigma < 0){
             System.err.println("sigma parameter must be >= 0.0");
@@ -89,11 +89,11 @@ public class LogNormal extends ContinuousDistribution implements Serializable {
         throw new RuntimeException("Laplace-Stieltjes transform of the Lognormal distribution not available yet.");
     }
 
-    public static LogNormal fitMeanAndSCV(double mean, double scv) {
+    public static Lognormal fitMeanAndSCV(double mean, double scv) {
         double c = Math.sqrt(scv);
         double mu = Math.log(mean / Math.sqrt(Math.pow(c, 2) + 1));
         double sigma = Math.sqrt(Math.log(Math.pow(c, 2) + 1));
-        return new LogNormal(mu, sigma);
+        return new Lognormal(mu, sigma);
     }
 }
 
