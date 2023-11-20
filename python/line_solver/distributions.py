@@ -1,6 +1,16 @@
 import jpype
 import jpype.imports
 
+from line_solver import jlineArrayToMatrix
+
+class APH:
+    def __init__(self, *args):
+        if len(args) == 1:
+            self.obj = args[0]
+        else:
+            alpha = args[0]
+            T = args[1]
+            self.obj = jpype.JPackage('jline').lang.distributions.APH(jlineArrayToMatrix(alpha).toList1D(), jlineArrayToMatrix(T))
 
 class Cox2:
     def __init__(self, *args):
@@ -66,6 +76,27 @@ class HyperExp:
 class Immediate:
     def __init__(self):
         self.obj = jpype.JPackage('jline').lang.distributions.Immediate()
+
+class MAP:
+    def __init__(self, *args):
+        if len(args) == 1:
+            self.obj = args[0]
+        else:
+            D0 = args[0]
+            D1 = args[1]
+            self.obj = jpype.JPackage('jline').lang.processes.MAP(jlineArrayToMatrix(D0), jlineArrayToMatrix(D1))
+
+    def toPH(self):
+        self.obj.toPH()
+
+class PH:
+    def __init__(self, *args):
+        if len(args) == 1:
+            self.obj = args[0]
+        else:
+            alpha = args[0]
+            T = args[1]
+            self.obj = jpype.JPackage('jline').lang.distributions.PH(jlineArrayToMatrix(alpha).toList1D(), jlineArrayToMatrix(T))
 
 
 class Zipf:

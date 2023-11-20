@@ -64,6 +64,8 @@ def jlineMatrixToArray(matrix):
     return np.array(list(matrix.toArray2D()))
 
 def jlineArrayToMatrix(array):
+    if isinstance(array,list):
+        array = np.array(array)
     if len(np.shape(array))>1:
         ret = jpype.JPackage('jline').util.Matrix(np.size(array,0), np.size(array,1), array.size)
         for i in range(np.size(array,0)):

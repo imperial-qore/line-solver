@@ -192,17 +192,28 @@ class Env:
     def getStageTable(self):
         return self.obj.getStageTable()
 
+class Node:
+    def __init__(self):
+        pass
 
-class Source:
+    def setRouting(self, jobclass, strategy):
+        self.obj.setRouting(jobclass.obj, strategy.value)
+
+    def setProbRouting(self, jobclass, node, prob):
+        self.obj.setProbRouting(jobclass.obj, node.obj, prob)
+
+class Source(Node):
     def __init__(self, model, name):
+        super().__init__()
         self.obj = jpype.JPackage('jline').lang.nodes.Source(model.obj, name)
 
     def setArrival(self, jobclass, distribution):
         self.obj.setArrival(jobclass.obj, distribution.obj)
 
 
-class ClassSwitch:
+class ClassSwitch(Node):
     def __init__(self, model, name):
+        super().__init__()
         self.obj = jpype.JPackage('jline').lang.nodes.ClassSwitch(model.obj, name)
 
     def initClassSwitchMatrix(self):
@@ -217,18 +228,20 @@ class Sink:
         self.obj = jpype.JPackage('jline').lang.nodes.Sink(model.obj, name)
 
 
-class Fork:
+class Fork(Node):
     def __init__(self, model, name):
+        super().__init__()
         self.obj = jpype.JPackage('jline').lang.nodes.Fork(model.obj, name)
 
 
-class Join:
+class Join(Node):
     def __init__(self, model, name, forknode):
+        super().__init__()
         self.obj = jpype.JPackage('jline').lang.nodes.Join(model.obj, name, forknode.obj)
 
-
-class Queue:
+class Queue(Node):
     def __init__(self, model, name, strategy):
+        super().__init__()
         self.obj = jpype.JPackage('jline').lang.nodes.Queue(model.obj, name, strategy.value)
 
     def setService(self, jobclass, distribution):
@@ -240,21 +253,19 @@ class Queue:
     def setLoadDependence(self, ldscaling):
         self.obj.setLoadDependence(jlineArrayToMatrix(ldscaling))
 
-class Delay:
+class Delay(Node):
     def __init__(self, model, name):
+        super().__init__()
         self.obj = jpype.JPackage('jline').lang.nodes.Delay(model.obj, name)
 
     def setService(self, jobclass, distribution):
         self.obj.setService(jobclass.obj, distribution.obj)
 
 
-class Router:
+class Router(Node):
     def __init__(self, model, name):
+        super().__init__()
         self.obj = jpype.JPackage('jline').lang.nodes.Router(model.obj, name)
-
-    def setRouting(self, jobclass, strategy):
-        self.obj.setRouting(jobclass.obj, strategy.value)
-
 
 class JobClass:
     def __init__(self):
@@ -263,6 +274,7 @@ class JobClass:
 
 class OpenClass(JobClass):
     def __init__(self, model, name, prio=0):
+        super().__init__()
         self.obj = jpype.JPackage('jline').lang.OpenClass(model.obj, name, prio)
         self.completes = False
 
@@ -277,6 +289,7 @@ class OpenClass(JobClass):
 
 class ClosedClass(JobClass):
     def __init__(self, model, name, njobs, refstat, prio=0):
+        super().__init__()
         self.obj = jpype.JPackage('jline').lang.ClosedClass(model.obj, name, njobs, refstat.obj, prio)
         self.completes = False
 
