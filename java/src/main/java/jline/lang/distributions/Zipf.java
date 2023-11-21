@@ -79,16 +79,17 @@ public class Zipf extends DiscreteDistribution{
 
     /**
      * Gets n samples from the distribution
+     *
      * @param n - the number of samples
      * @return - n samples from the distribution
      */
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         return this.sample(n,new Random());
     }
 
     @Override
-    public List<Double> sample(long n, Random random) {
+    public Matrix sample(long n, Random random) {
         throw new RuntimeException("Not implemented");
     }
 
@@ -109,7 +110,7 @@ public class Zipf extends DiscreteDistribution{
         throw new NotImplementedException("evalLST() not implemented in Zipf");
     }
 
-    public List<Double> evalPMF(){
+    public Matrix evalPMF(){
         int n = (int) this.getParam(4).getValue();
         List<Double> t = new ArrayList<>();
         for(int i = 1; i <= n; i++){
@@ -120,11 +121,12 @@ public class Zipf extends DiscreteDistribution{
 
     /**
      * Evaluates the probability mass function at t
+     *
      * @param t - the point where the pmf will be evaluated
      * @return - the pfm evaluated at t
      */
     @Override
-    public List<Double> evalPMF(List<Double> t){
+    public Matrix evalPMF(List<Double> t){
         double s = (double) this.getParam(3).getValue();
         int n = (int) this.getParam(4).getValue();
         List<Double> retList = new ArrayList<>();
@@ -132,7 +134,7 @@ public class Zipf extends DiscreteDistribution{
         for(double d : t){
             retList.add(1/Math.pow(d, s)/Hns);
         }
-        return retList;
+        return new Matrix(retList);
     }
 
     /**

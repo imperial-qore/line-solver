@@ -1,23 +1,114 @@
 import jpype
 import jpype.imports
 
-from line_solver import jlineArrayToMatrix
+from line_solver import jlineArrayToMatrix, jlineMatrixToArray
+
+
+class NamedParam:
+    def __init__(self, *args):
+        if len(args) == 1:
+            self.obj = args[0]
+        else:
+            self.name = args[0]
+            self.value = args[1]
+
+    def getName(self):
+        return self.name
+
+    def getValue(self):
+        return self.value
 
 class Distribution:
     def __init__(self):
         pass
 
+    def evalCDF(self, x):
+        return self.obj.evalCDF(x)
+
+    def evalLST(self, x):
+        return self.obj.evalLST(x)
+
+    def getName(self):
+        return self.obj.getName()
+
+    def getParam(self, id):
+        nparam = NamedParam(self.obj.getParam(id))
+        return nparam
+
+    def getMean(self):
+        return self.obj.getMean()
+
+    def getRate(self):
+        return self.obj.getRate()
+
+    def getSCV(self):
+        return self.obj.getSCV()
+
+    def getVar(self):
+        return self.obj.getVar()
+
+    def getSkew(self):
+        return self.obj.getSkew()
+
+    def getSupport(self):
+        return self.obj.getSupport()
+
+    def isContinuous(self):
+        return self.obj.isContinuous()
+
+    def isDisabled(self):
+        return self.obj.isDisabled()
+
+    def isDiscrete(self):
+        return self.obj.isDiscrete()
+
+    def isImmediate(self):
+        return self.obj.isImmediate()
+
+    def sample(self, *args):
+            if len(args) == 1:
+                n = args[0]
+                return jlineMatrixToArray(self.obj.isImmediate())
+            else:
+                n = args[0]
+                seed = args[1]
+
 class ContinuousDistribution(Distribution):
     def __init__(self):
         super().__init__()
+
 
 class DiscreteDistribution(Distribution):
     def __init__(self):
         super().__init__()
 
+
 class MarkovianDistribution(Distribution):
     def __init__(self):
         super().__init__()
+
+    def getD0(self):
+        return self.obj.getD0()
+
+    def getD1(self):
+        return self.obj.getD1()
+
+    def getMu(self):
+        return self.obj.getMu()
+
+    def getNumberOfPhases(self):
+        return self.obj.getNumberOfPhases()
+
+    def getPH(self):
+        return self.obj.getPH()
+
+    def getPhi(self):
+        return self.obj.getPhi()
+
+    def getRepres(self):
+        return self.obj.getRepres()
+
+
 
 class APH(MarkovianDistribution):
     def __init__(self, *args):
@@ -27,7 +118,9 @@ class APH(MarkovianDistribution):
         else:
             alpha = args[0]
             subgen = args[1]
-            self.obj = jpype.JPackage('jline').lang.distributions.APH(jlineArrayToMatrix(alpha).toList1D(), jlineArrayToMatrix(subgen))
+            self.obj = jpype.JPackage('jline').lang.distributions.APH(jlineArrayToMatrix(alpha).toList1D(),
+                                                                      jlineArrayToMatrix(subgen))
+
 
 class Binomial(DiscreteDistribution):
     def __init__(self, *args):
@@ -37,6 +130,7 @@ class Binomial(DiscreteDistribution):
             prob = args[0]
             n = args[1]
             self.obj = jpype.JPackage('jline').lang.distributions.Binomial(prob, n)
+
 
 class Cox2(MarkovianDistribution):
     def __init__(self, *args):
@@ -68,7 +162,7 @@ class Disabled(Distribution):
 class DiscreteSampler(DiscreteDistribution):
     def __init__(self, *args):
         if len(args) == 1:
-            if isinstance(args[0],DiscreteDistribution):
+            if isinstance(args[0], DiscreteDistribution):
                 self.obj = args[0]
             else:
                 p = args[0]
@@ -76,7 +170,8 @@ class DiscreteSampler(DiscreteDistribution):
         else:
             p = args[0]
             x = args[1]
-            self.obj = jpype.JPackage('jline').lang.distributions.DiscreteSampler(p,x)
+            self.obj = jpype.JPackage('jline').lang.distributions.DiscreteSampler(p, x)
+
 
 class Exp(MarkovianDistribution):
     def __init__(self, rate):
@@ -99,8 +194,10 @@ class Erlang(MarkovianDistribution):
 
     def fitMeanAndSCV(mean, scv):
         return Erlang(jpype.JPackage('jline').lang.distributions.Erlang.fitMeanAndSCV(mean, scv))
+
     def fitMeanAndOrder(mean, order):
         return Erlang(jpype.JPackage('jline').lang.distributions.Erlang.fitMeanAndOrder(mean, order))
+
 
 class Gamma(ContinuousDistribution):
     def __init__(self, *args):
@@ -115,14 +212,16 @@ class Gamma(ContinuousDistribution):
     def fitMeanAndSCV(mean, scv):
         return Gamma(jpype.JPackage('jline').lang.distributions.Gamma.fitMeanAndSCV(mean, scv))
 
+
 class Geometric(DiscreteDistribution):
     def __init__(self, *args):
         if len(args) == 1:
-            if isinstance(args[0],DiscreteDistribution):
+            if isinstance(args[0], DiscreteDistribution):
                 self.obj = args[0]
             else:
                 prob = args[0]
                 self.obj = jpype.JPackage('jline').lang.distributions.Geometric(prob)
+
 
 class HyperExp(MarkovianDistribution):
     def __init__(self, *args):
@@ -143,6 +242,7 @@ class Immediate(Distribution):
     def __init__(self):
         super().__init__()
         self.obj = jpype.JPackage('jline').lang.distributions.Immediate()
+
 
 class Lognormal(ContinuousDistribution):
     def __init__(self, *args):
@@ -171,6 +271,7 @@ class MAP(MarkovianDistribution):
     def toPH(self):
         self.obj.toPH()
 
+
 class PH(MarkovianDistribution):
     def __init__(self, *args):
         super().__init__()
@@ -179,7 +280,23 @@ class PH(MarkovianDistribution):
         else:
             alpha = args[0]
             subgen = args[1]
-            self.obj = jpype.JPackage('jline').lang.distributions.PH(jlineArrayToMatrix(alpha).toList1D(), jlineArrayToMatrix(subgen))
+            self.obj = jpype.JPackage('jline').lang.distributions.PH(jlineArrayToMatrix(alpha).toList1D(),
+                                                                     jlineArrayToMatrix(subgen))
+
+
+class Pareto(ContinuousDistribution):
+    def __init__(self, *args):
+        super().__init__()
+        if len(args) == 1:
+            self.obj = args[0]
+        else:
+            shape = args[0]
+            scale = args[1]
+            self.obj = jpype.JPackage('jline').lang.distributions.Pareto(shape, scale)
+
+    def fitMeanAndSCV(mean, scv):
+        return Pareto(jpype.JPackage('jline').lang.distributions.Pareto.fitMeanAndSCV(mean, scv))
+
 
 class Poisson(DiscreteDistribution):
     def __init__(self, *args):
@@ -196,9 +313,10 @@ class Uniform(ContinuousDistribution):
         if len(args) == 1:
             self.obj = args[0]
         else:
-            minVal = args[0] # min
-            maxVal = args[1] # max
+            minVal = args[0]  # min
+            maxVal = args[1]  # max
             self.obj = Uniform.JPackage('jline').lang.distributions.Uniform(minVal, maxVal)
+
 
 class Weibull(ContinuousDistribution):
     def __init__(self, *args):

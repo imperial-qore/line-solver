@@ -36,11 +36,11 @@ public class DiscreteSampler extends DiscreteDistribution{
     }
 
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         return this.sample(n,new Random());
     }
 
-    public List<Double> sample(long n, Random random) {
+    public Matrix sample(long n, Random random) {
         Matrix x = (Matrix) this.getParam(2).getValue();
         Matrix f = (Matrix) this.getParam(3).getValue();
         Matrix r = new Matrix((int) n, 1);
@@ -70,7 +70,7 @@ public class DiscreteSampler extends DiscreteDistribution{
         for(int i = 0; i < indexes.getNumCols(); i++){
             retList.add(x.get((int) indexes.get(i)));
         }
-        return retList;
+        return new Matrix(retList);
     }
 
     /**
@@ -133,7 +133,7 @@ public class DiscreteSampler extends DiscreteDistribution{
     }
 
     @Override
-    public List<Double> evalPMF(List<Double> t){
+    public Matrix evalPMF(List<Double> t){
         Matrix p = (Matrix) this.getParam(1).getValue();
         Matrix x = (Matrix) this.getParam(2).getValue();
         List<Double> retList = new ArrayList<>();
@@ -144,7 +144,7 @@ public class DiscreteSampler extends DiscreteDistribution{
             }
             retList.add(p.get(j));
         }
-        return retList;
+        return new Matrix(retList);
     }
 
     @Override

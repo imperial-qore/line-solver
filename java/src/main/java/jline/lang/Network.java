@@ -2484,7 +2484,7 @@ public class Network extends Model implements Serializable {
                             for(int j = 1; j <= param.nitems; j++){
                                 t.add((double) j);
                             }
-                            param.pread.put(r, cache.popularityGet(r).evalPMF(t));
+                            param.pread.put(r, cache.popularityGet(r).evalPMF(t).toList1D());
                         }
                     }
                     param.replacement = cache.getReplacementPolicy();

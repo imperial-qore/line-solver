@@ -1,5 +1,6 @@
 package jline.lang.distributions;
 
+import jline.util.Matrix;
 import jline.util.Pair;
 import org.apache.commons.math3.analysis.UnivariateFunction;
 import org.apache.commons.math3.analysis.integration.RombergIntegrator;
@@ -22,16 +23,17 @@ public class Pareto extends ContinuousDistribution implements Serializable {
 
     /**
      * Gets n samples from the distribution
+     *
      * @param n - the number of samples
      * @return - n samples from the distribution
      */
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         return this.sample(n,new Random());
     }
 
     @Override
-    public List<Double> sample(long n, Random random) {
+    public Matrix sample(long n, Random random) {
         List<Double> samples = new ArrayList<>();
         double shape = (double)this.getParam(1).getValue();
         double scale = (double)this.getParam(2).getValue();
@@ -42,7 +44,7 @@ public class Pareto extends ContinuousDistribution implements Serializable {
             samples.add(sample);
         }
 
-        return samples;
+        return new Matrix(samples);
     }
 
     @Override

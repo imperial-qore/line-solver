@@ -19,22 +19,23 @@ public class Immediate extends Distribution implements Serializable {
 
     /**
      * Gets n samples from the distribution
+     *
      * @param n - the number of samples
      * @return - n samples from the distribution
      */
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         return this.sample(n,null);
     }
 
     @Override
-    public List<Double> sample(long n, Random random) {
+    public Matrix sample(long n, Random random) {
         List<Double> ret_list = new ArrayList<Double>();
         for (int i = 0; i < n; i++) {
             ret_list.add(0.0);
         }
 
-        return ret_list;
+        return new Matrix(ret_list);
     }
 
     public double getRate() {

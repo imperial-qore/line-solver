@@ -1,5 +1,6 @@
 package jline.lang.distributions;
 
+import jline.util.Matrix;
 import jline.util.Pair;
 import org.apache.commons.math3.distribution.LogNormalDistribution;
 
@@ -20,16 +21,17 @@ public class Lognormal extends ContinuousDistribution implements Serializable {
 
     /**
      * Gets n samples from the distribution
+     *
      * @param n - the number of samples
      * @return - n samples from the distribution
      */
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         return this.sample(n,new Random());
     }
 
     @Override
-    public List<Double> sample(long n, Random random) {
+    public Matrix sample(long n, Random random) {
         List<Double> samples = new ArrayList<>();
         double mu = (double) this.getParam(1).getValue();
         double sigma = (double) this.getParam(2).getValue();
@@ -38,7 +40,7 @@ public class Lognormal extends ContinuousDistribution implements Serializable {
             double value = Math.exp(mu + sigma * z); // Log-normal Distribution
             samples.add(value);
         }
-        return samples;
+        return new Matrix(samples);
     }
 
     @Override

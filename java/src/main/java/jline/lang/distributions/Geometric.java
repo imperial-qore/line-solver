@@ -1,9 +1,9 @@
 package jline.lang.distributions;
 
+import jline.util.Matrix;
 import jline.util.Pair;
 
 import java.io.Serializable;
-import java.util.List;
 import java.util.Random;
 
 public class Geometric extends DiscreteDistribution implements Serializable {
@@ -20,16 +20,17 @@ public class Geometric extends DiscreteDistribution implements Serializable {
 
     /**
      * Gets n samples from the distribution
+     *
      * @param n - the number of samples
      * @return - n samples from the distribution
      */
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         return this.sample(n,new Random());
     }
 
     @Override
-    public List<Double> sample(long n, Random random) {
+    public Matrix sample(long n, Random random) {
         throw new RuntimeException("Not implemented");
     }
 

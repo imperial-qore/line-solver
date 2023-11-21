@@ -2,7 +2,6 @@ package jline.lang.distributions;
 
 import java.util.*;
 
-import jline.lang.constant.GlobalConstants;
 import jline.util.Matrix;
 import static jline.lib.KPCToolbox.*;
 
@@ -37,11 +36,11 @@ public class PH extends MarkovianDistribution {
     }
 
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         return this.sample(n,null);
     }
     @Override
-    public List<Double> sample(long n, Random random) {
+    public Matrix sample(long n, Random random) {
         throw new RuntimeException("Not implemented");
     }
 

@@ -17,16 +17,16 @@ public class Det extends Distribution implements Serializable {
         return false;
     }
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         return this.sample(n,null);
     }
     @Override
-    public List<Double> sample(long n, Random random) {
+    public Matrix sample(long n, Random random) {
         List<Double> ret_list = new ArrayList<>();
         for (int i = 0; i < n; i++) {
             ret_list.add((double)this.getParam(1).getValue());
         }
-        return ret_list;
+        return new Matrix(ret_list);
 //        throw new RuntimeException("Not implemented");
     }
 

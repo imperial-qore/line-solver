@@ -43,7 +43,7 @@ public class Matrix extends DMatrixSparseCSC {
 		super(matrix);
 	}
 
-	public Matrix(List<Integer> array) {
+	public Matrix(List<Double> array) {
 		super(array.size(), 1, array.size());
 		for(int i = 0; i < array.size(); i++)
 			this.set(i, 0, (double) array.get(i));

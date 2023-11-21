@@ -1,6 +1,7 @@
 package jline.lang.distributions;
 
 import jline.util.Maths;
+import jline.util.Matrix;
 import jline.util.Pair;
 import org.apache.commons.math3.distribution.WeibullDistribution;
 import org.apache.commons.math3.special.Gamma;
@@ -23,16 +24,17 @@ public class Weibull extends ContinuousDistribution implements Serializable {
 
     /**
      * Gets n samples from the distribution
+     *
      * @param n - the number of samples
      * @return - n samples from the distribution
      */
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         return this.sample(n, new Random());
     }
 
     @Override
-    public List<Double> sample(long n, Random random) {
+    public Matrix sample(long n, Random random) {
         double alpha = (double) this.getParam(1).getValue();
         double r = (double) this.getParam(2).getValue();
 
@@ -41,7 +43,7 @@ public class Weibull extends ContinuousDistribution implements Serializable {
         for (int i = 0; i < n; i++) {
             samples.add(weibullDistribution.inverseCumulativeProbability(random.nextDouble()));
         }
-        return samples;
+        return new Matrix(samples);
     }
 
     @Override

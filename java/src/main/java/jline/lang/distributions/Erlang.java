@@ -2,7 +2,6 @@ package jline.lang.distributions;
 
 import java.io.Serializable;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
@@ -19,11 +18,11 @@ public class Erlang extends MarkovianDistribution implements Serializable {
     }
 
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         throw new RuntimeException("Not implemented");
     }
 
-    public List<Double> sample(long n, Random random) {
+    public Matrix sample(long n, Random random) {
         return this.sample(n,random);
     }
 

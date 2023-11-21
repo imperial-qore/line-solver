@@ -37,11 +37,11 @@ public class APH extends MarkovianDistribution {
 	}
 
 	@Override
-	public List<Double> sample(long n) {
+	public Matrix sample(long n) {
 		return this.sample(n,null);
 	}
 	@Override
-	public List<Double> sample(long n, Random random) {
+	public Matrix sample(long n, Random random) {
 		throw new RuntimeException("Not implemented");
 	}
 

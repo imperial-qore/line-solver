@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Random;
 
 import jline.lang.constant.GlobalConstants;
+import jline.util.Matrix;
 import jline.util.NamedParam;
 import jline.util.Pair;
 import org.apache.commons.lang3.NotImplementedException;
@@ -19,8 +20,8 @@ abstract public class Distribution  implements Serializable  {
     protected Pair<Double, Double> support;
     protected List<NamedParam> params;
 
-    public abstract List<Double> sample(long n);
-    public abstract List<Double> sample(long n, Random random);
+    public abstract Matrix sample(long n);
+    public abstract Matrix sample(long n, Random random);
 
     public abstract double getMean();
     public abstract double getRate();
@@ -30,7 +31,7 @@ abstract public class Distribution  implements Serializable  {
     public abstract double evalCDF(double t);
     public abstract double evalLST(double s);
 
-    public List<Double> evalPMF(List<Double> t){
+    public Matrix evalPMF(List<Double> t){
         throw new NotImplementedException("evalPMF not implemented");
     }
 

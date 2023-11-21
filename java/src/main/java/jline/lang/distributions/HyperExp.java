@@ -38,12 +38,12 @@ public class HyperExp extends MarkovianDistribution implements Serializable {
      * @return - n samples from the distribution
      */
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         return this.sample(n, new Random());
     }
 
     @Override
-    public List<Double> sample(long n, Random random) {
+    public Matrix sample(long n, Random random) {
         throw new RuntimeException("Not implemented");
     }
 

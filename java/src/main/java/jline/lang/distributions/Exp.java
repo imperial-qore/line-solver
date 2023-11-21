@@ -5,7 +5,6 @@ import jline.util.Matrix;
 
 import java.io.Serializable;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
@@ -18,12 +17,12 @@ public class Exp extends MarkovianDistribution  implements Serializable {
     }
 
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         return this.sample(n,null);
     }
 
     @Override
-    public List<Double> sample(long n, Random rand)  {
+    public Matrix sample(long n, Random rand)  {
         double lambda = (double)this.getParam(1).getValue();
         //return exprnd(1/lambda, n, 1);
         throw new RuntimeException("Not Implemented!");

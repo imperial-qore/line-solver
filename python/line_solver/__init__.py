@@ -33,12 +33,12 @@ def jlineStart():
         from jline.lang import ItemSet, NodeAttribute, OutputStrategy, ServiceBinding
         from jline.lang.layerednetworks import ActivityPrecedence, CacheTask, LayeredNetworkElement
         from jline.lang.layerednetworks import LayeredNetworkStruct, ItemEntry, Host
-        from jline.lang.distributions import Binomial, ContinuousDistribution, Coxian, CumulativeDistribution
+        from jline.lang.distributions import ContinuousDistribution, Coxian, CumulativeDistribution
         from jline.lang.distributions import DiscreteDistribution, DiscreteSampler, Distribution
-        from jline.lang.distributions import Geometric, MarkovianDistribution, Pareto, Poisson
-        from jline.lang.nodes import Logger, Node, Place
+        from jline.lang.distributions import MarkovianDistribution
+        from jline.lang.nodes import Logger, Place
         from jline.lang.nodes import StatefulNode, Station, Transition
-        from jline.lang.processes import MMAP, MAP, Process
+        from jline.lang.processes import MMAP, Process
         from jline.lang.sections import Buffer, CacheClassSwitcher, ClassSwitcher, ClassSwitchOutputSection, Dispatcher
         from jline.lang.sections import Forker, InfiniteServer, InputSection, Joiner, OutputSection, PreemptiveServer
         from jline.lang.sections import RandomSource, Section, Server, ServiceSection, ServiceTunnel, SharedServer

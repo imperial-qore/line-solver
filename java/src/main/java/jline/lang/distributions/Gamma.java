@@ -1,5 +1,6 @@
 package jline.lang.distributions;
 
+import jline.util.Matrix;
 import jline.util.Pair;
 import org.apache.commons.math3.distribution.GammaDistribution;
 
@@ -17,7 +18,7 @@ public class Gamma extends ContinuousDistribution implements Serializable {
     }
 
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         double shape = (double) this.getParam(1).getValue();
         double scale = (double) this.getParam(2).getValue();
         GammaDistribution gammaDistribution = new GammaDistribution(shape, scale);
@@ -26,10 +27,10 @@ public class Gamma extends ContinuousDistribution implements Serializable {
         for (double sample : samples) {
             sampleList.add(sample);
         }
-        return sampleList;
+        return new Matrix(sampleList);
     }
 
-    public List<Double> sample(long n, Random random) {
+    public Matrix sample(long n, Random random) {
         double shape = (double) this.getParam(1).getValue();
         double scale = (double) this.getParam(2).getValue();
         GammaDistribution gammaDistribution = new GammaDistribution(shape, scale);
@@ -37,7 +38,7 @@ public class Gamma extends ContinuousDistribution implements Serializable {
         for (int i = 0; i < n; i++) {
             sampleList.add(gammaDistribution.inverseCumulativeProbability(random.nextDouble()));
         }
-        return sampleList;
+        return new Matrix(sampleList);
     }
 
     @Override

@@ -1,5 +1,6 @@
 package jline.lang.distributions;
 
+import jline.util.Matrix;
 import jline.util.Pair;
 
 import java.util.*;
@@ -15,16 +16,17 @@ public class Uniform extends ContinuousDistribution implements Serializable {
 
     /**
      * Gets n samples from the distribution
+     *
      * @param n - the number of samples
      * @return - n samples from the distribution
      */
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         return this.sample(n, new Random());
     }
 
     @Override
-    public List<Double> sample(long n, Random random) {
+    public Matrix sample(long n, Random random) {
         double minVal = (double) this.getParam(1).getValue();
         double maxVal = (double) this.getParam(2).getValue();
         List<Double> samples = new ArrayList<>();
@@ -32,7 +34,7 @@ public class Uniform extends ContinuousDistribution implements Serializable {
             double randomValue = minVal + (maxVal - minVal) * random.nextDouble();
             samples.add(randomValue);
         }
-        return samples;
+        return new Matrix(samples);
     }
 
     public double getMean() {

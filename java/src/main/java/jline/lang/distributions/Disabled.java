@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+import jline.util.Matrix;
 import jline.util.Pair;
 
 public class Disabled extends Distribution implements Serializable {
@@ -26,17 +27,17 @@ public class Disabled extends Distribution implements Serializable {
     }
 
     @Override
-    public List<Double> sample(long n) {
+    public Matrix sample(long n) {
         return this.sample(n,null);
     }
     @Override
-    public List<Double> sample(long n, Random random) {
+    public Matrix sample(long n, Random random) {
         List<Double> ret_list = new ArrayList<Double>();
         for (int i = 0; i < n; i++) {
             ret_list.add(Double.NaN);
         }
 
-        return ret_list;
+        return new Matrix(ret_list);
     }
 
     public double getRate() {

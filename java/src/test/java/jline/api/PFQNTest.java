@@ -657,7 +657,7 @@ class PFQNTest {
         N.set(0, 2, 2);
         Z.set(0, 0, 1.224);
         Z.set(0, 1, 0.251);
-        Z.set(0, 2, 1e-7);
+        Z.set(0, 2, 1e-9);
         int m = 2;
         double atol = 0.5;
         pfqnComomrmReturn ret = pfqn_comomrm(L, N, Z, m, atol);
@@ -665,13 +665,13 @@ class PFQNTest {
         Matrix lGbasis = ret.lGbasis;
         assertEquals(6, lGbasis.numRows);
         assertEquals(1, lGbasis.numCols);
-        assertEquals(17.144180853879238, lGbasis.get(0), 1e5*tolerance);
-        assertEquals(15.023945661910735, lGbasis.get(1), 1e5*tolerance);
-        assertEquals(15.714262655479768, lGbasis.get(2), 1e5*tolerance);
-        assertEquals(15.023945662603746, lGbasis.get(3), 1e5*tolerance);
-        assertEquals(12.967020455406505, lGbasis.get(4), 1e5*tolerance);
-        assertEquals(13.657139245576847, lGbasis.get(5), 1e5*tolerance);
-        assertEquals(33.078694899962024, lG, 1e5*tolerance);
+        assertEquals(17.144180857969538, lGbasis.get(0), 1e5*tolerance);
+        assertEquals(15.023945666602936, lGbasis.get(1), 1e5*tolerance);
+        assertEquals(15.714262659486160, lGbasis.get(2), 1e5*tolerance);
+        assertEquals(15.023945666609865, lGbasis.get(3), 1e5*tolerance);
+        assertEquals(12.967020460050561, lGbasis.get(4), 1e5*tolerance);
+        assertEquals(13.657139249487017, lGbasis.get(5), 1e5*tolerance);
+        assertEquals(33.078694903968140, lG, 1e5*tolerance);
     }
 
     @Test
@@ -685,9 +685,9 @@ class PFQNTest {
         N.set(0, 0, 9);
         N.set(0, 1, 4);
         N.set(0, 2, 2);
-        Z.set(0, 0, 1e-7);
-        Z.set(0, 1, 1e-7);
-        Z.set(0, 2, 1e-7);
+        Z.set(0, 0, 1e-9);
+        Z.set(0, 1, 1e-9);
+        Z.set(0, 2, 1e-9);
         int m = 2;
         double atol = 0.5;
         pfqnComomrmReturn ret = pfqn_comomrm(L, N, Z, m, atol);
