@@ -218,7 +218,7 @@ for r=1:numOfClasses
                     subParNodeAlpha.setAttribute('classPath', 'java.lang.Double');
                     subParNodeAlpha.setAttribute('name', 't');
                     subParValue = simDoc.createElement('value');
-                    subParValue.appendChild(simDoc.createTextNode(sprintf('%.12f',sn.rates(i,r))));
+                    subParValue.appendChild(simDoc.createTextNode(sprintf('%.12f',1/sn.rates(i,r))));
                     subParNodeAlpha.appendChild(subParValue);
                     distrParNode.appendChild(subParNodeAlpha);
                 case ProcessType.ID_EXP

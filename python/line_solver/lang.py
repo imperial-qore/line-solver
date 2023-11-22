@@ -1,7 +1,8 @@
 import jpype
 import jpype.imports
+import numpy as np
 
-from . import jlineMatrixToArray, jlineMapMatrixToArray, jlineArrayToMatrix
+from . import jlineMatrixToArray, jlineMapMatrixToArray, jlineMatrixFromArray
 from .constants import NodeType
 
 
@@ -43,9 +44,24 @@ class RoutingMatrix:
                         self.set(jobclass[k], jobclass[k], node[i], node[j], pmatrix[k][i][j])
 
 
-class Network:
-    def __init__(self, name):
-        self.obj = jpype.JPackage('jline').lang.Network(name)
+class Model:
+    def __init__(self):
+        pass
+    def getName(self):
+        return self.obj.getName()
+    def setName(self, name):
+        self.obj.setName(name)
+    def getVersion(self):
+        return self.obj.getVersion()
+
+class Network(Model):
+    def __init__(self, *argv):
+        super().__init__()
+        if isinstance(argv[0], jpype.JPackage('jline').lang.Network):
+            self.obj = argv[0]
+        else:
+            name = argv[0]
+            self.obj = jpype.JPackage('jline').lang.Network(name)
 
     def serialRouting(*argv):
         ctr = 0
@@ -197,9 +213,21 @@ class Cache(Node):
     def setMissClass(self, jobclass1, jobclass2):
         self.obj.setMissClass(jobclass1.obj, jobclass2.obj)
 
+class Ensemble:
+    def __init__(self):
+        pass
+    def getModel(self, stagenum):
+        return Network(self.obj.getModel(stagenum))
+    def getEnsemble(self):
+        jensemble = self.obj.getEnsemble()
+        ensemble = np.empty(jensemble.size(), dtype=object)
+        for i in range(len(ensemble)):
+            ensemble[i] = Network(jensemble.get(i))
+        return ensemble
 
-class Env:
+class Env(Ensemble):
     def __init__(self, name, nstages):
+        super().__init__()
         self.obj = jpype.JPackage('jline').lang.Env(name, nstages)
 
     def addStage(self, stage, envname, envtype, envmodel):
@@ -229,7 +257,7 @@ class ClassSwitch(Node):
         return jlineMatrixToArray(self.obj.initClassSwitchMatrix())
 
     def setClassSwitchingMatrix(self, csmatrix):
-        self.obj.setClassSwitchingMatrix(jlineArrayToMatrix(csmatrix))
+        self.obj.setClassSwitchingMatrix(jlineMatrixFromArray(csmatrix))
 
 
 class Sink(Node):
@@ -262,7 +290,7 @@ class Queue(Station):
         self.obj.setNumberOfServers(nservers)
 
     def setLoadDependence(self, ldscaling):
-        self.obj.setLoadDependence(jlineArrayToMatrix(ldscaling))
+        self.obj.setLoadDependence(jlineMatrixFromArray(ldscaling))
 
 
 class Delay(Station):

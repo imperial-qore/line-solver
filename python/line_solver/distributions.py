@@ -1,7 +1,7 @@
 import jpype
 import jpype.imports
 
-from line_solver import jlineArrayToMatrix, jlineMatrixToArray
+from line_solver import jlineMatrixFromArray, jlineMatrixToArray
 
 
 class NamedParam:
@@ -118,8 +118,8 @@ class APH(MarkovianDistribution):
         else:
             alpha = args[0]
             subgen = args[1]
-            self.obj = jpype.JPackage('jline').lang.distributions.APH(jlineArrayToMatrix(alpha).toList1D(),
-                                                                      jlineArrayToMatrix(subgen))
+            self.obj = jpype.JPackage('jline').lang.distributions.APH(jlineMatrixFromArray(alpha).toList1D(),
+                                                                      jlineMatrixFromArray(subgen))
 
 
 class Binomial(DiscreteDistribution):
@@ -266,7 +266,7 @@ class MAP(MarkovianDistribution):
         else:
             D0 = args[0]
             D1 = args[1]
-            self.obj = jpype.JPackage('jline').lang.processes.MAP(jlineArrayToMatrix(D0), jlineArrayToMatrix(D1))
+            self.obj = jpype.JPackage('jline').lang.processes.MAP(jlineMatrixFromArray(D0), jlineMatrixFromArray(D1))
 
     def toPH(self):
         self.obj.toPH()
@@ -280,8 +280,8 @@ class PH(MarkovianDistribution):
         else:
             alpha = args[0]
             subgen = args[1]
-            self.obj = jpype.JPackage('jline').lang.distributions.PH(jlineArrayToMatrix(alpha).toList1D(),
-                                                                     jlineArrayToMatrix(subgen))
+            self.obj = jpype.JPackage('jline').lang.distributions.PH(jlineMatrixFromArray(alpha).toList1D(),
+                                                                     jlineMatrixFromArray(subgen))
 
 
 class Pareto(ContinuousDistribution):

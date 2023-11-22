@@ -11,7 +11,7 @@ public class Model implements Serializable {
 
     public Model(String modelName) {
         this.name = modelName;
-        this.lineVersion = "3.0.0";
+        this.lineVersion = "2.0.31";
     }
 
     public String getName() {
@@ -20,5 +20,5 @@ public class Model implements Serializable {
     public void setName(String setName) {
         this.name = setName;
     }
-    public String getlineVersion() { return this.lineVersion; }
+    public String getVersion() { return this.lineVersion; }
 }

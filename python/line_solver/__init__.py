@@ -58,7 +58,7 @@ def jlineMapMatrixToArray(mapmatrix):
 def jlineMatrixToArray(matrix):
     return np.array(list(matrix.toArray2D()))
 
-def jlineArrayToMatrix(array):
+def jlineMatrixFromArray(array):
     if isinstance(array,list):
         array = np.array(array)
     if len(np.shape(array))>1:
@@ -80,3 +80,5 @@ from .utils import *
 from .solvers import *
 from .distributions import *
 from .layerednetworks import *
+from .lib import *
+from .api import *
