@@ -15,17 +15,18 @@ public class CTMC {
 	 * @return Steady-state probability vector
 	 */
 	public static Matrix ctmc_solve(Matrix Q) {
-		if (Q.length() == 1) {
+		Matrix Qmat = Q.clone();
+		if (Qmat.length() == 1) {
 			Matrix p = new Matrix(1, 1, 1);
 			p.set(0, 0, 1);
 			return p;
 		}
 
-		Q = ctmc_makeinfgen(Q);
-		int n = Q.length();
+		Qmat = ctmc_makeinfgen(Qmat);
+		int n = Qmat.length();
 
 		// B = abs(Q+Q')>0
-		Matrix B = Q.sub(1, Q.transpose());
+		Matrix B = Qmat.sub(1, Qmat.transpose());
 		B.abs();
 		for (int colIdx = 0; colIdx < B.numCols; colIdx++) {
 			int col1 = B.col_idx[colIdx];
@@ -48,7 +49,7 @@ public class CTMC {
 				int Qc_row = 0, Qc_col = 0;
 				for (Integer q_row : set_c) {
 					for (Integer q_col : set_c) {
-						Qc.set(Qc_row, Qc_col++, Q.get(q_row, q_col));
+						Qc.set(Qc_row, Qc_col++, Qmat.get(q_row, q_col));
 					}
 					Qc_row++;
 					Qc_col = 0;
@@ -66,7 +67,7 @@ public class CTMC {
 			return p;
 		}
 
-		if (Q.getNonZeroLength() == 0) {
+		if (Qmat.getNonZeroLength() == 0) {
 			Matrix p = new Matrix(1, n);
 			p.fill(1 / n);
 			return p;
@@ -77,9 +78,9 @@ public class CTMC {
 		Matrix nnzel = new Matrix(1, n);
 		for (int i = 0; i < n; i++)
 			nnzel.set(0, i, i);
-		Matrix Qnnz = Q.clone();
+		Matrix Qnnz = Qmat.clone();
 		Matrix bnnz = b.clone();
-		Matrix Qnnz_1 = Q.clone();
+		Matrix Qnnz_1 = Qmat.clone();
 		Matrix bnnz_1 = bnnz.clone();
 
 		boolean isReducible = false;
@@ -181,7 +182,7 @@ public class CTMC {
 					int Qc_row = 0, Qc_col = 0;
 					for (Integer q_row : set_c) {
 						for (Integer q_col : set_c) {
-							Qc.set(Qc_row, Qc_col++, Q.get(q_row, q_col));
+							Qc.set(Qc_row, Qc_col++, Qmat.get(q_row, q_col));
 						}
 						Qc_row++;
 						Qc_col = 0;

@@ -24,7 +24,7 @@ public class DTMC {
     	//Note that in this function, List is used instead of Matrix for performance consideration
     	if (P == null)
     		throw new RuntimeException("The first parameter of dtmc_stochcomp cannot be null");
-    	
+
     	int lengthP = Math.max(P.getNumCols(), P.getNumRows());
     	if (I == null || I.size() == 0) {
     		I = new ArrayList<Integer>();
@@ -45,15 +45,19 @@ public class DTMC {
 				double value = P.get(rowIdx,colIdx);
 				if (value > 0.0) {
 					if (I.contains(colIdx)) {
-						if (I.contains(rowIdx))
+						if (I.contains(rowIdx)) {
 							P11.set(I.indexOf(rowIdx), I.indexOf(colIdx), value);
-						else
+						}
+						else {
 							P21.set(Ic.indexOf(rowIdx), I.indexOf(colIdx), value);
+						}
 					} else {
-						if (I.contains(rowIdx))
+						if (I.contains(rowIdx)) {
 							P12.set(I.indexOf(rowIdx), Ic.indexOf(colIdx), value);
-						else
+						}
+						else {
 							P22.set(Ic.indexOf(rowIdx), Ic.indexOf(colIdx), value);
+						}
 					}
 				}
 			}
@@ -77,12 +81,12 @@ public class DTMC {
 	 * @return Steady-state solution vector of the DTMC
 	 */
     public static Matrix dtmc_solve(Matrix P) {
-    	
+    	Matrix Plocal = P.clone();
     	//P-eye(size(P))
-    	for(int i = 0; i < P.getNumRows(); i++) {
-    		P.set(i, i, P.get(i,i) - 1.0);
+    	for(int i = 0; i < Plocal.getNumRows(); i++) {
+			Plocal.set(i, i, Plocal.get(i,i) - 1.0);
     	}
-    	return CTMC.ctmc_solve(P);
+    	return CTMC.ctmc_solve(Plocal);
     }
 
 	/**
@@ -94,7 +98,7 @@ public class DTMC {
 	public static Matrix dtmc_timereverse(Matrix P) {
 		Matrix pie = DTMC.dtmc_solve(P);
 		Matrix Prev = new Matrix(P.getNumCols(),P.getNumRows());
-		//P-eye(size(P))
+
 		for(int i = 0; i < P.getNumRows(); i++) {
 			for(int j = 0; j < P.getNumCols(); j++) {
 				Prev.set(i,j,P.get(i,j)*pie.get(i)/pie.get(j));
