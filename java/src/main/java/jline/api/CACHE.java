@@ -33,10 +33,10 @@ public class CACHE {
                 }
                 ArrayList<Integer> Pij = new ArrayList<>();
                 Pij.add(1 + j);
-                ArrayList<Integer> pr_j = par(Rvi, 1 + j);
+                ArrayList<Integer> pr_j = cache_par(Rvi, 1 + j);
                 while(pr_j.size() > 0){
                     Pij.add(0, pr_j.get(0));
-                    pr_j = par(Rvi, pr_j.get(0));
+                    pr_j = cache_par(Rvi, pr_j.get(0));
                 }
                 if(Pij.size() == 0){
                     gamma.set(i, j, 0);
@@ -65,7 +65,7 @@ public class CACHE {
      * @param j - the list for which the parent will be found
      * @return - the parent of j
      */
-    public static ArrayList<Integer> par(Matrix R, int j){
+    private static ArrayList<Integer> cache_par(Matrix R, int j){
         ArrayList<Integer> parent = new ArrayList<>();
         for(int i = 0; i <= j - 1; i++){
             if(R.get(i, j) != 0){
@@ -159,7 +159,7 @@ public class CACHE {
      * @param SS2 - new state columns
      * @return - new state space
      */
-    public static Matrix ssg_decorate(Matrix SS, Matrix SS2){
+    private static Matrix ssg_decorate(Matrix SS, Matrix SS2){
         if(SS.isEmpty())
             return SS2;
         if(SS2.isEmpty())
@@ -196,17 +196,17 @@ public class CACHE {
         return SS;
     }
 
-    // TODO
+    // TODO: cache_ttl_lrum
     public static Matrix cache_ttl_lrum(Matrix[] gamma, Matrix m){
         throw new NotImplementedException("cache_ttl_lrum not implemented!");
     }
 
-    // TODO
+    // TODO: cache_ttl_hlru
     public static Matrix cache_ttl_hlru(Matrix[] gamma, Matrix m){
         throw new NotImplementedException("cache_ttl_hlru not implemented!");
     }
 
-    // TODO
+    // TODO: cache_ttl_tree
     public static Matrix cache_ttl_tree(Matrix[] lambda, Matrix[][] R, Matrix m){
         throw new NotImplementedException("cache_ttl_tree not implemented!");
     }
