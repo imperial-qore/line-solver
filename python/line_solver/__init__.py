@@ -69,7 +69,7 @@ def jlineMatrixFromArray(array):
     else:
         ret = jpype.JPackage('jline').util.Matrix(1, np.size(array,0), array.size)
         for i in range(np.size(array,0)):
-                ret.set(0,i,array[i])
+            ret.set(0,i,array[i])
     return ret
 
 
@@ -81,3 +81,4 @@ from .solvers import *
 from .distributions import *
 from .layerednetworks import *
 from .lib import *
+from .gallery import *
