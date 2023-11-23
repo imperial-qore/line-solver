@@ -72,6 +72,9 @@ def jlineMatrixFromArray(array):
             ret.set(0,i,array[i])
     return ret
 
+def is_interactive():
+    import __main__ as main
+    return not hasattr(main, '__file__')
 
 jlineStart()
 from .constants import *

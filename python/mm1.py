@@ -10,8 +10,8 @@ if __name__ == "__main__":
 
     # An M/M/1 queue with arrival rate 0.5 and service rate 1.0
     openclass = OpenClass(model, "Class1")
-    source.setArrival(openclass, Exp(0.5))
-    queue.setService(openclass, Exp(1.0))
+    source.setArrival(openclass, Exp(1.0))
+    queue.setService(openclass, Exp(2.0))
 
     model.addLink(source, queue)
     model.addLink(queue, sink)

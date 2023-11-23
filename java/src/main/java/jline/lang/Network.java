@@ -3110,12 +3110,7 @@ public class Network extends Model implements Serializable {
 
     public void jsimgView() {
         SolverJMT jmt = new SolverJMT(this);
-        try {
-            jmt.jsimgView();
-        } catch (ParserConfigurationException e) {
-            e.printStackTrace();
-            throw new RuntimeException(e);
-        }
+        jmt.jsimgView();
     }
 
 }

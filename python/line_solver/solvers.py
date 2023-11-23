@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from jpype import JArray
 
-from . import jlineMatrixToArray
+from . import jlineMatrixToArray, is_interactive
 from .constants import SolverType, VerboseLevel, GlobalConstants
 
 
@@ -63,7 +63,7 @@ class Solver:
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep] # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not is_interactive():
             print(AvgTable)
 
         return AvgTable
@@ -88,7 +88,7 @@ class Solver:
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep] # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not is_interactive():
             print(AvgTable)
 
         return AvgTable
@@ -189,11 +189,11 @@ class SolverJMT(Solver):
         options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.JMT)
         super().__init__(options, args)
         model = args[0]
-        jmtPath = jpype.JPackage('java').lang.String(os.path.dirname(os.path.abspath(__file__)) + "/JMT.jar")
-        self.obj = jpype.JPackage('jline').solvers.jmt.SolverJMT(model.obj, self.solveropt.obj, jmtPath)
+        self.jmtPath = jpype.JPackage('java').lang.String(os.path.dirname(os.path.abspath(__file__)) + "/JMT.jar")
+        self.obj = jpype.JPackage('jline').solvers.jmt.SolverJMT(model.obj, self.solveropt.obj, self.jmtPath)
 
     def jsimgView(self):
-        self.obj.jsimgView()
+        self.obj.jsimgView(self.jmtPath)
 
 
 class SolverMAM(Solver):

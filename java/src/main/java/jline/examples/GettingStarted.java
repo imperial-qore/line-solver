@@ -6,12 +6,14 @@ import jline.lang.nodes.Delay;
 import jline.lang.*;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.distributions.*;
+import jline.solvers.jmt.SolverJMT;
 import jline.util.Matrix;
 
 import jline.lang.nodes.Queue;
 import jline.lang.nodes.Sink;
 import jline.lang.nodes.Source;
 
+import javax.xml.parsers.ParserConfigurationException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -25,13 +27,12 @@ public class GettingStarted {
         /*  M/M/1 queue
          */
         Network model = new Network("MM1LowU");
-        OpenClass openClass = new OpenClass(model, "Open Class");
         Source source = new Source(model, "Source");
-        source.setArrival(openClass, new Exp(2));
         Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
-        queue.setService(openClass, new Exp(10));
         Sink sink = new Sink(model, "Sink");
-
+        OpenClass openClass = new OpenClass(model, "Open Class");
+        source.setArrival(openClass, new Exp(2));
+        queue.setService(openClass, new Exp(10));
         model.link(model.serialRouting(source, queue, sink));
 
         return model;
@@ -599,12 +600,13 @@ public class GettingStarted {
     }
 
 
-    public static void main(String[] args) throws IllegalAccessException {
-        Network model = ex1();
-        SolverCTMC solver = new SolverCTMC(model);
-
-        solver.applyCutoff(3);
-        solver.getAvgTable();
+    public static void main(String[] args) throws IllegalAccessException, ParserConfigurationException {
+        Network model = ex1_line();
+        //SolverCTMC solver = new SolverCTMC(model);
+        SolverJMT solver = new SolverJMT(model);
+        //solver.applyCutoff(3);
+        solver.getAvgTable().print();
+        solver.jsimgView();
 //        solver.getGenerator();
 //        solver.getStateSpace();
 //        solver.getProbabilityVector();

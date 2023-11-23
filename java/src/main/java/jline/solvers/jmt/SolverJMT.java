@@ -2639,6 +2639,10 @@ public class SolverJMT extends NetworkSolver {
     }
 
     public static void viewModel(String filename, ViewMode viewMode) {
+        viewModel(jmtGetPath(), filename, viewMode);
+    }
+
+    public static void viewModel(String jmtPath, String filename, ViewMode viewMode) {
         Path path = Paths.get(filename).getParent();
         if (path == null) {
             filename = Paths.get(java.lang.System.getProperty("user.dir"), filename).toString();
@@ -2651,10 +2655,10 @@ public class SolverJMT extends NetworkSolver {
 
         String cmd = String.format(
                 "java -cp %s jmt.commandline.Jmt %s %s %s",
-                jmtGetPath(), viewMode.toString().toLowerCase(), filename, redirectOutput
+                jmtPath, viewMode.toString().toLowerCase(), filename, redirectOutput
         );
 
-        String output = system(cmd);
+        String output = SysUtils.system(cmd);
         java.lang.System.out.println("JMT view model command output: " + output);
     }
 
@@ -2684,7 +2688,10 @@ public class SolverJMT extends NetworkSolver {
         jsimwView(this.options);
     }
 
-    public void jsimgView(SolverOptions options) throws ParserConfigurationException {
+    public void jsimgView(SolverOptions options) {
+        jsimgView(jmtGetPath(), options);
+    }
+    public void jsimgView(String jmtPath, SolverOptions options) {
 //        if (this.enableChecks && !supports(this.model)) {
 //            throw new RuntimeException("This model contains features not supported by the solver.");
 //        }
@@ -2706,16 +2713,24 @@ public class SolverJMT extends NetworkSolver {
         this.maxSamples = options.samples;
 
         NetworkStruct sn = getStruct();
-        this.writeJSIM(sn);
+        try {
+            this.writeJSIM(sn);
+        } catch (ParserConfigurationException e) {
+            e.printStackTrace();
+        }
 
         String fileName = this.getFilePath() + File.separator + this.getFileName() + ".jsim";
         java.lang.System.out.println("JMT Model: " + fileName);
 
-        viewModel(fileName, ViewMode.JSIMG);
+        viewModel(jmtPath, fileName, ViewMode.JSIMG);
     }
 
-    public void jsimgView() throws ParserConfigurationException {
+    public void jsimgView() {
         jsimgView(SolverJMT.defaultOptions());
+    }
+
+    public void jsimgView(String jmtPath) {
+        jsimgView(jmtPath, SolverJMT.defaultOptions());
     }
 
     public String writeJSIM(NetworkStruct sn, String outputFileName) throws ParserConfigurationException {
