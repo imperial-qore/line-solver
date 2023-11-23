@@ -81,4 +81,3 @@ from .solvers import *
 from .distributions import *
 from .layerednetworks import *
 from .lib import *
-from .api import *
