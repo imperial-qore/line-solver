@@ -34,7 +34,7 @@ options.samples = 1e4;
 options.seed = randi([1,1e6]);
 options.stiff = true;
 options.timespan = [Inf,Inf];
-options.verbose = 1;
+options.verbose = GlobalConstants.getVerbose();
 
 %% Solver-specific defaults
 switch solverName
@@ -49,7 +49,7 @@ switch solverName
         options.iter_max = 100;
         options.iter_tol = 1e-4;
         options.tol = 1e-4;
-        options.verbose = 0;
+        options.verbose = VerboseLevel.SILENT;
     case 'Fluid'
         options = Solver.defaultOptions();
         options.config.highvar = 'default';
@@ -64,7 +64,7 @@ switch solverName
         options.config.multiserver = 'default';
         options.timespan = [Inf,Inf];
         options.keep = false;
-        options.verbose = true;
+        options.verbose = VerboseLevel.STD;
         options.iter_tol = 5e-2;
         options.iter_max = 100;
     case 'LQNS'

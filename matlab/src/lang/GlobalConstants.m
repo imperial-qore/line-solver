@@ -90,6 +90,11 @@ classdef GlobalConstants
             LINEVerbose = val;
         end
 
+        function verbose = getVerbose()
+            global LINEVerbose
+            verbose = LINEVerbose;
+        end
+
         function setVersion(val)
             global LINEVersion
             LINEVersion = val;

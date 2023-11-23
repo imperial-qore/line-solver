@@ -3,6 +3,7 @@
 
 package jline.solvers;
 
+import jline.lang.constant.GlobalConstants;
 import jline.lang.constant.VerboseLevel;
 import jline.solvers.ssa.strategies.TauLeapingConfig;
 import jline.util.Matrix;
@@ -103,7 +104,7 @@ public class SolverOptions {
     this.timespan = new double[2];
     this.timespan[0] = POSITIVE_INFINITY;
     this.timespan[1] = POSITIVE_INFINITY;
-    this.verbose = VerboseLevel.STD;
+    this.verbose = GlobalConstants.getInstance().getVerbose();
   }
 
   public SolverOptions(SolverType solverType) {

@@ -111,8 +111,10 @@ switch options.lang
             case {'jsim','default'}
                 fname = self.writeJSIM(sn);
                 cmd = ['java -cp "',getJMTJarPath(self),filesep,'JMT.jar" jmt.commandline.Jmt sim "',fname,'" -seed ',num2str(options.seed),' --illegal-access=permit'];
-                if options.verbose
+                if options.verbose 
                     line_printf('JMT model: %s\n',fname);
+                end                
+                if options.verbose == VerboseLevel.DEBUG
                     line_printf('JMT command: %s\n',cmd);
                 end
                 [~, cmdoutput] = system(cmd);
@@ -211,6 +213,8 @@ switch options.lang
                 cmd = ['java -cp "',getJMTJarPath(self),filesep,'JMT.jar" jmt.commandline.Jmt mva "',fname,'" -seed ',num2str(options.seed),' --illegal-access=permit'];
                 if options.verbose
                     line_printf('JMT model: %s\n',fname);
+                end
+                if options.verbose == VerboseLevel.DEBUG
                     line_printf('JMT command: %s\n',cmd);
                 end
                 [~, cmdoutput] = system(cmd);

@@ -3639,8 +3639,10 @@ public class SolverJMT extends NetworkSolver {
                         this.jmtPath, fname, options.seed
                 );
 
-                if (options.verbose != VerboseLevel.values()[0]) {
+                if (options.verbose != VerboseLevel.SILENT) {
                     java.lang.System.out.println("JMT Model: " + fname);
+                }
+                if (options.verbose == VerboseLevel.DEBUG) {
                     java.lang.System.out.println("JMT Command: " + cmd);
                 }
                 cmdOutput = SysUtils.system(cmd);
