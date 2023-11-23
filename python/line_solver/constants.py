@@ -43,19 +43,6 @@ class EventType(Enum):
     READ = jpype.JPackage('jline').lang.constant.EventType.READ
     STAGE = jpype.JPackage('jline').lang.constant.EventType.STAGE
 
-
-class GlobalConstants:
-    def __repr__(self):
-        return str(self.value)
-    Zero = jpype.JPackage('jline').lang.constant.GlobalConstants.Zero
-    CoarseTol = jpype.JPackage('jline').lang.constant.GlobalConstants.CoarseTol
-    FineTol = jpype.JPackage('jline').lang.constant.GlobalConstants.FineTol
-    Immediate = jpype.JPackage('jline').lang.constant.GlobalConstants.Immediate
-    Version = jpype.JPackage('jline').lang.constant.GlobalConstants.Version
-    Verbose = jpype.JPackage('jline').lang.constant.GlobalConstants.Verbose
-    DummyMode = jpype.JPackage('jline').lang.constant.GlobalConstants.DummyMode
-
-
 class JobClassType(Enum):
     def __repr__(self):
         return str(self.value)
@@ -257,3 +244,37 @@ class VerboseLevel(Enum):
     SILENT = jpype.JPackage('jline').lang.constant.VerboseLevel.SILENT
     STD = jpype.JPackage('jline').lang.constant.VerboseLevel.STD
     DEBUG = jpype.JPackage('jline').lang.constant.VerboseLevel.DEBUG
+
+
+class GlobalConstants:
+    def __repr__(self):
+        return str(self.value)
+
+    Zero = jpype.JPackage('jline').lang.constant.GlobalConstants.Zero
+    CoarseTol = jpype.JPackage('jline').lang.constant.GlobalConstants.CoarseTol
+    FineTol = jpype.JPackage('jline').lang.constant.GlobalConstants.FineTol
+    Immediate = jpype.JPackage('jline').lang.constant.GlobalConstants.Immediate
+    Version = jpype.JPackage('jline').lang.constant.GlobalConstants.Version
+    Verbose = jpype.JPackage('jline').lang.constant.GlobalConstants.Verbose
+    DummyMode = jpype.JPackage('jline').lang.constant.GlobalConstants.DummyMode
+
+    def getVerbose():
+        GC = jpype.JPackage('jline').lang.constant.GlobalConstants.getInstance()
+        verbose = GC.getVerbose()
+        if verbose == jpype.JPackage('jline').lang.constant.VerboseLevel.STD:
+            return VerboseLevel.STD
+        elif verbose == jpype.JPackage('jline').lang.constant.VerboseLevel.DEBUG:
+            return VerboseLevel.DEBUG
+        elif verbose == jpype.JPackage('jline').lang.constant.VerboseLevel.SILENT:
+            return VerboseLevel.SILENT
+
+    def setVerbose(verbosity):
+        if verbosity == VerboseLevel.STD:
+            GC = jpype.JPackage('jline').lang.constant.GlobalConstants.getInstance()
+            GC.setVerbose(jpype.JPackage('jline').lang.constant.VerboseLevel.STD)
+        elif verbosity == VerboseLevel.DEBUG:
+            GC = jpype.JPackage('jline').lang.constant.GlobalConstants.getInstance()
+            GC.setVerbose(jpype.JPackage('jline').lang.constant.VerboseLevel.DEBUG)
+        elif verbosity ==  VerboseLevel.SILENT:
+            GC = jpype.JPackage('jline').lang.constant.GlobalConstants.getInstance()
+            GC.setVerbose(jpype.JPackage('jline').lang.constant.VerboseLevel.SILENT)

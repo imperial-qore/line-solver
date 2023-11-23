@@ -6,7 +6,7 @@ import pandas as pd
 from jpype import JArray
 
 from . import jlineMatrixToArray
-from .constants import SolverType, VerboseLevel
+from .constants import SolverType, VerboseLevel, GlobalConstants
 
 
 class Solver:
@@ -63,6 +63,9 @@ class Solver:
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep] # eliminate zero rows
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):
+            print(AvgTable)
+
         return AvgTable
 
     def getAvgSysRespT(self):

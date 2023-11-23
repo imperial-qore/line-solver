@@ -1,6 +1,8 @@
 from line_solver import *
 
 if __name__ == "__main__":
+    GlobalConstants.setVerbose(VerboseLevel.STD)
+
     model = Network("M/M/1 model")
     source = Source(model, "mySource")
     queue = Queue(model, "myQueue", SchedStrategy.FCFS)
@@ -16,7 +18,6 @@ if __name__ == "__main__":
 
     solver = SolverJMT(model)
     table = solver.getAvgTable()  # pandas.DataFrame
-    print(table)
 
 
 
