@@ -68,11 +68,30 @@ class Solver:
 
         return AvgTable
 
-    def getAvgSysRespT(self):
-        # TODO: this should call the native Java method not getAvgSysTable
-        table = self.obj.getAvgSysTable()
-        SysRespT = np.array(list(table.getSysRespT()))
-        return SysRespT
+    def getAvgRespTTable(self):
+        # TODO: this should call the native Java method not getAvgTable
+        table = self.obj.getAvgTable()
+        # convert to NumPy
+        RespT = np.array(list(table.getRespT()))
+
+        cols = ['RespT']
+        stations = list(table.getStationNames())
+        statnames = []
+        for i in range(len(stations)):
+            statnames.append(str(stations[i]))
+        jobclasses = list(table.getClassNames())
+        classnames = []
+        for i in range(len(jobclasses)):
+            classnames.append(str(jobclasses[i]))
+        AvgTable = pd.DataFrame(np.concatenate([[RespT]]).T, columns=cols)
+        tokeep = ~(AvgTable<=0.0).all(axis=1)
+        AvgTable.insert(0, "JobClass", classnames)
+        AvgTable.insert(0, "Station", statnames)
+        AvgTable = AvgTable.loc[tokeep] # eliminate zero rows
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):
+            print(AvgTable)
+
+        return AvgTable
 
     def getAvgSysTable(self):
         table = self.obj.getAvgSysTable()
@@ -94,7 +113,26 @@ class Solver:
         AvgSysTable.insert(0, "JobClasses", inchains)
         AvgSysTable.insert(0, "Chain", chains)
         AvgSysTable = AvgSysTable.loc[tokeep] # eliminate zero rows
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):
+            print(AvgSysTable)
         return AvgSysTable
+
+    def getAvgRespT(self):
+        # TODO: this should call the native Java method not getAvgSysTable
+        table = self.obj.getAvgTable()
+        RespT = np.array(list(table.getRespT()))
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):
+            print(RespT)
+        return RespT
+
+
+    def getAvgSysRespT(self):
+        # TODO: this should call the native Java method not getAvgSysTable
+        table = self.obj.getAvgSysTable()
+        SysRespT = np.array(list(table.getSysRespT()))
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):
+            print(SysRespT)
+        return SysRespT
 
     def getCdfRespT(self):
         try:
