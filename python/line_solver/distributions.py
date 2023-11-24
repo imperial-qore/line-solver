@@ -236,6 +236,8 @@ class HyperExp(MarkovianDistribution):
 
     def fitMeanAndSCV(mean, scv):
         return HyperExp(jpype.JPackage('jline').lang.distributions.HyperExp.fitMeanAndSCV(mean, scv))
+    def fitMeanAndSCVBalanced(mean, scv):
+        return HyperExp(jpype.JPackage('jline').lang.distributions.HyperExp.fitMeanAndSCVBalanced(mean, scv))
 
 
 class Immediate(Distribution):

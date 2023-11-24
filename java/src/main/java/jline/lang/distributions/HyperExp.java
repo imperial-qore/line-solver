@@ -151,13 +151,30 @@ public class HyperExp extends MarkovianDistribution implements Serializable {
      */
     public static HyperExp fitMeanAndSCV(double mean, double scv) {
         double p, mu1, mu2;
-        Map<Integer,Matrix> D = map_hyperexp(mean, scv, 0);
-        mu1 = -D.get(0).get(0,0);
-        mu2 = -D.get(0).get(1,1);
-        p = D.get(1).get(0,0)/mu1;
-        HyperExp he = new HyperExp(p,mu1,mu2);
+        Map<Integer, Matrix> D = map_hyperexp(mean, scv, 0);
+        mu1 = -D.get(0).get(0, 0);
+        mu2 = -D.get(0).get(1, 1);
+        p = D.get(1).get(0, 0) / mu1;
+        HyperExp he = new HyperExp(p, mu1, mu2);
         he.immediate = mean < GlobalConstants.CoarseTol;
         return he;
     }
 
+    /**
+     * Fit distribution with given squared coefficient of variation and balanced means i.e.,
+     * p/mu1 = (1-p)/mu2
+     */
+    public static HyperExp fitMeanAndSCVBalanced(double mean, double scv) {
+        double p, mu1, mu2;
+        mu1 = -(2.0 * (Math.sqrt((scv - 1) / (scv + 1)) / 2.0 - 0.5)) / mean;
+        p = 0.5 - Math.sqrt((scv - 1) / (scv + 1)) / 2.0;
+        if (mu1 < 0 || p < 0 || p > 1) {
+            p = Math.sqrt((scv - 1) / (scv + 1)) / 2.0 + 0.5;
+            mu1 = (2 * (Math.sqrt((scv - 1) / (scv + 1)) / 2.0 + 0.5)) / mean;
+        }
+        mu2 = (1 - p) / p * mu1;
+        HyperExp he = new HyperExp(p, mu1, mu2);
+        he.immediate = mean < GlobalConstants.CoarseTol;
+        return he;
+    }
 }

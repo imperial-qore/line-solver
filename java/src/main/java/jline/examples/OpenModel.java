@@ -32,7 +32,7 @@ public class OpenModel {
 
         node1.setService(jobclass1, new HyperExp(0.5, 3.0, 10.0));
         node2.setService(jobclass1, new Exp(1));
-        node3.setArrival(jobclass1, new Exp(0.1));
+        node3.setArrival(jobclass1, new Det(0.1));
 
         // Block 3: topology
 
@@ -371,12 +371,13 @@ public class OpenModel {
     }
 
     public static void main(String[] args) throws Exception {
-        Network model = ex2();
+        Network model = ex1_line();
 
         NetworkStruct sn = model.getStruct(false);
         SolverOptions options = new SolverOptions(SolverType.MVA);
         NetworkSolver solver = new SolverMVA(model, options);
         NetworkAvgTable t = solver.getAvgTable();
+        model.jsimgView();
         t.print(options);
     }
 }

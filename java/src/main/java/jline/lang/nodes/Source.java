@@ -41,7 +41,7 @@ public class Source extends Station implements HasSchedStrategy, Serializable {
 
     public void setArrival(JobClass jobClass, Distribution distribution) {
         ServiceBinding arrivalProcess = new ServiceBinding(jobClass, ServiceStrategy.LI, distribution);
-        this.input.setServiceProcess(arrivalProcess);
+        //this.input.setServiceProcess(arrivalProcess);
         this.setServiceProcess(arrivalProcess);
         if ((distribution == null) || (distribution instanceof Disabled)){
             this.classCap.put(jobClass, 0.0);

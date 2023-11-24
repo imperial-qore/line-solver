@@ -1,5 +1,6 @@
 from line_solver import *
 
+
 # TODO: APH.fitCentral
 # def gallery_aphm1():
 #     model = Network('APH/M/1')
@@ -31,7 +32,7 @@ from line_solver import *
 #     return model
 
 def gallery_detm1():
-    model = Network('Det/M/1')
+    model = Network('D/M/1')
     # Block 1: nodes
     source = Source(model, 'mySource')
     queue = Queue(model, 'myQueue', SchedStrategy.FCFS)
@@ -44,6 +45,7 @@ def gallery_detm1():
     model.link(Network.serialRouting(source, queue, sink))
     return model
 
+
 def gallery_erlm1():
     model = Network('Er/M/1')
     # Block 1: nodes
@@ -52,11 +54,12 @@ def gallery_erlm1():
     sink = Sink(model, 'mySink')
     # Block 2: classes
     oclass = OpenClass(model, 'myClass')
-    source.setArrival(oclass, Erlang.fitMeanAndOrder(1,5))
+    source.setArrival(oclass, Erlang.fitMeanAndOrder(1, 5))
     queue.setService(oclass, Exp(2))
     # Block 3: topology
     model.link(Network.serialRouting(source, queue, sink))
     return model
+
 
 def gallery_erlm1ps():
     model = Network('Er/M/1-PS')
@@ -66,39 +69,72 @@ def gallery_erlm1ps():
     sink = Sink(model, 'mySink')
     # Block 2: classes
     oclass = OpenClass(model, 'myClass')
-    source.setArrival(oclass, Erlang.fitMeanAndOrder(1,5))
+    source.setArrival(oclass, Erlang.fitMeanAndOrder(1, 5))
     queue.setService(oclass, Exp(2))
     # Block 3: topology
     model.link(Network.serialRouting(source, queue, sink))
     return model
+
 
 def gallery_gamm1():
     model = Network('Gam/M/1')
     # Block 1: nodes
     source = Source(model, 'mySource')
-    queue = Queue(model, 'myQueue', SchedStrategy.PS)
+    queue = Queue(model, 'myQueue', SchedStrategy.FCFS)
     sink = Sink(model, 'mySink')
     # Block 2: classes
     oclass = OpenClass(model, 'myClass')
-    source.setArrival(oclass, Gamma.fitMeanAndSCV(1,1/5))
+    source.setArrival(oclass, Gamma.fitMeanAndSCV(1, 1 / 5))
     queue.setService(oclass, Exp(2))
     # Block 3: topology
     model.link(Network.serialRouting(source, queue, sink))
     return model
 
-def gallery_hypm1():
-    model = Network('Hyp/M/1')
+
+def gallery_hyperlk(k=2):
+    model = Network('H/Er/k')
     # Block 1: nodes
     source = Source(model, 'mySource')
-    queue = Queue(model, 'myQueue', SchedStrategy.PS)
+    queue = Queue(model, 'myQueue', SchedStrategy.FCFS)
     sink = Sink(model, 'mySink')
     # Block 2: classes
     oclass = OpenClass(model, 'myClass')
-    source.setArrival(oclass, HyperExp.fitMeanAndSCV(1,64))
+    source.setArrival(oclass, HyperExp.fitMeanAndSCVBalanced(1.0 / 1.8, 4))
+    queue.setService(oclass, Erlang.fitMeanAndSCV(1, 0.25))
+    # Block 3: topology
+    model.link(Network.serialRouting(source, queue, sink))
+    return model
+
+
+def gallery_hypm1():
+    model = Network('H/M/1')
+    # Block 1: nodes
+    source = Source(model, 'mySource')
+    queue = Queue(model, 'myQueue', SchedStrategy.FCFS)
+    sink = Sink(model, 'mySink')
+    # Block 2: classes
+    oclass = OpenClass(model, 'myClass')
+    source.setArrival(oclass, HyperExp.fitMeanAndSCV(1, 64))
     queue.setService(oclass, Exp(2))
     # Block 3: topology
     model.link(Network.serialRouting(source, queue, sink))
     return model
+
+
+def gallery_mhyp1():
+    model = Network('M/H/1')
+    # Block 1: nodes
+    source = Source(model, 'mySource')
+    queue = Queue(model, 'myQueue', SchedStrategy.FCFS)
+    sink = Sink(model, 'mySink')
+    # Block 2: classes
+    oclass = OpenClass(model, 'myClass')
+    source.setArrival(oclass, Exp(1))
+    queue.setService(oclass, Coxian.fitMeanAndSCV(0.5, 4))
+    # Block 3: topology
+    model.link(Network.serialRouting(source, queue, sink))
+    return model
+
 
 def gallery_mm1():
     model = Network('M/M/1')
@@ -148,3 +184,64 @@ def gallery_mm1_linear(n=2, Umax=0.9):
 
 def gallery_mm1_tandem():
     return gallery_mm1_linear(2)
+
+
+def gallery_mmk(k=2):
+    model = Network('M/M/k')
+    # Block 1: nodes
+    source = Source(model, 'mySource')
+    queue = Queue(model, 'myQueue', SchedStrategy.FCFS)
+    sink = Sink(model, 'mySink')
+    # Block 2: classes
+    oclass = OpenClass(model, 'myClass')
+    source.setArrival(oclass, Exp(1))
+    queue.setService(oclass, Exp(2))
+    queue.setNumberOfServers(k)
+    # Block 3: topology
+    model.link(Network.serialRouting(source, queue, sink))
+    return model
+
+
+def gallery_mpar1():
+    model = Network('M/Par/1')
+    # Block 1: nodes
+    source = Source(model, 'mySource')
+    queue = Queue(model, 'myQueue', SchedStrategy.FCFS)
+    sink = Sink(model, 'mySink')
+    # Block 2: classes
+    oclass = OpenClass(model, 'myClass')
+    source.setArrival(oclass, Exp(1))
+    queue.setService(oclass, Pareto.fitMeanAndSCV(0.5, 64))
+    # Block 3: topology
+    model.link(Network.serialRouting(source, queue, sink))
+    return model
+
+
+def gallery_parm1():
+    model = Network('Par/M/1')
+    # Block 1: nodes
+    source = Source(model, 'mySource')
+    queue = Queue(model, 'myQueue', SchedStrategy.FCFS)
+    sink = Sink(model, 'mySink')
+    # Block 2: classes
+    oclass = OpenClass(model, 'myClass')
+    source.setArrival(oclass, Pareto.fitMeanAndSCV(1, 64))
+    queue.setService(oclass, Exp(2))
+    # Block 3: topology
+    model.link(Network.serialRouting(source, queue, sink))
+    return model
+
+
+def gallery_um1():
+    model = Network('U/M/1')
+    # Block 1: nodes
+    source = Source(model, 'mySource')
+    queue = Queue(model, 'myQueue', SchedStrategy.FCFS)
+    sink = Sink(model, 'mySink')
+    # Block 2: classes
+    oclass = OpenClass(model, 'myClass')
+    source.setArrival(oclass, Uniform(1, 2))
+    queue.setService(oclass, Exp(2))
+    # Block 3: topology
+    model.link(Network.serialRouting(source, queue, sink))
+    return model

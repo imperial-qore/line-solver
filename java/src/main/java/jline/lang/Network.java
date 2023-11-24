@@ -1446,6 +1446,8 @@ public class Network extends Model implements Serializable {
             return ProcessType.HYPEREXP;
         } else if (distr instanceof APH) {
             return ProcessType.APH;
+        } else if (distr instanceof Det) {
+            return ProcessType.DET;
         } else if (distr instanceof Coxian) {
             return ProcessType.COXIAN;
         } else if (distr instanceof Poisson) {
