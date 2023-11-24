@@ -101,6 +101,7 @@ def gallery_hyperlk(k=2):
     oclass = OpenClass(model, 'myClass')
     source.setArrival(oclass, HyperExp.fitMeanAndSCVBalanced(1.0 / 1.8, 4))
     queue.setService(oclass, Erlang.fitMeanAndSCV(1, 0.25))
+    queue.setNumberOfServers(k)
     # Block 3: topology
     model.link(Network.serialRouting(source, queue, sink))
     return model
