@@ -63,7 +63,7 @@ class Solver:
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep] # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not is_interactive():
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):# and not is_interactive():
             print(AvgTable)
 
         return AvgTable
@@ -88,7 +88,7 @@ class Solver:
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep] # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not is_interactive():
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):# and not is_interactive():
             print(AvgTable)
 
         return AvgTable

@@ -1,4 +1,5 @@
 import line_solver
+from line_solver import GlobalConstants, VerboseLevel
 
 
 def tget(table, *argv):
@@ -19,8 +20,10 @@ def tget(table, *argv):
             station = argv[0]
             jobclass = argv[1]
             results = table.loc[(table["Station"] == station) & (table["JobClass"] == jobclass)]
-        elif isinstance(argv[0], line_solver.lang.JobClass):
+        elif isinstance(argv[1], line_solver.lang.JobClass):
             station = argv[0].obj.getName()
             jobclass = argv[1].obj.getName()
             results = table.loc[(table["Station"] == station) & (table["JobClass"] == jobclass)]
+    if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):
+        print(results)
     return results
