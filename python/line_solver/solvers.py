@@ -63,7 +63,7 @@ class Solver:
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep] # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):# and not is_interactive():
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:# and not is_interactive():
             print(AvgTable)
 
         return AvgTable
@@ -88,7 +88,7 @@ class Solver:
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep] # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):# and not is_interactive():
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:# and not is_interactive():
             print(AvgTable)
 
         return AvgTable
@@ -113,7 +113,7 @@ class Solver:
         AvgSysTable.insert(0, "JobClasses", inchains)
         AvgSysTable.insert(0, "Chain", chains)
         AvgSysTable = AvgSysTable.loc[tokeep] # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
             print(AvgSysTable)
         return AvgSysTable
 
@@ -130,7 +130,7 @@ class Solver:
         # TODO: this should call the native Java method not getAvgSysTable
         table = self.obj.getAvgSysTable()
         SysRespT = np.array(list(table.getSysRespT()))
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
             print(SysRespT)
         return SysRespT
 
