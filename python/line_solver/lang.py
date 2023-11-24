@@ -105,7 +105,12 @@ class Network(Model):
         return Qt, Ut, Tt
 
     def jsimgView(self):
-        self.obj.jsimgView()
+        from line_solver import SolverJMT
+        SolverJMT(self).jsimgView()
+
+    def jsimwView(self):
+        from line_solver import SolverJMT
+        SolverJMT(self).jsimgView()
 
     def addLinks(self, linkPairs):
         for i in range(len(linkPairs)):

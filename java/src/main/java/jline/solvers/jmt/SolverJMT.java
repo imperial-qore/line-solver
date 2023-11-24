@@ -2658,11 +2658,20 @@ public class SolverJMT extends NetworkSolver {
                 jmtPath, viewMode.toString().toLowerCase(), filename, redirectOutput
         );
 
+        java.lang.System.out.println("JMT view model command: " + cmd);
         String output = SysUtils.system(cmd);
         java.lang.System.out.println("JMT view model command output: " + output);
     }
 
-    public void jsimwView(SolverOptions options) throws ParserConfigurationException {
+    public void jsimwView(String jmtPath) {
+        try {
+            jsimwView(jmtPath, SolverJMT.defaultOptions());
+        } catch (ParserConfigurationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void jsimwView(String jmtPath, SolverOptions options) throws ParserConfigurationException {
         if (this.enableChecks && !supports(this.model)) {
             throw new RuntimeException("This model contains features not supported by the solver.");
         }
@@ -2681,16 +2690,18 @@ public class SolverJMT extends NetworkSolver {
         String fileName = this.getFilePath() + File.separator + this.getFileName() + ".jsim";
         java.lang.System.out.println("JMT Model: " + fileName);
 
-        viewModel(fileName, ViewMode.JSIMW);
+        viewModel(jmtPath, fileName, ViewMode.JSIMW);
     }
 
-    public void jsimwView() throws ParserConfigurationException {
-        jsimwView(this.options);
+
+    public void jsimgView() {
+        jsimgView(jmtGetPath(), this.options);
     }
 
     public void jsimgView(SolverOptions options) {
         jsimgView(jmtGetPath(), options);
     }
+
     public void jsimgView(String jmtPath, SolverOptions options) {
 //        if (this.enableChecks && !supports(this.model)) {
 //            throw new RuntimeException("This model contains features not supported by the solver.");
@@ -2725,8 +2736,8 @@ public class SolverJMT extends NetworkSolver {
         viewModel(jmtPath, fileName, ViewMode.JSIMG);
     }
 
-    public void jsimgView() {
-        jsimgView(SolverJMT.defaultOptions());
+    public void jsimwView() throws ParserConfigurationException {
+        jsimwView(jmtGetPath(), this.options);
     }
 
     public void jsimgView(String jmtPath) {

@@ -192,6 +192,9 @@ class SolverJMT(Solver):
         self.jmtPath = jpype.JPackage('java').lang.String(os.path.dirname(os.path.abspath(__file__)) + "/JMT.jar")
         self.obj = jpype.JPackage('jline').solvers.jmt.SolverJMT(model.obj, self.solveropt.obj, self.jmtPath)
 
+    def jsimwView(self):
+        self.obj.jsimwView(self.jmtPath)
+
     def jsimgView(self):
         self.obj.jsimgView(self.jmtPath)
 
