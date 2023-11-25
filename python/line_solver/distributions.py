@@ -18,6 +18,7 @@ class NamedParam:
     def getValue(self):
         return self.value
 
+
 class Distribution:
     def __init__(self):
         pass
@@ -66,12 +67,13 @@ class Distribution:
         return self.obj.isImmediate()
 
     def sample(self, *args):
-            if len(args) == 1:
-                n = args[0]
-                return jlineMatrixToArray(self.obj.isImmediate())
-            else:
-                n = args[0]
-                seed = args[1]
+        if len(args) == 1:
+            n = args[0]
+            return jlineMatrixToArray(self.obj.isImmediate())
+        else:
+            n = args[0]
+            seed = args[1]
+
 
 class ContinuousDistribution(Distribution):
     def __init__(self):
@@ -109,7 +111,6 @@ class MarkovianDistribution(Distribution):
         return self.obj.getRepres()
 
 
-
 class APH(MarkovianDistribution):
     def __init__(self, *args):
         super().__init__()
@@ -124,6 +125,7 @@ class APH(MarkovianDistribution):
 
 class Binomial(DiscreteDistribution):
     def __init__(self, *args):
+        super().__init__()
         if len(args) == 1:
             self.obj = args[0]
         else:
@@ -161,6 +163,7 @@ class Disabled(Distribution):
 
 class DiscreteSampler(DiscreteDistribution):
     def __init__(self, *args):
+        super().__init__()
         if len(args) == 1:
             if isinstance(args[0], DiscreteDistribution):
                 self.obj = args[0]
@@ -215,6 +218,7 @@ class Gamma(ContinuousDistribution):
 
 class Geometric(DiscreteDistribution):
     def __init__(self, *args):
+        super().__init__()
         if len(args) == 1:
             if isinstance(args[0], DiscreteDistribution):
                 self.obj = args[0]
@@ -236,6 +240,7 @@ class HyperExp(MarkovianDistribution):
 
     def fitMeanAndSCV(mean, scv):
         return HyperExp(jpype.JPackage('jline').lang.distributions.HyperExp.fitMeanAndSCV(mean, scv))
+
     def fitMeanAndSCVBalanced(mean, scv):
         return HyperExp(jpype.JPackage('jline').lang.distributions.HyperExp.fitMeanAndSCVBalanced(mean, scv))
 
@@ -302,11 +307,27 @@ class Pareto(ContinuousDistribution):
 
 class Poisson(DiscreteDistribution):
     def __init__(self, *args):
+        super().__init__()
         if len(args) == 1:
             self.obj = args[0]
         else:
             rate = args[0]
             self.obj = jpype.JPackage('jline').lang.distributions.Geometric(rate)
+
+
+class Replayer(Distribution):
+    def __init__(self, *args):
+        super().__init__()
+        if len(args) == 1:
+            if isinstance(args[0], Distribution):
+                self.obj = args[0]
+            else:
+                fname = args[0]  # filename
+                self.obj = jpype.JPackage('jline').lang.processes.Replayer(fname)
+
+    def fitAPH(filename):
+        rep = Replayer(filename)
+        return APH(rep.obj.fitAPH(filename))
 
 
 class Uniform(ContinuousDistribution):

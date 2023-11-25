@@ -2,6 +2,7 @@ package jline.lang;
 
 import jline.api.DTMC;
 import jline.api.SN;
+import jline.lang.processes.Replayer;
 import jline.util.Maths;
 import jline.lang.constant.*;
 import jline.lang.distributions.*;
@@ -1452,6 +1453,8 @@ public class Network extends Model implements Serializable {
             return ProcessType.COXIAN;
         } else if (distr instanceof Poisson) {
             return ProcessType.POISSON;
+        } else if (distr instanceof Replayer) {
+            return ProcessType.REPLAYER;
         } else if (distr instanceof Binomial) {
             return ProcessType.BINOMIAL;
         } else if (distr instanceof Immediate) {
