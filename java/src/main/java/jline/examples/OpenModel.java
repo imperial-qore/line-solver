@@ -5,6 +5,7 @@ import jline.lang.constant.SchedStrategy;
 import jline.lang.constant.SolverType;
 import jline.lang.distributions.*;
 import jline.lang.nodes.*;
+import jline.lang.processes.Replayer;
 import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.solvers.mva.SolverMVA;
@@ -377,7 +378,7 @@ public class OpenModel {
         SolverOptions options = new SolverOptions(SolverType.MVA);
         NetworkSolver solver = new SolverMVA(model, options);
         NetworkAvgTable t = solver.getAvgTable();
-        model.jsimgView();
+        //model.jsimgView();
         t.print(options);
     }
 }
