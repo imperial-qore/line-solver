@@ -22,10 +22,10 @@ M = model.getNumberOfStations();
 K = model.getNumberOfClasses();
 
 P = model.initRoutingMatrix;
-P{1,1} = zeros(4); P{1,1}(1:2,1:2) = circul(2);
-P{1,2} = zeros(4);
+P{1,1} = zeros(M); P{1,1}(1:2,1:2) = circul(2);
+P{1,2} = zeros(M);
 P{2,2} = [0,1,0,0; 0,0,0,1; 1,0,0,0; 0,0,0,0];
-P{2,1} = zeros(4);
+P{2,1} = zeros(M);
 
 model.link(P);
 %%

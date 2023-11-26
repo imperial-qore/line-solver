@@ -8,7 +8,7 @@ for k=1:K
     queue.setService(jobclass{k}, Erlang.fitMeanAndOrder(k,2));
 end
 
-P = model.initRoutingMatrix;
+P = model.initRoutingMatrix();
 P{jobclass{1},jobclass{2}}(queue,queue) = 1.0;
 P{jobclass{2},jobclass{3}}(queue,queue) = 1.0;
 P{jobclass{3},jobclass{1}}(queue,queue) = 1.0;

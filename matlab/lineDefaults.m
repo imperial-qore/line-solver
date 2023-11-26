@@ -34,7 +34,7 @@ options.samples = 1e4;
 options.seed = randi([1,1e6]);
 options.stiff = true;
 options.timespan = [Inf,Inf];
-options.verbose = GlobalConstants.getVerbose();
+options.verbose = 1;
 
 %% Solver-specific defaults
 switch solverName

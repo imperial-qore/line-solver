@@ -1,5 +1,5 @@
 function model = gallery_erlm1_ps
-model = Network('Erl/M/1-PS');
+model = Network('Er/M/1-PS');
 %% Block 1: nodes
 source = Source(model, 'mySource');
 queue = Queue(model, 'myQueue', SchedStrategy.PS);

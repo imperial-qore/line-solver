@@ -3,5 +3,5 @@ function P = initRoutingMatrix(self)
 
 M = self.getNumberOfNodes;
 K = self.getNumberOfClasses;
-P = cellzeros(K,K,M,M);
+P = RoutingMatrix(cellzeros(K,K,M,M));
 end

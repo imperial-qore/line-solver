@@ -4,6 +4,9 @@ function self = link(self, P)
 % Copyright (c) 2012-2023, Imperial College London
 % All rights reserved.
 
+if isa(P,'RoutingMatrix')
+    P = P.getCell();
+end
 sanitize(self);
 
 isReset = false;

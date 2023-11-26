@@ -1,5 +1,5 @@
 function model = gallery_erlm1_reentrant
-model = Network('Hyper/M/1-Reentrant');
+model = Network('Er/M/1-Reentrant');
 %% Block 1: nodes
 source = Source(model, 'Source');
 queue = Queue(model, 'Queue', SchedStrategy.FCFS);

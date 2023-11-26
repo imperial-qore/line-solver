@@ -1,5 +1,5 @@
 clear node jobclass solver AvgTable;
-%% a basic M/M/1 with explicit definition of a classswitch node
+%% a basic M/M/1 with explicit definition of a ClassSwitch node
 % Recommended ClassSwitch declaration style
 model = Network('mm1cs');
 

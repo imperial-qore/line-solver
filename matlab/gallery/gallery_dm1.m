@@ -9,8 +9,5 @@ oclass1 = OpenClass(model, 'Class1');
 source.setArrival(oclass1, Det(1));
 queue.setService(oclass1, Exp(2));
 %% Block 3: topology
-P = model.initRoutingMatrix;
-P{oclass1,oclass1}(source,queue)=1;
-P{oclass1,oclass1}(queue,sink)=1;
-model.link(P);
+model.link(Network.serialRouting(source,queue,sink));
 end
