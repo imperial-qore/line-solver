@@ -102,7 +102,7 @@ class NodeType(Enum):
     Sink = jpype.JPackage('jline').lang.constant.NodeType.Sink
     Join = jpype.JPackage('jline').lang.constant.NodeType.Join
     Queue = jpype.JPackage('jline').lang.constant.NodeType.Queue
-    def fromJava(obj):
+    def fromJLine(obj):
         match str(obj):
             case 'Transition':
                 return NodeType.Transition

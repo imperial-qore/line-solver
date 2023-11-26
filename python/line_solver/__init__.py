@@ -29,7 +29,7 @@ def jlineStart():
         from jline.lang.constant import GlobalConstants
         from jline.lang import Chain, Element, Ensemble, Metric
         from jline.lang import FeatureSet, FiniteCapacityRegion, InputBinding
-        from jline.lang import Model, NetworkAttribute, NetworkElement, NetworkEvent, NetworkStruct
+        from jline.lang import Model, NetworkAttribute, NetworkElement, NetworkEvent
         from jline.lang import ItemSet, NodeAttribute, OutputStrategy, ServiceBinding
         from jline.lang.layerednetworks import ActivityPrecedence, CacheTask, LayeredNetworkElement
         from jline.lang.layerednetworks import LayeredNetworkStruct, ItemEntry, Host
@@ -56,7 +56,10 @@ def jlineMapMatrixToArray(mapmatrix):
     return d
 
 def jlineMatrixToArray(matrix):
-    return np.array(list(matrix.toArray2D()))
+    if matrix is None:
+        return None
+    else:
+        return np.array(list(matrix.toArray2D()))
 
 def jlineMatrixFromArray(array):
     if isinstance(array,list):

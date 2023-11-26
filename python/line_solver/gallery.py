@@ -1,4 +1,5 @@
 from line_solver import *
+from line_solver import Erlang
 
 
 # TODO: APH.fitCentral
