@@ -414,15 +414,19 @@ public class RoutingMatrix implements Serializable {
     }
 
     public void set(JobClass jobclass1, JobClass jobclass2, Matrix rt) {
-        for (int i = 0; i < rt.length(); i++)
-            for (int j = 0; j < rt.length(); j++) {
-                Node srcNode = nodes.get(i);
-                Node destNode = nodes.get(j);
-                this.addConnection(jobclass1, jobclass2, srcNode, destNode, rt.get(i, j));
-            }
+        this.routings.get(jobclass1.getIndex()-1).get(jobclass2.getIndex()-1).setTo(rt);
+    }
+
+    public void set(JobClass jobclass1, JobClass jobclass2, RoutingMatrix rt) {
+        this.routings.get(jobclass1.getIndex()-1).get(jobclass2.getIndex()-1).setTo(rt.get(jobclass1, jobclass2));
     }
 
     public void set(Node srcNode, Node destNode) {
         this.addConnection(srcNode, destNode);
     }
+
+    public Matrix get(JobClass jobclass1, JobClass jobclass2) {
+        return routings.get(jobclass1.getIndex()-1).get(jobclass2.getIndex()-1);
+    }
+
 }

@@ -43,7 +43,10 @@ class RoutingMatrix:
             class_source = argv[0]
             class_dest = argv[1]
             rt = argv[2]
-            self.obj.set(class_source.obj, class_dest.obj, jlineMatrixFromArray(rt))
+            if isinstance(rt, RoutingMatrix):
+                self.obj.set(class_source.obj, class_dest.obj, rt.obj)
+            else: # assume argv[2] is a np.array
+                self.obj.set(class_source.obj, class_dest.obj, jlineMatrixFromArray(rt))
             return self.obj
 
     def setRoutingMatrix(self, jobclass, node, pmatrix):

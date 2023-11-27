@@ -294,11 +294,11 @@ public class Network extends Model implements Serializable {
 
         for (int i = 1; i < nodes.length; i++) {
             //System.out.format("Loading connection %s->%s\n", nodes[i-1].getName(), nodes[i].getName());
-            outMatrix.addConnection(nodes[i-1], nodes[i]);
+            outMatrix.addConnection(nodes[i-1], nodes[i], 1.0);
         }
 
         if(!(nodes[nodes.length-1] instanceof Sink)) {
-            outMatrix.addConnection(nodes[nodes.length-1], nodes[0]);
+            outMatrix.addConnection(nodes[nodes.length-1], nodes[0], 1.0);
         }
 
         return outMatrix;
