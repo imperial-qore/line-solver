@@ -31,8 +31,20 @@ class RoutingMatrix:
     def __init__(self, rt):
         self.obj = rt
 
-    def set(self, class_source, class_dest, stat_source, stat_dest, prob):
-        return self.obj.set(class_source.obj, class_dest.obj, stat_source.obj, stat_dest.obj, prob)
+    def set(self, *argv):
+        if len(argv) == 5:
+            class_source = argv[0]
+            class_dest = argv[1]
+            stat_source = argv[2]
+            stat_dest = argv[3]
+            prob = argv[4]
+            return self.obj.set(class_source.obj, class_dest.obj, stat_source.obj, stat_dest.obj, prob)
+        else:
+            class_source = argv[0]
+            class_dest = argv[1]
+            rt = argv[2]
+            self.obj.set(class_source.obj, class_dest.obj, jlineMatrixFromArray(rt))
+            return self.obj
 
     def setRoutingMatrix(self, jobclass, node, pmatrix):
         if isinstance(jobclass, JobClass):
@@ -115,7 +127,7 @@ class NetworkStruct(dict):
         droprule = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses)), dtype=object)
         proc = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses), 2), dtype=object)
         # TODO: missing in Jline, rtorig always set to None?
-        #rtorig = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses)), dtype=object)
+        # rtorig = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses)), dtype=object)
         for ist in range(int(jsn.nstations)):
             sched[ist] = SchedStrategy(jsn.sched.get(jsn.stations[ist]))
             space[ist] = jlineMatrixToArray(jsn.space.get(jsn.stations[ist]))
@@ -123,7 +135,7 @@ class NetworkStruct(dict):
                 mu[ist, jcl] = jlineMatrixToArray(jsn.mu.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
                 phi[ist, jcl] = jlineMatrixToArray(jsn.phi.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
                 pie[ist, jcl] = jlineMatrixToArray(jsn.pie.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
-                #rtorig[ist, jcl] = jlineMatrixToArray(jsn.rtorig.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
+                # rtorig[ist, jcl] = jlineMatrixToArray(jsn.rtorig.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
                 proctype[ist, jcl] = ProcessType(jsn.proctype.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
                 routing[ist, jcl] = RoutingStrategy(jsn.routing.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
                 droprule[ist, jcl] = DropStrategy(jsn.droprule.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
@@ -137,7 +149,7 @@ class NetworkStruct(dict):
         super().__setitem__("proctype", proctype)
         super().__setitem__("routing", routing)
         super().__setitem__("droprule", droprule)
-        #super().__setitem__("rtorig", rtorig)
+        # super().__setitem__("rtorig", rtorig)
         super().__setitem__("proc", proc)
 
         # TODO: NodeParam class to be ported in Python
@@ -146,19 +158,20 @@ class NetworkStruct(dict):
         #    nodeparam[ind] = NodeParam(jsn.sched.get(jsn.nodes[ind]))
 
         # TODO: fields missing in JLINE
-        #state = np.empty(int(jsn.nstateful), dtype=object)
-        #stateprior = np.empty(int(jsn.nstateful), dtype=object)
-        #for isf in range(int(jsn.nstateful)):
+        # state = np.empty(int(jsn.nstateful), dtype=object)
+        # stateprior = np.empty(int(jsn.nstateful), dtype=object)
+        # for isf in range(int(jsn.nstateful)):
         #    state[isf] = jlineMatrixToArray(jsn.state.get(jsn.stateful[isf]))
         #    stateprior[isf] = jlineMatrixToArray(jsn.state.get(jsn.stateprior[isf]))
-        #super().__setitem__("state", state)
-        #super().__setitem__("stateprior", stateprior)
+        # super().__setitem__("state", state)
+        # super().__setitem__("stateprior", stateprior)
 
         # TODO: fields not parsed yet
         # SerializableFunction<Pair<Map<Node, Matrix>, Map<Node, Matrix>>, Matrix> rtfun;
         # public Map<Station, Map<JobClass, SerializableFunction<Double, Double>>> lst;
         # public Map<Station, SerializableFunction<Matrix, Double>> cdscaling;
         # public Map<Integer, Sync> sync;
+
 
 class Network(Model):
     def __init__(self, *argv):
