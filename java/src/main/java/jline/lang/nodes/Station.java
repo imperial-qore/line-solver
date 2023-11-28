@@ -9,6 +9,7 @@ import java.util.Map;
 
 import jline.lang.constant.GlobalConstants;
 import jline.lang.distributions.*;
+import jline.lang.processes.Replayer;
 import jline.util.SerializableFunction;
 import jline.util.Matrix;
 
@@ -185,12 +186,6 @@ public class Station extends StatefulNode implements Serializable {
     			map.put(jobclass, tmp);
     			mu.put(jobclass, mu_matrix);
     			phi.put(jobclass, phi_matrix);
-    		} else if (!(queue.getServiceProcess(jobclass) instanceof Disabled)) {
-    			//Current JLine only support Exp, Coxian, Erlang, HyperEXP and APH.
-    			Distribution distr = this.server.getServiceDistribution(jobclass);
-				map.put(jobclass, ((MarkovianDistribution)distr).getRepres());
-				mu.put(jobclass, ((MarkovianDistribution)distr).getMu());
-				phi.put(jobclass, ((MarkovianDistribution)distr).getPhi());
             } else if ((queue.getServiceProcess(jobclass) instanceof Det)) {
                 Distribution distr = this.server.getServiceDistribution(jobclass);
                 Map<Integer, Matrix> tmp = new HashMap<Integer, Matrix>();
@@ -199,7 +194,21 @@ public class Station extends StatefulNode implements Serializable {
                 map.put(jobclass, tmp);
                 mu.put(jobclass, new Matrix(distr.getRate()));
                 phi.put(jobclass, new Matrix(1.0));
-    		} else {
+            } else if ((queue.getServiceProcess(jobclass) instanceof Replayer)) {
+                Distribution distr = this.server.getServiceDistribution(jobclass);
+                Map<Integer, Matrix> tmp = new HashMap<Integer, Matrix>();
+                tmp.put(0, new Matrix(-distr.getRate()));
+                tmp.put(1, new Matrix(distr.getRate()));
+                map.put(jobclass, tmp);
+                mu.put(jobclass, new Matrix(distr.getRate()));
+                phi.put(jobclass, new Matrix(1.0));
+            } else if (!(queue.getServiceProcess(jobclass) instanceof Disabled)) {
+                //Current JLine only support Exp, Coxian, Erlang, HyperEXP and APH.
+                Distribution distr = this.server.getServiceDistribution(jobclass);
+                map.put(jobclass, ((MarkovianDistribution)distr).getRepres());
+                mu.put(jobclass, ((MarkovianDistribution)distr).getMu());
+                phi.put(jobclass, ((MarkovianDistribution)distr).getPhi());
+    		} else { // Disabled
     			Matrix nan_matrix = new Matrix(1,1,1);
     			nan_matrix.fill(Double.NaN);
     			Map<Integer, Matrix> tmp = new HashMap<Integer, Matrix>();

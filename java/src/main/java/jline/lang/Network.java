@@ -2519,8 +2519,22 @@ public class Network extends Model implements Serializable {
                     throw new RuntimeException("Logger node is not supported in JLINE");
                 case Queue:
                     // TODO
+                    for(int r = 0; r < R; r++) {
+                        ServiceBinding serviceProcess = node.getServer().getServiceProcess(this.getClassByIndex(r));
+                        Distribution serviceDistrib = serviceProcess.getDistribution();
+                        if (serviceDistrib instanceof Replayer) {
+                            param.fileName = ((Replayer) serviceDistrib).getFileName();
+                        }
+                    }
                 case Delay:
                     // TODO
+                    for(int r = 0; r < R; r++) {
+                        ServiceBinding serviceProcess = node.getServer().getServiceProcess(this.getClassByIndex(r));
+                        Distribution serviceDistrib = serviceProcess.getDistribution();
+                        if (serviceDistrib instanceof Replayer) {
+                            param.fileName = ((Replayer) serviceDistrib).getFileName();
+                        }
+                    }
                 case Transition:
                     // TODO
 //	    			for(int r = 0; r < R; r++) {

@@ -103,8 +103,18 @@ classdef RoutingMatrix < Copyable
             end
         end
 
-        function self = set(self, jobclass1, jobclass2, node1, node2, val)
-            self.P{jobclass1,jobclass2}(node1, node2)=val;
+        function self = set(self, varargin)
+            jobclass1=varargin{1};
+            jobclass2=varargin{2};
+            if length(varargin)==5
+                node1=varargin{3};
+                node2=varargin{4};
+                val=varargin{5};
+                self.P{jobclass1,jobclass2}(node1, node2)=val;
+            else
+                mat=varargin{3};
+                self.P{jobclass1,jobclass2}=mat;
+            end
         end
 
         function P = getCell(self)
