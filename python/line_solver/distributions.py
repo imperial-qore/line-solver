@@ -322,12 +322,11 @@ class Replayer(Distribution):
             if isinstance(args[0], Distribution):
                 self.obj = args[0]
             else:
-                fname = args[0]  # filename
-                self.obj = jpype.JPackage('jline').lang.processes.Replayer(fname)
+                filename = args[0]
+                self.obj = jpype.JPackage('jline').lang.processes.Replayer(filename)
 
-    def fitAPH(filename):
-        rep = Replayer(filename)
-        return APH(rep.obj.fitAPH(filename))
+    def fitAPH(self):
+        return APH(self.obj.fitAPH())
 
 
 class Uniform(ContinuousDistribution):

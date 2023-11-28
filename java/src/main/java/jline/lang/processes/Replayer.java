@@ -114,9 +114,8 @@ public class Replayer extends Distribution {
     }
 
     // TODO: in MATLAB this also uses the skewness
-    public static APH fitAPH(String fileName) {
-        Replayer replayer = new Replayer(fileName);
-        return APH.fitMeanAndSCV(replayer.getMean(), replayer.getSCV());
+    public APH fitAPH() {
+        return APH.fitMeanAndSCV(this.getMean(), this.getSCV());
     }
 
 }
