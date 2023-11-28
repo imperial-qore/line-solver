@@ -15,14 +15,17 @@ source.setArrival(jobclass2, Exp(0.5));
 queue.setService(jobclass1, Erlang.fitMeanAndSCV(1,1/3));
 queue.setService(jobclass2, Replayer([cwd,filesep,'example_trace.txt']));
 
-P = model.initRoutingMatrix;
+P = model.initRoutingMatrix();
 P{1} = Network.serialRouting(source,queue,sink);
 P{2} = Network.serialRouting(source,queue,sink);
 model.link(P);
 
-jmtAvgTable = SolverJMT(model,'seed',23000).getAvgTable
+jmtAvgTable = SolverJMT(model,'seed',23000).getAvgTable()
 
 queue.setService(jobclass2, Replayer([cwd,filesep,'example_trace.txt']).fitAPH());
-ctmcAvgTable2 = SolverCTMC(model,'cutoff',2,'verbose',true).getAvgTable
-ctmcAvgTable4 = SolverCTMC(model,'cutoff',4,'verbose',true).getAvgTable
-mamAvgTable = SolverMAM(model).getAvgTable
+model.reset();
+jmtAvgTable = SolverJMT(model,'seed',23000).getAvgTable()
+
+ctmcAvgTable2 = SolverCTMC(model,'cutoff',2,'verbose',true).getAvgTable()
+ctmcAvgTable4 = SolverCTMC(model,'cutoff',4,'verbose',true).getAvgTable()
+mamAvgTable = SolverMAM(model).getAvgTable()

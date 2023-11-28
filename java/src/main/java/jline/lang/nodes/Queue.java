@@ -130,7 +130,7 @@ public class Queue extends Station implements HasSchedStrategy, Serializable {
         if (resetState) {
             this.model.setInitialized(false);
         }
-        
+
         this.dropRule.put(jobClass, DropStrategy.WaitingQueue);
     }
 

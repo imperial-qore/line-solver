@@ -108,7 +108,18 @@ public class APH extends MarkovianDistribution {
 		return (Matrix) this.getParam(3).getValue();
 	}
 
-	public static APH fitMeanAndSCV(double mean, double scv) {
+	public static APH fit(double mean, double scv, double skew) {
+		if (mean <= GlobalConstants.FineTol)  {
+			ArrayList<Double> alpha = new ArrayList<>();
+			alpha.add(0,1.0);
+			return new APH(alpha, new Matrix(Double.POSITIVE_INFINITY));
+		} else {
+			// TODO: fitting based on skewness to be implemented, it requires porting of APHFrom3Moments from BUTools
+			return APH.fitMeanAndSCV(mean, scv);
+		}
+	}
+
+		public static APH fitMeanAndSCV(double mean, double scv) {
 		APH ex;
 		if (mean <= GlobalConstants.FineTol) {
 			Matrix T = new Matrix(1,1);

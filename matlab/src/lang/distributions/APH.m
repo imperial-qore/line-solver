@@ -239,7 +239,7 @@ classdef APH < MarkovianDistribution
             % Fit the distribution from first three standard moments (mean,
             % SCV, skewness)
             if MEAN <= GlobalConstants.FineTol
-                ex = Exp(Inf);
+                ex = APH(1.0, [1]);
             else
                 ex = APH(1.0, [1]);
                 ex.update(MEAN, SCV, SKEW);

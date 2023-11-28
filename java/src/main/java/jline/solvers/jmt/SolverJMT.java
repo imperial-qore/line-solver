@@ -3644,6 +3644,7 @@ public class SolverJMT extends NetworkSolver {
         } else {
             this.maxSimulatedTime = options.timespan[1];
         }
+
         if (!this.model.hasInitState()) {
             this.model.initDefault();
         }
