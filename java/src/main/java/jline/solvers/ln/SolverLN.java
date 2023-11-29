@@ -24,6 +24,7 @@ import org.apache.commons.lang3.NotImplementedException;
 import java.util.*;
 
 public class SolverLN extends EnsembleSolver {
+    // TODO: unlike MATLAB LayeredNetworkSolver is not a superclass here, implement and add as an interface?
     // registries of quantities to update at every iteration
     private int nlayers;
     private LayeredNetworkStruct lqn;

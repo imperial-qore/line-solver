@@ -27,6 +27,7 @@ public class NetworkStruct implements Serializable, Cloneable {
     public double nclosedjobs;
     public int nchains;
 
+    //TODO: check if use of station, stateful and node are consistent with MATLAB
     public Map<JobClass, Map<JobClass, Matrix>> rtorig;
     public Map<Station, Map<JobClass, SerializableFunction<Double, Double>>> lst;
     public Map<StatefulNode, Matrix> state;

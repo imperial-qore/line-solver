@@ -17,7 +17,7 @@ import jline.util.Matrix;
  * Class for the nodeparam field within NetworkStruct
  */
 public class NodeParam implements Serializable {
-
+	//TODO: this data structure is a blob and may need reimplementation
 	// Cache
 	public int nitems;
 	public Matrix[][] accost;

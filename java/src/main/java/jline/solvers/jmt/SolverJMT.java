@@ -3111,6 +3111,7 @@ public class SolverJMT extends NetworkSolver {
         return getProbAggr(node, state_a);
     }
 
+    // TODO: add sampling method
     public double sampleAggr(Node node, int numEvents, boolean markActivePassive) throws IOException {
         if (GlobalConstants.DummyMode) {
             return NaN;
@@ -3136,10 +3137,12 @@ public class SolverJMT extends NetworkSolver {
 //        modelCopy.linkAndLog();
     }
 
+    // TODO: add sampling method
     public double sampleAggr(Node node, int numEvents) throws IOException {
         return sampleAggr(node, numEvents, false);
     }
 
+    // TODO: add sampling method
     public double sampleAggr(Node node) {
         throw new RuntimeException("JMT does not allow to fix the number of events for individual nodes. The number of returned events may be inaccurate.");
     }

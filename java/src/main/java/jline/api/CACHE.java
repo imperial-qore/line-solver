@@ -11,7 +11,7 @@ import java.util.Collections;
  * APIs for stochastic models of caches
  */
 public class CACHE {
-
+    // TODO: missing caching methods for NC solver
     /**
      * Computes access factors for the cache
      * @param lambda - request arrival rates from users to items of individual lists

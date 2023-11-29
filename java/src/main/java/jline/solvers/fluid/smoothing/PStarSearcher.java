@@ -39,7 +39,7 @@ import static java.lang.Double.isInfinite;
 // close of this current project.
 
 public class PStarSearcher {
-
+  // TODO: this still needs integration with the fluid solver as per info above
   public long runTime;
 
   // Generates the target (accurate) queue lengths used within the CMA-ES objective function

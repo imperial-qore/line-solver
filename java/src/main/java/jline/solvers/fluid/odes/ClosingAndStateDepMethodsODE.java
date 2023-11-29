@@ -20,6 +20,7 @@ import static jline.lang.constant.SchedStrategy.DPS;
 import static jline.lib.KPCToolbox.*;
 
 public class ClosingAndStateDepMethodsODE implements FirstOrderDifferentialEquations {
+  // TODO: softmin method not implemented yet
   private final NetworkStruct sn;
   private final Map<Station, Map<JobClass, Matrix>> mu;
   private final Map<Station, Map<JobClass, Matrix>> phi;

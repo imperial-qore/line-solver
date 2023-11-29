@@ -14,6 +14,7 @@ import static jline.lib.KPCToolbox.*;
  * A Markovian Arrival Process
  */
 public class MAP extends MarkovianDistribution implements Serializable {
+    //TODO: several methods missing
     List<Double> totalDepartureRate;
     List<Double> totalPhaseRate;
     private final int nPhases;
