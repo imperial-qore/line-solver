@@ -687,8 +687,7 @@ public class ClosedModel {
         // SolverFluid solver = new SolverFluid(model,options);
 
         SolverOptions options = new SolverOptions(SolverType.JMT);
-        SolverJMT solver = new SolverJMT(model,options);
-
+        SolverFluid solver = new SolverFluid(model,options);
 
         solver.options.stiff = true;
         //solver.runAnalyzer();

@@ -3,6 +3,7 @@ package jline.solvers;
 import jline.lang.constant.GlobalConstants;
 import jline.lang.constant.VerboseLevel;
 
+import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -22,18 +23,23 @@ public class NetworkAvgTable {
     public java.util.List<String> getClassNames() {
         return classNames;
     }
+
     public java.util.List<String> getStationNames() {
         return stationNames;
     }
+
     public void setClassNames(java.util.List<String> classNames) {
         this.classNames = classNames;
     }
+
     public void setStationNames(java.util.List<String> stationNames) {
         this.stationNames = stationNames;
     }
+
     public void setOptions(SolverOptions options) {
         this.options = options;
     }
+
     public List<Double> get(int col) {
         return this.T.get(col);
     }
@@ -41,6 +47,7 @@ public class NetworkAvgTable {
     public List<Double> getQLen() {
         return this.T.get(0);
     }
+
     public List<Double> getUtil() {
         return this.T.get(1);
     }
@@ -53,9 +60,7 @@ public class NetworkAvgTable {
         return this.T.get(3);
     }
 
-    public List<Double> getArvR() {
-        return this.T.get(4);
-    }
+    public List<Double> getArvR() { return this.T.get(4); }
 
     public List<Double> getTput() {
         return this.T.get(5);
@@ -68,22 +73,24 @@ public class NetworkAvgTable {
     public void printTable() {
         this.print();
     }
-    public void printTable(SolverOptions options){
+
+    public void printTable(SolverOptions options) {
         this.print(options);
     }
+
     public void print() {
         this.print(this.options);
     }
-    public void print(SolverOptions options){
+
+    public void print(SolverOptions options) {
         if (options.verbose != VerboseLevel.SILENT) {
             System.out.printf(
-                    "%-12s\t %-12s\t %-17s\t %-17s\t %-17s\t %-17s\t %-17s\t %-17s",
+                    "%-10s\t%-10s\t%-10s\t%-10s\t%-10s\t%-10s\t%-10s\t%-10s",
                     "Station", "JobClass", "QLen", "Util", "RespT", "ResidT", "ArvR", "Tput");
             System.out.println(
-                    "\n--------------------------------------------------------------------------------------------------------------------------------------------------------");
-            NumberFormat nf = NumberFormat.getNumberInstance();
-            //nf.setMinimumFractionDigits(5);
-            nf.setMinimumFractionDigits(16);
+                    "\n--------------------------------------------------------------------------------------------");
+            DecimalFormat nf = new DecimalFormat("#0.#####");
+            nf.setMinimumFractionDigits(5);
             for (int i = 0; i < stationNames.size(); i++) {
                 if (getQLen().get(i) > GlobalConstants.Zero ||
                         getUtil().get(i) > GlobalConstants.Zero ||
@@ -92,7 +99,7 @@ public class NetworkAvgTable {
                         getArvR().get(i) > GlobalConstants.Zero ||
                         getTput().get(i) > GlobalConstants.Zero) {
                     System.out.format(
-                            "%-12s\t %-12s\t %-10s\t %-10s\t %-10s\t %-10s\t %-10s\t %-10s\n",
+                            "%-10s\t%-10s\t%-10s\t%-10s\t%-10s\t%-10s\t%-10s\t%-10s\n",
                             stationNames.get(i),
                             classNames.get(i),
                             nf.format(getQLen().get(i)),
@@ -104,7 +111,7 @@ public class NetworkAvgTable {
                 }
             }
             System.out.println(
-                    "--------------------------------------------------------------------------------------------------------------------------------------------------------");
+                    "--------------------------------------------------------------------------------------------");
         }
     }
 }

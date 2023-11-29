@@ -12,6 +12,7 @@ public class SolverMetrics {
   public Matrix UNclass;
   public Matrix RNclass;
   public Matrix TNclass;
+  public Matrix ANclass;
   public Matrix WNclass;
   public Matrix CNchain;
   public Matrix XNchain;

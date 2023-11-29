@@ -325,7 +325,7 @@ public class ForkJoin {
     }
 
     public static void main(String[] args) {
-        Network model = ex_nested();
+        Network model = ex1_line();
         SolverOptions options = new SolverOptions(SolverType.MVA);
 //        options.config.fork_join = "ht";
         options.iter_max = 100;

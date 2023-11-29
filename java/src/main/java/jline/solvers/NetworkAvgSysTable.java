@@ -16,7 +16,7 @@ public class NetworkAvgSysTable {
     List<String> inChainNames;
 
     public NetworkAvgSysTable(List<Double> SysRespTval, List<Double> SysTputval, SolverOptions options) {
-        this.T = new ArrayList<>(Arrays.asList(SysRespTval,SysTputval ));
+        this.T = new ArrayList<>(Arrays.asList(SysRespTval,SysTputval));
         this.options = options;
     }
 
