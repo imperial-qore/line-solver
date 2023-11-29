@@ -72,7 +72,8 @@ public class SolverSSAClosedExamplesTest {
 		assertEquals(1.0118384964373368, ResidT.get(0), 1e-13);
 		assertEquals(3.4615704818705266, ResidT.get(1), 1e-13);
 
-		List<Double> Tput = avgTable.get(4);
+		List<Double> AvrR = avgTable.get(4);
+		List<Double> Tput = avgTable.get(5);
 		assertEquals(2.2900449730000120, Tput.get(0), 1e-13);
 		assertEquals(0.6649185948607406, Tput.get(1), 1e-13);
 	}

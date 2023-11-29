@@ -25,39 +25,40 @@ public class SolverJMTIOOpenExamplesTest {
         options.seed = 23000;
         options.iter_max = 200;
         SolverJMT solver = new SolverJMT(model, options);
-//        solver.jsimgView();
+        //solver.jsimgView();
 
         NetworkAvgTable avgTable = solver.getAvgTable();
-
+        avgTable.printTable();
         // QLen values
         List<Double> QLen = avgTable.get(0);
-        assertEquals(0.0226789994053706, QLen.get(0), 1e-13);
-        assertEquals(0.113319721462768, QLen.get(1), 1e-13);
+        assertEquals(0.0210224504535244, QLen.get(0), 1e-13);
+        assertEquals(0.0970769740346852, QLen.get(1), 1e-13);
         assertEquals(0.0, QLen.get(2), 1e-13);
 
         // Util values
         List<Double> Util = avgTable.get(1);
-        assertEquals(0.0226789994053706, Util.get(0), 1e-13);
-        assertEquals(0.102223795456197, Util.get(1), 1e-13);
+        assertEquals(0.0210224504535244, Util.get(0), 1e-13);
+        assertEquals(0.0970769740346852, Util.get(1), 1e-13);
         assertEquals(0.0, Util.get(2), 1e-13);
 
         // RespT values
         List<Double> RespT = avgTable.get(2);
-        assertEquals(0.214832145125023, RespT.get(0), 1e-13);
-        assertEquals(1.1075290123417, RespT.get(1), 1e-13);
+        assertEquals(0.2130525434758123, RespT.get(0), 1e-13);
+        assertEquals(0.9963834920584885, RespT.get(1), 1e-13);
         assertEquals(0.0, RespT.get(2), 1e-13);
 
         // ResidT values
         List<Double> ResidT = avgTable.get(3);
-        assertEquals(0.214832145125023, ResidT.get(0), 1e-13);
-        assertEquals(1.1075290123417, ResidT.get(1), 1e-13);
+        assertEquals(0.2130525434758124, ResidT.get(0), 1e-13);
+        assertEquals(0.9963834920584888, ResidT.get(1), 1e-13);
         assertEquals(0.0, ResidT.get(2), 1e-13);
 
         // Tput values
-        List<Double> Tput = avgTable.get(4);
-        assertEquals(0.0996073116118573, Tput.get(0), 1e-13);
-        assertEquals(0.100011985776734, Tput.get(1), 1e-13);
-        assertEquals(0.0996206521870407, Tput.get(2), 1e-13);
+        List<Double> ArvR = avgTable.get(4);
+        List<Double> Tput = avgTable.get(5);
+        assertEquals(0.0999978032520005, Tput.get(0), 1e-13);
+        assertEquals(0.0999991505973458, Tput.get(1), 1e-13);
+        assertEquals(0.1000000000000000, Tput.get(2), 1e-13);
     }
 
     @Test
@@ -84,7 +85,7 @@ public class SolverJMTIOOpenExamplesTest {
             assertEquals(expectedUtil[i], avgTable.get(1).get(i), 1e-3);
             assertEquals(expectedRespT[i], avgTable.get(2).get(i), 1e-3);
             assertEquals(expectedResidT[i], avgTable.get(3).get(i), 1e-3);
-            assertEquals(expectedTput[i], avgTable.get(4).get(i), 1e-3);
+            assertEquals(expectedTput[i], avgTable.get(5).get(i), 1e-3);
         }
     }
 }

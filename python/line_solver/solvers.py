@@ -47,9 +47,10 @@ class Solver:
         Util = np.array(list(table.getUtil()))
         RespT = np.array(list(table.getRespT()))
         ResidT = np.array(list(table.getResidT()))
+        ArvR = np.array(list(table.getArvR()))
         Tput = np.array(list(table.getTput()))
 
-        cols = ['QLen', 'Util', 'RespT', 'ResidT', 'Tput']
+        cols = ['QLen', 'Util', 'RespT', 'ResidT', 'ArvR', 'Tput']
         stations = list(table.getStationNames())
         statnames = []
         for i in range(len(stations)):
@@ -58,7 +59,7 @@ class Solver:
         classnames = []
         for i in range(len(jobclasses)):
             classnames.append(str(jobclasses[i]))
-        AvgTable = pd.DataFrame(np.concatenate([[QLen, Util, RespT, ResidT, Tput]]).T, columns=cols)
+        AvgTable = pd.DataFrame(np.concatenate([[QLen, Util, RespT, ResidT, ArvR, Tput]]).T, columns=cols)
         tokeep = ~(AvgTable<=0.0).all(axis=1)
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)

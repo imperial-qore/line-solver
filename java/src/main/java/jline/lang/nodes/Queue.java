@@ -101,7 +101,7 @@ public class Queue extends Station implements HasSchedStrategy, Serializable {
             }        
        }
 
-        return new Immediate();
+        return new Disabled();
     }
 
     public Distribution getService(JobClass jobClass) {

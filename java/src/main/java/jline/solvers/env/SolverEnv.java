@@ -4,9 +4,7 @@
 package jline.solvers.env;
 
 
-import jline.lang.constant.GlobalConstants;
 import jline.solvers.*;
-import jline.util.Maths;
 import jline.lang.*;
 import jline.lang.constant.SolverType;
 import jline.solvers.fluid.smoothing.PStarSearcher;
@@ -388,6 +386,7 @@ public class SolverEnv extends EnsembleSolver {
       List<Double> Qval = new ArrayList<>();
       List<Double> Uval = new ArrayList<>();
       List<Double> Residval = new ArrayList<>();
+      List<Double> ArvR = new ArrayList<>();
       List<Double> Tval = new ArrayList<>();
       List<Double> respTVal = new ArrayList<>();
       List<String> className = new ArrayList<>();
@@ -398,6 +397,7 @@ public class SolverEnv extends EnsembleSolver {
             Qval.add(QN.get(i, k));
             Uval.add(UN.get(i, k));
             Residval.add(0.0);
+            ArvR.add(0.0);
             Tval.add(TN.get(i, k));
             respTVal.add(QN.get(i, k) / TN.get(i, k));
             className.add(sn[0].jobclasses.get(k).getName());
@@ -406,7 +406,7 @@ public class SolverEnv extends EnsembleSolver {
         }
       }
 
-      NetworkAvgTable avgTable = new NetworkAvgTable(Qval, Uval, respTVal, Residval, Tval);
+      NetworkAvgTable avgTable = new NetworkAvgTable(Qval, Uval, respTVal, Residval, ArvR, Tval);
       avgTable.setOptions(this.options);
       avgTable.setClassNames(className);
       avgTable.setStationNames(stationName);

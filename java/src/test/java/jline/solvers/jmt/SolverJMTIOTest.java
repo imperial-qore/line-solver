@@ -59,7 +59,8 @@ public class SolverJMTIOTest {
         assertEquals(0, ResidT.get(0), 1e-13);
         assertEquals(0.954292928096683, ResidT.get(1), 1e-13);
 
-        List<Double> Tput = avgTable.get(4);
+        List<Double> ArvR = avgTable.get(4);
+        List<Double> Tput = avgTable.get(5);
         assertEquals(0.998941736137035, Tput.get(0), 1e-13);
         assertEquals(0.99986838711003, Tput.get(1), 1e-13);
     }
@@ -88,7 +89,7 @@ public class SolverJMTIOTest {
             assertEquals(expectedUtil[i], avgTable.get(1).get(i), 1e-3);
             assertEquals(expectedRespT[i], avgTable.get(2).get(i), 1e-3);
             assertEquals(expectedResidT[i], avgTable.get(3).get(i), 1e-3);
-            assertEquals(expectedTput[i], avgTable.get(4).get(i), 1e-3);
+            assertEquals(expectedTput[i], avgTable.get(5).get(i), 1e-3);
         }
     }
 
@@ -114,7 +115,7 @@ public class SolverJMTIOTest {
             assertEquals(expectedUtil[i], avgTable.get(1).get(i), 1e-3);
             assertEquals(expectedRespT[i], avgTable.get(2).get(i), 1e-3);
             assertEquals(expectedResidT[i], avgTable.get(3).get(i), 1e-3);
-            assertEquals(expectedTput[i], avgTable.get(4).get(i), 1e-3);
+            assertEquals(expectedTput[i], avgTable.get(5).get(i), 1e-3);
         }
     }
 
@@ -141,7 +142,7 @@ public class SolverJMTIOTest {
             assertEquals(expectedUtil[i], avgTable.get(1).get(i), 1e-2);
             assertEquals(expectedRespT[i], avgTable.get(2).get(i), 1e-2);
             assertEquals(expectedResidT[i], avgTable.get(3).get(i), 1e-2);
-            assertEquals(expectedTput[i], avgTable.get(4).get(i), 1e-2);
+            assertEquals(expectedTput[i], avgTable.get(5).get(i), 1e-2);
         }
     }
 
@@ -171,7 +172,7 @@ public class SolverJMTIOTest {
             assertEquals(expectedUtil[i], avgTable.get(1).get(i), 1e-3);
             assertEquals(expectedRespT[i], avgTable.get(2).get(i), 1e-3);
             assertEquals(expectedResidT[i], avgTable.get(3).get(i), 1e-3);
-            assertEquals(expectedTput[i], avgTable.get(4).get(i), 1e-3);
+            assertEquals(expectedTput[i], avgTable.get(5).get(i), 1e-3);
         }
     }
 }

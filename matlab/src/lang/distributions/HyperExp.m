@@ -70,7 +70,7 @@ classdef HyperExp < MarkovianDistribution
         end
 
         function PH = getPH(self)
-            % PH = GETREPRESENTATION()
+            % PH = GETPH()
             % Return the renewal process associated to the distribution
             p = self.getParam(1).paramValue;
             n = length(p);

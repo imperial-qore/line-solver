@@ -27,7 +27,7 @@ public class ServiceSection extends Section implements Serializable {
 
     public Distribution getServiceDistribution(JobClass jobClass) {
         if (!this.serviceProcesses.containsKey(jobClass)) {
-            return new Immediate();
+            return new Disabled();
         }
         return this.serviceProcesses.get(jobClass).getDistribution();
     }

@@ -79,6 +79,7 @@ class SolverLNTest {
         return model;
     }
 
+    // This is the former TestSolverLN2
     LayeredNetwork buildModel3() throws Exception {
         LayeredNetwork model = new LayeredNetwork("test_LQN_4");
         Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
@@ -501,7 +502,9 @@ class SolverLNTest {
         // this test is to test the network's job classes, stations and connections
 
         SolverLN solverLN = new SolverLN(buildModel3());
+
         Network network1 = solverLN.getEnsemble().get(0);
+
         Network network2 = solverLN.getEnsemble().get(1);
 
         // test layer 1

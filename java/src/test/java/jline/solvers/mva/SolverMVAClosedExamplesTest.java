@@ -64,7 +64,8 @@ public class SolverMVAClosedExamplesTest {
 		assertEquals(1.0000000000000000, ResidT.get(0), 1e-13);
 		assertEquals(3.49220427715866, ResidT.get(1), 1e-13);
 
-		List<Double> Tput = avgTable.get(4);
+		List<Double> AvrR = avgTable.get(4);
+		List<Double> Tput = avgTable.get(5);
 		assertEquals(2.22607864269366, Tput.get(0), 1e-13);
 		assertEquals(0.667823592808098, Tput.get(1), 1e-13);
 	}
@@ -137,7 +138,8 @@ public class SolverMVAClosedExamplesTest {
 		assertEquals(0.03297918716791013, ResidT.get(2), 1e-13);
 		assertEquals(1.1803082719965812, ResidT.get(3), 1e-13);
 
-		List<Double> Tput = avgTable.get(4);
+		List<Double> AvrR = avgTable.get(4);
+		List<Double> Tput = avgTable.get(5);
 		assertEquals(1.402365268339978, Tput.get(0), 1e-13);
 		assertEquals(0.9536088031807657, Tput.get(1), 1e-13);
 		assertEquals(0.14023652683399782, Tput.get(2), 1e-13);
@@ -230,7 +232,8 @@ public class SolverMVAClosedExamplesTest {
 		assertEquals(0.2023690446700002, ResidT.get(4), 1e-13);
 		assertEquals(0.3333104754472425, ResidT.get(5), 1e-13);
 
-		List<Double> Tput = avgTable.get(4);
+		List<Double> AvrR = avgTable.get(4);
+		List<Double> Tput = avgTable.get(5);
 		assertEquals(1.7050678367759344, Tput.get(0), 1e-13);
 		assertEquals(1.1594466405279866, Tput.get(1), 1e-13);
 		assertEquals(0.7500093077114268, Tput.get(2), 1e-13);

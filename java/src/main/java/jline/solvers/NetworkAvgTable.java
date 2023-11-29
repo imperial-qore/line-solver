@@ -15,8 +15,8 @@ public class NetworkAvgTable {
     List<String> classNames;
     List<String> stationNames;
 
-    public NetworkAvgTable(List<Double> Qval, List<Double> Uval, List<Double> Rval, List<Double> Residval, List<Double> Tval) {
-        this.T = new ArrayList<>(Arrays.asList(Qval, Uval, Rval, Residval, Tval));
+    public NetworkAvgTable(List<Double> Qval, List<Double> Uval, List<Double> Rval, List<Double> Residval, List<Double> ArvR, List<Double> Tval) {
+        this.T = new ArrayList<>(Arrays.asList(Qval, Uval, Rval, Residval, ArvR, Tval));
     }
 
     public java.util.List<String> getClassNames() {
@@ -53,8 +53,12 @@ public class NetworkAvgTable {
         return this.T.get(3);
     }
 
-    public List<Double> getTput() {
+    public List<Double> getArvR() {
         return this.T.get(4);
+    }
+
+    public List<Double> getTput() {
+        return this.T.get(5);
     }
 
     //    List<Double> getArvR() {
@@ -73,10 +77,10 @@ public class NetworkAvgTable {
     public void print(SolverOptions options){
         if (options.verbose != VerboseLevel.SILENT) {
             System.out.printf(
-                    "%-12s\t %-12s\t %-17s\t %-17s\t %-17s\t %-17s\t %-17s",
-                    "Station", "JobClass", "QLen", "Util", "RespT", "ResidT", "Tput");
+                    "%-12s\t %-12s\t %-17s\t %-17s\t %-17s\t %-17s\t %-17s\t %-17s",
+                    "Station", "JobClass", "QLen", "Util", "RespT", "ResidT", "ArvR", "Tput");
             System.out.println(
-                    "\n-----------------------------------------------------------------------------------------------------------------------------------");
+                    "\n--------------------------------------------------------------------------------------------------------------------------------------------------------");
             NumberFormat nf = NumberFormat.getNumberInstance();
             //nf.setMinimumFractionDigits(5);
             nf.setMinimumFractionDigits(16);
@@ -85,20 +89,22 @@ public class NetworkAvgTable {
                         getUtil().get(i) > GlobalConstants.Zero ||
                         getRespT().get(i) > GlobalConstants.Zero ||
                         getResidT().get(i) > GlobalConstants.Zero ||
+                        getArvR().get(i) > GlobalConstants.Zero ||
                         getTput().get(i) > GlobalConstants.Zero) {
                     System.out.format(
-                            "%-12s\t %-12s\t %-10s\t %-10s\t %-10s\t %-10s\t %-10s\n",
+                            "%-12s\t %-12s\t %-10s\t %-10s\t %-10s\t %-10s\t %-10s\t %-10s\n",
                             stationNames.get(i),
                             classNames.get(i),
                             nf.format(getQLen().get(i)),
                             nf.format(getUtil().get(i)),
                             nf.format(getRespT().get(i)),
                             nf.format(getResidT().get(i)),
+                            nf.format(getArvR().get(i)),
                             nf.format(getTput().get(i)));
                 }
             }
             System.out.println(
-                    "-----------------------------------------------------------------------------------------------------------------------------------");
+                    "--------------------------------------------------------------------------------------------------------------------------------------------------------");
         }
     }
 }

@@ -11,7 +11,6 @@ import jline.lang.Network;
 import jline.lang.NetworkStruct;
 
 import javax.xml.parsers.ParserConfigurationException;
-import java.text.NumberFormat;
 import java.util.*;
 
 // Abstract class for solvers applicable to Network models
@@ -426,6 +425,7 @@ public abstract class NetworkSolver extends Solver {
             List<Double> Uval = new ArrayList<>();
             List<Double> Rval = new ArrayList<>();
             List<Double> Tval = new ArrayList<>();
+            List<Double> ArvR = new ArrayList<>();
             List<Double> Residval = new ArrayList<>();
             List<String> className = new ArrayList<>();
             List<String> stationName = new ArrayList<>();
@@ -442,6 +442,7 @@ public abstract class NetworkSolver extends Solver {
                     Qval.add(QN.get(i, k));
                     Uval.add(UN.get(i, k));
                     Rval.add(RN.get(i, k));
+                    ArvR.add(0.0);
                     Tval.add(TN.get(i, k));
                     className.add(sn.jobclasses.get(k).getName());
                     stationName.add(sn.stations.get(i).getName());
@@ -465,7 +466,7 @@ public abstract class NetworkSolver extends Solver {
                     //  }
                 }
             }
-            NetworkAvgTable avgTable = new NetworkAvgTable(Qval, Uval, Rval, Residval, Tval);
+            NetworkAvgTable avgTable = new NetworkAvgTable(Qval, Uval, Rval, Residval, ArvR, Tval);
             avgTable.setOptions(this.options);
             avgTable.setClassNames(className);
             avgTable.setStationNames(stationName);
@@ -576,8 +577,7 @@ public abstract class NetworkSolver extends Solver {
 
         boolean[] completes = new boolean[sn.nclasses];
         for (int idx = 0; idx < sn.nclasses; idx++) {
-            // TODO: entry = T{refstats(r),r}.class.completes;
-            completes[idx] = model.getClasses().get(idx).getCompletes(); // Replaced by above once implemented
+            completes[idx] = model.getClasses().get(idx).getCompletes();
         }
 
         // TODO: if any(isinf(sn.njobs')) // If the model has any open class

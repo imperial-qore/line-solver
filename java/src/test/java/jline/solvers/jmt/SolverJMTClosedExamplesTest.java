@@ -43,7 +43,8 @@ public class SolverJMTClosedExamplesTest {
         assertEquals(1.00806433579534, ResidT.get(0), 1e-13);
         assertEquals(3.47201805035843, ResidT.get(1), 1e-13);
 
-        List<Double> Tput = avgTable.get(4);
+        List<Double> ArvR = avgTable.get(5);
+        List<Double> Tput = avgTable.get(5);
         assertEquals(2.21287923853873, Tput.get(0), 1e-13);
         assertEquals(0.680220567268009, Tput.get(1), 1e-13);
     }
@@ -87,7 +88,9 @@ public class SolverJMTClosedExamplesTest {
         assertEquals(0.0327326198595526, ResidT.get(2), 1e-13);
         assertEquals(1.18602561506753, ResidT.get(3), 1e-13);
 
-        List<Double> Tput = avgTable.get(4);
+        List<Double> ArvR = avgTable.get(5);
+        List<Double> Tput = avgTable.get(5);
+
         assertEquals(1.40780162218347, Tput.get(0), 1e-13);
         assertEquals(0.950637005374731, Tput.get(1), 1e-13);
         assertEquals(0.137244652741601, Tput.get(2), 1e-13);
@@ -139,7 +142,8 @@ public class SolverJMTClosedExamplesTest {
         assertEquals(0.208162074533773, ResidT.get(4), 1e-13);
         assertEquals(0.354291512693584, ResidT.get(5), 1e-13);
 
-        List<Double> Tput = avgTable.get(4);
+        List<Double> ArvR = avgTable.get(5);
+        List<Double> Tput = avgTable.get(5);
         assertEquals(1.70923082948479, Tput.get(0), 1e-13);
         assertEquals(1.16177133451427, Tput.get(1), 1e-13);
         assertEquals(0.740279575628389, Tput.get(2), 1e-13);
@@ -173,7 +177,7 @@ public class SolverJMTClosedExamplesTest {
             assertEquals(expectedUtil[i], avgTable.get(1).get(i), 1e-4);
             assertEquals(expectedRespT[i], avgTable.get(2).get(i), 1e-4);
             assertEquals(expectedResidT[i], avgTable.get(3).get(i), 1e-4);
-            assertEquals(expectedTput[i], avgTable.get(4).get(i), 1e-4);
+            assertEquals(expectedTput[i], avgTable.get(5).get(i), 1e-4);
         }
 
 //        solver.jsimgView(options);
@@ -203,7 +207,7 @@ public class SolverJMTClosedExamplesTest {
             assertEquals(expectedUtil[i], avgTable.get(1).get(i), 1e-2);
             assertEquals(expectedRespT[i], avgTable.get(2).get(i), 1e-2);
             assertEquals(expectedResidT[i], avgTable.get(3).get(i), 1e-2);
-            assertEquals(expectedTput[i], avgTable.get(4).get(i), 1e-2);
+            assertEquals(expectedTput[i], avgTable.get(5).get(i), 1e-2);
         }
 
 //        solver.jsimgView(options);

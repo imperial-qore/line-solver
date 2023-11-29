@@ -79,6 +79,6 @@ if isplot ~= 0
     h1 = plot(x,y1,'b--','LineWidth',2);
     h2 = plot(x,y2,'b-.','LineWidth',2);
     plot(X,Yfit,'r-','LineWidth',3);
-    legend([h1,h2],'slope 1/2','slope 1',4)
+    %legend([h1,h2],'slope 1/2','slope 1',4)
     xlabel('log10(blocks of size m)'),ylabel('log10(R/S)'),title('R/S Method');
 end

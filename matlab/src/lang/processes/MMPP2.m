@@ -132,7 +132,7 @@ classdef MMPP2 < MarkovModulated
         end
 
         function PH = getPH(self)
-            % PH = GETREPRESENTATION()
+            % PH = GETPH()
             PH = getProcess(self);
         end
 

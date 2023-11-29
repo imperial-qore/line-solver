@@ -85,7 +85,8 @@ classdef Immediate < Distribution
         end
 
         function PH = getPH(self)
-            %global GlobalConstants.Immediate
+            % PH = GETPH()
+            % global GlobalConstants.Immediate
             PH = {[-GlobalConstants.Immediate] ,[GlobalConstants.Immediate]};
         end
 
