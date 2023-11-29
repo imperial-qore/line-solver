@@ -95,6 +95,7 @@ class Solver:
 
     def getAvgSysTable(self):
         table = self.obj.getAvgSysTable()
+
         # convert to NumPy
         SysRespT = np.array(list(table.getSysRespT()))
         SysTput = np.array(list(table.getSysTput()))

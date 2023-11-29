@@ -7,6 +7,7 @@ import jline.lang.*;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.distributions.*;
 import jline.solvers.jmt.SolverJMT;
+import jline.solvers.mva.SolverMVA;
 import jline.util.Matrix;
 
 import jline.lang.nodes.Queue;
@@ -138,6 +139,32 @@ public class GettingStarted {
         queue3.setService(closedClass, new Exp(3));
 
         model.link(model.serialRouting(queue1, queue2, queue3));
+        return model;
+    }
+
+    public static Network ex5_line() {
+        /* A closed network of 3 queues
+         */
+        Network model = new Network("3 Closed");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+
+        ClosedClass jobClass1 = new ClosedClass(model, "Class1", 1, queue);
+        ClosedClass jobClass2 = new ClosedClass(model, "Class2", 0, queue);
+        ClosedClass jobClass3 = new ClosedClass(model, "Class3", 0, queue);
+
+        queue.setService(jobClass1, Erlang.fitMeanAndOrder(1, 2));
+        queue.setService(jobClass2, Erlang.fitMeanAndOrder(2, 2));
+        queue.setService(jobClass3, Erlang.fitMeanAndOrder(3, 2));
+
+        RoutingMatrix P = model.initRoutingMatrix();
+        P.set(jobClass1, jobClass2, queue, queue, 1.0);
+        P.set(jobClass2, jobClass3, queue, queue, 1.0);
+        P.set(jobClass3, jobClass1, queue, queue, 1.0);
+
+
+        //jobClass1.setCompletes(false);
+        //jobClass2.setCompletes(false);
+        model.link(P);
         return model;
     }
 
@@ -601,12 +628,14 @@ public class GettingStarted {
 
 
     public static void main(String[] args) throws IllegalAccessException, ParserConfigurationException {
-        Network model = ex1_line();
+        Network model = ex5_line();
         //SolverCTMC solver = new SolverCTMC(model);
-        SolverJMT solver = new SolverJMT(model);
+        //SolverJMT solver = new SolverJMT(model);
+        SolverMVA solver = new SolverMVA(model);
         //solver.applyCutoff(3);
         solver.getAvgTable().print();
-        solver.jsimgView();
+        solver.getAvgSysTable().print();
+        //solver.jsimgView();
 //        solver.getGenerator();
 //        solver.getStateSpace();
 //        solver.getProbabilityVector();

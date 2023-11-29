@@ -6,6 +6,7 @@ import jline.lang.constant.SolverType;
 import jline.lang.distributions.*;
 import jline.lang.nodes.*;
 import jline.lang.processes.Replayer;
+import jline.solvers.NetworkAvgSysTable;
 import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.solvers.jmt.SolverJMT;
@@ -379,7 +380,7 @@ public class OpenModel {
         NetworkStruct sn = model.getStruct(false);
         SolverOptions options = new SolverOptions(SolverType.MVA);
         NetworkSolver solver = new SolverJMT(model, options);
-        NetworkAvgTable t = solver.getAvgTable();
+        NetworkAvgSysTable t = solver.getAvgSysTable();
         //model.jsimgView();
         t.print(options);
     }

@@ -577,7 +577,7 @@ public abstract class NetworkSolver extends Solver {
         boolean[] completes = new boolean[sn.nclasses];
         for (int idx = 0; idx < sn.nclasses; idx++) {
             // TODO: entry = T{refstats(r),r}.class.completes;
-            completes[idx] = true; // Replaced by above once implemented
+            completes[idx] = model.getClasses().get(idx).getCompletes(); // Replaced by above once implemented
         }
 
         // TODO: if any(isinf(sn.njobs')) // If the model has any open class
@@ -610,14 +610,16 @@ public abstract class NetworkSolver extends Solver {
             }
         }
 
+
         for (int c = 0; c < sn.nchains; c++) {
             Matrix inchain = sn.inchain.get(c);
             Matrix completingClasses = Matrix.extractRows(sn.chains, c, c + 1, null);
             for (int i = 0; i < completingClasses.length(); i++) {
                 if (!completes[i]) {
-                    completingClasses.set(0, i, 0);
+                    completingClasses.set(0, i, Double.NaN);
                 }
             }
+
             for (int i = 0; i < sn.nstations; i++) {
                 if (sn.refclass.get(c) >= 0) {
                     // For all classes within the chain (a class belongs to a single chain, the reference
@@ -625,7 +627,7 @@ public abstract class NetworkSolver extends Solver {
                     List<Double> intersection = Matrix.intersect(sn.refclass.findNonNegative(), inchain);
                     for (double value : intersection) {
                         int k = (int) value;
-                        int sumVisits = 0;
+                        double sumVisits = 0.0;
                         for (int idx = 0; idx < completingClasses.length(); idx++) {
                             if (completingClasses.get(idx) == 1) {
                                 sumVisits +=
@@ -647,15 +649,10 @@ public abstract class NetworkSolver extends Solver {
                     // station must be identical for all classes within a chain)
                     for (int j = 0; j < inchain.length(); j++) {
                         int k = (int) inchain.get(j);
-                        int sumVisits = 0;
+                        double sumVisits = 0.0;
                         for (int idx = 0; idx < completingClasses.length(); idx++) {
                             if (completingClasses.get(idx) == 1) {
-                                sumVisits +=
-                                        sn.visits
-                                                .get(c)
-                                                .get(
-                                                        (int) sn.stationToStateful.get((int) sn.refstat.get(k)),
-                                                        idx);
+                                sumVisits += sn.visits.get(c).get((int) sn.stationToStateful.get((int) sn.refstat.get(k)), idx);
                             }
                         }
                         alpha.set(i, k, alpha.get(i, k) + sn.visits.get(c).get(i, k) / sumVisits);
@@ -666,7 +663,7 @@ public abstract class NetworkSolver extends Solver {
         for (int i = 0; i < sn.nstations; i++) {
             for (int k = 0; k < sn.nclasses; k++) {
                 if (!Double.isFinite(alpha.get(i, k))) {
-                    alpha.set(i, k, 0);
+                    alpha.set(i, k, 0.0);
                 }
             }
         }
@@ -678,9 +675,10 @@ public abstract class NetworkSolver extends Solver {
         for (int c = 0; c < sn.nchains; c++) {
             Matrix inchain = sn.inchain.get(c);
             Matrix completingClasses = Matrix.extractRows(sn.chains, c, c + 1, null).find();
-            for (int i = 0; i < completingClasses.length(); i++) {
-                if (!completes[i]) {
-                    completingClasses.set(0, i, 0);
+            completingClasses = completingClasses.transpose();
+            for (int i = 0; i < inchain.length(); i++) {
+                if (!this.model.getClasses().get(i).getCompletes()) {
+                    completingClasses.set(0, i, Double.NaN);
                 }
             }
 
@@ -692,27 +690,29 @@ public abstract class NetworkSolver extends Solver {
                 for (int i = 0; i < sn.nstations; i++) {
                     for (int j = 0; j < completingClasses.length(); j++) {
                         int r = (int) completingClasses.get(j);
-                        List<Double> intersection = Matrix.intersect(sn.refclass.findNonNegative(), inchain);
-                        for (double value : intersection) {
-                            int s = (int) value;
-                            if (!Double.isNaN(this.result.TN.get(i, r))) {
-                                this.metrics.XNchain.set(
-                                        0,
-                                        c,
-                                        this.metrics.XNchain.get(0, c)
-                                                + sn.rt.get(i * sn.nclasses + r, ref * sn.nclasses + s)
-                                                * this.result.TN.get(i, r));
+                        if (completingClasses.get(j) >=0) {
+                            List<Double> intersection = Matrix.intersect(sn.refclass.findNonNegative(), inchain);
+                            for (double value : intersection) {
+                                int s = (int) value;
+                                if (!Double.isNaN(this.result.TN.get(i, r))) {
+                                    this.metrics.XNchain.set(
+                                            0,
+                                            c,
+                                            this.metrics.XNchain.get(0, c)
+                                                    + sn.rt.get(i * sn.nclasses + r, ref * sn.nclasses + s)
+                                                    * this.result.TN.get(i, r));
+                                }
                             }
-                        }
-                        for (int k = 0; k < inchain.length(); k++) {
-                            int s = (int) inchain.get(k);
-                            if (!Double.isNaN(this.result.TN.get(i, r))) {
-                                this.metrics.XNchain.set(
-                                        0,
-                                        c,
-                                        this.metrics.XNchain.get(0, c)
-                                                + sn.rt.get(i * sn.nclasses + r, ref * sn.nclasses + s)
-                                                * this.result.TN.get(i, r));
+                            for (int k = 0; k < inchain.length(); k++) {
+                                int s = (int) inchain.get(k);
+                                if (!Double.isNaN(this.result.TN.get(i, r))) {
+                                    this.metrics.XNchain.set(
+                                            0,
+                                            c,
+                                            this.metrics.XNchain.get(0, c)
+                                                    + sn.rt.get(i * sn.nclasses + r, ref * sn.nclasses + s)
+                                                    * this.result.TN.get(i, r));
+                                }
                             }
                         }
                     }
@@ -726,6 +726,7 @@ public abstract class NetworkSolver extends Solver {
                     nJobsChain += sn.njobs.get(i);
                 }
             }
+
             if (this.model.hasFork() && this.model.hasJoin()) {
                 // In this case, CNclass is unreliable as it sums the contribution across all stations,
                 // which would include also forked tasks, we use Little's law instead
@@ -745,6 +746,7 @@ public abstract class NetworkSolver extends Solver {
                     if (Double.isFinite(value))
                         sumFinite += value;
                 }
+
                 this.metrics.CNchain.set(0, c, sumFinite);
             }
         }
@@ -757,7 +759,8 @@ public abstract class NetworkSolver extends Solver {
         // TODO: provide polymorphic version where handles can be passed in as a whole?
 
         this.getAvgSys();
-        NetworkAvgSysTable avgSysTable = new NetworkAvgSysTable(this.metrics.CNchain.toList1D(), this.metrics.XNchain.toList1D());
+
+        NetworkAvgSysTable avgSysTable = new NetworkAvgSysTable(this.metrics.CNchain.toList1D(), this.metrics.XNchain.toList1D(), this.options);
 
         java.util.List<String> chainNames = new ArrayList<>();
         java.util.List<String> inChainNames = new ArrayList<>();

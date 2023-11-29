@@ -395,7 +395,7 @@ class ClosedClass(JobClass):
     def __init__(self, model, name, njobs, refstat, prio=0):
         super().__init__()
         self.obj = jpype.JPackage('jline').lang.ClosedClass(model.obj, name, njobs, refstat.obj, prio)
-        self.completes = False
+        self.completes = True
 
     def __setattr__(self, name, value):
         object.__setattr__(self, name, value)
