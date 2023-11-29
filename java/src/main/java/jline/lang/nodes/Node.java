@@ -135,12 +135,20 @@ public class Node extends NetworkElement implements Serializable {
         return this.statefulIdx != -1;
     }
 
+    public void setNodeIdx(int index) {
+        this.nodeIndex = index;
+    }
+
     public int getNodeIdx() {
     	if (this.nodeIndex == -1) {
     		this.nodeIndex = this.model.getNodeIndex(this);
     	}
 
     	return this.nodeIndex;
+    }
+
+    public void setStationIdx(int index) {
+        this.stationIdx = index;
     }
 
     public int getStationIdx() {

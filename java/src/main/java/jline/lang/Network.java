@@ -157,9 +157,12 @@ public class Network extends Model implements Serializable {
     public List<Station> getStations() {return this.stations; }
 
     public void addNode(Node node) {
+        node.setNodeIdx(node.getNodeIdx()); // searches within the model nodes
         nodes.add(node);
-        if (node instanceof Station)
+        if (node instanceof Station) {
+            node.setStationIdx(node.getStationIdx()); // searches within the model stations
             stations.add((Station) node);
+        }
     }
 
     public void setInitialized(boolean initStatus) {

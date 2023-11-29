@@ -336,6 +336,7 @@ public class  SolverCTMC extends NetworkSolver {
         result.UN = UN;
         result.TN = TN;
         result.RN = RN;
+        result.AN = new Matrix(stateN,nClasses);
         result.XN = XN;
         result.CN = CN;
         result.runtime = runTime/1000.0;

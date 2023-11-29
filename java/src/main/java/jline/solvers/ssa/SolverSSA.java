@@ -198,6 +198,8 @@ public class SolverSSA extends NetworkSolver {
         this.result.QN = new Matrix(M, K);
         this.result.RN = new Matrix(M, K);
         this.result.TN = new Matrix(M, K);
+        this.result.AN = new Matrix(M, K);
+        this.result.WN = new Matrix(M, K);
         this.result.XN = new Matrix(1, K);
         this.result.CN = new Matrix(1, K);
 

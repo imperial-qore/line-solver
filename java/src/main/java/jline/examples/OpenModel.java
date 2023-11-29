@@ -376,7 +376,6 @@ public class OpenModel {
 
     public static void main(String[] args) throws Exception {
         Network model = ex1_line();
-
         NetworkStruct sn = model.getStruct(false);
         SolverOptions options = new SolverOptions(SolverType.MVA);
         NetworkSolver solver = new SolverJMT(model, options);

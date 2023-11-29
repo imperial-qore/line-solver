@@ -198,6 +198,7 @@ public abstract class NetworkSolver extends Solver {
         Matrix UNclass = new Matrix(0, 0);
         Matrix RNclass = new Matrix(0, 0);
         Matrix TNclass = new Matrix(0, 0);
+        Matrix ANclass = new Matrix(0, 0);
         Matrix WNclass;
 
         if (!this.result.QN.isEmpty()) {
@@ -239,7 +240,6 @@ public abstract class NetworkSolver extends Solver {
                 }
             }
         }
-
         if (!this.result.RN.isEmpty()) {
             RNclass = new Matrix(M, K);
             for (int k = 0; k < K; k++) {
@@ -275,6 +275,26 @@ public abstract class NetworkSolver extends Solver {
                         }
                     } else {
                         TNclass.set(i, k, 0); // Indicates that a metric is disabled
+                    }
+                }
+            }
+        }
+
+        if (!this.result.AN.isEmpty()) {
+            ANclass = new Matrix(M, K);
+            for (int k = 0; k < K; k++) {
+                for (int i = 0; i < M; i++) {
+                    if (!this.handles.A.get(this.model.getStations().get(i)).get(this.model.getClassByIndex(k)).isDisabled
+                            && !this.result.AN.isEmpty()) {
+                        ANclass.set(i, k, this.result.TN.get(i, k));
+                        if (ANclass.get(i, k) < GlobalConstants.FineTol) { // Round to zero numerical perturbations
+                            ANclass.set(i, k, 0);
+                        }
+                        if (Double.isNaN(ANclass.get(i, k))) { // Indicates that a metric is disabled
+                            ANclass.set(i, k, 0);
+                        }
+                    } else {
+                        ANclass.set(i, k, 0); // Indicates that a metric is disabled
                     }
                 }
             }
@@ -363,6 +383,7 @@ public abstract class NetworkSolver extends Solver {
         this.metrics.QNclass = QNclass;
         this.metrics.UNclass = UNclass;
         this.metrics.RNclass = RNclass;
+        this.metrics.ANclass = ANclass;
         this.metrics.TNclass = TNclass;
         this.metrics.WNclass = WNclass;
     }
@@ -405,6 +426,7 @@ public abstract class NetworkSolver extends Solver {
         Matrix UN = this.metrics.UNclass;
         Matrix RN = this.metrics.RNclass;
         Matrix TN = this.metrics.TNclass;
+        Matrix AN = this.metrics.ANclass;
 
         if (QN.isEmpty()) {
             throw new RuntimeException(
@@ -442,7 +464,7 @@ public abstract class NetworkSolver extends Solver {
                     Qval.add(QN.get(i, k));
                     Uval.add(UN.get(i, k));
                     Rval.add(RN.get(i, k));
-                    ArvR.add(0.0);
+                    ArvR.add(AN.get(i, k));
                     Tval.add(TN.get(i, k));
                     className.add(sn.jobclasses.get(k).getName());
                     stationName.add(sn.stations.get(i).getName());
