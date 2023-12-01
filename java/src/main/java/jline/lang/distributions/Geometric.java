@@ -31,25 +31,25 @@ public class Geometric extends DiscreteDistribution implements Serializable {
 
     @Override
     public Matrix sample(long n, Random random) {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
 
     public double getRate() {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
     public double getSCV() {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
     public double getVar() {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
     public double getSkew() {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
     public double evalCDF(double t) {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
     public double evalLST(double s) {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
 }

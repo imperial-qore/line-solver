@@ -88,7 +88,7 @@ public class Lognormal extends ContinuousDistribution implements Serializable {
 
     @Override
     public double evalLST(double s) {
-        throw new RuntimeException("Laplace-Stieltjes transform of the Lognormal distribution not available yet.");
+        throw new RuntimeException("Laplace-Stieltjes transform of the Lognormal distribution not available yet."); // TODO: not implemented
     }
 
     public static Lognormal fitMeanAndSCV(double mean, double scv) {

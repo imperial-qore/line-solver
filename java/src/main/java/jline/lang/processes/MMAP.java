@@ -95,7 +95,7 @@ public class MMAP extends MarkovianDistribution implements Serializable {
 
     @Override
     public Matrix sample(long n, Random random) {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
 
     public List<Double> getMoments() {
@@ -172,14 +172,14 @@ public class MMAP extends MarkovianDistribution implements Serializable {
     }
 
     public double evalCDF(double t) {
-        throw new RuntimeException("Not Implemented!");
+        throw new RuntimeException("Not Implemented!"); // TODO: not implemented
     }
 
     public Map<Integer, Matrix> getPH() {
-        throw new RuntimeException("Not Implemented!");
+        throw new RuntimeException("Not Implemented!"); // TODO: not implemented
     }
 
     public double evalLST(double s) {
-        throw new RuntimeException("Not Implemented!");
+        throw new RuntimeException("Not Implemented!"); // TODO: not implemented
     }
 }

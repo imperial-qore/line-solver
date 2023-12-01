@@ -66,7 +66,7 @@ public abstract class Solver {
 
   // List valid fields for options data structure
   protected static void listValidOptions() {
-    // TODO: implementation - note return type should likely not be void
+    //TODO: implementation - note return type should likely not be void
     throw new RuntimeException("listValidOptions() has not yet been implemented in JLINE.");
   }
 
@@ -88,7 +88,7 @@ public abstract class Solver {
 
   // Returns a solver configured to run the chosen method
   protected static Solver load(String chosenMethod, Model model) {
-    // TODO: implementation - note further arguments may be needed
+    //TODO: implementation - note further arguments may be needed
     throw new RuntimeException("load() has not yet been implemented in JLINE.");
   }
 

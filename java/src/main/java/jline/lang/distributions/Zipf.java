@@ -90,7 +90,7 @@ public class Zipf extends DiscreteDistribution{
 
     @Override
     public Matrix sample(long n, Random random) {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
 
     /**

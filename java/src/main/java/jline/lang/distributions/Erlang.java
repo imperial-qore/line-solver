@@ -19,7 +19,7 @@ public class Erlang extends MarkovianDistribution implements Serializable {
 
     @Override
     public Matrix sample(long n) {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
 
     public Matrix sample(long n, Random random) {

@@ -17,7 +17,7 @@ public class Coxian extends MarkovianDistribution{
         super("Coxian", 1);
 		
         if (!checkParameter(mu, phi))
-        	throw new RuntimeException("Parameter Error");
+        	throw new RuntimeException("Parameter Error"); // TODO: not implemented
 
 		int nPhases = mu.size();
         this.setParam(1, "mu", mu);
@@ -48,7 +48,7 @@ public class Coxian extends MarkovianDistribution{
 	}
 	@Override
 	public Matrix sample(long n, Random random) {
-		throw new RuntimeException("Not implemented");
+		throw new RuntimeException("Not implemented"); // TODO: not implemented
 	}
 
 		@Override

@@ -44,7 +44,7 @@ public class Poisson extends DiscreteDistribution implements Serializable {
 
     @Override
     public Matrix sample(long n, Random random) {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
 
 
@@ -55,7 +55,7 @@ public class Poisson extends DiscreteDistribution implements Serializable {
         return (double) this.getParam(1).getValue();
     }
     public double getSCV() {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
     public double getVar() {
         return this.getRate();
@@ -64,9 +64,9 @@ public class Poisson extends DiscreteDistribution implements Serializable {
         return Math.pow(this.getRate(), -0.5);
     }
     public double evalCDF(double t) {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
     public double evalLST(double s) {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
 }

@@ -44,7 +44,7 @@ public class HyperExp extends MarkovianDistribution implements Serializable {
 
     @Override
     public Matrix sample(long n, Random random) {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
 
     public long getNumberOfPhases() {
@@ -141,7 +141,7 @@ public class HyperExp extends MarkovianDistribution implements Serializable {
 
     public double getRateFromPhase(int phase) {
         if (phase > this.nPhases)
-            throw new RuntimeException("Exceed the number of phases");
+            throw new RuntimeException("Exceed the number of phases"); // TODO: not implemented
 
         return ((List<Double>) this.getParam(2)).get(phase - 1);
     }

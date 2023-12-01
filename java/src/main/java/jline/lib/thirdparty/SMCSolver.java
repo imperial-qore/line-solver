@@ -665,31 +665,31 @@ public class SMCSolver {
 
     public static void QBD_ParsePara(Matrix A0, Matrix A1, Matrix A2){
         if(A0.numCols!=A0.numRows){
-            throw new RuntimeException("MATLAB:QBD_ParsePara:InvalidInput, A0 is not a square matrix");
+            throw new RuntimeException("A0 is not a square matrix");
         }
         if(A1.numCols!=A1.numRows){
-            throw new RuntimeException("MATLAB:QBD_ParsePara:InvalidInput, A1 is not a square matrix");
+            throw new RuntimeException("A1 is not a square matrix");
         }
         if(A2.numCols!=A2.numRows){
-            throw new RuntimeException("MATLAB:QBD_ParsePara:InvalidInput, A2 is not a square matrix");
+            throw new RuntimeException("A2 is not a square matrix");
         }
         if(A0.numCols!=A1.numCols){
-            throw new RuntimeException("MATLAB:QBD_ParsePara:InvalidInput, The matrices A0 and A1 do not have the same dimension");
+            throw new RuntimeException("The matrices A0 and A1 do not have the same dimension");
         }
         if(A0.numCols!=A2.numCols){
-            throw new RuntimeException("MATLAB:QBD_ParsePara:InvalidInput, The matrices A0 and A2 do not have the same dimension");
+            throw new RuntimeException("The matrices A0 and A2 do not have the same dimension");
         }
         if(A0.elementMin()<=-Math.pow(-10,-14)){
-            throw new RuntimeException("MATLAB:QBD_ParsePara:InvalidInput, The matrix A0 contains negative data");
+            throw new RuntimeException("The matrix A0 contains negative data");
         }
         if(A1.elementMin()<=-Math.pow(-10,-14)){
-            throw new RuntimeException("MATLAB:QBD_ParsePara:InvalidInput, The matrix A1 contains negative data");
+            throw new RuntimeException("The matrix A1 contains negative data");
         }
         if(A2.elementMin()<=-Math.pow(-10,-14)){
-            throw new RuntimeException("MATLAB:QBD_ParsePara:InvalidInput, The matrix A2 contains negative data");
+            throw new RuntimeException("he matrix A2 contains negative data");
         }
         if(A0.add(1,A1).add(1,A2).sumRows().elementMax()>1+Math.pow(10,-14)){
-            throw new RuntimeException("MATLAB:QBD_ParsePara:InvalidInput, The matrix A0+A1+A2 has to be (sub)stochastic");
+            throw new RuntimeException("The matrix A0+A1+A2 has to be (sub)stochastic");
         }
     }
 
@@ -798,6 +798,7 @@ public class SMCSolver {
 
 
     public static Matrix QBD_NI_Sylvest(Matrix A, Matrix B, Matrix C, Matrix D){
+        // TODO: not implemented
         throw new RuntimeException("QBD_NI_Sylvest has not been implemented");
     }
 }

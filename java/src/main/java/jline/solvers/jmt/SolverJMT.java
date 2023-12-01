@@ -785,6 +785,7 @@ public class SolverJMT extends NetworkSolver {
                     concStratNode.setAttribute("name", "Join the Shortest Queue (JSQ)");
                     break;
                 case KCHOICES:
+                    // TODO: not implemented
                     throw new RuntimeException("KCHOICES has not yet been implemented in JLNE.");
 //                    concStratNode = simDoc.createElement("subParameter");
 //                    concStratNode.setAttribute("classPath", "jmt.engine.NetStrategies.RoutingStrategies.PowerOfKRoutingStrategy");
@@ -2542,6 +2543,7 @@ public class SolverJMT extends NetworkSolver {
                     case REPLAYER:
                     case TRACE:
                     default:
+                        // TODO: not implemented
                         throw new RuntimeException(String.format("Unsupported firing distribution for mode %d", m));
                 }
                 timimgStrategyNode.appendChild(distrParNode);
@@ -3116,6 +3118,7 @@ public class SolverJMT extends NetworkSolver {
         if (GlobalConstants.DummyMode) {
             return NaN;
         }
+        // TODO: not implemented
         throw new RuntimeException("sampleAggr() has not yet been implemented in JLINE.");
 //        NetworkStruct sn = getStruct();
 //        Map<Station, Map<JobClass, SolverHandles.Metric>> Q = getAvgQLenHandles();
@@ -3144,6 +3147,7 @@ public class SolverJMT extends NetworkSolver {
 
     // TODO: add sampling method
     public double sampleAggr(Node node) {
+        // TODO: not implemented
         throw new RuntimeException("JMT does not allow to fix the number of events for individual nodes. The number of returned events may be inaccurate.");
     }
 
@@ -3171,6 +3175,7 @@ public class SolverJMT extends NetworkSolver {
         if (GlobalConstants.DummyMode) {
             return null;
         }
+        // TODO: not implemented
         throw new RuntimeException("sampleSysAggr() has not yet been implemented in JLINE.");
 //        NetworkStruct sn = getStruct();
 //        numEvents -= 1;
@@ -3194,6 +3199,7 @@ public class SolverJMT extends NetworkSolver {
         if (GlobalConstants.DummyMode) {
             return NaN;
         }
+        // TODO: not implemented
         throw new RuntimeException("probSysStateAggr() has not yet been implemented in JLINE.");
     }
 
@@ -3203,6 +3209,7 @@ public class SolverJMT extends NetworkSolver {
     }
 
     public Matrix getCdfRespT(Map<Station, Map<JobClass, SolverHandles.Metric>> R) {
+        // TODO: not implemented
         throw new RuntimeException("getCdfRespT() has not yet been implemented in JLINE.");
     }
 
@@ -3212,6 +3219,7 @@ public class SolverJMT extends NetworkSolver {
     }
 
     public Matrix getTranCdfRespT(Map<Station, Map<JobClass, SolverHandles.Metric>> R) {
+        // TODO: not implemented
         throw new RuntimeException("getTranCdfRespT() has not yet been implemented in JLINE.");
     }
 
@@ -3226,6 +3234,7 @@ public class SolverJMT extends NetworkSolver {
     }
 
     public Matrix getTranCdfPassT(Map<Station, Map<JobClass, SolverHandles.Metric>> R) {
+        // TODO: not implemented
         throw new RuntimeException("getTranCdfPassT() has not yet been implemented in JLINE.");
 //        NetworkStruct sn = getStruct();
 //        Matrix RD = new Matrix(sn.nstations,sn.nclasses);

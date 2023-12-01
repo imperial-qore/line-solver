@@ -33,6 +33,7 @@ public class Binomial extends DiscreteDistribution implements Serializable {
     }
     @Override
     public Matrix sample(long n, Random random) {
+        // TODO: not implemented
         throw new RuntimeException("Not implemented");
     }
 
@@ -43,6 +44,7 @@ public class Binomial extends DiscreteDistribution implements Serializable {
         return 0;
     }
     public double getSCV() {
+        // TODO: not implemented
         throw new RuntimeException("Not implemented");
     }
     public double getVar() {
@@ -58,9 +60,11 @@ public class Binomial extends DiscreteDistribution implements Serializable {
         return (q-p)/(Math.sqrt(n*p*q));
     }
     public double evalCDF(double t) {
+        // TODO: not implemented
         throw new RuntimeException("Not implemented");
     }
     public double evalLST(double s) {
+        // TODO: not implemented
         throw new RuntimeException("Not implemented");
     }
 }

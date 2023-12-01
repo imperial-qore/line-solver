@@ -90,11 +90,11 @@ public class SolverOptions {
     this.odesolvers.odeminstep = 0.001;
     //this.odeMinStep = 0.00000001;
     this.odesolvers.odemaxstep = POSITIVE_INFINITY;
-    this.odesolvers.fastODESolver = null; // TODO
+    this.odesolvers.fastODESolver = new ClassicalRungeKuttaIntegrator(this.odesolvers.odemaxstep);
     this.odesolvers.accurateODESolver =
             new DormandPrince54Integrator(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol);
     this.odesolvers.fastStiffODESolver =
-            new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 3, 3); // TODO
+            new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 3, 3);
     this.odesolvers.accurateStiffODESolver =
             new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 12, 5);
 
@@ -161,11 +161,11 @@ public class SolverOptions {
 
   public void setODEMinStep(double odeMinStep) {
     this.odesolvers.odeminstep = odeMinStep;
-    this.odesolvers.fastODESolver = null; // TODO
+    this.odesolvers.fastODESolver = new ClassicalRungeKuttaIntegrator(this.odesolvers.odemaxstep);
     this.odesolvers.accurateODESolver =
             new DormandPrince54Integrator(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol);
     this.odesolvers.fastStiffODESolver =
-            new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 3, 3); // TODO
+            new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 3, 3);
     this.odesolvers.accurateStiffODESolver =
             new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 12, 5);
   }
@@ -176,7 +176,7 @@ public class SolverOptions {
     this.odesolvers.accurateODESolver =
             new DormandPrince54Integrator(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol);
     this.odesolvers.fastStiffODESolver =
-            new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 3, 3); // TODO
+            new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 3, 3);
     this.odesolvers.accurateStiffODESolver =
             new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 12, 5);
   }

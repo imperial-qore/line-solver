@@ -133,7 +133,7 @@ public class Maths {
 
       // Vector is not a single row
       if (vec.getNumRows() != 1) {
-        throw new RuntimeException("JLineMatrix passed to uniquePerms has more than one row. Unsupported.");
+        throw new RuntimeException("Matrix passed to uniquePerms has more than one row. Unsupported.");
       }
 
       // Number of elements in the vector

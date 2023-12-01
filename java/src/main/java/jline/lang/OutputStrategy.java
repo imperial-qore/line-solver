@@ -26,6 +26,7 @@ public class OutputStrategy implements Serializable {
         this.probability = probability;
 
         if (!legalStrategies.contains(routingStrategy)) {
+            // TODO: check if legalStrategies include all
             throw new RuntimeException("Unsupported Routing Strategy!");
         }
     }

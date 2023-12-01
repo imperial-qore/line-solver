@@ -150,6 +150,7 @@ public class SolverFluid extends NetworkSolver {
         analyzer = new MatrixMethodAnalyzer();
         break;
       default:
+        // TODO: not implemented
         throw new RuntimeException("Unsupported method.");
     }
 

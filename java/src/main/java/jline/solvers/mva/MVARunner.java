@@ -40,6 +40,7 @@ public class MVARunner {
 		int iter = 0;
 
 		if(this.solver.enableChecks && !SolverMVA.supports(this.solver.model)){
+			// TODO: not implemented
 			throw new RuntimeException("This model contains features not supported by the solver.");
 		}
 

@@ -1561,7 +1561,7 @@ public class Matrix extends DMatrixSparseCSC {
 
 	public Map<String,Matrix> QR_decomposition(){
 		if(numRows!= numCols){
-			throw new RuntimeException("Only square matrix can be decomposited");
+			throw new RuntimeException("Only square matrix can be decomposed");
 		}
 		QRSparseDecomposition<DMatrixSparseCSC> decomposition = new QrLeftLookingDecomposition_DSCC(null);
 		decomposition.decompose(this.toDMatrixSparseCSC());
@@ -1573,7 +1573,7 @@ public class Matrix extends DMatrixSparseCSC {
 
 	public Map<String,Matrix> Schur_decomposition(String method,Integer it_){
 		if(numRows!= numCols){
-			throw new RuntimeException("Only square matrix can be decomposited");
+			throw new RuntimeException("Only square matrix can be decomposed");
 		}
 		if(this.nz_length==0){
 			Map<String,Matrix> result = new HashMap<>();

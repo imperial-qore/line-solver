@@ -96,7 +96,7 @@ abstract public class MarkovianDistribution extends Distribution implements Seri
 		Matrix D0 = getD0();
 		Matrix D1 = getD1();
 		//return map.evalCDF(t); Not implemented in MAP
-		throw new RuntimeException("Not implemented");
+		throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
     
     public double evalLST(double t) {

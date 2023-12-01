@@ -164,6 +164,7 @@ public class LCFSBuffer extends SSAStateCell {
     }
 
     public int incrementPhaseN(int n, int classIdx) {
+        // TODO: not implemented
         throw new RuntimeException("Not implemented");
     }
 

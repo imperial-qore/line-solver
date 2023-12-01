@@ -155,8 +155,9 @@ public class LCFSPRBuffer extends SSAStateCell {
         return true;
     }
 
+
     public int incrementPhaseN(int n, int classIdx) {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
 
     public int getGlobalPhase(int classIdx) {

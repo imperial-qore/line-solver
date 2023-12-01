@@ -504,7 +504,7 @@ public class KPCToolbox {
             }else if((h2>0 && h3<0)|| h2*(1-h2-2*Math.sqrt(-h2))>h3 || h3<=Math.pow(h2,2)){
                 result.error = 40;
             }else {
-                throw new RuntimeException("I lost an error");
+                throw new RuntimeException("Unknown error"); // TODO: not implemented
             }
         }
 
@@ -691,8 +691,6 @@ public class KPCToolbox {
         Matrix P = map_embedded(D0,D1);
         Matrix x = map_prob(D0,D1);
         x.scale(map_lambda(D0,D1));
-
-        //todo sym matrix
 
         Matrix neg_D0 = D0.clone();
         neg_D0.scale(-1);

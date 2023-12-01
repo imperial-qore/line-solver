@@ -614,6 +614,7 @@ public class ClosingAndStateDepMethodsAnalyzer implements MethodAnalyzer {
                   }
                   break;
                 default:
+                  // TODO: not implemented
                   throw new RuntimeException("Unsupported scheduling policy.");
               }
             }

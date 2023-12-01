@@ -67,7 +67,7 @@ public class State implements Serializable {
       Matrix space_var) {
     // Cached node, currently not support in JLINE
     if (sn.isstation.get(ind, 0) == 0 && sn.isstateful.get(ind, 0) > 0) {
-      throw new RuntimeException("Not implemented");
+      throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
 
     int R = sn.nclasses;

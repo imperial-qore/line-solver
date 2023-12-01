@@ -89,19 +89,19 @@ public class Station extends StatefulNode implements Serializable {
     }
 
     public boolean[] isServiceDefined() {
-        throw new RuntimeException("Not Implemented!");
+        throw new RuntimeException("Not Implemented!"); // TODO: not implemented
     }
 
     public boolean isServiceDefined(JobClass j_class)  {
-        throw new RuntimeException("Not Implemented!");
+        throw new RuntimeException("Not Implemented!"); // TODO: not implemented
     }
 
     public boolean[] isServiceDisabled()  {
-        throw new RuntimeException("Not Implemented!");
+        throw new RuntimeException("Not Implemented!"); // TODO: not implemented
     }
 
     public boolean isServiceDisabled(JobClass j_class)  {
-        throw new RuntimeException("Not Implemented!");
+        throw new RuntimeException("Not Implemented!"); // TODO: not implemented
     }
 
     public List<Object> getSourceRates()  {

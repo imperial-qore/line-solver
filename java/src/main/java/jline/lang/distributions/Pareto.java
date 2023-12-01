@@ -156,7 +156,7 @@ public class Pareto extends ContinuousDistribution implements Serializable {
     public static Pareto fitMeanAndSCV(double mean, double scv){
         // Fit distribution with given mean and squared coefficient of variation (SCV=variance/mean^2)
         if (mean <= 0 || scv <= 0) {
-            throw new RuntimeException("Mean and SCV should be positive.");
+            throw new RuntimeException("Mean and SCV should be positive."); // TODO: not implemented
         }
         double shape = (scv * mean + mean * Math.sqrt(scv * (scv + 1))) / (scv * mean);
         double scale = mean + scv * mean - mean * Math.sqrt(scv * (scv + 1));

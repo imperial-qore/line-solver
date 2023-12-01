@@ -322,6 +322,7 @@ public class SolverMAM extends NetworkSolver {
                     }
                 }else {
                     if(sn.nodetypes.get(ind)==NodeType.Fork){
+                        // TODO: not implemented
                         throw new RuntimeException("Fork nodes not supported yet by QNA solver.");
                     }
                 }
@@ -838,6 +839,7 @@ public class SolverMAM extends NetworkSolver {
                     }
                 }else {
                     if(sn.nodetypes.get(ind)==NodeType.Fork){
+                        // TODO: not implemented
                         throw new RuntimeException("Fork nodes not supported yet by MAM solver.");
                     }
                 }
@@ -1311,6 +1313,7 @@ public class SolverMAM extends NetworkSolver {
                         }
                     } else {
                         if (sn.nodetypes.get(ind) == NodeType.Fork) {
+                            // TODO: not implemented
                             throw new RuntimeException("Fork nodes not supported yet by QNA solver.");
                         }
                     }
@@ -1653,6 +1656,7 @@ public class SolverMAM extends NetworkSolver {
             }
 
         }else {
+            // TODO: not implemented
             throw new RuntimeException("This model is not supported by SolverMAM yet.");
         }
 

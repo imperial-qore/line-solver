@@ -324,6 +324,7 @@ public class M3A {
         moments.set(0,0,1);
         Matrix F = mmap_forward_moment(mmap,moments);
         Matrix B = mmap_backward_moment(mmap,moments);
+        // TODO: not implemented
         throw new RuntimeException("mamap2m_fit_gamma_fb_mmap has not been implemented");
 
     }

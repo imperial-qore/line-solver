@@ -41,7 +41,7 @@ public class PH extends MarkovianDistribution {
     }
     @Override
     public Matrix sample(long n, Random random) {
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
 
     @Override
@@ -72,7 +72,7 @@ public class PH extends MarkovianDistribution {
     @Override
     public double evalCDF(double t) {
         //Since currently no function to support calculating eigen values, thus calculating expm. This method is now not implemented.
-        throw new RuntimeException("Not implemented");
+        throw new RuntimeException("Not implemented"); // TODO: not implemented
     }
 
     @Override
