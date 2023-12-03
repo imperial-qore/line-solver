@@ -19,6 +19,7 @@ warning ON BACKTRACE
 
 % import java classes
 javaaddpath(which('jline.jar'));
+import org.ejml.*; %#ok<SIMPT>
 javaaddpath(which('pfqn_nclib.jar'));
 import DataStructures.*; %#ok<SIMPT>
 import QueueingNet.*; %#ok<SIMPT>
