@@ -19,7 +19,6 @@ public abstract class NetworkSolver extends Solver {
     public Network model; // Model to be solved
     public NetworkStruct sn; // Structure describing the model
     public SolverHandles handles; // Performance metric handles
-    public SolverMetrics metrics; // Performance metrics
 
     // Construct a NetworkSolver with given model, name and options data structure
     protected NetworkSolver(Network model, String name, SolverOptions options) {
@@ -108,39 +107,57 @@ public abstract class NetworkSolver extends Solver {
     }
 
     // Compute average queue-lengths at steady-state
-    protected final void getAvgQLen() {
-        // TODO: implementation - note return type should likely not be void
-        throw new RuntimeException("getAvgQLen() has not yet been implemented in JLINE.");
+    public final Matrix getAvgQLen() {
+        if (!this.hasResults()) {
+            this.getAvg();
+        }
+        return this.result.QN;
     }
 
     // Compute average utilizations at steady-state
-    protected final void getAvgUtil() {
-        // TODO: implementation - note return type should likely not be void
-        throw new RuntimeException("getAvgUtil() has not yet been implemented in JLINE.");
+    public final Matrix getAvgUtil() {
+        if (!this.hasResults()) {
+            this.getAvg();
+        }
+        return this.result.UN;
     }
 
     // Compute average response times at steady-state
-    protected final void getAvgRespT() {
-        // TODO: implementation - note return type should likely not be void
-        throw new RuntimeException("getAvgRespT() has not yet been implemented in JLINE.");
+    public final Matrix getAvgRespT() {
+        if (!this.hasResults()) {
+            this.getAvg();
+        }
+        return this.result.RN;
     }
 
     // Compute average waiting time in queue excluding service
-    protected final void getAvgWaitT() {
-        // TODO: implementation - note return type should likely not be void
+    public final Matrix getAvgWaitT() {
+        // TODO: implementation
         throw new RuntimeException("getAvgWaitT() has not yet been implemented in JLINE.");
     }
 
+    // Compute average residence time in queue
+    public final Matrix getAvgResidT() {
+        if (!this.hasResults()) {
+            this.getAvg();
+        }
+        return this.result.WN;
+    }
+
     // Compute average throughputs at steady-state
-    protected final void getAvgTput() {
-        // TODO: implementation - note return type should likely not be void
-        throw new RuntimeException("getAvgTput() has not yet been implemented in JLINE.");
+    public final Matrix getAvgTput() {
+        if (!this.hasResults()) {
+            this.getAvg();
+        }
+        return this.result.TN;
     }
 
     // Compute average arrival rate at steady-state
-    protected final void getAvgArvR() {
-        // TODO: implementation - note return type should likely not be void
-        throw new RuntimeException("getAvgArvR() has not yet been implemented in JLINE.");
+    public final Matrix getAvgArvR() {
+        if (!this.hasResults()) {
+            this.getAvg();
+        }
+        return this.result.AN;
     }
 
     // Returns average station metrics at steady-state
@@ -313,39 +330,47 @@ public abstract class NetworkSolver extends Solver {
 
         WNclass = RNclass.clone();
         WNclass.zero();
-        for (int i = 0; i < M; i++) {
-            for (int k = 0; k < K; k++) {
-                if (!RNclass.isEmpty() && RNclass.get(i, k) > 0) {
-                    int c = -1;
-                    for (int chain = 0; chain < sn.chains.getNumRows(); chain++) {
-                        if (sn.chains.get(chain, k) > 0) {
-                            c = chain;
-                            break;
-                        }
-                    }
-                    if (RNclass.get(i, k) < GlobalConstants.FineTol) {
-                        WNclass.set(i, k, RNclass.get(i, k));
-                    } else {
-                        int refClass = (int) sn.refclass.get(0, c);
-                        if (refClass > 0) {
-                            // If there is a reference class, use this:
-                            WNclass.set(
-                                    i,
-                                    k,
-                                    RNclass.get(i, k) * V.get(i, k) / V.get((int) sn.refstat.get(k, 0), refClass));
-                        } else {
-                            int Vrow = (int) sn.refstat.get(k, 0);
-                            double Vsum = 0;
-                            for (int col = 0; col < sn.inchain.get(c).getNumCols(); col++) {
-                                Vsum += V.get(Vrow, (int) sn.inchain.get(c).get(0, col));
+        if (this.result.WN == null || this.result.WN.isEmpty()) {
+                for (int i = 0; i < M; i++) {
+                    for (int k = 0; k < K; k++) {
+                        if (!RNclass.isEmpty() && RNclass.get(i, k) > 0) {
+                            int c = -1;
+                            for (int chain = 0; chain < sn.chains.getNumRows(); chain++) {
+                                if (sn.chains.get(chain, k) > 0) {
+                                    c = chain;
+                                    break;
+                                }
                             }
-                            WNclass.set(i, k, RNclass.get(i, k) * V.get(i, k) / Vsum);
+                            if (RNclass.get(i, k) < GlobalConstants.FineTol) {
+                                WNclass.set(i, k, RNclass.get(i, k));
+                            } else {
+                                int refClass = (int) sn.refclass.get(0, c);
+                                if (refClass > 0) {
+                                    // If there is a reference class, use this:
+                                    WNclass.set(
+                                            i,
+                                            k,
+                                            RNclass.get(i, k) * V.get(i, k) / V.get((int) sn.refstat.get(k, 0), refClass));
+                                } else {
+                                    int Vrow = (int) sn.refstat.get(k, 0);
+                                    double Vsum = 0;
+                                    for (int col = 0; col < sn.inchain.get(c).getNumCols(); col++) {
+                                        Vsum += V.get(Vrow, (int) sn.inchain.get(c).get(0, col));
+                                    }
+                                    WNclass.set(i, k, RNclass.get(i, k) * V.get(i, k) / Vsum);
+                                }
+                            }
                         }
                     }
                 }
+                this.result.WN = new Matrix(WNclass);
+            } else {
+            for (int i = 0; i < M; i++) {
+                for (int k = 0; k < K; k++) {
+                    WNclass.set(i, k, this.result.WN.get(i, k));
+                }
             }
         }
-
         for (int i = 0; i < M; i++) {
             for (int j = 0; j < K; j++) {
                 if (Double.isNaN(WNclass.get(i, j))
@@ -379,13 +404,13 @@ public abstract class NetworkSolver extends Solver {
             }
         }
 
-        this.metrics = new SolverMetrics();
-        this.metrics.QNclass = QNclass;
-        this.metrics.UNclass = UNclass;
-        this.metrics.RNclass = RNclass;
-        this.metrics.ANclass = ANclass;
-        this.metrics.TNclass = TNclass;
-        this.metrics.WNclass = WNclass;
+        this.result = new SolverResult();
+        this.result.QN = QNclass;
+        this.result.UN = UNclass;
+        this.result.RN = RNclass;
+        this.result.AN = ANclass;
+        this.result.TN = TNclass;
+        this.result.WN = WNclass;
     }
 
     // Compute average utilizations at steady-state for all nodes
@@ -422,11 +447,11 @@ public abstract class NetworkSolver extends Solver {
             e.printStackTrace();
         }
 
-        Matrix QN = this.metrics.QNclass;
-        Matrix UN = this.metrics.UNclass;
-        Matrix RN = this.metrics.RNclass;
-        Matrix TN = this.metrics.TNclass;
-        Matrix AN = this.metrics.ANclass;
+        Matrix QN = this.result.QN;
+        Matrix UN = this.result.UN;
+        Matrix RN = this.result.RN;
+        Matrix TN = this.result.TN;
+        Matrix AN = this.result.AN;
 
         if (QN.isEmpty()) {
             throw new RuntimeException(
@@ -691,8 +716,8 @@ public abstract class NetworkSolver extends Solver {
         }
 
         // Compute average chain metrics
-        this.metrics.CNchain = new Matrix(1, sn.nchains);
-        this.metrics.XNchain = new Matrix(1, sn.nchains);
+        this.result.CN = new Matrix(1, sn.nchains);
+        this.result.XN = new Matrix(1, sn.nchains);
 
         for (int c = 0; c < sn.nchains; c++) {
             Matrix inchain = sn.inchain.get(c);
@@ -712,15 +737,15 @@ public abstract class NetworkSolver extends Solver {
                 for (int i = 0; i < sn.nstations; i++) {
                     for (int j = 0; j < completingClasses.length(); j++) {
                         int r = (int) completingClasses.get(j);
-                        if (completingClasses.get(j) >=0) {
+                        if (completingClasses.get(j) >= 0) {
                             List<Double> intersection = Matrix.intersect(sn.refclass.findNonNegative(), inchain);
                             for (double value : intersection) {
                                 int s = (int) value;
                                 if (!Double.isNaN(this.result.TN.get(i, r))) {
-                                    this.metrics.XNchain.set(
+                                    this.result.XN.set(
                                             0,
                                             c,
-                                            this.metrics.XNchain.get(0, c)
+                                            this.result.XN.get(0, c)
                                                     + sn.rt.get(i * sn.nclasses + r, ref * sn.nclasses + s)
                                                     * this.result.TN.get(i, r));
                                 }
@@ -728,10 +753,10 @@ public abstract class NetworkSolver extends Solver {
                             for (int k = 0; k < inchain.length(); k++) {
                                 int s = (int) inchain.get(k);
                                 if (!Double.isNaN(this.result.TN.get(i, r))) {
-                                    this.metrics.XNchain.set(
+                                    this.result.XN.set(
                                             0,
                                             c,
-                                            this.metrics.XNchain.get(0, c)
+                                            this.result.XN.get(0, c)
                                                     + sn.rt.get(i * sn.nclasses + r, ref * sn.nclasses + s)
                                                     * this.result.TN.get(i, r));
                                 }
@@ -750,9 +775,9 @@ public abstract class NetworkSolver extends Solver {
             }
 
             if (this.model.hasFork() && this.model.hasJoin()) {
-                // In this case, CNclass is unreliable as it sums the contribution across all stations,
+                // In this case, CN is unreliable as it sums the contribution across all stations,
                 // which would include also forked tasks, we use Little's law instead
-                this.metrics.CNchain.set(0, c, nJobsChain / this.metrics.XNchain.get(0, c));
+                this.result.CN.set(0, c, nJobsChain / this.result.XN.get(0, c));
             } else {
                 // TODO: implementation - note return type and parameters should likely not be void
                 if (Double.isInfinite(nJobsChain)) {
@@ -769,7 +794,7 @@ public abstract class NetworkSolver extends Solver {
                         sumFinite += value;
                 }
 
-                this.metrics.CNchain.set(0, c, sumFinite);
+                this.result.CN.set(0, c, sumFinite);
             }
         }
     }
@@ -782,7 +807,7 @@ public abstract class NetworkSolver extends Solver {
 
         this.getAvgSys();
 
-        NetworkAvgSysTable avgSysTable = new NetworkAvgSysTable(this.metrics.CNchain.toList1D(), this.metrics.XNchain.toList1D(), this.options);
+        NetworkAvgSysTable avgSysTable = new NetworkAvgSysTable(this.result.CN.toList1D(), this.result.XN.toList1D(), this.options);
 
         java.util.List<String> chainNames = new ArrayList<>();
         java.util.List<String> inChainNames = new ArrayList<>();
@@ -823,16 +848,20 @@ public abstract class NetworkSolver extends Solver {
 //    System.out.println("-----------------------------------------------------");
     }
 
-    // Return average system response times at steady state
-    protected final void getAvgSysRespT() {
-        // TODO: implementation - note return type and parameters should likely not be void
-        throw new RuntimeException("getAvgSysRespT() has not yet been implemented in JLINE.");
+    // Return average system response time at steady state
+    public final Matrix getAvgSysRespT() {
+        if (!this.hasResults()) {
+            this.getAvgSys();
+        }
+        return this.result.CN;
     }
 
-    // Return average system throughputs at steady state
-    protected final void getAvgSysTput() {
-        // TODO: implementation - note return type and parameters should likely not be void
-        throw new RuntimeException("getAvgSysTput() has not yet been implemented in JLINE.");
+    // Return average system throughput at steady state
+    public final Matrix getAvgSysTput() {
+        if (!this.hasResults()) {
+            this.getAvgSys();
+        }
+        return this.result.XN;
     }
 
     // Return transient average station metrics

@@ -185,6 +185,15 @@ classdef NetworkSolver < Solver
             [~,~,RN,~] = self.getAvg([],[],R,[],[],[]);
         end
 
+        function WN = getAvgResidT(self)
+            % WN = GETAVGRESIDT()
+
+            % Compute average residence times at steady-state
+            R = getAvgRespTHandles(self);
+            W = getAvgResidTHandles(self);            
+            [~,~,~,~,~,WN] = self.getAvg([],[],R,[],[],W);
+        end
+
         function WN = getAvgWaitT(self)
             % RN = GETAVGWAITT()
             % Compute average waiting time in queue excluding service

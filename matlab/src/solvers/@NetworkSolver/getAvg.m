@@ -6,14 +6,16 @@ function [QNclass,UNclass,RNclass,TNclass,ANclass,WNclass] = getAvg(self,Q,U,R,T
 % Copyright (c) 2012-2023, Imperial College London
 % All rights reserved.
 
-%global GlobalConstants.FineTol 
-sn = self.model.getStruct;
+%global GlobalConstants.FineTol
+sn = self.model.getStruct();
 
 if ~isempty(self.model.obj)
     M = sn.nstations;
     R = sn.nclasses;
     if isempty(self.obj)
         switch self.name
+            case 'SolverFluid'
+                self.obj = JLINE.SolverFluid(self.model.obj);
             case 'SolverMVA'
                 self.obj = JLINE.SolverMVA(self.model.obj);
             case 'SolverSSA'
@@ -56,29 +58,29 @@ else
     self.options.timespan = [0,Inf];
 end
 
-if ~self.hasAvgResults || ~self.options.cache
-%    try
-        runAnalyzer(self);
-        % the next line is required because getAvg can alter the chain
-        % structure in the presence of caches so we need to reload sn
-        sn = self.model.getStruct;        
-%     catch ME
-%         switch ME.identifier
-%             case {'Line:FeatureNotSupportedBySolver', 'Line:ModelTooLargeToSolve', 'Line:UnspecifiedOption'}
-%                 if self.options.verbose
-%                     line_printf('\n%s',ME.message);
-%                 end
-%                 QNclass=[];
-%                 UNclass=[];
-%                 RNclass=[];
-%                 TNclass=[];
-%                 ANclass=[];
-%                 WNclass=[];
-%                 return
-%             otherwise
-%                 rethrow(ME)
-%         end
-%     end
+if ~self.hasAvgResults() || ~self.options.cache
+    %    try
+    runAnalyzer(self);
+    % the next line is required because getAvg can alter the chain
+    % structure in the presence of caches so we need to reload sn
+    sn = self.model.getStruct;
+    %     catch ME
+    %         switch ME.identifier
+    %             case {'Line:FeatureNotSupportedBySolver', 'Line:ModelTooLargeToSolve', 'Line:UnspecifiedOption'}
+    %                 if self.options.verbose
+    %                     line_printf('\n%s',ME.message);
+    %                 end
+    %                 QNclass=[];
+    %                 UNclass=[];
+    %                 RNclass=[];
+    %                 TNclass=[];
+    %                 ANclass=[];
+    %                 WNclass=[];
+    %                 return
+    %             otherwise
+    %                 rethrow(ME)
+    %         end
+    %     end
     if ~self.hasAvgResults
         line_error(mfilename,'Unable to return results for this model.');
     end
@@ -184,7 +186,6 @@ if ~isempty(R)
             end
         end
     end
-
 end
 
 if ~isempty(T)
@@ -203,7 +204,7 @@ if ~isempty(T)
     end
     % nan values indicate that a metric is disabled
     TNclass(isnan(TNclass))=0;
-    
+
     % round to zero numerical perturbations
     TNclass(TNclass < GlobalConstants.FineTol)=0;
     % set to zero metrics for classes that are unreachable
@@ -252,34 +253,37 @@ if ~isempty(A)
 end
 
 %% compute residence times
-WNclass = 0*RNclass;
+if ~isempty(W)
+    WNclass = 0*RNclass;
 
-for i=1:M
-    for k=1:K
-        if isempty(W) || W{i,k}.disabled
-            WNclass(i,k) = NaN;
-        else
-            if ~isempty(RNclass) && RNclass(i,k)>0
-                c = find(sn.chains(:,k));
-                if RNclass(i,k) < GlobalConstants.FineTol
-                    WNclass(i,k) = RNclass(i,k);
-                else
-                    refclass = sn.refclass(c);
-                    if refclass>0
-                        % if there is a reference class, use this
-                        WNclass(i,k) = RNclass(i,k)*V(i,k)/sum(V(sn.refstat(k),refclass));
+    for i=1:M
+        for k=1:K
+            if isempty(W) || W{i,k}.disabled
+                WNclass(i,k) = NaN;
+            elseif isempty(self.result.Avg.W)
+                if ~isempty(RNclass) && RNclass(i,k)>0
+                    c = find(sn.chains(:,k));
+                    if RNclass(i,k) < GlobalConstants.FineTol
+                        WNclass(i,k) = RNclass(i,k);
                     else
-                        WNclass(i,k) = RNclass(i,k)*V(i,k)/sum(V(sn.refstat(k),sn.inchain{c}));
+                        refclass = sn.refclass(c);
+                        if refclass>0
+                            % if there is a reference class, use this
+                            WNclass(i,k) = RNclass(i,k)*V(i,k)/sum(V(sn.refstat(k),refclass));
+                        else
+                            WNclass(i,k) = RNclass(i,k)*V(i,k)/sum(V(sn.refstat(k),sn.inchain{c}));
+                        end
                     end
                 end
+            else
+                WNclass(i,k) = self.result.Avg.W(i,k);
             end
         end
     end
+    WNclass(isnan(WNclass))=0;
+    WNclass(WNclass < 10*GlobalConstants.FineTol)=0;
+    WNclass(WNclass < GlobalConstants.FineTol)=0;
 end
-
-WNclass(isnan(WNclass))=0;
-WNclass(WNclass < 10*GlobalConstants.FineTol)=0;
-WNclass(WNclass < GlobalConstants.FineTol)=0;
 
 if ~isempty(UNclass)
     unstableQueues = find(sum(UNclass,2)>0.99 * sn.nservers);

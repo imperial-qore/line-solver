@@ -2981,6 +2981,13 @@ public class SolverJMT extends NetworkSolver {
                         solverResult.RN = metric.getAnalyzedSamples() > sumJobs ? setValues(solverResult.RN, istStations, rList, metric.getMeanValue()) : setValues(solverResult.RN, istStations, rList, 0);
                     }
                     break;
+                case ResidT:
+                    if (open) {
+                        solverResult.WN = setValues(solverResult.WN, istStations, rList, metric.getMeanValue());
+                    } else {    // closed
+                        solverResult.WN = metric.getAnalyzedSamples() > sumJobs ? setValues(solverResult.WN, istStations, rList, metric.getMeanValue()) : setValues(solverResult.WN, istStations, rList, 0);
+                    }
+                    break;
                 case ArvR:
                     if (open) {
                         solverResult.AN = setValues(solverResult.AN, istStations, rList, metric.getMeanValue());

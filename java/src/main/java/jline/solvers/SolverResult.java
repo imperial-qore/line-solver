@@ -17,7 +17,7 @@ public class SolverResult {
   public Matrix AN; // mean arrival rates (nstations x nclasses)
   public Matrix WN; // mean residence times (nstations x nclasses)
   public Matrix CN; // mean system response time (1 x nclasses)
-  public Matrix XN; // mean throughput (1 x nclasses)
+  public Matrix XN; // mean system throughput (1 x nclasses)
 
   // Note: for transient metrics, the time steps are stored separately in 't' - this differs from
   // LINE where they are stored in adjacent columns to the performance metrics QNt, UNt and TNt.

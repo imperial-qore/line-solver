@@ -44,7 +44,7 @@ def jlineStart():
         from jline.lang.sections import RandomSource, Section, Server, ServiceSection, ServiceTunnel, SharedServer
         from jline.lang.sections import StatefulClassSwitcher, StatelessClassSwitcher
         from jline.lang.state import State
-        from jline.solvers import EnsembleSolver, NetworkAvgTable, NetworkSolver, Solver, SolverHandles, SolverMetrics
+        from jline.solvers import EnsembleSolver, NetworkAvgTable, NetworkSolver, SolverHandles
 
         gi()
 

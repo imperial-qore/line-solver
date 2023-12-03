@@ -119,19 +119,50 @@ class Solver:
             print(AvgSysTable)
         return AvgSysTable
 
+    def getAvgTput(self):
+        Tput = jlineMatrixToArray(self.obj.getAvgTput())
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+            print(Tput)
+        return Tput
+
+    def getAvgResidT(self):
+        ResidT = jlineMatrixToArray(self.obj.getAvgResidT())
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+            print(ResidT)
+        return ResidT
+
+    def getAvgArvR(self):
+        ArvR = jlineMatrixToArray(self.obj.getAvgArvR())
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+            print(ArvR)
+        return ArvR
+
+    def getAvgUtil(self):
+        Util = jlineMatrixToArray(self.obj.getAvgUtil())
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+            print(Util)
+        return Util
+
+    def getAvgQLen(self):
+        QLen = jlineMatrixToArray(self.obj.getAvgQLen())
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+            print(QLen)
+        return QLen
+
     def getAvgRespT(self):
-        # TODO: this should call the native Java method not getAvgSysTable
-        table = self.obj.getAvgTable()
-        RespT = np.array(list(table.getRespT()))
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT):
+        RespT = jlineMatrixToArray(self.obj.getAvgRespT())
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
             print(RespT)
         return RespT
 
+    def getAvgSysTput(self):
+        SysTput = jlineMatrixToArray(self.obj.getAvgSysTput())
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+            print(SysTput)
+        return SysTput
 
     def getAvgSysRespT(self):
-        # TODO: this should call the native Java method not getAvgSysTable
-        table = self.obj.getAvgSysTable()
-        SysRespT = np.array(list(table.getSysRespT()))
+        SysRespT = jlineMatrixToArray(self.obj.getAvgSysRespT())
         if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
             print(SysRespT)
         return SysRespT

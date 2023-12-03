@@ -125,9 +125,10 @@ for c=1:sn.nchains
             %    CNchain(c) = sumfinite(alpha(refstats(inchain(1)),inchain).*CNclass(inchain));
         end
     end
-    CNchain(c) = sumfinite(alpha(refstats(inchain(1)),inchain).*CNclass(inchain));
-    
+    CNchain(c) = sumfinite(alpha(refstats(inchain(1)),inchain).*CNclass(inchain));  
 end
+self.result.XN = XNchain;
+self.result.CN = CNchain;
 end
 
 % Finds all the paths coming out of start, computes the total response time along them, and identifies all the stations along these paths

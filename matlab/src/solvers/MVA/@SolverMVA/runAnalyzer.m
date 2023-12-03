@@ -31,14 +31,23 @@ switch options.lang
         sn = self.getStruct;
         M = sn.nstations;
         R = sn.nclasses;
+        C = sn.nchains;
         T = getAvgTputHandles(self);
         if ~isempty(T) && ~isempty(TN)
             AN = zeros(M,R);
+            WN = zeros(M,R);
+            for c=1:C
+                inchain = sn.inchain{c};
+                refstat = find(sn.refstat(:,inchain{1}));
+                XN(c) = sum(TN(refstat,inchain));
+            end
             for i=1:M
                 for j=1:M
                     for k=1:R
                         for r=1:R
                             AN(i,k) = AN(i,k) + TN(j,r)*sn.rt((j-1)*R+r, (i-1)*R+k);
+                            c = find(sn.chains(:,r));
+                            WN(i,r) = RN(i,r)*TN(i,r)/XN(c);
                         end
                     end
                 end
@@ -46,7 +55,7 @@ switch options.lang
         else
             AN = [];
         end
-        self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,runtime,options.method,lastiter);
+        self.setAvgResults(QN,UN,RN,TN,AN,WN,CN,XN,runtime,options.method,lastiter);
         self.result.Prob.logNormConstAggr = lG;
         return
     case 'matlab'
@@ -63,7 +72,7 @@ switch options.lang
             if self.model.hasFork
                 forkIter = forkIter + 1;
                 if forkIter == 1
-                    switch options.config.fork_join 
+                    switch options.config.fork_join
                         case {'heidelberger-trivedi', 'ht'}
                             [nonfjmodel, fjclassmap, fjforkmap, fj_auxiliary_delays] = solver_mva_fj_network_transform(self.model);
                         case {'fjt', 'default'}
@@ -242,7 +251,7 @@ switch options.lang
                                         idx = idx + 1;
                                         nonfjmodel.nodes{fj_auxiliary_delays{joinIdx}}.setService(nonfjmodel.classes{s}, Exp.fitMean(r0));
                                     end
-                                    
+
                                 end
                             end
                     end
@@ -276,7 +285,7 @@ switch options.lang
                         end
                         % Re-set the throughputs for the original classes
                         TN(nonfjstruct.nodeToStation(find(sn.nodetype == NodeType.ID_JOIN)), nonzeros(fjclassmap)) = TN_orig;
-                    case {'fjt', 'default'} 
+                    case {'fjt', 'default'}
                         TN_orig = TN([nonfjstruct.nodeToStation(find(sn.nodetype == NodeType.ID_JOIN)), nonfjstruct.nodeToStation(find(sn.nodetype == NodeType.ID_SOURCE))], nonzeros(fjclassmap));
                         % merge back artificial classes into their original classes
                         for r=1:length(fjclassmap)
@@ -308,9 +317,23 @@ switch options.lang
 
         sn = self.model.getStruct();
 
-        % Compute average arrival rate at steady-state
+        % Compute average residence time at steady-state
         AN = getAvgArvRFromTput(sn, TN, self.getAvgTputHandles());
-
+        M = sn.nstations;
+        R = sn.nclasses;
+        WN = RN;
+        if ~isempty(RN)
+            for i=1:M
+                for j=1:M
+                    for k=1:R
+                        for r=1:R
+                            c = find(sn.chains(:,r))
+                            WN(i,r) = RN(i,r)*TN(i,r)/XN(c);
+                        end
+                    end
+                end
+            end
+        end
         self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,runtime,method,iter);
         self.result.Prob.logNormConstAggr = lG;
 end

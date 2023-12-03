@@ -36,6 +36,8 @@ P{2,2}(2,3) = 1; % (Queue 1,Class2) -> (Sink 1,Class2)
 P{2,2}(4,2) = 1; % (ClassSwitch 1,Class2) -> (Queue 1,Class2)
 model.link(P);
 
+model.printRoutingMatrix();
+
 solver{1} = SolverMVA(model);
 AvgTable{1} = solver{1}.getAvgChainTable;
 AvgTable{1}

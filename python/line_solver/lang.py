@@ -45,7 +45,7 @@ class RoutingMatrix:
             rt = argv[2]
             if isinstance(rt, RoutingMatrix):
                 self.obj.set(class_source.obj, class_dest.obj, rt.obj)
-            else: # assume argv[2] is a np.array
+            else:  # assume argv[2] is a np.array
                 self.obj.set(class_source.obj, class_dest.obj, jlineMatrixFromArray(rt))
             return self.obj
 
@@ -244,6 +244,9 @@ class Network(Model):
         sn.fromJline(jsn)
         return sn
 
+    def printRoutingMatrix(self):
+        self.obj.printRoutingMatrix()
+
 
 class Cache(Node):
     def __init__(self, model, name, nitems, itemLevelCap, replPolicy, graph=()):
@@ -316,10 +319,39 @@ class Source(Station):
         self.obj.setArrival(jobclass.obj, distribution.obj)
 
 
+class Logger(Node):
+    def __init__(self, model, name, logfile):
+        super().__init__()
+        self.obj = jpype.JPackage('jline').lang.nodes.Logger(model.obj, name, logfile)
+
+    def setStartTime(self, activate):
+        self.obj.setStartTime(activate)
+
+    def setJobID(self, activate):
+        self.obj.setJobID(activate)
+
+    def setJobClass(self, activate):
+        self.obj.setJobClass(activate)
+
+    def setTimestamp(self, activate):
+        self.obj.setTimestamp(activate)
+
+    def setTimeSameClass(self, activate):
+        self.obj.setTimeSameClass(activate)
+
+    def setTimeAnyClass(self, activate):
+        self.obj.setTimeAnyClass(activate)
+
+
 class ClassSwitch(Node):
-    def __init__(self, model, name):
+    def __init__(self, *argv):
+        model = argv[0]
+        name = argv[1]
         super().__init__()
         self.obj = jpype.JPackage('jline').lang.nodes.ClassSwitch(model.obj, name)
+        if len(argv) > 2:
+            csmatrix = argv[2]
+            self.setClassSwitchingMatrix(csmatrix)
 
     def initClassSwitchMatrix(self):
         return jlineMatrixToArray(self.obj.initClassSwitchMatrix())
@@ -351,8 +383,8 @@ class Queue(Station):
         super().__init__()
         self.obj = jpype.JPackage('jline').lang.nodes.Queue(model.obj, name, strategy.value)
 
-    def setService(self, jobclass, distribution):
-        self.obj.setService(jobclass.obj, distribution.obj)
+    def setService(self, jobclass, distribution, weight=1.0):
+        self.obj.setService(jobclass.obj, distribution.obj, weight)
 
     def setNumberOfServers(self, nservers):
         self.obj.setNumberOfServers(nservers)

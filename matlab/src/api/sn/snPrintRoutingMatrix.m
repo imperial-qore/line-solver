@@ -35,4 +35,5 @@ for i=1:nnodes
         end
     end
 end
+line_printf('\n');
 end
