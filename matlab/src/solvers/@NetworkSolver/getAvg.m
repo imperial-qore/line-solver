@@ -8,6 +8,12 @@ function [QNclass,UNclass,RNclass,TNclass,ANclass,WNclass] = getAvg(self,Q,U,R,T
 
 %global GlobalConstants.FineTol
 sn = self.model.getStruct();
+QNclass = [];
+UNclass = [];
+RNclass = [];
+TNclass = [];
+ANclass = [];
+WNclass = [];
 
 if ~isempty(self.model.obj)
     M = sn.nstations;

@@ -327,7 +327,7 @@ switch options.lang
                 for j=1:M
                     for k=1:R
                         for r=1:R
-                            c = find(sn.chains(:,r))
+                            c = find(sn.chains(:,r));
                             WN(i,r) = RN(i,r)*TN(i,r)/XN(c);
                         end
                     end
