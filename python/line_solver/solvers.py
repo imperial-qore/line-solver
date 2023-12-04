@@ -60,17 +60,17 @@ class Solver:
         for i in range(len(jobclasses)):
             classnames.append(str(jobclasses[i]))
         AvgTable = pd.DataFrame(np.concatenate([[QLen, Util, RespT, ResidT, ArvR, Tput]]).T, columns=cols)
-        tokeep = ~(AvgTable<=0.0).all(axis=1)
+        tokeep = ~(AvgTable <= 0.0).all(axis=1)
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
-        AvgTable = AvgTable.loc[tokeep] # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:# and not is_interactive():
+        AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
+        if not (
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
             print(AvgTable)
 
         return AvgTable
 
     def getAvgRespTTable(self):
-        # TODO: this should call the native Java method not getAvgTable
         table = self.obj.getAvgTable()
         # convert to NumPy
         RespT = np.array(list(table.getRespT()))
@@ -85,11 +85,137 @@ class Solver:
         for i in range(len(jobclasses)):
             classnames.append(str(jobclasses[i]))
         AvgTable = pd.DataFrame(np.concatenate([[RespT]]).T, columns=cols)
-        tokeep = ~(AvgTable<=0.0).all(axis=1)
+        tokeep = ~(AvgTable <= 0.0).all(axis=1)
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
-        AvgTable = AvgTable.loc[tokeep] # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:# and not is_interactive():
+        AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
+        if not (
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
+            print(AvgTable)
+
+        return AvgTable
+
+    def getAvgResidTTable(self):
+        table = self.obj.getAvgTable()
+
+        # convert to NumPy
+        ResidT = np.array(list(table.getResidT()))
+
+        cols = ['ResidT']
+        stations = list(table.getStationNames())
+        statnames = []
+        for i in range(len(stations)):
+            statnames.append(str(stations[i]))
+        jobclasses = list(table.getClassNames())
+        classnames = []
+        for i in range(len(jobclasses)):
+            classnames.append(str(jobclasses[i]))
+        AvgTable = pd.DataFrame(np.concatenate([[ResidT]]).T, columns=cols)
+        tokeep = ~(AvgTable <= 0.0).all(axis=1)
+        AvgTable.insert(0, "JobClass", classnames)
+        AvgTable.insert(0, "Station", statnames)
+        AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
+            print(AvgTable)
+
+        return AvgTable
+
+    def getAvgUtilTable(self):
+        table = self.obj.getAvgTable()
+
+        # convert to NumPy
+        Util = np.array(list(table.getUtil()))
+
+        cols = ['Util']
+        stations = list(table.getStationNames())
+        statnames = []
+        for i in range(len(stations)):
+            statnames.append(str(stations[i]))
+        jobclasses = list(table.getClassNames())
+        classnames = []
+        for i in range(len(jobclasses)):
+            classnames.append(str(jobclasses[i]))
+        AvgTable = pd.DataFrame(np.concatenate([[Util]]).T, columns=cols)
+        tokeep = ~(AvgTable <= 0.0).all(axis=1)
+        AvgTable.insert(0, "JobClass", classnames)
+        AvgTable.insert(0, "Station", statnames)
+        AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
+            print(AvgTable)
+
+        return AvgTable
+
+    def getAvgQLenTable(self):
+        table = self.obj.getAvgTable()
+
+        # convert to NumPy
+        QLen = np.array(list(table.getQLen()))
+
+        cols = ['QLen']
+        stations = list(table.getStationNames())
+        statnames = []
+        for i in range(len(stations)):
+            statnames.append(str(stations[i]))
+        jobclasses = list(table.getClassNames())
+        classnames = []
+        for i in range(len(jobclasses)):
+            classnames.append(str(jobclasses[i]))
+        AvgTable = pd.DataFrame(np.concatenate([[QLen]]).T, columns=cols)
+        tokeep = ~(AvgTable <= 0.0).all(axis=1)
+        AvgTable.insert(0, "JobClass", classnames)
+        AvgTable.insert(0, "Station", statnames)
+        AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
+            print(AvgTable)
+
+        return AvgTable
+
+    def getAvgTputTable(self):
+        table = self.obj.getAvgTable()
+
+        # convert to NumPy
+        Tput = np.array(list(table.getTput()))
+
+        cols = ['Tput']
+        stations = list(table.getStationNames())
+        statnames = []
+        for i in range(len(stations)):
+            statnames.append(str(stations[i]))
+        jobclasses = list(table.getClassNames())
+        classnames = []
+        for i in range(len(jobclasses)):
+            classnames.append(str(jobclasses[i]))
+        AvgTable = pd.DataFrame(np.concatenate([[Tput]]).T, columns=cols)
+        tokeep = ~(AvgTable <= 0.0).all(axis=1)
+        AvgTable.insert(0, "JobClass", classnames)
+        AvgTable.insert(0, "Station", statnames)
+        AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
+            print(AvgTable)
+
+        return AvgTable
+
+    def getAvgArvRTable(self):
+        table = self.obj.getAvgTable()
+
+        # convert to NumPy
+        ArvR = np.array(list(table.getArvR()))
+
+        cols = ['ArvR']
+        stations = list(table.getStationNames())
+        statnames = []
+        for i in range(len(stations)):
+            statnames.append(str(stations[i]))
+        jobclasses = list(table.getClassNames())
+        classnames = []
+        for i in range(len(jobclasses)):
+            classnames.append(str(jobclasses[i]))
+        AvgTable = pd.DataFrame(np.concatenate([[ArvR]]).T, columns=cols)
+        tokeep = ~(AvgTable <= 0.0).all(axis=1)
+        AvgTable.insert(0, "JobClass", classnames)
+        AvgTable.insert(0, "Station", statnames)
+        AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
             print(AvgTable)
 
         return AvgTable
@@ -111,59 +237,68 @@ class Solver:
         for i in range(len(jobinchains)):
             inchains.append(str(jobinchains[i]))
         AvgSysTable = pd.DataFrame(np.concatenate([[SysRespT, SysTput]]).T, columns=cols)
-        tokeep = ~(AvgSysTable<=0.0).all(axis=1)
+        tokeep = ~(AvgSysTable <= 0.0).all(axis=1)
         AvgSysTable.insert(0, "JobClasses", inchains)
         AvgSysTable.insert(0, "Chain", chains)
-        AvgSysTable = AvgSysTable.loc[tokeep] # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+        AvgSysTable = AvgSysTable.loc[tokeep]  # eliminate zero rows
+        if not (
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
             print(AvgSysTable)
         return AvgSysTable
 
     def getAvgTput(self):
         Tput = jlineMatrixToArray(self.obj.getAvgTput())
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+        if not (
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
             print(Tput)
         return Tput
 
     def getAvgResidT(self):
         ResidT = jlineMatrixToArray(self.obj.getAvgResidT())
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+        if not (
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
             print(ResidT)
         return ResidT
 
     def getAvgArvR(self):
         ArvR = jlineMatrixToArray(self.obj.getAvgArvR())
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+        if not (
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
             print(ArvR)
         return ArvR
 
     def getAvgUtil(self):
         Util = jlineMatrixToArray(self.obj.getAvgUtil())
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+        if not (
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
             print(Util)
         return Util
 
     def getAvgQLen(self):
         QLen = jlineMatrixToArray(self.obj.getAvgQLen())
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+        if not (
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
             print(QLen)
         return QLen
 
     def getAvgRespT(self):
         RespT = jlineMatrixToArray(self.obj.getAvgRespT())
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+        if not (
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
             print(RespT)
         return RespT
 
     def getAvgSysTput(self):
         SysTput = jlineMatrixToArray(self.obj.getAvgSysTput())
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+        if not (
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
             print(SysTput)
         return SysTput
 
     def getAvgSysRespT(self):
         SysRespT = jlineMatrixToArray(self.obj.getAvgSysRespT())
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+        if not (
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
             print(SysRespT)
         return SysRespT
 
@@ -204,8 +339,10 @@ class SolverEnv(Solver):
         for i in range(len(solvers)):
             solvers[i] = args[1][i].obj
         self.obj = jpype.JPackage('jline').solvers.env.SolverEnv(model.obj, solvers, self.solveropt.obj)
+
     def getEnsembleAvg(self):
         return self.obj.getEnsembleAvg()
+
     def printAvgTable(self):
         self.obj.printAvgTable()
 
@@ -216,6 +353,7 @@ class SolverFluid(Solver):
         super().__init__(options, args)
         model = args[0]
         self.obj = jpype.JPackage('jline').solvers.fluid.SolverFluid(model.obj, self.solveropt.obj)
+
 
 class SolverJMT(Solver):
     def __init__(self, *args):
