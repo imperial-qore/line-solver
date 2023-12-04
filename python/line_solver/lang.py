@@ -192,43 +192,43 @@ class NodeParam:
             self.rpolicy = ReplacementStrategy(jnodeparam.rpolicy).name
         else:
             self.rpolicy = None
-        # # Fork
-        # fanOut
-        # # Join
-        # joinStrategy
-        # fanIn
-        # joinRequired
-        # # WRROBIN
-        # weights
-        # # RROBIN, WRROBIN
-        # outlinks
-        # #KCHOICES
-        # withMemory
-        # k
-        # # Petri
-        # nmodes
-        # enabling
-        # inhibiting
-        # modenames
-        # nmodeservers
-        # # Transition
-        # firingid
-        # firing
-        # firingprocid
-        # firingproc
-        # firingphases
-        # firingprio
-        # fireweight
-        # # Logger
-        # fileName
-        # filePath
-        # startTime
-        # loggerName
-        # timestamp
-        # jobID
-        # jobClass
-        # timeSameClass
-        # timeAnyClass
+        ## Fork
+        self.fanOut = jnodeparam.fanOut
+        ## Join
+        self.joinStrategy = jnodeparam.joinStrategy
+        self.fanIn = jnodeparam.fanIn
+        self.joinRequired = jnodeparam.joinRequired
+        ## WRROBIN
+        self.weights = jnodeparam.weights
+        ## RROBIN, WRROBIN
+        self.outlinks = jnodeparam.outlinks
+        ## KCHOICES
+        self.withMemory = jnodeparam.withMemory
+        self.k = jnodeparam.k
+        ## Petri net elements
+        self.nmodes = jnodeparam.nmodes
+        self.enabling = jnodeparam.enabling
+        self.inhibiting = jnodeparam.inhibiting
+        self.modenames = jnodeparam.modenames
+        self.nmodeservers = jnodeparam.nmodeservers
+        ## Transition
+        self.firingid = jnodeparam.firingid
+        self.firing = jnodeparam.firing
+        self.firingprocid = jnodeparam.firingprocid
+        self.firingproc = jnodeparam.firingproc
+        self.firingphases = jnodeparam.firingphases
+        self.firingprio = jnodeparam.firingprio
+        self.fireweight = jnodeparam.fireweight
+        ## Logger
+        self.fileName = jnodeparam.fileName
+        self.filePath = jnodeparam.filePath
+        self.startTime = jnodeparam.startTime
+        self.loggerName = jnodeparam.loggerName
+        self.timestamp = jnodeparam.timestamp
+        self.jobID = jnodeparam.jobID
+        self.jobClass = jnodeparam.jobClass
+        self.timeSameClass = jnodeparam.timeSameClass
+        self.timeAnyClass = jnodeparam.timeAnyClass
 
 class Network(Model):
     def __init__(self, *argv):
