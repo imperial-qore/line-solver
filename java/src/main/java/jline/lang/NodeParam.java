@@ -5,10 +5,8 @@ import java.util.List;
 import java.util.Map;
 
 import jline.lang.constant.ProcessType;
-import jline.lang.distributions.Distribution;
 
 import jline.lang.constant.TimingStrategy;
-import jline.lang.JobClass;
 import jline.lang.constant.JoinStrategy;
 import jline.lang.constant.ReplacementStrategy;
 import jline.util.Matrix;
@@ -18,22 +16,24 @@ import jline.util.Matrix;
  */
 public class NodeParam implements Serializable {
 	//TODO: this data structure is a blob and may need reimplementation
+
 	// Cache
-	public int nitems;
 	public Matrix[][] accost;
-	public Matrix itemcap;
-	public Map<Integer, List<Double>> pread;
-	public ReplacementStrategy replacement;
 	public Matrix hitclass;
+	public Matrix itemcap;
 	public Matrix missclass;
-	
+	public int nitems;
+		public Map<Integer, List<Double>> pread;
+	public ReplacementStrategy rpolicy;
+
 	//Fork
 	public double fanOut = Double.NaN;
 	
 	//Join
 	public Map<JobClass, JoinStrategy> joinStrategy = null;
 	public Map<JobClass, Double> fanIn = null;
-	
+	public Map<JobClass, Double> joinRequired;
+
 	//RoutingStrategy WRROBIN:
 	public Map<JobClass, Matrix> weights = null;
 	
@@ -47,8 +47,6 @@ public class NodeParam implements Serializable {
 	public List<Matrix> enabling = null;
 
 	public List<Matrix> inhibiting = null;
-
-	public Map<JobClass, Double> joinRequired;
 
 	public List<String> modenames;
 

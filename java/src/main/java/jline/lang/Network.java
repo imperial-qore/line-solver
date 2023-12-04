@@ -15,7 +15,6 @@ import jline.solvers.jmt.SolverJMT;
 import jline.util.*;
 import org.apache.commons.lang3.NotImplementedException;
 
-import javax.xml.parsers.ParserConfigurationException;
 import java.io.Serializable;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -2518,7 +2517,7 @@ public class Network extends Model implements Serializable {
                             param.pread.put(r, cache.popularityGet(r).evalPMF(t).toList1D());
                         }
                     }
-                    param.replacement = cache.getReplacementPolicy();
+                    param.rpolicy = cache.getReplacementPolicy();
                     param.hitclass = new Matrix(cache.getCacheServer().hitClass.getNumRows(), cache.getCacheServer().hitClass.getNumCols());
                     for (int r = 0; r < cache.getCacheServer().hitClass.getNumRows(); r++) {
                         for (int c = 0; c < cache.getCacheServer().hitClass.getNumCols(); c++) {

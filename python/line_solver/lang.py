@@ -1,6 +1,7 @@
 import jpype
 import jpype.imports
 import numpy as np
+from pprint import pprint, pformat
 
 from . import jlineMatrixToArray, jlineMapMatrixToArray, jlineMatrixFromArray
 from .constants import *
@@ -75,50 +76,53 @@ class Model:
         return self.obj.getVersion()
 
 
-class NetworkStruct(dict):
+class NetworkStruct():
+    def __str__(self):
+        return pformat(vars(self))
+
     def fromJline(self, jsn):
-        super().__setitem__("nstations", int(jsn.nstations))
-        super().__setitem__("nstateful", int(jsn.nstateful))
-        super().__setitem__("nnodes", int(jsn.nnodes))
-        super().__setitem__("nclasses", int(jsn.nclasses))
-        super().__setitem__("nclosedjobs", int(jsn.nclosedjobs))
-        super().__setitem__("nchains", int(jsn.nchains))
-        super().__setitem__("refstat", jlineMatrixToArray(jsn.refstat))
-        super().__setitem__("njobs", jlineMatrixToArray(jsn.njobs))
-        super().__setitem__("nservers", jlineMatrixToArray(jsn.nservers))
-        super().__setitem__("connmatrix", jlineMatrixToArray(jsn.connmatrix))
-        super().__setitem__("scv", jlineMatrixToArray(jsn.scv))
-        super().__setitem__("isstation", jlineMatrixToArray(jsn.isstation))
-        super().__setitem__("isstateful", jlineMatrixToArray(jsn.isstateful))
-        super().__setitem__("isstatedep", jlineMatrixToArray(jsn.isstatedep))
-        super().__setitem__("nodeToStateful", jlineMatrixToArray(jsn.nodeToStateful))
-        super().__setitem__("nodeToStation", jlineMatrixToArray(jsn.nodeToStation))
-        super().__setitem__("stationToNode", jlineMatrixToArray(jsn.stationToNode))
-        super().__setitem__("stationToStateful", jlineMatrixToArray(jsn.stationToStateful))
-        super().__setitem__("statefulToNode", jlineMatrixToArray(jsn.statefulToNode))
-        super().__setitem__("rates", jlineMatrixToArray(jsn.rates))
-        super().__setitem__("classprio", jlineMatrixToArray(jsn.classprio))
-        super().__setitem__("phases", jlineMatrixToArray(jsn.phases))
-        super().__setitem__("phasessz", jlineMatrixToArray(jsn.phasessz))
-        super().__setitem__("phaseshift", jlineMatrixToArray(jsn.phaseshift))
-        super().__setitem__("schedparam", jlineMatrixToArray(jsn.schedparam))
-        super().__setitem__("chains", jlineMatrixToArray(jsn.chains))
-        super().__setitem__("rt", jlineMatrixToArray(jsn.rt))
-        super().__setitem__("nvars", jlineMatrixToArray(jsn.nvars))
-        super().__setitem__("rtnodes", jlineMatrixToArray(jsn.rtnodes))
-        super().__setitem__("csmask", jlineMatrixToArray(jsn.csmask))
-        super().__setitem__("isslc", jlineMatrixToArray(jsn.isslc))
-        super().__setitem__("cap", jlineMatrixToArray(jsn.cap))
-        super().__setitem__("refclass", jlineMatrixToArray(jsn.refclass))
-        super().__setitem__("lldscaling", jlineMatrixToArray(jsn.lldscaling))
-        super().__setitem__("fj", jlineMatrixToArray(jsn.fj))
-        super().__setitem__("classcap", jlineMatrixToArray(jsn.classcap))
-        super().__setitem__("inchain", jlineMapMatrixToArray(jsn.inchain))
-        super().__setitem__("visits", jlineMapMatrixToArray(jsn.visits))
-        super().__setitem__("nodevisits", jlineMapMatrixToArray(jsn.nodevisits))
-        super().__setitem__("classnames", tuple(jsn.classnames))
-        super().__setitem__("nodetypes", tuple(map(lambda x: NodeType.fromJLine(x), jsn.nodetypes)))
-        super().__setitem__("nodenames", tuple(jsn.nodenames))
+        self.nstations=int(jsn.nstations)
+        self.nstateful=int(jsn.nstateful)
+        self.nnodes=int(jsn.nnodes)
+        self.nclasses=int(jsn.nclasses)
+        self.nclosedjobs=int(jsn.nclosedjobs)
+        self.nchains=int(jsn.nchains)
+        self.refstat=jlineMatrixToArray(jsn.refstat)
+        self.njobs=jlineMatrixToArray(jsn.njobs)
+        self.nservers=jlineMatrixToArray(jsn.nservers)
+        self.connmatrix=jlineMatrixToArray(jsn.connmatrix)
+        self.scv=jlineMatrixToArray(jsn.scv)
+        self.isstation=jlineMatrixToArray(jsn.isstation)
+        self.isstateful=jlineMatrixToArray(jsn.isstateful)
+        self.isstatedep=jlineMatrixToArray(jsn.isstatedep)
+        self.nodeToStateful=jlineMatrixToArray(jsn.nodeToStateful)
+        self.nodeToStation=jlineMatrixToArray(jsn.nodeToStation)
+        self.stationToNode=jlineMatrixToArray(jsn.stationToNode)
+        self.stationToStateful=jlineMatrixToArray(jsn.stationToStateful)
+        self.statefulToNode=jlineMatrixToArray(jsn.statefulToNode)
+        self.rates=jlineMatrixToArray(jsn.rates)
+        self.classprio=jlineMatrixToArray(jsn.classprio)
+        self.phases=jlineMatrixToArray(jsn.phases)
+        self.phasessz=jlineMatrixToArray(jsn.phasessz)
+        self.phaseshift=jlineMatrixToArray(jsn.phaseshift)
+        self.schedparam=jlineMatrixToArray(jsn.schedparam)
+        self.chains=jlineMatrixToArray(jsn.chains)
+        self.rt=jlineMatrixToArray(jsn.rt)
+        self.nvars=jlineMatrixToArray(jsn.nvars)
+        self.rtnodes=jlineMatrixToArray(jsn.rtnodes)
+        self.csmask=jlineMatrixToArray(jsn.csmask)
+        self.isslc=jlineMatrixToArray(jsn.isslc)
+        self.cap=jlineMatrixToArray(jsn.cap)
+        self.refclass=jlineMatrixToArray(jsn.refclass)
+        self.lldscaling=jlineMatrixToArray(jsn.lldscaling)
+        self.fj=jlineMatrixToArray(jsn.fj)
+        self.classcap=jlineMatrixToArray(jsn.classcap)
+        self.inchain=jlineMapMatrixToArray(jsn.inchain)
+        self.visits=jlineMapMatrixToArray(jsn.visits)
+        self.nodevisits=jlineMapMatrixToArray(jsn.nodevisits)
+        self.classnames=tuple(jsn.classnames)
+        self.nodetypes=tuple(map(lambda x: NodeType.fromJLine(x), jsn.nodetypes))
+        self.nodenames=tuple(jsn.nodenames)
 
         sched = np.empty(int(jsn.nstations), dtype=object)
         space = np.empty(int(jsn.nstations), dtype=object)
@@ -129,36 +133,37 @@ class NetworkStruct(dict):
         routing = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses)), dtype=object)
         droprule = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses)), dtype=object)
         proc = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses), 2), dtype=object)
+        nodeparam = np.empty(int(jsn.nnodes), dtype=object)
         # TODO: missing in Jline, rtorig always set to None?
         # rtorig = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses)), dtype=object)
         for ist in range(int(jsn.nstations)):
-            sched[ist] = SchedStrategy(jsn.sched.get(jsn.stations[ist]))
+            sched[ist] = SchedStrategy(jsn.sched.get(jsn.stations[ist])).name
             space[ist] = jlineMatrixToArray(jsn.space.get(jsn.stations[ist]))
             for jcl in range(int(jsn.nclasses)):
                 mu[ist, jcl] = jlineMatrixToArray(jsn.mu.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
                 phi[ist, jcl] = jlineMatrixToArray(jsn.phi.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
                 pie[ist, jcl] = jlineMatrixToArray(jsn.pie.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
                 # rtorig[ist, jcl] = jlineMatrixToArray(jsn.rtorig.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
-                proctype[ist, jcl] = ProcessType(jsn.proctype.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
-                routing[ist, jcl] = RoutingStrategy(jsn.routing.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
-                droprule[ist, jcl] = DropStrategy(jsn.droprule.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
+                proctype[ist, jcl] = ProcessType(jsn.proctype.get(jsn.stations[ist]).get(jsn.jobclasses[jcl])).name
+                routing[ist, jcl] = RoutingStrategy(jsn.routing.get(jsn.stations[ist]).get(jsn.jobclasses[jcl])).name
+                droprule[ist, jcl] = DropStrategy(jsn.droprule.get(jsn.stations[ist]).get(jsn.jobclasses[jcl])).name
                 proc[ist, jcl, 0] = jlineMatrixToArray(jsn.proc.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]).get(0))
                 proc[ist, jcl, 1] = jlineMatrixToArray(jsn.proc.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]).get(1))
-        super().__setitem__("sched", sched)
-        super().__setitem__("space", space)
-        super().__setitem__("mu", mu)
-        super().__setitem__("phi", phi)
-        super().__setitem__("pie", pie)
-        super().__setitem__("proctype", proctype)
-        super().__setitem__("routing", routing)
-        super().__setitem__("droprule", droprule)
-        # super().__setitem__("rtorig", rtorig)
-        super().__setitem__("proc", proc)
 
-        # TODO: NodeParam class to be ported in Python
-        # nodeparam = np.empty(int(jsn.nstations), dtype=object)
-        # for ind in range(int(jsn.nnodes)):
-        #    nodeparam[ind] = NodeParam(jsn.sched.get(jsn.nodes[ind]))
+        for ind in range(int(jsn.nnodes)):
+            nodeparam[ind] = NodeParam(jsn.nodeparam.get(jsn.nodes[ind]))
+
+        self.nodeparam=nodeparam
+        self.sched=sched
+        self.space=space
+        self.mu=mu
+        self.phi=phi
+        self.pie=pie
+        self.proctype=proctype
+        self.routing=routing
+        self.droprule=droprule
+        # self.rtorig=rtorig
+        self.proc=proc
 
         # TODO: fields missing in JLINE
         # state = np.empty(int(jsn.nstateful), dtype=object)
@@ -166,8 +171,8 @@ class NetworkStruct(dict):
         # for isf in range(int(jsn.nstateful)):
         #    state[isf] = jlineMatrixToArray(jsn.state.get(jsn.stateful[isf]))
         #    stateprior[isf] = jlineMatrixToArray(jsn.state.get(jsn.stateprior[isf]))
-        # super().__setitem__("state", state)
-        # super().__setitem__("stateprior", stateprior)
+        # self.state=state)
+        # self.stateprior=stateprior)
 
         # TODO: fields not parsed yet
         # SerializableFunction<Pair<Map<Node, Matrix>, Map<Node, Matrix>>, Matrix> rtfun;
@@ -175,6 +180,55 @@ class NetworkStruct(dict):
         # public Map<Station, SerializableFunction<Matrix, Double>> cdscaling;
         # public Map<Integer, Sync> sync;
 
+class NodeParam:
+    def __init__(self, jnodeparam):
+        self.nitems = jnodeparam.nitems
+        self.hitclass = jlineMatrixToArray(jnodeparam.hitclass)
+        self.missclass = jlineMatrixToArray(jnodeparam.missclass)
+        # accost
+        self.itemcap = jlineMatrixToArray(jnodeparam.itemcap)
+        #self.pread = jlineMapMatrixToArray() # TODO: unclear why a List of Doubles as Map<Integer, List<Double>>
+        if jnodeparam.rpolicy is not None:
+            self.rpolicy = ReplacementStrategy(jnodeparam.rpolicy).name
+        else:
+            self.rpolicy = None
+        # # Fork
+        # fanOut
+        # # Join
+        # joinStrategy
+        # fanIn
+        # joinRequired
+        # # WRROBIN
+        # weights
+        # # RROBIN, WRROBIN
+        # outlinks
+        # #KCHOICES
+        # withMemory
+        # k
+        # # Petri
+        # nmodes
+        # enabling
+        # inhibiting
+        # modenames
+        # nmodeservers
+        # # Transition
+        # firingid
+        # firing
+        # firingprocid
+        # firingproc
+        # firingphases
+        # firingprio
+        # fireweight
+        # # Logger
+        # fileName
+        # filePath
+        # startTime
+        # loggerName
+        # timestamp
+        # jobID
+        # jobClass
+        # timeSameClass
+        # timeAnyClass
 
 class Network(Model):
     def __init__(self, *argv):
@@ -451,3 +505,5 @@ class SelfLoopingClass(JobClass):
                 self.obj.setCompletes(True)
             else:
                 self.obj.setCompletes(False)
+
+
