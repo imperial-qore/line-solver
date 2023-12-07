@@ -11,6 +11,9 @@ class JobClass:
     def __init__(self):
         pass
 
+    def __index__(self):
+        return self.obj.getIndex()-1
+
 
 class Node:
     def __init__(self):
