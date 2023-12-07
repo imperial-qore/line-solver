@@ -11,6 +11,7 @@ import jline.lang.Network;
 import jline.lang.NetworkStruct;
 
 import javax.xml.parsers.ParserConfigurationException;
+import java.text.NumberFormat;
 import java.util.*;
 
 // Abstract class for solvers applicable to Network models
@@ -517,6 +518,7 @@ public abstract class NetworkSolver extends Solver {
             avgTable.setOptions(this.options);
             avgTable.setClassNames(className);
             avgTable.setStationNames(stationName);
+
             return avgTable;
         } else {
             // TODO: implementation if keepDisabled is set to true
@@ -809,6 +811,7 @@ public abstract class NetworkSolver extends Solver {
 
         NetworkAvgSysTable avgSysTable = new NetworkAvgSysTable(this.result.CN.toList1D(), this.result.XN.toList1D(), this.options);
 
+
         java.util.List<String> chainNames = new ArrayList<>();
         java.util.List<String> inChainNames = new ArrayList<>();
         for (int c = 0; c < this.sn.nchains; c++) {
@@ -830,22 +833,6 @@ public abstract class NetworkSolver extends Solver {
         avgSysTable.setInChainNames(inChainNames);
 
         return avgSysTable;
-
-//    // TODO: implementation - note return type and parameters should likely not be void
-//    System.out.printf(
-//        "%-12s\t %-12s\t %-10s\t %-10s\t", "Chain", "JobClasses", "SysRespT", "SysTput");
-//    System.out.println("\n-----------------------------------------------------");
-//    NumberFormat nf = NumberFormat.getNumberInstance();
-//    nf.setMinimumFractionDigits(5);
-//    for (int i = 0; i < sn.nchains; i++) {
-//      System.out.format(
-//          "%-12s\t %-12s\t %-10s\t %-10s\n",
-//          i + 1,
-//          sn.jobclasses.get(i).getName(),
-//          nf.format(this.metrics.CNchain.get(i)),
-//          nf.format(this.metrics.XNchain.get(i)));
-//    }
-//    System.out.println("-----------------------------------------------------");
     }
 
     // Return average system response time at steady state

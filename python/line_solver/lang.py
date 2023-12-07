@@ -130,9 +130,9 @@ class NetworkStruct():
         phi = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses)), dtype=object)
         pie = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses)), dtype=object)
         proctype = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses)), dtype=object)
-        routing = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses)), dtype=object)
         droprule = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses)), dtype=object)
         proc = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses), 2), dtype=object)
+        routing = np.empty(shape=(int(jsn.nnodes), int(jsn.nclasses)), dtype=object)
         nodeparam = np.empty(int(jsn.nnodes), dtype=object)
         # TODO: missing in Jline, rtorig always set to None?
         # rtorig = np.empty(shape=(int(jsn.nstations), int(jsn.nclasses)), dtype=object)
@@ -145,13 +145,14 @@ class NetworkStruct():
                 pie[ist, jcl] = jlineMatrixToArray(jsn.pie.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
                 # rtorig[ist, jcl] = jlineMatrixToArray(jsn.rtorig.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]))
                 proctype[ist, jcl] = ProcessType(jsn.proctype.get(jsn.stations[ist]).get(jsn.jobclasses[jcl])).name
-                routing[ist, jcl] = RoutingStrategy(jsn.routing.get(jsn.stations[ist]).get(jsn.jobclasses[jcl])).name
                 droprule[ist, jcl] = DropStrategy(jsn.droprule.get(jsn.stations[ist]).get(jsn.jobclasses[jcl])).name
                 proc[ist, jcl, 0] = jlineMatrixToArray(jsn.proc.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]).get(0))
                 proc[ist, jcl, 1] = jlineMatrixToArray(jsn.proc.get(jsn.stations[ist]).get(jsn.jobclasses[jcl]).get(1))
 
         for ind in range(int(jsn.nnodes)):
             nodeparam[ind] = NodeParam(jsn.nodeparam.get(jsn.nodes[ind]))
+            for jcl in range(int(jsn.nclasses)):
+                routing[ind, jcl] = RoutingStrategy(jsn.routing.get(jsn.nodes[ind]).get(jsn.jobclasses[jcl])).name
 
         self.nodeparam=nodeparam
         self.sched=sched
@@ -466,7 +467,7 @@ class OpenClass(JobClass):
     def __init__(self, model, name, prio=0):
         super().__init__()
         self.obj = jpype.JPackage('jline').lang.OpenClass(model.obj, name, prio)
-        self.completes = False
+        self.completes = True
 
     def __setattr__(self, name, value):
         object.__setattr__(self, name, value)
@@ -496,7 +497,7 @@ class SelfLoopingClass(JobClass):
     def __init__(self, model, name, njobs, refstat, prio=0):
         super().__init__()
         self.obj = jpype.JPackage('jline').lang.SelfLoopingClass(model.obj, name, njobs, refstat.obj, prio)
-        self.completes = False
+        self.completes = True
 
     def __setattr__(self, name, value):
         object.__setattr__(self, name, value)

@@ -22,7 +22,7 @@ public class ClassSwitchModel {
         Source node1 = new Source(model, "Source 1");
         Queue node2 = new Queue(model, "Queue 1", SchedStrategy.FCFS);
         Sink node3 = new Sink(model, "Sink 1");
-        jline.lang.nodes.ClassSwitch node4 = new jline.lang.nodes.ClassSwitch(model, "ClassSwitch 1"); // Dummy node, class switching is embedded in the routing matrix P
+        ClassSwitch node4 = new ClassSwitch(model, "ClassSwitch 1"); // Dummy node, class switching is embedded in the routing matrix P
 
         // Block 2: classes
         OpenClass jobclass1 = new OpenClass(model, "Class1", 0);
@@ -41,9 +41,7 @@ public class ClassSwitchModel {
         node4.setClassSwitchingMatrix(csMatrix);
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2),
-                Arrays.asList(node1, node2, node3, node4));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node4, 1.000000); // (Source 1,Class1) -> (ClassSwitch 1,Class1)
         routingMatrix.set(jobclass1, jobclass1, node2, node3, 1.000000); // (Queue 1,Class1) -> (Sink 1,Class1)
@@ -51,6 +49,7 @@ public class ClassSwitchModel {
         routingMatrix.set(jobclass2, jobclass2, node1, node4, 1.000000); // (Source 1,Class2) -> (ClassSwitch 1,Class2)
         routingMatrix.set(jobclass2, jobclass2, node2, node3, 1.000000); // (Queue 1,Class2) -> (Sink 1,Class2)
         routingMatrix.set(jobclass2, jobclass2, node4, node2, 1.000000); // (Queue 1,Class2) -> (Sink 1,Class2)
+
 
         model.link(routingMatrix);
 
@@ -62,8 +61,9 @@ public class ClassSwitchModel {
 
         NetworkStruct sn = model.getStruct(false);
         sn.rt.print();
+        model.printRoutingMatrix();
         NetworkSolver solver = new SolverMVA(model);
-        solver.getAvgTable();
+        solver.getAvgSysTable().print();
     }
 
 }
