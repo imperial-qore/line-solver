@@ -79,7 +79,7 @@ public class OpenModel {
         node5.setService(jobclass3, Exp.fitMean(0.150000)); // (Queue 2,Class C)
 
         // Block 3: topology
-        Matrix C = node3.initClassSwitchMatrix();
+        ClassSwitchMatrix C = node3.initClassSwitchMatrix();
         C.setTo(Matrix.eye(C.length()));
         node3.setClassSwitchingMatrix(C);
 
@@ -172,7 +172,7 @@ public class OpenModel {
         node5.setService(jobclass3, Exp.fitMean(0.150000)); // (Queue 2,Class C)
 
         // Block 3: topology
-        Matrix C = node3.initClassSwitchMatrix();
+        ClassSwitchMatrix C = node3.initClassSwitchMatrix();
         C.setTo(Matrix.eye(C.length()));
         node3.setClassSwitchingMatrix(C);
 
@@ -223,8 +223,8 @@ public class OpenModel {
         node5.setService(jobclass2, Exp.fitMean(1.000000)); // (Queue 2,Class B)
         node5.setService(jobclass3, Exp.fitMean(0.150000)); // (Queue 2,Class C)
 
-        Matrix C = node3.initClassSwitchMatrix();
-        C = Matrix.eye(C.numRows);
+        ClassSwitchMatrix C = node3.initClassSwitchMatrix();
+        C = (ClassSwitchMatrix) ClassSwitchMatrix.eye(C.numRows);
         node3.setClassSwitchingMatrix(C);
 
         // Block 3: topology

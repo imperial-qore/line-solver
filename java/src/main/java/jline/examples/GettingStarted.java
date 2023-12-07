@@ -461,7 +461,7 @@ public class GettingStarted {
         node12.setService(jobclass1, APH.fitMeanAndSCV(16.000000, 16.000000)); // (delay10,CClass1)
         // Initialise class switch matrix
         for (ClassSwitch switchNode : switchNodes) {
-            Matrix csMatrix = switchNode.initClassSwitchMatrix();
+            ClassSwitchMatrix csMatrix = switchNode.initClassSwitchMatrix();
             csMatrix.set(jobclass1.getIndex() - 1, jobclass1.getIndex() - 1, 1);
             switchNode.setClassSwitchingMatrix(csMatrix);
         }

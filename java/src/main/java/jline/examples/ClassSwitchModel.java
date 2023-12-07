@@ -33,11 +33,11 @@ public class ClassSwitchModel {
         node2.setService(jobclass1, Exp.fitMean(1.000000)); // (Queue 1,Class1)
         node2.setService(jobclass2, Exp.fitMean(1.000000)); // (Queue 1,Class2)
 
-        Matrix csMatrix = node4.initClassSwitchMatrix();
-        csMatrix.set(jobclass1.getIndex()-1, jobclass1.getIndex()-1, 0.3);
-        csMatrix.set(jobclass1.getIndex()-1, jobclass2.getIndex()-1, 0.7);
-        csMatrix.set(jobclass2.getIndex()-1, jobclass1.getIndex()-1, 1.0);
-        csMatrix.set(jobclass2.getIndex()-1, jobclass2.getIndex()-1, 0.0);
+        ClassSwitchMatrix csMatrix = node4.initClassSwitchMatrix();
+        csMatrix.set(jobclass1, jobclass1, 0.3);
+        csMatrix.set(jobclass1, jobclass2, 0.7);
+        csMatrix.set(jobclass2, jobclass1, 1.0);
+        csMatrix.set(jobclass2, jobclass2, 0.0);
         node4.setClassSwitchingMatrix(csMatrix);
 
         // Block 3: topology

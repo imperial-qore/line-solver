@@ -1,5 +1,6 @@
 package jline.lang.nodes;
 
+import jline.lang.ClassSwitchMatrix;
 import jline.lang.JobClass;
 import jline.lang.Network;
 import jline.lang.constant.RoutingStrategy;
@@ -59,12 +60,12 @@ public class ClassSwitch extends Node implements Serializable {
         this.server = new StatelessClassSwitcher(jobClasses, csFun);
     }
 
-    public Matrix initClassSwitchMatrix() {
+    public ClassSwitchMatrix initClassSwitchMatrix() {
         int m = this.model.getNumberOfClasses();
-        return new Matrix(m,m,m*m);
+        return new ClassSwitchMatrix(m,m,m*m);
     }
 
-    public void setClassSwitchingMatrix(Matrix csMatrix) {
+    public void setClassSwitchingMatrix(ClassSwitchMatrix csMatrix) {
         ((StatelessClassSwitcher)this.server).updateClasses(this.model.getClasses());
         ((StatelessClassSwitcher)this.server).updateClassSwitch(csMatrix);
     }

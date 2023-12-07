@@ -397,7 +397,6 @@ class Logger(Node):
     def setTimeAnyClass(self, activate):
         self.obj.setTimeAnyClass(activate)
 
-
 class ClassSwitch(Node):
     def __init__(self, *argv):
         model = argv[0]
@@ -412,7 +411,7 @@ class ClassSwitch(Node):
         return jlineMatrixToArray(self.obj.initClassSwitchMatrix())
 
     def setClassSwitchingMatrix(self, csmatrix):
-        self.obj.setClassSwitchingMatrix(jlineMatrixFromArray(csmatrix))
+        self.obj.setClassSwitchingMatrix(jpype.JPackage('jline').lang.ClassSwitchMatrix(jlineMatrixFromArray(csmatrix)))
 
 
 class Sink(Node):
