@@ -2864,7 +2864,7 @@ public class SolverJMT extends NetworkSolver {
             Element stationPopulationsNode = null;
 
             if (sn.nodetypes.get(nodeIndex) != NodeType.Source && sn.nodetypes.get(nodeIndex) != NodeType.Join) {
-                State.StateMarginalStatistics sms = State.toMarginal(sn, nodeIndex, s0.get(sn.stations.get(isf)), null, null, null, null, null);
+                State.StateMarginalStatistics sms = State.toMarginal(sn, nodeIndex, s0.get(sn.stateful.get(isf)), null, null, null, null, null);
                 stationPopulationsNode = xml.simDoc.createElement("stationPopulations");
                 stationPopulationsNode.setAttribute("stationName", sn.nodenames.get(nodeIndex));
 

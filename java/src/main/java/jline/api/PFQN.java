@@ -1432,6 +1432,19 @@ public class PFQN {
 	 * @return normalizing constant and its logarithm
 	 */
 	public static pfqnNcReturn pfqn_ls(Matrix L, Matrix N, Matrix Z, int I) {
+		return pfqn_ls(L,N,Z,I,23000);
+	}
+
+	/**
+	 * Logistic sampling method to compute the normalizing constant
+	 * @param L - demands at all stations
+	 * @param N - number of jobs for each class
+	 * @param Z - think time for each class
+	 * @param I - number of samples
+	 * @param seed - random number generation seed
+	 * @return normalizing constant and its logarithm
+	 */
+	public static pfqnNcReturn pfqn_ls(Matrix L, Matrix N, Matrix Z, int I, long seed) {
 		int M = L.numRows;
 		int R = L.numCols;
 		Matrix Lsum = new Matrix(M, 1);
@@ -1488,6 +1501,7 @@ public class PFQN {
 				iA_array[i] = tmp_row;
 			}
 			MultivariateNormalDistribution mvd = new MultivariateNormalDistribution(x0_array, iA_array);
+			mvd.reseedRandomGenerator(seed);
 
 			if (sample == null) {
 				sample = mvd.sample(I);

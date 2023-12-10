@@ -170,11 +170,11 @@ class NetworkStruct():
         self.proc=proc
 
         # TODO: fields missing in JLINE
-        # state = np.empty(int(jsn.nstateful), dtype=object)
-        # stateprior = np.empty(int(jsn.nstateful), dtype=object)
-        # for isf in range(int(jsn.nstateful)):
-        #    state[isf] = jlineMatrixToArray(jsn.state.get(jsn.stateful[isf]))
-        #    stateprior[isf] = jlineMatrixToArray(jsn.state.get(jsn.stateprior[isf]))
+        self.state = np.empty(int(jsn.nstateful), dtype=object)
+        stateprior = np.empty(int(jsn.nstateful), dtype=object)
+        for isf in range(int(jsn.nstateful)):
+            self.state[isf] = jlineMatrixToArray(jsn.state.get(jsn.stateful.get(isf)))
+            #stateprior[isf] = jlineMatrixToArray(jsn.state.get(jsn.stateprior[isf]))
         # self.state=state)
         # self.stateprior=stateprior)
 

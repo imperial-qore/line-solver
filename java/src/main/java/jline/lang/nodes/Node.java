@@ -132,7 +132,7 @@ public class Node extends NetworkElement implements Serializable {
     }
 
     public boolean isStateful() {
-        return this.statefulIdx != -1;
+        return this.model.getStatefulNodeIndex(this) != -1; // call needed to ensure statefulIdx is generated
     }
 
     public void setNodeIdx(int index) {
