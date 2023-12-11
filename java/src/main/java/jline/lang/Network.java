@@ -2961,7 +2961,11 @@ public class Network extends Model implements Serializable {
             if (this.sn == null) {
                 rtorig = null;
             } else {
-                rtorig = new HashMap<>(this.sn.rtorig); // save linked routing table
+                if (this.sn.rtorig != null) {
+                    rtorig = new HashMap<>(this.sn.rtorig); // save linked routing table
+                } else {
+                    rtorig = null;
+                }
             }
             this.sn = new NetworkStruct();
             this.sn.rtorig = rtorig;
