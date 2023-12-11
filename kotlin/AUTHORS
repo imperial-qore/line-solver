@@ -1,0 +1,16 @@
+The LINE Java codebase has been released in pair with LINE 2.0.19 and successive releases and it is versioned identically to the MATLAB LINE codebase.
+
+This file acknowledges codebase authors across successive releases of the Java codebase:
+Giuliano Casale (2.0.19-*; 2022-Present)
+Manoj Darsh (2.0.23; 2022)
+Jacob Dillarstone (2.0.23; 2022)
+Rares Dobres (2.0.29; 2023)
+David Dragulin (2.0.29; 2022)
+Yilei Guan (2.0.29; 2023)
+Dongchi Li (2.0.23; 2022)
+Songtao Li (2.0.29; 2023)
+Zhuoyuan Li (2.0.29; 2023)
+Wenzheng Shan (2.0.23; 2022)
+Matthew Sheldon (2.0.19-*; 2022-Present)
+Yaqi Zhou (2.0.29; 2023)
+
