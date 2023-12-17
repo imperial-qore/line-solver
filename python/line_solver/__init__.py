@@ -24,8 +24,13 @@ class GlobalImport:
 
 def jlineStart():
     with GlobalImport() as gi:
+<<<<<<< HEAD
         # jpype.startJVM()
         jpype.startJVM("-Xint", "-Xdebug", "-Xnoagent","-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005")
+=======
+        jpype.startJVM()
+        # jpype.startJVM("-Xint", "-Xdebug", "-Xnoagent","-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005")
+>>>>>>> main
         jpype.addClassPath('jline.jar')
         from jline.lang.constant import GlobalConstants
         from jline.lang import Chain, Element, Ensemble, Metric

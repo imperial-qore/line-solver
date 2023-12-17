@@ -17,3 +17,7 @@ __pycache__/
 .idea/
 console.out
 scratch.py
+deploy.sh
+dist/
+line_solver.egg-info
+setup.cfg
