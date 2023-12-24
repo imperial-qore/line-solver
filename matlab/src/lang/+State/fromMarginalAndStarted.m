@@ -71,7 +71,7 @@ switch sn.nodetype(ind)
                     state = State.decorate(state,init);
                 end
                 space = State.decorate(space,state);
-            case {SchedStrategy.ID_SIRO, SchedStrategy.ID_LEPT, SchedStrategy.ID_SEPT}
+            case {SchedStrategy.ID_SIRO, SchedStrategy.ID_LEPT, SchedStrategy.ID_SEPT, SchedStrategy.ID_POLLING}
                 % in these policies we track an un-ordered buffer and
                 % the jobs in the servers
                 % build list of job classes in the node, with repetition
@@ -83,7 +83,7 @@ switch sn.nodetype(ind)
                     end
                     space = State.decorate(space,[zeros(size(state,1),R),state]);
                 else
-                    %            si = multichoosecon(n,S(i)); % jobs of class r that are running
+                    % si = multichoosecon(n,S(i)); % jobs of class r that are running
                     si = s;
                     mi_buf = repmat(n,size(si,1),1) - si; % jobs of class r in buffer
                     for k=1:size(si,1)

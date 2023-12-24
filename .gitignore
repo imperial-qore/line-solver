@@ -12,6 +12,7 @@ JMT.jar
 .idea/
 .attach*
 *.pyc
+*.asv
 *.class
 __pycache__/
 .idea/

@@ -9,9 +9,9 @@ classdef FunctionTask < Task
         SetupTime; 
         SetupTimeMean;
         SetupTimeSCV;
-        DelayedOffTime;
-        DelayedOffTimeMean;
-        DelayedOffTimeSCV;
+        DelayOffTime;
+        DelayOffTimeMean;
+        DelayOffTimeSCV;
 
     end
 
@@ -20,7 +20,7 @@ classdef FunctionTask < Task
         
         %constructor
         function self = FunctionTask(model, name, multiplicity, scheduling)
-            %self = FunctionTask(model, name, setupTime, delayedoffTime, multiplicity, scheduling)
+            %self = FunctionTask(model, name, setupTime, delayoffTime, multiplicity, scheduling)
 
             if ~exist('name','var')
                 line_error(mfilename,'Constructor requires to specify at least a name.');
@@ -35,7 +35,7 @@ classdef FunctionTask < Task
             end    
             self@Task(model, name, multiplicity, scheduling);           
             self.setSetupTime(Immediate());
-            self.setDelayedOffTime(Immediate());
+            self.setDelayOffTime(Immediate());
         end
 
         function self = setSetupTime(self, SetupTime)
@@ -58,23 +58,23 @@ classdef FunctionTask < Task
             end
         end
 
-        function self = setDelayedOffTime(self, DelayedOffTime)
+        function self = setDelayOffTime(self, DelayOffTime)
             % self = SETTHINKTIME(self, THINKTIME)
             
-            if isnumeric(DelayedOffTime)
-                if DelayedOffTime <= GlobalConstants.FineTol
-                    self.DelayedOffTime = Immediate.getInstance();
-                    self.DelayedOffTimeMean = GlobalConstants.FineTol;
-                    self.DelayedOffTimeSCV = GlobalConstants.FineTol;
+            if isnumeric(DelayOffTime)
+                if DelayOffTime <= GlobalConstants.FineTol
+                    self.DelayOffTime = Immediate.getInstance();
+                    self.DelayOffTimeMean = GlobalConstants.FineTol;
+                    self.DelayOffTimeSCV = GlobalConstants.FineTol;
                 else
-                    self.DelayedOffTime = Exp(1/DelayedOffTime);
-                    self.DelayedOffTimeMean = DelayedOffTime;
-                    self.DelayedOffTimeSCV = 1.0;
+                    self.DelayOffTime = Exp(1/DelayOffTime);
+                    self.DelayOffTimeMean = DelayOffTime;
+                    self.DelayOffTimeSCV = 1.0;
                 end
-            elseif isa(DelayedOffTime,'Distribution')
-                self.DelayedOffTime = DelayedOffTime;
-                self.DelayedOffTimeMean = DelayedOffTime.getMean();
-                self.DelayedOffTimeSCV = DelayedOffTime.getSCV();
+            elseif isa(DelayOffTime,'Distribution')
+                self.DelayOffTime = DelayOffTime;
+                self.DelayOffTimeMean = DelayOffTime.getMean();
+                self.DelayOffTimeSCV = DelayOffTime.getSCV();
             end
         end
     end

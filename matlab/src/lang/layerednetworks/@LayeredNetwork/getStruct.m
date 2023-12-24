@@ -42,7 +42,7 @@ lqn.itemcap  = {};
 lqn.itemproc = {};
 lqn.iscache = zeros(lqn.nhosts+lqn.ntasks,1);
 lqn.setuptime = cell(lqn.nhosts+lqn.ntasks,1);
-lqn.delayedofftime = {};
+lqn.delayofftime = {};
 lqn.isfunction = zeros(lqn.nhosts+lqn.ntasks,1);
 
 lqn.parent = [];
@@ -82,7 +82,7 @@ for t=1:lqn.ntasks
             lqn.hashnames{idx,1} = ['C:',lqn.names{idx,1}];
         case 'FunctionTask'
             lqn.setuptime{idx,1} = self.tasks{t}.SetupTime;
-            lqn.delayedofftime{idx,1} = self.tasks{t}.DelayedOffTime;
+            lqn.delayofftime{idx,1} = self.tasks{t}.DelayOffTime;
             lqn.hashnames{idx,1} = ['F:',lqn.names{idx,1}];            
             %lqn.shortnames{idx,1} = ['C',num2str(idx-tshift)];
     end

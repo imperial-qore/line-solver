@@ -121,6 +121,8 @@ switch options.lang
 
             if sn.nclasses==1 && sn.nclosedjobs == 0 && length(sn.nodetype)==3 && all(sort(sn.nodetype)' == sort([NodeType.Source,NodeType.Queue,NodeType.Sink])) % is an open queueing system
                 [QN,UN,RN,TN,CN,XN,lG,runtime,lastiter] = solver_mva_qsys_analyzer(sn, options);
+            elseif sn.nclasses>1 && sn.nclosedjobs == 0 && length(sn.nodetype)==3 && all(sort(sn.nodetype)' == sort([NodeType.Source,NodeType.Queue,NodeType.Sink])) && sn.schedid(find(sn.nodetype==NodeType.Queue)) == SchedStrategy.ID_POLLING % is an open polling system
+                [QN,UN,RN,TN,CN,XN,lG,runtime,lastiter] = solver_mva_polling_analyzer(sn, options);
             elseif sn.nclosedjobs == 0 && length(sn.nodetype)==3 && all(sort(sn.nodetype)' == sort([NodeType.Source,NodeType.Cache,NodeType.Sink])) % is a non-rentrant cache
                 % random initialization
                 for ind = 1:sn.nnodes

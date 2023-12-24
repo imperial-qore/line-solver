@@ -307,7 +307,7 @@ self.ensemble{idx} = model;
                                     end
                                     serverStation{m}.setService(aidxClass{nextaidx}, lqn.hostdem{nextaidx});
                                     if isfunctionlayer
-                                        serverStation{m}.setFunction(aidxClass{nextaidx}, lqn.setuptime{lqn.parent(nextaidx)}, lqn.delayedofftime{lqn.parent(nextaidx)});
+                                        serverStation{m}.setDelayOff(aidxClass{nextaidx}, lqn.setuptime{lqn.parent(nextaidx)}, lqn.delayofftime{lqn.parent(nextaidx)});
                                     end
                                 end
                                 jobPos = atServer;

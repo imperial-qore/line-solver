@@ -20,7 +20,7 @@ classdef PreemptiveServer < ServiceSection
         function initServers(self, customerClasses)
             % INITSERVERS(CUSTOMERCLASSES)
             
-            for i = 1 : length(customerClasses),
+            for i = 1 : length(customerClasses)
                 self.serviceProcess{1, i} = {customerClasses{1, i}.name, ServiceStrategy.ID_LI, Exponential()};
             end
         end

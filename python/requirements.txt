@@ -4,5 +4,3 @@ numpy
 pandas
 matplotlib
 scipy
-pprint
-os

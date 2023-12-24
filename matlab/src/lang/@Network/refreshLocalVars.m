@@ -123,13 +123,30 @@ for ind=1:self.getNumberOfNodes
                         if isempty(nodeparam{ind})
                             nodeparam{ind} = cell(1,self.getNumberOfClasses);
                         end
-                        nodeparam{ind}{r} = struct();
+                        if isempty(nodeparam{ind}{r})
+                            nodeparam{ind}{r} = struct();
+                        end
                         nodeparam{ind}{r}.(node.server.serviceProcess{r}{3}.params{1}.paramName) = node.server.serviceProcess{r}{3}.params{1}.paramValue;
                 end
-                if ~strcmp(class(node),'Transition') && ~isempty(node.setupTime) && ~isempty(node.setupTime{r}) 
-                    nodeparam{ind}{r} = struct();
-                    nodeparam{ind}{r}.setupDistribution = node.setupTime{r};
-                    nodeparam{ind}{r}.delayedoffDistribution = node.delayedoffTime{r};
+                if ~strcmp(class(node),'Transition') && ~isempty(node.setupTime) && ~isempty(node.setupTime{r})
+                    if isempty(nodeparam{ind})
+                        nodeparam{ind} = cell(1,self.getNumberOfClasses);
+                    end
+                    if isempty(nodeparam{ind}{r})
+                        nodeparam{ind}{r} = struct();
+                    end
+                    nodeparam{ind}{r}.setupTime = node.setupTime{r};
+                    nodeparam{ind}{r}.delayoffTime = node.delayoffTime{r}.getRepres();
+                end
+                if (strcmp(class(node),'Queue') || strcmp(class(node),'QueueingStation')) && ~isempty(node.pollingType) && ~isempty(node.pollingType{r})
+                    if isempty(nodeparam{ind})
+                        nodeparam{ind} = cell(1,self.getNumberOfClasses);
+                    end
+                    if isempty(nodeparam{ind}{r})
+                        nodeparam{ind}{r} = struct();
+                    end
+                    nodeparam{ind}{r}.pollingType = node.pollingType{r};
+                    nodeparam{ind}{r}.switchoverTime = node.switchoverTime{r}.getRepres();
                 end
             end
     end

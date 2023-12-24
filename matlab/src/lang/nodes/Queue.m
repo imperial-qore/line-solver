@@ -10,7 +10,9 @@ classdef Queue < Station
         schedStrategyPar;
         serviceProcess;
         setupTime;
-        delayedoffTime;
+        delayoffTime;
+        switchoverTime;
+        pollingType;
     end
 
     methods
@@ -25,7 +27,7 @@ classdef Queue < Station
                 self.input = Buffer(classes);
                 self.output = Dispatcher(classes);
                 self.schedPolicy = SchedStrategyType.PR;
-                self.schedStrategy = SchedStrategy.ID_PS;
+                self.schedStrategy = SchedStrategy.PS;
                 self.serviceProcess = {};
                 self.server = Server(classes);
                 self.numberOfServers = 1;
@@ -35,7 +37,8 @@ classdef Queue < Station
                 self.dropRule = [];
                 self.obj = [];
                 self.setupTime = {};
-                self.delayedoffTime = {};
+                self.delayoffTime = {};
+                self.pollingType = {};
 
                 if nargin>=3 %exist('schedStrategy','var')
                     self.schedStrategy = schedStrategy;
@@ -56,12 +59,15 @@ classdef Queue < Station
                         case SchedStrategy.ID_HOL
                             self.schedPolicy = SchedStrategyType.NP;
                             self.server = Server(classes);
+                        case SchedStrategy.ID_POLLING
+                            self.schedPolicy = SchedStrategyType.NP;
+                            self.server = PollingServer(classes);
                         otherwise
                             line_error(mfilename,sprintf('The specified scheduling strategy (%s) is unsupported.',schedStrategy));
                     end
                 end
             elseif isa(model,'JNetwork')
-                self.setModel(model);                
+                self.setModel(model);
                 switch SchedStrategy.toId(schedStrategy)
                     case SchedStrategy.ID_INF
                         self.obj = jline.lang.nodes.Queue(model.obj, name, jline.lang.constant.SchedStrategy.INF);
@@ -121,13 +127,13 @@ classdef Queue < Station
         function setNumberOfServers(self, value)
             % SETNUMBEROFSERVERS(VALUE)
             if isempty(self.obj)
-            switch SchedStrategy.toId(self.schedStrategy)
-                case SchedStrategy.ID_INF
-                    %line_warning(mfilename,'A request to change the number of servers in an infinite server node has been ignored.');
-                    %ignore
-                otherwise
-                    self.setNumServers(value);
-            end
+                switch SchedStrategy.toId(self.schedStrategy)
+                    case SchedStrategy.ID_INF
+                        %line_warning(mfilename,'A request to change the number of servers in an infinite server node has been ignored.');
+                        %ignore
+                    otherwise
+                        self.setNumServers(value);
+                end
             else
                 self.obj.setNumberOfServers(value);
             end
@@ -215,17 +221,37 @@ classdef Queue < Station
                 self.obj.setService(class.obj, distribution.obj, weight);
             end
         end
-        
-        function setFunction(self, class, setupTime, delayedoffTime)
-            c = class.index;
+
+        function setDelayOff(self, jobclass, setupTime, delayoffTime)
+            c = jobclass.index;
             self.setupTime{1, c} = setupTime;
-            self.delayedoffTime{1, c} = delayedoffTime;
+            self.delayoffTime{1, c} = delayoffTime;
         end
 
         function sections = getSections(self)
             % SECTIONS = GETSECTIONS()
 
             sections = {self.input, self.server, self.output};
+        end
+
+        function setSwitchOver(self, jobclass, switchoverTime)
+            % time to switch from queue i to the next one
+            if SchedStrategy.toId(self.schedStrategy) ~= SchedStrategy.ID_POLLING
+                line_error(mfilename,'setSwitchOver can only be invoked on queues with SchedStrategy.POLLING.\n');
+            end
+            c = jobclass.index;
+            self.switchoverTime{1, c} = switchoverTime;
+        end
+
+        function setPollingType(self, rule)
+            % support only identical polling type at each class buffer
+            if SchedStrategy.toId(self.schedStrategy) ~= SchedStrategy.ID_POLLING
+                line_error(mfilename,'setPollingType can only be invoked on queues with SchedStrategy.POLLING.\n');
+            end
+            for r=1:length(self.model.classes)
+                self.pollingType{1,r} = rule;
+                setSwitchOver(self, self.model.classes{r}, Immediate());
+            end
         end
 
         %        function distrib = getServiceProcess(self, oclass)

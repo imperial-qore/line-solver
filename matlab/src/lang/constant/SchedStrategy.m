@@ -21,6 +21,7 @@ classdef (Sealed) SchedStrategy
         FORK = 'fork';
         EXT = 'ext'; % external world (open arrival source and sink)
         REF = 'ref'; % reference node in LayeredNetworks
+        POLLING = 'polling';
         
         ID_INF = 0;
         ID_FCFS = 1;
@@ -38,6 +39,7 @@ classdef (Sealed) SchedStrategy
         ID_EXT = 13;
         ID_REF = 14;
         ID_LCFSPR = 15;
+        ID_POLLING = 16;
     end
     
     methods (Static)
@@ -76,6 +78,8 @@ classdef (Sealed) SchedStrategy
                     id = 14;
                 case SchedStrategy.LCFSPR
                     id = 15;
+                case SchedStrategy.POLLING
+                    id = 16;
             end
         end
 
@@ -114,6 +118,8 @@ classdef (Sealed) SchedStrategy
                     type=SchedStrategy.REF;
                 case SchedStrategy.ID_LCFSPR
                     type=SchedStrategy.LCFSPR;
+                case SchedStrategy.ID_POLLING
+                    type=SchedStrategy.POLLING;
             end
         end
         
@@ -152,6 +158,8 @@ classdef (Sealed) SchedStrategy
                     text = 'ref';
                 case SchedStrategy.LCFSPR
                     text = 'lcfspr';
+                case SchedStrategy.POLLING
+                    text = 'polling';
             end
         end
         
@@ -190,6 +198,8 @@ classdef (Sealed) SchedStrategy
                     type = SchedStrategy.REF;
                 case 'lcfspr'
                     type = SchedStrategy.LCFSPR;
+                case 'polling'
+                    type = SchedStrategy.POLLING;
             end
         end        
         
@@ -233,6 +243,8 @@ classdef (Sealed) SchedStrategy
                     property = 'EXT';
                 case 'lcfspr'
                     property = 'LCFSPR';
+                case 'polling'
+                    property = 'POLLING';
             end
         end
         
@@ -272,6 +284,8 @@ classdef (Sealed) SchedStrategy
                     text = 'SchedStrategy_REF';
                 case SchedStrategy.LCFSPR
                     text = 'SchedStrategy_LCFSPR';
+                case SchedStrategy.POLLING
+                    text = 'SchedStrategy_POLLING';
             end
         end
     end
