@@ -236,7 +236,7 @@ classdef Queue < Station
             sections = {self.input, self.server, self.output};
         end
 
-        function setSwitchOver(self, varargin)
+        function setSwitchover(self, varargin)
             if isempty(self.switchoverTime)
                 if SchedStrategy.toId(self.schedStrategy) == SchedStrategy.ID_POLLING
                     self.switchoverTime = cell(1,length(self.model.classes));
@@ -255,7 +255,7 @@ classdef Queue < Station
                 soTime = varargin{2};
                 % time to switch from queue i to the next one
                 if SchedStrategy.toId(self.schedStrategy) ~= SchedStrategy.ID_POLLING
-                    line_error(mfilename,'setSwitchOver(jobclass, distrib) can only be invoked on queues with SchedStrategy.POLLING.\n');
+                    line_error(mfilename,'setSwitchover(jobclass, distrib) can only be invoked on queues with SchedStrategy.POLLING.\n');
                 end
                 c = jobclass.index;
                 self.switchoverTime{1,c} = soTime;
@@ -282,7 +282,7 @@ classdef Queue < Station
             for r=1:length(self.model.classes)
                 self.pollingType{1,r} = rule;
                 self.pollingPar = par;
-                setSwitchOver(self, self.model.classes{r}, Immediate());
+                setSwitchover(self, self.model.classes{r}, Immediate());
             end
         end
 
