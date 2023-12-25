@@ -84,6 +84,10 @@ classdef Immediate < Distribution
             L = 1; % as in Det(0)
         end
 
+        function PH = getRepres(self)
+            PH = getPH(self);
+        end
+
         function PH = getPH(self)
             % PH = GETPH()
             % global GlobalConstants.Immediate

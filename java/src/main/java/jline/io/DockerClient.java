@@ -1,6 +1,6 @@
 package jline.io;
 
-import jline.lang.layerednetworks.*;
+import jline.lang.layered.*;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.distributions.Erlang;
 import jline.lang.distributions.Exp;

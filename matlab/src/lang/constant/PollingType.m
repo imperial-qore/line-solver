@@ -7,11 +7,11 @@ classdef (Sealed) PollingType
     properties (Constant)
         ID_GATED = 0;
         ID_EXHAUSTIVE = 1;
-        ID_LIMITED = 2;
+        ID_KLIMITED = 2;
         
         GATED = 'gated'; % gated service type
         EXHAUSTIVE = 'exhaustive'; % exhaustive service type
-        LIMITED = 'limited'; % Ki-limited service type at buffer i
+        KLIMITED = 'klimited'; % Ki-limited service type at buffer i
     end
     
     methods (Access = private)
@@ -31,8 +31,8 @@ classdef (Sealed) PollingType
                     typeId = PollingType.ID_GATED;
                 case EXHAUSTIVE
                     typeId = PollingType.ID_EXHAUSTIVE;
-                case LIMITED
-                    typeId = PollingType.ID_LIMITED;
+                case KLIMITED
+                    typeId = PollingType.ID_KLIMITED;
                 otherwise
                     line_error(mfilename,'Unrecognized polling type.');
             end
@@ -45,8 +45,8 @@ classdef (Sealed) PollingType
                     text = 'Gated';
                 case PollingType.EXHAUSTIVE
                     text = 'Exhaustive';
-                case PollingType.LIMITED
-                    text = 'Limited';
+                case PollingType.KLIMITED
+                    text = 'K-Limited';
             end
         end
 
@@ -57,8 +57,8 @@ classdef (Sealed) PollingType
                     id = PollingType.ID_GATED;
                 case PollingType.EXHAUSTIVE
                     id = PollingType.ID_EXHAUSTIVE;
-                case PollingType.LIMITED
-                    id = PollingType.ID_LIMITED;
+                case PollingType.KLIMITED
+                    id = PollingType.ID_KLIMITED;
             end
         end
     end

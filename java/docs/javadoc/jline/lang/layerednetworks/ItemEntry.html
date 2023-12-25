@@ -117,7 +117,7 @@ $('.navPadding').css('padding-top', $('.fixedNav').css("height"));
 <!-- ======== START OF CLASS DATA ======== -->
 <main role="main">
 <div class="header">
-<div class="subTitle"><span class="packageLabelInType">Package</span>&nbsp;<a href="package-summary.html">jline.lang.layerednetworks</a></div>
+<div class="subTitle"><span class="packageLabelInType">Package</span>&nbsp;<a href="package-summary.html">jline.lang.layered</a></div>
 <h2 title="Class ItemEntry" class="title">Class ItemEntry</h2>
 </div>
 <div class="contentContainer">
@@ -128,13 +128,13 @@ $('.navPadding').css('padding-top', $('.fixedNav').css("height"));
 <li><a href="../Element.html" title="class in jline.lang">jline.lang.Element</a></li>
 <li>
 <ul class="inheritance">
-<li><a href="LayeredNetworkElement.html" title="class in jline.lang.layerednetworks">jline.lang.layerednetworks.LayeredNetworkElement</a></li>
+<li><a href="LayeredNetworkElement.html" title="class in jline.lang.layered">jline.lang.layered.LayeredNetworkElement</a></li>
 <li>
 <ul class="inheritance">
-<li><a href="Entry.html" title="class in jline.lang.layerednetworks">jline.lang.layerednetworks.Entry</a></li>
+<li><a href="Entry.html" title="class in jline.lang.layered">jline.lang.layered.Entry</a></li>
 <li>
 <ul class="inheritance">
-<li>jline.lang.layerednetworks.ItemEntry</li>
+<li>jline.lang.layered.ItemEntry</li>
 </ul>
 </li>
 </ul>
@@ -153,7 +153,7 @@ $('.navPadding').css('padding-top', $('.fixedNav').css("height"));
 </dl>
 <hr>
 <pre>public class <span class="typeNameLabel">ItemEntry</span>
-extends <a href="Entry.html" title="class in jline.lang.layerednetworks">Entry</a></pre>
+extends <a href="Entry.html" title="class in jline.lang.layered">Entry</a></pre>
 <div class="block">A caching service that gives access to items</div>
 <dl>
 <dt><span class="seeLabel">See Also:</span></dt>
@@ -194,14 +194,14 @@ extends <a href="Entry.html" title="class in jline.lang.layerednetworks">Entry</
 <li class="blockList"><a id="fields.inherited.from.class.jline.lang.layerednetworks.Entry">
 <!--   -->
 </a>
-<h3>Fields inherited from class&nbsp;jline.lang.layerednetworks.<a href="Entry.html" title="class in jline.lang.layerednetworks">Entry</a></h3>
+<h3>Fields inherited from class&nbsp;jline.lang.layered.<a href="Entry.html" title="class in jline.lang.layered">Entry</a></h3>
 <code><a href="Entry.html#parent">parent</a>, <a href="Entry.html#replyActivity">replyActivity</a>, <a href="Entry.html#scheduling">scheduling</a></code></li>
 </ul>
 <ul class="blockList">
 <li class="blockList"><a id="fields.inherited.from.class.jline.lang.layerednetworks.LayeredNetworkElement">
 <!--   -->
 </a>
-<h3>Fields inherited from class&nbsp;jline.lang.layerednetworks.<a href="LayeredNetworkElement.html" title="class in jline.lang.layerednetworks">LayeredNetworkElement</a></h3>
+<h3>Fields inherited from class&nbsp;jline.lang.layered.<a href="LayeredNetworkElement.html" title="class in jline.lang.layered">LayeredNetworkElement</a></h3>
 <code><a href="LayeredNetworkElement.html#ACTIVITY">ACTIVITY</a>, <a href="LayeredNetworkElement.html#CALL">CALL</a>, <a href="LayeredNetworkElement.html#ENTRY">ENTRY</a>, <a href="LayeredNetworkElement.html#HOST">HOST</a>, <a href="LayeredNetworkElement.html#model">model</a>, <a href="LayeredNetworkElement.html#PROCESSOR">PROCESSOR</a>, <a href="LayeredNetworkElement.html#TASK">TASK</a></code></li>
 </ul>
 <ul class="blockList">
@@ -229,7 +229,7 @@ extends <a href="Entry.html" title="class in jline.lang.layerednetworks">Entry</
 </tr>
 <tr class="altColor">
 <th class="colConstructorName" scope="row"><code><span class="memberNameLink"><a href="#%3Cinit%3E(java.lang.String,jline.lang.layerednetworks.LayeredNetwork,int,jline.lang.distributions.Distribution)">ItemEntry</a></span>&#8203;(<a href="https://docs.oracle.com/en/java/javase/11/docs/api/java.base/java/lang/String.html?is-external=true" title="class or interface in java.lang" class="externalLink">String</a>&nbsp;name,
-         <a href="LayeredNetwork.html" title="class in jline.lang.layerednetworks">LayeredNetwork</a>&nbsp;model,
+         <a href="LayeredNetwork.html" title="class in jline.lang.layered">LayeredNetwork</a>&nbsp;model,
          int&nbsp;cardinality,
          <a href="../distributions/Distribution.html" title="class in jline.lang.distributions">Distribution</a>&nbsp;distribution)</code></th>
 <td class="colLast">&nbsp;</td>
@@ -264,7 +264,7 @@ extends <a href="Entry.html" title="class in jline.lang.layerednetworks">Entry</
 </tr>
 <tr id="i2" class="altColor">
 <td class="colFirst"><code>void</code></td>
-<th class="colSecond" scope="row"><code><span class="memberNameLink"><a href="#on(jline.lang.layerednetworks.Task)">on</a></span>&#8203;(<a href="Task.html" title="class in jline.lang.layerednetworks">Task</a>&nbsp;newParent)</code></th>
+<th class="colSecond" scope="row"><code><span class="memberNameLink"><a href="#on(jline.lang.layerednetworks.Task)">on</a></span>&#8203;(<a href="Task.html" title="class in jline.lang.layered">Task</a>&nbsp;newParent)</code></th>
 <td class="colLast">&nbsp;</td>
 </tr>
 </table>
@@ -333,7 +333,7 @@ extends <a href="Entry.html" title="class in jline.lang.layerednetworks">Entry</
 <li class="blockList">
 <h4>ItemEntry</h4>
 <pre>public&nbsp;ItemEntry&#8203;(<a href="https://docs.oracle.com/en/java/javase/11/docs/api/java.base/java/lang/String.html?is-external=true" title="class or interface in java.lang" class="externalLink">String</a>&nbsp;name,
-                 <a href="LayeredNetwork.html" title="class in jline.lang.layerednetworks">LayeredNetwork</a>&nbsp;model,
+                 <a href="LayeredNetwork.html" title="class in jline.lang.layered">LayeredNetwork</a>&nbsp;model,
                  int&nbsp;cardinality,
                  <a href="../distributions/Distribution.html" title="class in jline.lang.distributions">Distribution</a>&nbsp;distribution)</pre>
 </li>
@@ -372,10 +372,10 @@ extends <a href="Entry.html" title="class in jline.lang.layerednetworks">Entry</
 <ul class="blockListLast">
 <li class="blockList">
 <h4>on</h4>
-<pre class="methodSignature">public&nbsp;void&nbsp;on&#8203;(<a href="Task.html" title="class in jline.lang.layerednetworks">Task</a>&nbsp;newParent)</pre>
+<pre class="methodSignature">public&nbsp;void&nbsp;on&#8203;(<a href="Task.html" title="class in jline.lang.layered">Task</a>&nbsp;newParent)</pre>
 <dl>
 <dt><span class="overrideSpecifyLabel">Overrides:</span></dt>
-<dd><code><a href="Entry.html#on(jline.lang.layerednetworks.Task)">on</a></code>&nbsp;in class&nbsp;<code><a href="Entry.html" title="class in jline.lang.layerednetworks">Entry</a></code></dd>
+<dd><code><a href="Entry.html#on(jline.lang.layerednetworks.Task)">on</a></code>&nbsp;in class&nbsp;<code><a href="Entry.html" title="class in jline.lang.layered">Entry</a></code></dd>
 </dl>
 </li>
 </ul>

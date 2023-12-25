@@ -13,6 +13,7 @@ classdef Queue < Station
         delayoffTime;
         switchoverTime;
         pollingType;
+        pollingPar;
     end
 
     methods
@@ -39,6 +40,7 @@ classdef Queue < Station
                 self.setupTime = {};
                 self.delayoffTime = {};
                 self.pollingType = {};
+                self.switchoverTime  = {};
 
                 if nargin>=3 %exist('schedStrategy','var')
                     self.schedStrategy = schedStrategy;
@@ -234,22 +236,52 @@ classdef Queue < Station
             sections = {self.input, self.server, self.output};
         end
 
-        function setSwitchOver(self, jobclass, switchoverTime)
-            % time to switch from queue i to the next one
-            if SchedStrategy.toId(self.schedStrategy) ~= SchedStrategy.ID_POLLING
-                line_error(mfilename,'setSwitchOver can only be invoked on queues with SchedStrategy.POLLING.\n');
+        function setSwitchOver(self, varargin)
+            if isempty(self.switchoverTime)
+                if SchedStrategy.toId(self.schedStrategy) == SchedStrategy.ID_POLLING
+                    self.switchoverTime = cell(1,length(self.model.classes));
+                else
+                    K = length(self.model.classes);
+                    self.switchoverTime = cell(K,K);
+                    for r=1:K
+                        for s=1:K
+                            self.switchoverTime{r,s} = Immediate();
+                        end
+                    end
+                end
             end
-            c = jobclass.index;
-            self.switchoverTime{1, c} = switchoverTime;
+            if length(varargin)==2
+                jobclass = varargin{1};
+                soTime = varargin{2};
+                % time to switch from queue i to the next one
+                if SchedStrategy.toId(self.schedStrategy) ~= SchedStrategy.ID_POLLING
+                    line_error(mfilename,'setSwitchOver(jobclass, distrib) can only be invoked on queues with SchedStrategy.POLLING.\n');
+                end
+                c = jobclass.index;
+                self.switchoverTime{1,c} = soTime;
+            elseif length(varargin)==3
+                jobclass_from = varargin{1};
+                jobclass_to = varargin{2};
+                soTime = varargin{3};
+                f = jobclass_from.index;
+                t = jobclass_to.index;
+                self.switchoverTime{f,t} = soTime;
+            end
         end
 
-        function setPollingType(self, rule)
+        function setPollingType(self, rule, par)
+            if PollingType.toId(rule) ~= PollingType.ID_KLIMITED
+                par = [];
+            elseif PollingType.toId(rule) == PollingType.ID_KLIMITED && nargin<3
+                    line_error(mfilename,'K-Limited polling requires to specify the parameter K, e.g., setPollingType(PollingType.KLIMITED, 2).\n');
+            end
             % support only identical polling type at each class buffer
             if SchedStrategy.toId(self.schedStrategy) ~= SchedStrategy.ID_POLLING
                 line_error(mfilename,'setPollingType can only be invoked on queues with SchedStrategy.POLLING.\n');
             end
             for r=1:length(self.model.classes)
                 self.pollingType{1,r} = rule;
+                self.pollingPar = par;
                 setSwitchOver(self, self.model.classes{r}, Immediate());
             end
         end

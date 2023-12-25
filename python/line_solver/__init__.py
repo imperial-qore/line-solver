@@ -92,6 +92,6 @@ from .lang import *
 from .utils import *
 from .solvers import *
 from .distributions import *
-from .layerednetworks import *
+from .layered import *
 from .lib import *
 from .gallery import *

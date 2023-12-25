@@ -1,4 +1,4 @@
-package jline.lang.layerednetworks;
+package jline.lang.layered;
 
 
 import jline.lang.constant.GlobalConstants;
@@ -28,6 +28,7 @@ public class Task extends LayeredNetworkElement{
 
     public Task(LayeredNetwork model, String name, int multiplicity, SchedStrategy scheduling, Distribution thinkTime) {
         super(name);
+        this.parent = null;
         this.setReplication(1);
         this.model = model;
         this.multiplicity = multiplicity;
@@ -43,6 +44,7 @@ public class Task extends LayeredNetworkElement{
 
     public Task(LayeredNetwork model, String name, int multiplicity, SchedStrategy scheduling) {
         super(name);
+        this.parent = null;
         this.setReplication(1);
         this.model = model;
         this.multiplicity = multiplicity;
@@ -58,6 +60,7 @@ public class Task extends LayeredNetworkElement{
 
     public Task(LayeredNetwork model, String name, int multiplicity) {
         super(name);
+        this.parent = null;
         this.setReplication(1);
         this.model = model;
         this.multiplicity = multiplicity;
@@ -72,6 +75,7 @@ public class Task extends LayeredNetworkElement{
 
     public Task(LayeredNetwork model, String name) {
         super(name);
+        this.parent = null;
         this.setReplication(1);
         this.model = model;
         this.multiplicity = 1;
@@ -89,6 +93,9 @@ public class Task extends LayeredNetworkElement{
     }
 
     public void on(Processor parent){
+        if (this.parent != null) {
+            this.parent.removeTask(this);
+        }
         this.parent = parent;
         this.parent.addTask(this);
     }

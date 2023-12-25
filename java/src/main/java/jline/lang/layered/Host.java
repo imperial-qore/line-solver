@@ -1,4 +1,4 @@
-package jline.lang.layerednetworks;
+package jline.lang.layered;
 
 import jline.lang.constant.SchedStrategy;
 
@@ -83,5 +83,8 @@ public class Host extends LayeredNetworkElement {
 
     public void addTask(Task newTask){
         tasks.add(newTask);
+    }
+    public boolean removeTask(Task newTask){
+        return tasks.remove(newTask);
     }
 }

@@ -48,7 +48,7 @@ classdef SolverJMT < NetworkSolver
         [simDoc, section] = saveArrivalStrategy(self, simDoc, section, ind)
         [simDoc, section] = saveBufferCapacity(self, simDoc, section, ind)
         [simDoc, section] = saveDropStrategy(self, simDoc, section, ind)
-        [simDoc, section] = saveGetStrategy(self, simDoc, section)
+        [simDoc, section] = saveGetStrategy(self, simDoc, section, ind)
         [simDoc, section] = saveNumberOfServers(self, simDoc, section, ind)
         [simDoc, section] = savePreemptiveStrategy(self, simDoc, section, ind)
         [simDoc, section] = savePreemptiveWeights(self, simDoc, section, ind)
@@ -56,6 +56,7 @@ classdef SolverJMT < NetworkSolver
         [simDoc, section] = saveRoutingStrategy(self, simDoc, section, ind)
         [simDoc, section] = saveServerVisits(self, simDoc, section)
         [simDoc, section] = saveServiceStrategy(self, simDoc, section, ind)
+        [simDoc, section] = saveSwitchoverStrategy(self, simDoc, section, ind)
         [simDoc, section] = saveClassSwitchStrategy(self, simDoc, section, ind)
         [simDoc, section] = saveLogTunnel(self, simDoc, section, ind)
         [simDoc, section] = saveForkStrategy(self, simDoc, section, ind)
@@ -201,6 +202,7 @@ classdef SolverJMT < NetworkSolver
                 'SchedStrategy_LEPT',...
                 'SchedStrategy_SJF',...
                 'SchedStrategy_LJF',...
+                'SchedStrategy_POLLING',...
                 'RoutingStrategy_PROB',...
                 'RoutingStrategy_RAND',...
                 'RoutingStrategy_RROBIN',...

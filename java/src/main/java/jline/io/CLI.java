@@ -1,6 +1,6 @@
 package jline.io;
 
-import jline.lang.layerednetworks.*;
+import jline.lang.layered.*;
 import jline.solvers.ln.SolverLN;
 
 import java.util.ArrayList;

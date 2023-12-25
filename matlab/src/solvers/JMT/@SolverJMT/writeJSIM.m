@@ -18,21 +18,26 @@ for i=1:numOfNodes
     currentNode = self.model.nodes{i,1};
     node = simXMLDoc.createElement('node');
     node.setAttribute('name', currentNode.name);
-    
+
     nodeSections = getSections(currentNode);
     for j=1:length(nodeSections)
         xml_section = simXMLDoc.createElement('section');
         currentSection = nodeSections{1,j};
-        if ~isempty(currentSection)            
+        if ~isempty(currentSection)
             xml_section.setAttribute('className', currentSection.className);
             switch currentSection.className
                 case 'Buffer'
                     xml_section.setAttribute('className', 'Queue'); %overwrite with JMT class name
                     [simXMLDoc, xml_section] = saveBufferCapacity(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = saveDropStrategy(self, simXMLDoc, xml_section, ind); % unfinished
-                    [simXMLDoc, xml_section] = saveGetStrategy(self, simXMLDoc, xml_section);
+                    [simXMLDoc, xml_section] = saveGetStrategy(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = savePutStrategy(self, simXMLDoc, xml_section, ind);
-                case {'Server','PreemptiveServer'}
+                case 'Server'
+                    [simXMLDoc, xml_section] = saveNumberOfServers(self, simXMLDoc, xml_section, ind);
+                    [simXMLDoc, xml_section] = saveServerVisits(self, simXMLDoc, xml_section);
+                    [simXMLDoc, xml_section] = saveServiceStrategy(self, simXMLDoc, xml_section, ind);
+                    [simXMLDoc, xml_section] = saveSwitchoverStrategy(self, simXMLDoc, xml_section, ind);
+                case 'PreemptiveServer'
                     [simXMLDoc, xml_section] = saveNumberOfServers(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = saveServerVisits(self, simXMLDoc, xml_section);
                     [simXMLDoc, xml_section] = saveServiceStrategy(self, simXMLDoc, xml_section, ind);
@@ -46,6 +51,20 @@ for i=1:numOfNodes
                 case 'InfiniteServer'
                     xml_section.setAttribute('className', 'Delay'); %overwrite with JMT class name
                     [simXMLDoc, xml_section] = saveServiceStrategy(self, simXMLDoc, xml_section, ind);
+                case 'PollingServer'
+                    % we assume identical polling type on each buffer
+                    switch sn.nodeparam{ind}{1}.pollingType
+                        case PollingType.GATED
+                            xml_section.setAttribute('className', 'GatedPollingServer'); %overwrite with JMT class name
+                        case PollingType.EXHAUSTIVE
+                            xml_section.setAttribute('className', 'ExhaustivePollingServer'); %overwrite with JMT class name
+                        case PollingType.KLIMITED
+                            xml_section.setAttribute('className', 'LimitedPollingServer'); %overwrite with JMT class name
+                    end
+                    [simXMLDoc, xml_section] = saveNumberOfServers(self, simXMLDoc, xml_section, ind);
+                    [simXMLDoc, xml_section] = saveServerVisits(self, simXMLDoc, xml_section);
+                    [simXMLDoc, xml_section] = saveServiceStrategy(self, simXMLDoc, xml_section, ind);
+                    [simXMLDoc, xml_section] = saveSwitchoverStrategy(self, simXMLDoc, xml_section, ind);
                 case 'RandomSource'
                     [simXMLDoc, xml_section] = saveArrivalStrategy(self, simXMLDoc, xml_section, ind);
                 case 'Dispatcher'
@@ -67,7 +86,7 @@ for i=1:numOfNodes
                     [simXMLDoc, xml_section] = saveTotalCapacity(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = savePlaceCapacities(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = saveDropRule(self, simXMLDoc, xml_section, ind); % unfinished
-                    [simXMLDoc, xml_section] = saveGetStrategy(self, simXMLDoc, xml_section);
+                    [simXMLDoc, xml_section] = saveGetStrategy(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = savePutStrategies(self, simXMLDoc, xml_section, ind);
                 case 'Enabling'
                     xml_section.setAttribute('className', 'Enabling'); %overwrite with JMT class name

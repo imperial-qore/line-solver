@@ -1,8 +1,7 @@
-package jline.lang.layerednetworks;
+package jline.lang.layered;
 
 import jline.lang.constant.SchedStrategy;
 import org.junit.jupiter.api.Test;
-import jline.lang.layerednetworks.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 

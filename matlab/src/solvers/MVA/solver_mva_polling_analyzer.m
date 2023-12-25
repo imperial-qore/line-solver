@@ -13,7 +13,7 @@ totiter = 1;
 method = options.method;
 source_ist = sn.nodeToStation(sn.nodetype == NodeType.Source);
 queue_ist = sn.nodeToStation(sn.nodetype == NodeType.Queue);
-lambda = sn.rates(source_ist)*sn.visits{1}(sn.stationToStateful(queue_ist));
+lambda = sn.rates(source_ist,:)*sn.visits{source_ist}(sn.stationToStateful(queue_ist));
 k = sn.nservers(queue_ist);
 mu = sn.rates(queue_ist,:);
 ca = sqrt(sn.scv(source_ist,:));

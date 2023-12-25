@@ -11,6 +11,7 @@ strategyNode.setAttribute('name', 'ServiceStrategy');
 sn = self.getStruct;
 numOfClasses = sn.nclasses;
 i = sn.nodeToStation(ind);
+
 for r=1:numOfClasses
     refClassNode2 = simDoc.createElement('refClass');
     refClassNode2.appendChild(simDoc.createTextNode(sn.classnames{r}));

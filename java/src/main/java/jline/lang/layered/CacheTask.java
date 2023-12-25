@@ -1,4 +1,4 @@
-package jline.lang.layerednetworks;
+package jline.lang.layered;
 
 /**
  * A task that offers caching services

@@ -1,10 +1,7 @@
-package jline.lang.layerednetworks;
+package jline.lang.layered;
 
 
 import jline.lang.distributions.Distribution;
-import jline.lang.layerednetworks.Entry;
-import jline.lang.layerednetworks.LayeredNetwork;
-import jline.lang.layerednetworks.Task;
 import org.apache.commons.lang3.SerializationUtils;
 
 /**

@@ -8,9 +8,9 @@ import jline.lang.distributions.Disabled;
 import jline.lang.distributions.Distribution;
 import jline.lang.distributions.Exp;
 import jline.lang.distributions.Immediate;
-import jline.lang.layerednetworks.LayeredNetwork;
-import jline.lang.layerednetworks.LayeredNetworkElement;
-import jline.lang.layerednetworks.LayeredNetworkStruct;
+import jline.lang.layered.LayeredNetwork;
+import jline.lang.layered.LayeredNetworkElement;
+import jline.lang.layered.LayeredNetworkStruct;
 import jline.lang.nodes.*;
 
 import jline.lang.nodes.Delay;

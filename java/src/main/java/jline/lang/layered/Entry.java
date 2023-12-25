@@ -1,5 +1,5 @@
 
-package jline.lang.layerednetworks;
+package jline.lang.layered;
 
 import jline.util.Matrix;
 

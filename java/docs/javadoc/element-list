@@ -5,7 +5,7 @@ jline.io
 jline.lang
 jline.lang.constant
 jline.lang.distributions
-jline.lang.layerednetworks
+jline.lang.layered
 jline.lang.nodes
 jline.lang.processes
 jline.lang.sections

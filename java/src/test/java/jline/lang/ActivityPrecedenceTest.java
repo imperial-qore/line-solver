@@ -1,4 +1,4 @@
-package jline.lang.layerednetworks;
+package jline.lang.layered;
 
 import org.junit.jupiter.api.Test;
 

@@ -15,6 +15,7 @@ for r=1:numOfClasses
     else
         userClass.setAttribute('type', 'closed');
     end
+    userClass.setAttribute('softDeadline', '0.0');
     userClass.setAttribute('priority', int2str(sn.classprio(r)));
     refStatIndex = sn.refstat(r);
     refNodeIndex = sn.stationToNode(sn.refstat(r));

@@ -7,8 +7,7 @@ import jline.lang.distributions.Immediate;
 import jline.lang.nodes.ClassSwitch;
 import jline.lang.nodes.Delay;
 import jline.lang.nodes.Queue;
-import jline.lang.layerednetworks.*;
-import jline.solvers.ln.SolverLN;
+import jline.lang.layered.*;
 import jline.solvers.mva.SolverMVA;
 
 import static org.junit.jupiter.api.Assertions.*;
