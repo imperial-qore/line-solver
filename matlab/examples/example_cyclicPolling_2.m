@@ -13,13 +13,13 @@ source.setArrival(oclass2, Exp(0.8));
 queue.setService(oclass2, Exp(1.5));
 
 queue.setPollingType(PollingType.GATED)
-queue.setSwitchOver(oclass1, Exp(1.0))
-queue.setSwitchOver(oclass2, Exp(0.5))
+queue.setSwitchover(oclass1, Exp(1.0))
+queue.setSwitchover(oclass2, Exp(0.5))
 %% Block 3: topology
 P = model.initRoutingMatrix;
 P{1} = Network.serialRouting(source,queue,sink);
 P{2} = Network.serialRouting(source,queue,sink);
 model.link(P);
 
-SolverMVA(model).getAvgTable()
-SolverJMT(model,'keep',true,'samples',1e6).getAvgTable()
+SolverMVA(model).getAvgTable() % solution is exact
+SolverJMT(model,'samples',1e5,'seed',23002).getAvgTable()

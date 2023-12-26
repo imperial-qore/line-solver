@@ -5,7 +5,8 @@ function [simDoc, section] = saveGetStrategy(self, simDoc, section, ind)
 % All rights reserved.
 
 sn = self.getStruct;
-if sn.schedid(ind) == SchedStrategy.ID_POLLING
+ist = sn.nodeToStation(ind);
+if ~isnan(ist) && sn.schedid(ist) == SchedStrategy.ID_POLLING
     queueGetStrategyNode = simDoc.createElement('parameter');
     switch sn.nodeparam{ind}{1}.pollingType
         case PollingType.GATED

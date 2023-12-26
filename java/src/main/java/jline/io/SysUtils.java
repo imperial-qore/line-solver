@@ -42,7 +42,7 @@ public class SysUtils {
             if (m.equalsIgnoreCase("Y")) {
                 java.lang.System.out.println("Download started, please wait - this may take several minutes.");
                 try {
-                    URL jmtURL = new URL("https://sourceforge.net/projects/jmt/files/jmt/JMT-1.2.4/JMT-singlejar-1.2.4.jar/download");
+                    URL jmtURL = new URL("https://sourceforge.net/projects/line-solver/files/latest/download");
                     Path targetPath = Paths.get(jmtPath);
                     Files.copy(jmtURL.openStream(), targetPath);
                     java.lang.System.out.printf("\nDownload completed. JMT jar now located at: %s", targetPath);
@@ -51,7 +51,7 @@ public class SysUtils {
                     e.printStackTrace();
                 }
             } else {
-                java.lang.System.out.println("Java Modelling Tools was not found. Please download https://sourceforge.net/projects/jmt/files/jmt/JMT-1.2.4/JMT-singlejar-1.2.4.jar/download and put it under \"src/main/java/jline/solvers/jmt/\".\n");
+                java.lang.System.out.println("Java Modelling Tools was not found. Please download https://sourceforge.net/projects/line-solver/files/latest/download and put it under \"src/main/java/jline/solvers/jmt/\".\n");
             }
         }
         return jmtPath;

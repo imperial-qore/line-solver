@@ -27,7 +27,7 @@ import Utilities.*; %#ok<SIMPT>
 
 % assign global constants
 LINEStdOut = 1; % console
-LINEVersion = '2.0.31';
+LINEVersion = '2.0.32';
 LINEVerbose = VerboseLevel.STD;
 LINEDoChecks = true;
 LINEDummyMode = false; 

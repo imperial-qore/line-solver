@@ -87,6 +87,7 @@ def is_interactive():
     return not hasattr(main, '__file__')
 
 jlineStart()
+from .api import *
 from .constants import *
 from .lang import *
 from .utils import *

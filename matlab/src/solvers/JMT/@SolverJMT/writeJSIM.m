@@ -36,7 +36,9 @@ for i=1:numOfNodes
                     [simXMLDoc, xml_section] = saveNumberOfServers(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = saveServerVisits(self, simXMLDoc, xml_section);
                     [simXMLDoc, xml_section] = saveServiceStrategy(self, simXMLDoc, xml_section, ind);
-                    [simXMLDoc, xml_section] = saveSwitchoverStrategy(self, simXMLDoc, xml_section, ind);
+                    if ~isempty(currentNode.switchoverTime)
+                        [simXMLDoc, xml_section] = saveSwitchoverStrategy(self, simXMLDoc, xml_section, ind);
+                    end
                 case 'PreemptiveServer'
                     [simXMLDoc, xml_section] = saveNumberOfServers(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = saveServerVisits(self, simXMLDoc, xml_section);

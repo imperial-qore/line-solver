@@ -141,12 +141,9 @@ for ind=1:self.getNumberOfNodes
                 if (strcmp(class(node),'Queue') || strcmp(class(node),'QueueingStation')) 
                     if isempty(nodeparam{ind}) && (~isempty(node.pollingType) || ~isempty(node.switchoverTime))
                         nodeparam{ind} = cell(1,self.getNumberOfClasses);
-                    end
-                    if isempty(nodeparam{ind}{r}) && ~isempty(node.pollingType) && ~isempty(node.pollingType{r})
-                        nodeparam{ind}{r} = struct();
-                    end
-                    if isempty(nodeparam{ind}{r}) && ~isempty(node.switchoverTime) && ~isempty(node.switchoverTime{r})
-                        nodeparam{ind}{r} = struct();
+                        for s=1:self.getNumberOfClasses
+                            nodeparam{ind}{s} = struct();
+                        end
                     end
                     if ~isempty(node.pollingType) && ~isempty(node.pollingType{r})
                         nodeparam{ind}{r}.pollingType = node.pollingType{r};

@@ -10,7 +10,7 @@ public class GlobalConstants {
     public static final double CoarseTol = 1.0000e-03;
     public static final double FineTol = 1.0000e-08;
     public static final double Immediate = 100000000;
-    public static final String Version = "2.0.31";
+    public static final String Version = "2.0.32";
     public static VerboseLevel Verbose = VerboseLevel.STD;
     public static final boolean DummyMode = false;
 

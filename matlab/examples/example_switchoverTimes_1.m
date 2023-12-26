@@ -12,8 +12,8 @@ oclass2 = OpenClass(model, 'myClass2');
 source.setArrival(oclass2, Exp(0.8));
 queue.setService(oclass2, Exp(1.5));
 
-queue.setSwitchOver(oclass1, oclass2, Exp(1))
-queue.setSwitchOver(oclass2, oclass1, Erlang(1,2))
+queue.setSwitchover(oclass1, oclass2, Exp(1))
+queue.setSwitchover(oclass2, oclass1, Erlang(1,2))
 %% Block 3: topology
 P = model.initRoutingMatrix;
 P{1} = Network.serialRouting(source,queue,sink);

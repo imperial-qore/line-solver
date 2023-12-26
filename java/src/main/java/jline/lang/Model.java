@@ -1,5 +1,7 @@
 package jline.lang;
 
+import jline.lang.constant.GlobalConstants;
+
 import java.io.Serializable;
 
 /**
@@ -11,7 +13,7 @@ public class Model implements Serializable {
 
     public Model(String modelName) {
         this.name = modelName;
-        this.lineVersion = "2.0.31";
+        this.lineVersion = GlobalConstants.Version;
     }
 
     public String getName() {
