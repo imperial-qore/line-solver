@@ -1,5 +1,5 @@
-function W=opoll_gated(arvMAPs,svcMAPs,switchMAPs)
-% W=opoll_gated(arvMAPs,svcMAPs,switchMAPs)
+function W=polling_qsys_gated(arvMAPs,svcMAPs,switchMAPs)
+% W=polling_qsys_gated(arvMAPs,svcMAPs,switchMAPs)
 %
 % Exact mean waiting time solution of a polling system with open arrivals.
 % All queues use gated service.
@@ -7,7 +7,7 @@ function W=opoll_gated(arvMAPs,svcMAPs,switchMAPs)
 % Takagi, ACM Computing Surveys, Vol. 20, No. 1, March 1988, eq (20)
 %
 % Example:
-% W=opoll_gated({map_exponential(1/0.6),map_exponential(1/0.2)},{map_exponential(1),map_exponential(1)},{map_exponential(1),map_exponential(1)})
+% W=polling_qsys_gated({map_exponential(1/0.6),map_exponential(1/0.2)},{map_exponential(1),map_exponential(1)},{map_exponential(1),map_exponential(1)})
 
 n = length(arvMAPs); % number of classes
 for i=1:n
@@ -24,7 +24,7 @@ r=sum(r1);
 W=gated(n,rho,delta2,lambda,b2,rho1,r);
 end
 
-function W=gated(n,p,delta2,lambda,b2,rho1,r)
+function W=gated(n,rho,delta2,lambda,b2,rho1,r)
 lst1 = [];
 lst2 = [];
 
@@ -70,7 +70,7 @@ for i = 1:n
                 t1((m-1)*n + i) = t1((m-1)*n + i)-(rho1(i)^2);
             end
             lst1 = [lst1; t1];
-            temp = delta2(i) + lambda(i) * b2(i) * r / (1 - p);
+            temp = delta2(i) + lambda(i) * b2(i) * r / (1 - rho);
             lst2 = [lst2; temp];
         end
     end
@@ -79,7 +79,7 @@ final = linsolve(lst1, lst2);
 W = zeros(1, n);
 
 for i = 1:n
-    temp = (1 + rho1(i)) * r / (2 * (1 - p));
+    temp = (1 + rho1(i)) * r / (2 * (1 - rho));
     sum = 0;
     for j = 1:n
         if i ~= j
@@ -90,7 +90,7 @@ for i = 1:n
     for j = 1:n
         sum = sum + final((j-1)*n + i);
     end
-    temp = temp + (1 - p) * (1 + rho1(i)) * sum / (2 * r);
+    temp = temp + (1 - rho) * (1 + rho1(i)) * sum / (2 * r);
     %disp(temp);
     W(i) = temp;
 end

@@ -1,5 +1,5 @@
-function W=opoll_exhaustive(arvMAPs,svcMAPs,switchMAPs)
-% W=opoll_exhaustive(arvMAPs,svcMAPs,switchMAPs)
+function W=polling_qsys_exhaustive(arvMAPs,svcMAPs,switchMAPs)
+% W=polling_qsys_exhaustive(arvMAPs,svcMAPs,switchMAPs)
 %
 % Exact mean waiting time solution of a polling system with open arrivals.
 % All queues use exhaustive service.
@@ -7,7 +7,7 @@ function W=opoll_exhaustive(arvMAPs,svcMAPs,switchMAPs)
 % Takagi, ACM Computing Surveys, Vol. 20, No. 1, March 1988, eq (15)
 %
 % Example:
-% W=opoll_exhaustive({map_exponential(1/0.6),map_exponential(1/0.2)},{map_exponential(1),map_exponential(1)},{map_exponential(1),map_exponential(1)})
+% W=polling_qsys_exhaustive({map_exponential(1/0.6),map_exponential(1/0.2)},{map_exponential(1),map_exponential(1)},{map_exponential(1),map_exponential(1)})
 
 
 n = length(arvMAPs); % number of classes

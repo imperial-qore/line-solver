@@ -30,7 +30,7 @@ for r=1:sn.nclasses
 end
 
 if strcmpi(method,'exact')
-    if all(ca == 1) && k==1
+    if all(ca == 1) && k==1 && ((polling_type == PollingType.ID_EXHAUSTIVE) || (polling_type == PollingType.ID_GATED))
         method = 'stationtime';
     else
         line_error(mfilename,'MVA exact method unavailable for this model.');
@@ -38,12 +38,19 @@ if strcmpi(method,'exact')
 end
 
 switch method
-    case {'default','stationtime','exact'}
+    case {'default','stationtime'}
         switch nanmax(polling_type) % we assume polling types to be identical
-            case PollingType.ID_GATED
-                W = polling_qsys_gated(sn.proc{source_ist},sn.proc{queue_ist},switchover);
             case PollingType.ID_EXHAUSTIVE
                 W = polling_qsys_exhaustive(sn.proc{source_ist},sn.proc{queue_ist},switchover);
+            case PollingType.ID_GATED
+                W = polling_qsys_gated(sn.proc{source_ist},sn.proc{queue_ist},switchover);
+            case PollingType.ID_KLIMITED
+                K = sn.nodeparam{sn.stationToNode(queue_ist)}{1}.pollingPar;
+                if K==1
+                    W = polling_qsys_1limited(sn.proc{source_ist},sn.proc{queue_ist},switchover);
+                else
+                    line_error(mfilename,'MVA method unavailable for K-limited polling with K>1.');
+                end
             otherwise
                 line_error(mfilename,'Unsupported polling type.');
         end
