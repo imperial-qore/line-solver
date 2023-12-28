@@ -42,10 +42,10 @@ public class SysUtils {
             if (m.equalsIgnoreCase("Y")) {
                 java.lang.System.out.println("Download started, please wait - this may take several minutes.");
                 try {
-                    URL jmtURL = new URL("https://sourceforge.net/projects/line-solver/files/latest/download");
+                    URL jmtURL = new URL("https://jmt.sourceforge.net/latest/JMT.jar");
                     Path targetPath = Paths.get(jmtPath);
                     Files.copy(jmtURL.openStream(), targetPath);
-                    java.lang.System.out.printf("\nDownload completed. JMT jar now located at: %s", targetPath);
+                    java.lang.System.out.printf("\nDownload completed. JMT jar now located at: %s\n", targetPath);
                 } catch (IOException e) {
                     jmtFile.delete();
                     e.printStackTrace();

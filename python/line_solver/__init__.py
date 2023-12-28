@@ -1,10 +1,13 @@
 # In __init__.py
 import jpype
+
 from urllib.request import urlretrieve
 import jpype.imports
 from jpype import startJVM, shutdownJVM, java
 import numpy as np
-import os
+import os, sys
+dir_path = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(1, dir_path)
 
 class GlobalImport:
     def __enter__(self):

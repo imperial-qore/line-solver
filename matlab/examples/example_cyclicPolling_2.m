@@ -22,4 +22,4 @@ P{2} = Network.serialRouting(source,queue,sink);
 model.link(P);
 
 SolverMVA(model).getAvgTable() % solution is exact
-SolverJMT(model,'samples',1e5,'seed',23002).getAvgTable()
+SolverJMT(model,'samples',1e6).getAvgTable()
