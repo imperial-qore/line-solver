@@ -11,6 +11,7 @@ import jline.lang.Network;
 import jline.lang.NetworkStruct;
 
 import javax.xml.parsers.ParserConfigurationException;
+import java.io.IOException;
 import java.text.NumberFormat;
 import java.util.*;
 
@@ -188,6 +189,8 @@ public abstract class NetworkSolver extends Solver {
                 System.out.println("IllegalAccessException upon running runAnalyzer()");
             } catch (ParserConfigurationException e) {
                 System.err.println("ParserConfigurationException upon running runAnalyzer()");
+            } catch (IOException e) {
+                System.out.println("IOException upon running runAnalyzer()");
             }
             // TODO: provide more granular error messaging (if useful) (Lines 33-49)
             if (!this.hasAvgResults()) {
@@ -892,6 +895,8 @@ public abstract class NetworkSolver extends Solver {
                 System.err.println("IllegalAccessException upon running runAnalyzer()");
             } catch (ParserConfigurationException e) {
                 System.err.println("ParserConfigurationException upon running runAnalyzer()");
+            } catch (IOException e) {
+                System.err.println("IOException upon running runAnalyzer()");
             }
         }
 

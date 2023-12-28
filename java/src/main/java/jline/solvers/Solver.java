@@ -8,11 +8,13 @@ import jline.lang.Network;
 import jline.lang.constant.SolverType;
 
 import javax.xml.parsers.ParserConfigurationException;
+import java.io.IOException;
 import java.util.Random;
 
 // Abstract class for model solution algorithms and tools
 public abstract class Solver {
 
+  public Model model;
   public String name; // Solver name
   public SolverOptions options; // Data structure with solver options
   public SolverResult result; // Last result
@@ -20,6 +22,10 @@ public abstract class Solver {
   public Random random;
 
   protected Solver(String name, SolverOptions options) {
+    this(null, name, options);
+  }
+  protected Solver(Model model, String name, SolverOptions options) {
+    this.model = model;
     this.name = name;
     this.setOptions(options);
     this.result = new SolverResult();
@@ -32,7 +38,7 @@ public abstract class Solver {
   }
 
   // Generic method to run the solver
-  protected abstract void runAnalyzer() throws IllegalAccessException, ParserConfigurationException;
+  protected abstract void runAnalyzer() throws IllegalAccessException, ParserConfigurationException, IOException;
 
   protected void setChecks(boolean bool) {
     enableChecks = bool;
