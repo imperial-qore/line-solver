@@ -41,8 +41,8 @@ def jlineStart():
         from jline.lang import FeatureSet, FiniteCapacityRegion, InputBinding
         from jline.lang import Model, NetworkAttribute, NetworkElement, NetworkEvent
         from jline.lang import ItemSet, NodeAttribute, OutputStrategy, ServiceBinding
-        from jline.lang.layerednetworks import ActivityPrecedence, CacheTask, LayeredNetworkElement
-        from jline.lang.layerednetworks import LayeredNetworkStruct, ItemEntry, Host
+        from jline.lang.layered import ActivityPrecedence, CacheTask, LayeredNetworkElement
+        from jline.lang.layered import LayeredNetworkStruct, ItemEntry, Host
         from jline.lang.distributions import ContinuousDistribution, Coxian, CumulativeDistribution
         from jline.lang.distributions import DiscreteDistribution, DiscreteSampler, Distribution
         from jline.lang.distributions import MarkovianDistribution

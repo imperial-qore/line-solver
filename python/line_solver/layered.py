@@ -4,7 +4,7 @@ import jpype.imports
 
 class LayeredNetwork:
     def __init__(self, name):
-        self.obj = jpype.JPackage('jline').lang.layerednetworks.LayeredNetwork(name)
+        self.obj = jpype.JPackage('jline').lang.layered.LayeredNetwork(name)
 
     def writeXML(self, filename, abstractNames=False):
         self.obj.writeXML(filename, abstractNames)
@@ -12,12 +12,12 @@ class LayeredNetwork:
 
 class Processor:
     def __init__(self, model, name, mult, schedStrategy):
-        self.obj = jpype.JPackage('jline').lang.layerednetworks.Processor(model.obj, name, mult, schedStrategy.value)
+        self.obj = jpype.JPackage('jline').lang.layered.Processor(model.obj, name, mult, schedStrategy.value)
 
 
 class Task:
     def __init__(self, model, name, mult, schedStrategy):
-        self.obj = jpype.JPackage('jline').lang.layerednetworks.Task(model.obj, name, mult, schedStrategy.value)
+        self.obj = jpype.JPackage('jline').lang.layered.Task(model.obj, name, mult, schedStrategy.value)
 
     def on(self, proc):
         self.obj.on(proc.obj)
@@ -34,7 +34,7 @@ class Task:
 
 class Entry:
     def __init__(self, model, name):
-        self.obj = jpype.JPackage('jline').lang.layerednetworks.Entry(model.obj, name)
+        self.obj = jpype.JPackage('jline').lang.layered.Entry(model.obj, name)
 
     def on(self, proc):
         self.obj.on(proc.obj)
@@ -43,7 +43,7 @@ class Entry:
 
 class Activity:
     def __init__(self, model, name, distrib):
-        self.obj = jpype.JPackage('jline').lang.layerednetworks.Activity(model.obj, name, distrib.obj)
+        self.obj = jpype.JPackage('jline').lang.layered.Activity(model.obj, name, distrib.obj)
 
     def on(self, proc):
         self.obj.on(proc.obj)
@@ -64,13 +64,13 @@ class Activity:
 
 class ActivityPrecedence:
     def __init__(self, name):
-        self.obj = jpype.JPackage('jline').lang.layerednetworks.ActivityPrecedence(name)
+        self.obj = jpype.JPackage('jline').lang.layered.ActivityPrecedence(name)
 
     @staticmethod
     def Serial(act0, act1):
-        return jpype.JPackage('jline').lang.layerednetworks.ActivityPrecedence.Serial(
+        return jpype.JPackage('jline').lang.layered.ActivityPrecedence.Serial(
             jpype.java.util.ArrayList((act0.obj, act1.obj)))
     @staticmethod
     def Sequence(act0, act1):
-        return jpype.JPackage('jline').lang.layerednetworks.ActivityPrecedence.Sequence(
+        return jpype.JPackage('jline').lang.layered.ActivityPrecedence.Sequence(
             act0.obj.getName(), act1.obj.getName())
