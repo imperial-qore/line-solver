@@ -385,6 +385,44 @@ class SolverMVA(Solver):
         model = args[0]
         self.obj = jpype.JPackage('jline').solvers.mva.SolverMVA(model.obj, self.solveropt.obj)
 
+class SolverLQNS(Solver):
+    def __init__(self, *args):
+        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.LQNS)
+        super().__init__(options, args)
+        model = args[0]
+        self.obj = jpype.JPackage('jline').solvers.lqns.SolverLQNS(model.obj, self.solveropt.obj)
+
+
+    def getAvgTable(self):
+        table = self.obj.getAvgTable()
+        # convert to NumPy
+
+        QLen = np.array(list(table.getQLen()))
+        Util = np.array(list(table.getUtil()))
+        RespT = np.array(list(table.getRespT()))
+        ResidT = np.array(list(table.getResidT()))
+        Tput = np.array(list(table.getTput()))
+
+        cols = ['QLen', 'Util', 'RespT', 'ResidT', 'Tput']
+        nodenames = list(table.getNodeNames())
+        mynodenames = []
+        for i in range(len(nodenames)):
+            mynodenames.append(str(nodenames[i]))
+        nodetypes = list(table.getNodeTypes())
+        mynodetypes = []
+        for i in range(len(nodetypes)):
+            mynodetypes.append(str(nodetypes[i]))
+        AvgTable = pd.DataFrame(np.concatenate([[QLen, Util, RespT, ResidT, Tput]]).T, columns=cols)
+        tokeep = ~(AvgTable <= 0.0).all(axis=1)
+        AvgTable.insert(0, "NodeType", mynodetypes)
+        AvgTable.insert(0, "Node", mynodenames)
+        AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
+        if not (
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
+            print(AvgTable)
+
+        return AvgTable
+
 
 class SolverLN(Solver):
     def __init__(self, *args):
