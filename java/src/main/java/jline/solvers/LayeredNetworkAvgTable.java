@@ -89,7 +89,7 @@ public class LayeredNetworkAvgTable {
             DecimalFormat nf = new DecimalFormat("#0.#####");
             nf.setMinimumFractionDigits(5);
             for (int i = 0; i < nodeTypes.size(); i++) {
-                if (true || getQLen().get(i) > GlobalConstants.Zero ||
+                if (getQLen().get(i) > GlobalConstants.Zero ||
                         getUtil().get(i) > GlobalConstants.Zero ||
                         getRespT().get(i) > GlobalConstants.Zero ||
                         getResidT().get(i) > GlobalConstants.Zero ||

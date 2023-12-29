@@ -11,7 +11,8 @@ classdef Processor  < Host
         %constructor
         function self = Processor(model, name, multiplicity, scheduling, quantum, speedFactor)
             % OBJ = PROCESSOR(MODEL, NAME, MULTIPLICITY, SCHEDULING, QUANTUM, SPEEDFACTOR)
-            
+            name = char(name);
+
             if nargin<2 %~exist('name','var')
                 line_error(mfilename,'Constructor requires to specify at least a name.');
             end            

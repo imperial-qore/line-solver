@@ -201,7 +201,11 @@ public class SolverLQNS extends Solver {
                     Element resultElement = (Element) taskResult.item(0);
 
                     double uRes = Double.parseDouble(resultElement.getAttribute("utilization"));
-                    double p1uRes = Double.parseDouble(resultElement.getAttribute("phase1-utilization"));
+                    String p1uResStr = resultElement.getAttribute("phase1-utilization");
+                    double p1uRes = Double.NaN;
+                    if (!p1uResStr.isEmpty()) {
+                        p1uRes = Double.parseDouble(p1uResStr);
+                    }
                     String p2uResStr = resultElement.getAttribute("phase2-utilization");
                     double p2uRes = Double.NaN;
                     if (!p2uResStr.isEmpty()) {
@@ -230,13 +234,21 @@ public class SolverLQNS extends Solver {
                         Element firstEntryResult = (Element) entryResult.item(0);
 
                         uRes = Double.parseDouble(firstEntryResult.getAttribute("utilization"));
-                        p1uRes = Double.parseDouble(firstEntryResult.getAttribute("phase1-utilization"));
+                        p1uResStr = firstEntryResult.getAttribute("phase1-utilization");
+                        p1uRes = Double.NaN;
+                        if (!p1uResStr.isEmpty()) {
+                            p1uRes = Double.parseDouble(p1uResStr);
+                        }
                         p2uResStr = firstEntryResult.getAttribute("phase2-utilization");
                         p2uRes = Double.NaN;
                         if (!p2uResStr.isEmpty()) {
                             p2uRes = Double.parseDouble(p2uResStr);
                         }
-                        double p1stRes = Double.parseDouble(firstEntryResult.getAttribute("phase1-service-time"));
+                        String p1stResStr = firstEntryResult.getAttribute("phase1-service-time");
+                        double p1stRes = Double.NaN;
+                        if (!p1stResStr.isEmpty()) {
+                            p1stRes = Double.parseDouble(p1stResStr);
+                        }
                         String p2stResStr = firstEntryResult.getAttribute("phase2-service-time");
                         double p2stRes = Double.NaN;
                         if (!p2stResStr.isEmpty()) {
@@ -302,7 +314,7 @@ public class SolverLQNS extends Solver {
                                     int callPos = 0;
 
                                     for (Map.Entry<Integer, String> entry : lqn.callnames.entrySet()) {
-                                        if (Objects.equals(Arrays.asList(actID + "=>" + destID), entry.getValue())) {
+                                        if (Objects.equals(Arrays.asList(actID + "=>" + destID).get(0), entry.getValue())) {
                                             callPos = entry.getKey().intValue();
                                         }
                                     }
@@ -325,7 +337,7 @@ public class SolverLQNS extends Solver {
                                     String destID = lqn.names.get(destPos);
                                     int callPos = 0;
                                     for (Map.Entry<Integer, String> entry : lqn.callnames.entrySet()) {
-                                        if (Objects.equals(Arrays.asList(actID + "->" + destID), entry.getValue())) {
+                                        if (Objects.equals(Arrays.asList(actID + "->" + destID).get(0), entry.getValue())) {
                                             callPos = entry.getKey().intValue();
                                         }
                                     }
@@ -435,7 +447,7 @@ public class SolverLQNS extends Solver {
 
     public static void main(String[] args) throws Exception {
         GlobalConstants.getInstance().setVerbose(VerboseLevel.DEBUG);
-        LayeredNetwork lqnmodel = jline.examples.LayeredNetwork.test2();
+        LayeredNetwork lqnmodel = jline.examples.LayeredNetwork.ex4();
         SolverLQNS s = new SolverLQNS(lqnmodel);
         LayeredNetworkAvgTable AvgTable = s.getAvgTable();
         AvgTable.printTable();

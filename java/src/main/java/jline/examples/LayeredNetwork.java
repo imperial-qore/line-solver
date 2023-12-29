@@ -238,7 +238,7 @@ public class LayeredNetwork {
         return model;
     }
 
-    public static void testOfBizFCFS() throws Exception {
+    public static jline.lang.layered.LayeredNetwork  testOfBizFCFS() throws Exception {
 
         jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("myLayeredModel");
 
@@ -354,15 +354,16 @@ public class LayeredNetwork {
         T9.addPrecedence(ActivityPrecedence.Sequence("StartAction_start__EkBkIMhoEeKON4DtRoKCMw_34_5", "InternalAction_addcart__5JEHQMhoEeKON4DtRoKCMw_34_50"));
         T9.addPrecedence(ActivityPrecedence.Sequence("InternalAction_addcart__5JEHQMhoEeKON4DtRoKCMw_34_50", "StopAction_stop__EkCLMMhoEeKON4DtRoKCMw_34_5"));
 
-        SolverLN solver = new SolverLN(model);
-        solver.getEnsemble().get(7).getConnectionMatrix().print();
-        for(int i=0;i<solver.getEnsemble().size();i++) {
-            System.out.println("Solver result "+i);
-            Network layer = solver.getEnsemble().get(i);
-            SolverMVA layersolver = new SolverMVA(layer);
-            layersolver.getAvgTable();
-        }
-        solver.getEnsembleAvg();
+//        SolverLN solver = new SolverLN(model);
+//        solver.getEnsemble().get(7).getConnectionMatrix().print();
+//        for(int i=0;i<solver.getEnsemble().size();i++) {
+//            System.out.println("Solver result "+i);
+//            Network layer = solver.getEnsemble().get(i);
+//            SolverMVA layersolver = new SolverMVA(layer);
+//            layersolver.getAvgTable();
+//        }
+//        solver.getEnsembleAvg();
+        return model;
     }
 
     public static void main(String[] args) throws Exception{

@@ -25,7 +25,7 @@ classdef Task < LayeredNetworkElement
         %constructor
         function self = Task(model, name, multiplicity, scheduling, thinkTime)
             % self = TASK(MODEL, NAME, MULTIPLICITY, SCHEDULING, THINKTIME)
-            
+            name = char(name);
             if nargin<2%~exist('name','var')
                 line_error(mfilename,'Constructor requires to specify at least a name.');
             end
