@@ -22,9 +22,12 @@ import static jline.io.SysUtils.lineTempName;
 
 // LayeredNetworkSolver not available in Java
 public class SolverLQNS extends Solver {
-    // Variables and constructors can go here
     public SolverLQNS(LayeredNetwork lqnmodel) {
-        super(lqnmodel, "SolverLQNS", new SolverOptions(SolverType.LQNS));
+        this(lqnmodel, new SolverOptions(SolverType.LQNS));
+    }
+
+    public SolverLQNS(LayeredNetwork lqnmodel, SolverOptions options) {
+        super(lqnmodel, "SolverLQNS", options);
         //setOptions(Solver.parseOptions(varargin, defaultOptions()));
         if (!isAvailable()) {
             throw new RuntimeException("SolverLQNS requires the lqns and lqsim commands to be available on the system path. Please visit: http://www.sce.carleton.ca/rads/lqns/");
