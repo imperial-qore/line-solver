@@ -66,8 +66,11 @@ public class SolverLQNS extends Solver {
         }
         try {
             Process process = Runtime.getRuntime().exec(cmd);
+            int status = process.waitFor();
         } catch (IOException e) {
             return;
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
         try {
             this.parseXMLResults(filename);
@@ -131,7 +134,7 @@ public class SolverLQNS extends Solver {
         Document doc = null;
         try {
             while (!fXmlFile.exists()) {
-                TimeUnit.NANOSECONDS.sleep(10);
+                TimeUnit.MILLISECONDS.sleep(1);
             }
             doc = dBuilder.parse(fXmlFile.toURI().toString());
         } catch (SAXException | InterruptedException e) {
