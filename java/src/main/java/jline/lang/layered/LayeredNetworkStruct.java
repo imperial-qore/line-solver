@@ -14,7 +14,6 @@ import java.util.Map;
  * Class summarizing the characteristics of a LayeredNetwork
  */
 public class LayeredNetworkStruct {
-
     public  int nidx;
     public  int nhosts;
     public  int ntasks;
