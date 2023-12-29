@@ -42,6 +42,7 @@ classdef LayeredNetwork < Model & Ensemble
             if nargin<1 %~exist('name','var')
                 [~,name]=fileparts(lineTempName);
             end
+            name = char(name);
             self@Model(name);
             self.ensemble = {};
             self.hosts = {};

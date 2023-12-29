@@ -302,7 +302,7 @@ public class SolverLQNS extends Solver {
                                     int callPos = 0;
 
                                     for (Map.Entry<Integer, String> entry : lqn.callnames.entrySet()) {
-                                        if (Objects.equals(Arrays.asList(actID + "=>" + destID), entry.getValue())) {
+                                        if (Objects.equals(Arrays.asList(actID + "=>" + destID).get(0), entry.getValue())) {
                                             callPos = entry.getKey().intValue();
                                         }
                                     }
@@ -325,7 +325,7 @@ public class SolverLQNS extends Solver {
                                     String destID = lqn.names.get(destPos);
                                     int callPos = 0;
                                     for (Map.Entry<Integer, String> entry : lqn.callnames.entrySet()) {
-                                        if (Objects.equals(Arrays.asList(actID + "->" + destID), entry.getValue())) {
+                                        if (Objects.equals(Arrays.asList(actID + "->" + destID).get(0), entry.getValue())) {
                                             callPos = entry.getKey().intValue();
                                         }
                                     }

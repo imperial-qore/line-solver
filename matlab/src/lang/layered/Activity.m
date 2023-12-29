@@ -25,7 +25,7 @@ classdef Activity < LayeredNetworkElement
         %constructor
         function obj = Activity(model, name, hostDemand, boundToEntry, callOrder)
             % OBJ = ACTIVITY(MODEL, NAME, HOSTDEMAND, BOUNDTOENTRY, CALLORDER)
-            
+            name = char(name);
             if nargin<2 %~exist('name','var')
                 line_error(mfilename,'Constructor requires to specify at least a name.');
             end
