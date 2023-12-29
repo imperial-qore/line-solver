@@ -1,14 +1,23 @@
 package jline.solvers.lqns;
 
+import jline.lang.constant.GlobalConstants;
 import jline.lang.constant.SolverType;
 import jline.lang.constant.VerboseLevel;
 import jline.lang.layered.LayeredNetwork;
+import jline.lang.layered.LayeredNetworkStruct;
 import jline.solvers.Solver;
 import jline.solvers.SolverOptions;
 
-import javax.xml.parsers.ParserConfigurationException;
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
+import javax.xml.parsers.*;
+
+import jline.solvers.SolverResult;
+import jline.util.Matrix;
+import org.w3c.dom.*;
+import org.xml.sax.InputSource;
+import org.xml.sax.SAXException;
 
 import static jline.io.SysUtils.lineTempName;
 
@@ -40,7 +49,7 @@ public class SolverLQNS extends Solver {
             return;
         }
         String filename = dirpath + File.separator + "model.lqnx";
-        ((LayeredNetwork)this.model).writeXML(filename, false);
+        ((LayeredNetwork) this.model).writeXML(filename, false);
 
         this.resetRandomGeneratorSeed(options.seed);
 
@@ -57,7 +66,11 @@ public class SolverLQNS extends Solver {
         } catch (IOException e) {
             return;
         }
-
+        try {
+            this.parseXMLResults(filename);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
         if (!options.keep) {
             // Remove the directory
             new File(dirpath).delete();
@@ -65,21 +78,278 @@ public class SolverLQNS extends Solver {
 
     }
 
+    public LayeredNetworkStruct getStruct() {
+        return ((LayeredNetwork) this.model).getStruct();
+    }
 
-//    public Object[] parseXMLResults(String filename) {
-//        // Implementation of parseXMLResults
-//        return new Object[0]; // placeholder return
-//    }
-//
-//    public Object[] getAvg(Object... varargin) {
-//        // Implementation of getAvg
-//        return getEnsembleAvg(varargin);
-//    }
-//
-//    public Object[] getEnsembleAvg(Object... useLQNSnaming) {
-//        // Implementation of getEnsembleAvg
-//        return new Object[0]; // placeholder return
-//    }
+    public SolverResult parseXMLResults(String filename) throws IOException {
+        SolverResult result = null;
+        LayeredNetworkStruct lqn = this.getStruct();
+        int numOfNodes = lqn.nidx;
+        int numOfCalls = lqn.ncalls;
+        Matrix AvgNodesUtilization = new Matrix(numOfNodes, 1);
+        AvgNodesUtilization.fill(Double.NaN);
+        Matrix AvgNodesPhase1Utilization = new Matrix(numOfNodes, 1);
+        AvgNodesPhase1Utilization.fill(Double.NaN);
+        Matrix AvgNodesPhase2Utilization = new Matrix(numOfNodes, 1);
+        AvgNodesPhase2Utilization.fill(Double.NaN);
+        Matrix AvgNodesPhase1ServiceTime = new Matrix(numOfNodes, 1);
+        AvgNodesPhase1ServiceTime.fill(Double.NaN);
+        Matrix AvgNodesPhase2ServiceTime = new Matrix(numOfNodes, 1);
+        AvgNodesPhase2ServiceTime.fill(Double.NaN);
+        Matrix AvgNodesThroughput = new Matrix(numOfNodes, 1);
+        AvgNodesThroughput.fill(Double.NaN);
+        Matrix AvgNodesProcWaiting = new Matrix(numOfNodes, 1);
+        AvgNodesProcWaiting.fill(Double.NaN);
+        Matrix AvgNodesProcUtilization = new Matrix(numOfNodes, 1);
+        AvgNodesProcUtilization.fill(Double.NaN);
+        Matrix AvgEdgesWaiting = new Matrix(numOfCalls, 1);
+        AvgEdgesWaiting.fill(Double.NaN);
+
+        DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
+        DocumentBuilder dBuilder = null;
+        try {
+            dBuilder = dbFactory.newDocumentBuilder();
+        } catch (ParserConfigurationException e) {
+            throw new RuntimeException(e);
+        }
+
+        int dotIndex = filename.lastIndexOf('.');
+        String resultFilename = filename.substring(0, dotIndex) + ".lqxo";
+        File fXmlFile = new File(resultFilename);
+        if (this.options.verbose == VerboseLevel.DEBUG) {
+            System.out.println("Parsing LQNS result file: " + resultFilename);
+            if (this.options.keep) {
+                System.out.println("LQNS result file available at: " + resultFilename);
+            }
+        }
+        Document doc = null;
+        try {
+            while (!fXmlFile.exists()) {
+                TimeUnit.NANOSECONDS.sleep(10);
+            }
+            doc = dBuilder.parse(fXmlFile.toURI().toString());
+        } catch (SAXException | InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+        doc.getDocumentElement().normalize();
+
+        // Parse number of lqns iterations
+        NodeList solverParams = doc.getElementsByTagName("solver-params");
+        int iterations = 0;
+        for (int i = 0; i < solverParams.getLength(); i++) {
+            Node solverParamNode = solverParams.item(i);
+            if (solverParamNode.getNodeType() == Node.ELEMENT_NODE) {
+                Element solverParamElement = (Element) solverParamNode;
+                NodeList resultGeneralList = solverParamElement.getElementsByTagName("result-general");
+                if (resultGeneralList.getLength() > 0) {
+                    Element resultGeneralElement = (Element) resultGeneralList.item(0);
+                    String iterationsStr = resultGeneralElement.getAttribute("iterations");
+                    try {
+                        iterations = Integer.parseInt(iterationsStr);
+                    } catch (NumberFormatException e) {
+                        System.err.println("Error parsing iterations value: " + iterationsStr);
+                    }
+                }
+            }
+        }
+
+        NodeList procList = doc.getElementsByTagName("processor");
+
+        for (int i = 0; i < procList.getLength(); i++) {
+            Node procNode = procList.item(i);
+
+            if (procNode.getNodeType() == Node.ELEMENT_NODE) {
+                Element procElement = (Element) procNode;
+                String procName = procElement.getAttribute("name");
+
+                // Find the position of procName
+                int procPos = 0;
+                for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
+                    if (Objects.equals(procName, entry.getValue())) {
+                        procPos = entry.getKey().intValue();
+                    }
+                }
+                NodeList procResultList = procElement.getElementsByTagName("result-processor");
+                if (procResultList.getLength() > 0) {
+                    Element procResultElement = (Element) procResultList.item(0);
+                    String utilizationStr = procResultElement.getAttribute("utilization");
+
+                    try {
+                        // Convert utilization string to double and store in Avg.Nodes.ProcUtilization
+                        double uRes = Double.parseDouble(utilizationStr);
+                        AvgNodesProcUtilization.set(procPos - 1, uRes);
+                    } catch (NumberFormatException e) {
+                        System.err.println("Error parsing utilization for processor " + procName + ": " + utilizationStr);
+                    }
+                }
+
+                // Assuming procElement is already defined as an Element and lqn.names is a List or array.
+                NodeList taskList = procElement.getElementsByTagName("task");
+                for (int j = 0; j < taskList.getLength(); j++) {
+                    // Element - Task
+                    Element taskElement = (Element) taskList.item(j);
+                    String taskName = taskElement.getAttribute("name");
+
+                    // Find the position of taskName
+                    int taskPos = 0;
+                    for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
+                        if (Objects.equals(taskName, entry.getValue())) {
+                            taskPos = entry.getKey().intValue();
+                        }
+                    }
+                    NodeList taskResult = taskElement.getElementsByTagName("result-task");
+                    Element resultElement = (Element) taskResult.item(0);
+
+                    double uRes = Double.parseDouble(resultElement.getAttribute("utilization"));
+                    double p1uRes = Double.parseDouble(resultElement.getAttribute("phase1-utilization"));
+                    String p2uResStr = resultElement.getAttribute("phase2-utilization");
+                    double p2uRes = Double.NaN;
+                    if (!p2uResStr.isEmpty()) {
+                        p2uRes = Double.parseDouble(p2uResStr);
+                    }
+                    double tRes = Double.parseDouble(resultElement.getAttribute("throughput"));
+                    double puRes = Double.parseDouble(resultElement.getAttribute("proc-utilization"));
+                    AvgNodesUtilization.set(taskPos - 1, uRes);
+                    AvgNodesPhase1Utilization.set(taskPos - 1, p1uRes);
+                    AvgNodesThroughput.set(taskPos - 1, tRes);
+                    AvgNodesProcUtilization.set(taskPos - 1, puRes);
+                    AvgNodesPhase2Utilization.set(taskPos - 1, p2uRes);
+
+                    NodeList entryList = doc.getElementsByTagName("entry");
+                    for (int k = 0; k < entryList.getLength(); k++) {
+                        Element entryElement = (Element) entryList.item(k);
+                        String entryName = entryElement.getAttribute("name");
+                        // Find the position of entryName
+                        int entryPos = 0;
+                        for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
+                            if (Objects.equals(entryName, entry.getValue())) {
+                                entryPos = entry.getKey().intValue();
+                            }
+                        }
+                        NodeList entryResult = entryElement.getElementsByTagName("result-entry");
+                        Element firstEntryResult = (Element) entryResult.item(0);
+
+                        uRes = Double.parseDouble(firstEntryResult.getAttribute("utilization"));
+                        p1uRes = Double.parseDouble(firstEntryResult.getAttribute("phase1-utilization"));
+                        p2uResStr = firstEntryResult.getAttribute("phase2-utilization");
+                        p2uRes = Double.NaN;
+                        if (!p2uResStr.isEmpty()) {
+                            p2uRes = Double.parseDouble(p2uResStr);
+                        }
+                        double p1stRes = Double.parseDouble(firstEntryResult.getAttribute("phase1-service-time"));
+                        String p2stResStr = firstEntryResult.getAttribute("phase2-service-time");
+                        double p2stRes = Double.NaN;
+                        if (!p2stResStr.isEmpty()) {
+                            p2stRes = Double.parseDouble(p2uResStr);
+                        }
+                        tRes = Double.parseDouble(firstEntryResult.getAttribute("throughput"));
+                        puRes = Double.parseDouble(firstEntryResult.getAttribute("proc-utilization"));
+
+                        AvgNodesUtilization.set(entryPos - 1, uRes);
+                        AvgNodesPhase1Utilization.set(entryPos - 1, p1uRes);
+                        AvgNodesPhase2Utilization.set(entryPos - 1, p2uRes);
+                        AvgNodesPhase1ServiceTime.set(entryPos - 1, p1stRes);
+                        AvgNodesPhase2ServiceTime.set(entryPos - 1, p2stRes);
+                        AvgNodesThroughput.set(entryPos - 1, tRes);
+                        AvgNodesProcUtilization.set(entryPos - 1, puRes);
+                    }
+
+                    NodeList taskActsList = doc.getElementsByTagName("task-activities");
+                    if (taskActsList.getLength() > 0) {
+                        Element taskActsElement = (Element) taskActsList.item(0);
+                        NodeList actList = taskActsElement.getElementsByTagName("activity");
+                        for (int l = 0; l < actList.getLength(); l++) {
+                            Element actElement = (Element) actList.item(l);
+                            if (actElement.getParentNode().getNodeName().equals("task-activities")) {
+                                String actName = actElement.getAttribute("name");
+                                // Find the position of actName
+                                int actPos = 0;
+                                for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
+                                    if (Objects.equals(actName, entry.getValue())) {
+                                        actPos = entry.getKey().intValue();
+                                    }
+                                }
+                                NodeList actResult = actElement.getElementsByTagName("result-activity");
+                                uRes = Double.parseDouble(actResult.item(0).getAttributes().getNamedItem("utilization").getNodeValue());
+                                double stRes = Double.parseDouble(actResult.item(0).getAttributes().getNamedItem("service-time").getNodeValue());
+                                tRes = Double.parseDouble(resultElement.getAttribute("throughput"));
+                                String pwResStr = resultElement.getAttribute("proc-waiting");
+                                double pwRes = Double.NaN;
+                                if (!pwResStr.isEmpty()) {
+                                    pwRes = Double.parseDouble(pwResStr);
+                                }
+                                puRes = Double.parseDouble(resultElement.getAttribute("proc-utilization"));
+                                AvgNodesUtilization.set(actPos - 1, uRes);
+                                AvgNodesPhase1ServiceTime.set(actPos - 1, stRes);
+                                AvgNodesThroughput.set(actPos - 1, tRes);
+                                AvgNodesProcWaiting.set(actPos - 1, pwRes);
+                                AvgNodesProcUtilization.set(actPos - 1, puRes);
+
+                                String actID = lqn.names.get(actPos);
+                                // Synchronous calls
+                                NodeList synchCalls = actElement.getElementsByTagName("synch-call");
+                                for (int m = 0; m < synchCalls.getLength(); m++) {
+                                    Element callElement = (Element) synchCalls.item(m);
+                                    String destName = callElement.getAttribute("dest");
+                                    int destPos = 0;
+                                    for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
+                                        if (Objects.equals(destName, entry.getValue())) {
+                                            destPos = entry.getKey().intValue();
+                                        }
+                                    }
+                                    String destID = lqn.names.get(destPos);
+                                    int callPos = 0;
+                                    for (Map.Entry<Integer, String> entry : lqn.callnames.entrySet()) {
+                                        if (Objects.equals(Arrays.asList(actID + "=>" + destID), entry.getValue())) {
+                                            callPos = entry.getKey().intValue();
+                                        }
+                                    }
+                                    NodeList callResult = callElement.getElementsByTagName("result-call");
+                                    double wRes = Double.parseDouble(((Element) callResult.item(0)).getAttribute("waiting"));
+                                    AvgEdgesWaiting.set(callPos-1,wRes);
+                                }
+
+                                // Asynchronous calls
+                                NodeList asynchCalls = actElement.getElementsByTagName("asynch-call");
+                                for (int m = 0; m < asynchCalls.getLength(); m++) {
+                                    Element callElement = (Element) asynchCalls.item(m);
+                                    String destName = callElement.getAttribute("dest");
+                                    int destPos = 0;
+                                    for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
+                                        if (Objects.equals(destName, entry.getValue())) {
+                                            destPos = entry.getKey().intValue();
+                                        }
+                                    }
+                                    String destID = lqn.names.get(destPos);
+                                    int callPos = 0;
+                                    for (Map.Entry<Integer, String> entry : lqn.callnames.entrySet()) {
+                                        if (Objects.equals(Arrays.asList(actID + "->" + destID), entry.getValue())) {
+                                            callPos = entry.getKey().intValue();
+                                        }
+                                    }
+                                    NodeList callResult = callElement.getElementsByTagName("result-call");
+                                    double wRes = Double.parseDouble(((Element) callResult.item(0)).getAttribute("waiting"));
+                                    AvgEdgesWaiting.set(callPos-1,wRes);
+                                }
+
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        AvgNodesProcUtilization.print();
+        AvgNodesPhase1ServiceTime.print();
+        AvgNodesThroughput.print();
+        AvgNodesUtilization.print();
+        AvgNodesProcWaiting.print();
+
+        //AvgNodesPhase1Utilization.print();
+        //AvgNodesPhase2Utilization.print();
+        //AvgNodesPhase2ServiceTime.print();
+        return result;
+    }
 
     // Static methods
     public static List<String> listValidMethods() {
@@ -104,6 +374,7 @@ public class SolverLQNS extends Solver {
     }
 
     public static void main(String[] args) throws Exception {
+        GlobalConstants.getInstance().setVerbose(VerboseLevel.DEBUG);
         LayeredNetwork lqnmodel = jline.examples.LayeredNetwork.test1();
         SolverLQNS s = new SolverLQNS(lqnmodel);
         s.runAnalyzer();
