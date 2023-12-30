@@ -15,7 +15,6 @@ public class LayeredNetworkElement extends Element {
     public static final int ACTIVITY = 3;
     public static final int CALL = 4;
 
-
     public LayeredNetworkElement(String name) {
         super(name);
     }
