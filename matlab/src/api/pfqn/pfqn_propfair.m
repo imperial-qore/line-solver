@@ -19,9 +19,7 @@ function [G,lG,Xasy] = pfqn_propfair(L,N,Z)
 [M,R]=size(L);
 optimopt = optimoptions(@fmincon,'MaxFunctionEvaluations',1e6,'Display','none');
 obj = @(X) -sum((N-X.*Z).*log(X+1e-6));
-x0 = N ./ (sum(L,1) + (sum(N)-1)*max(L,[],1) + Z);
-[Xopt] = fmincon(@(x) obj(x), x0, L, ones(M,1), [],[], zeros(1,R), [],[],optimopt);
-Xasy = Xopt .* (sum(L,1) + (sum(N)-1)*max(L,[],1)) ./ (sum(L,1) + (sum(N)-1)*max(L,[],1) + Z); 
-lG = -sum(N.*log(Xasy));
+[Xasy] = fmincon(@(x) obj(x), zeros(1,R), L, ones(M,1), [],[], zeros(1,R), [],[],optimopt);
+lG = sum((N-Xasy.*Z).*log(1./Xasy)) + sum((Xasy.*Z).*log(Z)) - sum(factln(Xasy.*Z));
 G = exp(lG);
 end
