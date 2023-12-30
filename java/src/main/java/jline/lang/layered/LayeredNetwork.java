@@ -31,8 +31,7 @@ import static jline.lang.constant.ActivityPrecedenceType.*;
  */
 public class LayeredNetwork extends Ensemble {
 
-    private final Aux aux;
-    private Indexes indexes;
+    //private final Aux aux;
     private Matrix lqnGraph;
     private Matrix taskGraph;
     private Param param;
@@ -42,17 +41,6 @@ public class LayeredNetwork extends Ensemble {
     protected Map<Integer, Task> reftasks;
     protected Map<Integer, Activity> activities;
     protected Map<Integer, Entry> entries;
-
-    private class Aux {
-    }
-
-    private class Indexes {
-        private List<Processor> hosts;
-        private List<Task> tasks;
-        private List<Task> reftasks;
-        private List<Entry> entries;
-        private List<Activity> activities;
-    }
 
     private class Param {
 
@@ -79,7 +67,7 @@ public class LayeredNetwork extends Ensemble {
 
     public LayeredNetwork(String name){
         super(name);
-        this.aux = new Aux();
+//        this.aux = new Aux();
 //        this.lqnGraph = new JLineMatrix(0,0,0);
 //        this.taskGraph = new JLineMatrix(0,0,0);
         this.ensemble = new ArrayList<>();
@@ -88,12 +76,6 @@ public class LayeredNetwork extends Ensemble {
         this.tasks = new HashMap<>();
         this.reftasks = new HashMap<>();
         this.entries = new HashMap<>();
-        this.indexes = new Indexes();
-        this.indexes.hosts = new ArrayList<>();
-        this.indexes.tasks = new ArrayList<>();
-        this.indexes.reftasks = new ArrayList<>();
-        this.indexes.entries = new ArrayList<>();
-        this.indexes.activities = new ArrayList<>();
         this.param = new Param();
         this.param.Nodes.RespT = 0;
         this.param.Nodes.Tput = 0;
@@ -105,7 +87,7 @@ public class LayeredNetwork extends Ensemble {
 
     public LayeredNetwork(String name, String filename) {
         super(name);
-        this.aux = new Aux();
+        //this.aux = new Aux();
         this.lqnGraph = new Matrix(0,0,0);
         this.taskGraph = new Matrix(0,0,0);
         this.ensemble = new ArrayList<>();
@@ -113,11 +95,6 @@ public class LayeredNetwork extends Ensemble {
         this.tasks = new HashMap<>();
         this.reftasks = new HashMap<>();
         this.entries = new HashMap<>();
-        this.indexes.hosts = new ArrayList<>();
-        this.indexes.tasks = new ArrayList<>();
-        this.indexes.reftasks = new ArrayList<>();
-        this.indexes.entries = new ArrayList<>();
-        this.indexes.activities = new ArrayList<>();
         this.param.Nodes.RespT = 0;
         this.param.Nodes.Tput = 0;
         this.param.Nodes.Util = 0;
@@ -1125,9 +1102,35 @@ public class LayeredNetwork extends Ensemble {
                   }
               }
            }
-
        }
-
         return myLN;
+    }
+
+    public Integer getNodeIndex(LayeredNetworkElement node) {
+        List<String> nodenames = this.getNodeNames();
+        String nodeName = node.getName();
+        for(int idx=0; idx<nodenames.size(); idx++) {
+            if(nodenames.get(idx).equals(nodeName)) {
+                return idx;
+            }
+        }
+        return -1;
+    }
+
+    public List<String> getNodeNames() {
+        List<String> nodenames = new ArrayList<>();
+        for(int h=0; h<this.hosts.size(); h++) {
+            nodenames.add(this.hosts.get(h).getName());
+        }
+        for(int t=0; t<this.tasks.size(); t++) {
+            nodenames.add(this.tasks.get(t).getName());
+        }
+        for(int e=0; e<this.entries.size(); e++) {
+            nodenames.add(this.entries.get(e).getName());
+        }
+        for(int a=0; a<this.activities.size(); a++) {
+            nodenames.add(this.activities.get(a).getName());
+        }
+        return nodenames;
     }
 }

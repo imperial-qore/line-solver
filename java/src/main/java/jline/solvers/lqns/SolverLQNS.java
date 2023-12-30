@@ -82,7 +82,7 @@ public class SolverLQNS extends Solver {
             new File(dirpath).delete();
         }
         long endTimeMillis = System.currentTimeMillis();
-        result.runtime = (endTimeMillis-startTimeMillis) / 1000.0;
+        result.runtime = (endTimeMillis - startTimeMillis) / 1000.0;
 
     }
 
@@ -271,15 +271,20 @@ public class SolverLQNS extends Solver {
                         AvgNodesThroughput.set(entryPos - 1, tRes);
                         AvgNodesProcUtilization.set(entryPos - 1, puRes);
                     }
+                }
 
-                    NodeList taskActsList = doc.getElementsByTagName("task-activities");
-                    if (taskActsList.getLength() > 0) {
-                        Element taskActsElement = (Element) taskActsList.item(0);
+                NodeList taskActsList = doc.getElementsByTagName("task-activities");
+                if (taskActsList.getLength() > 0) {
+                    for (int t = 0; t < taskActsList.getLength(); t++) {
+                        Element taskActsElement = (Element) taskActsList.item(t);
                         NodeList actList = taskActsElement.getElementsByTagName("activity");
                         for (int l = 0; l < actList.getLength(); l++) {
                             Element actElement = (Element) actList.item(l);
                             if (actElement.getParentNode().getNodeName().equals("task-activities")) {
                                 String actName = actElement.getAttribute("name");
+                                // TODO: there may be a performance bug here as actName seems to visit more than once
+                                //  the same activity
+
                                 // Find the position of actName
                                 int actPos = 0;
                                 for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
@@ -288,9 +293,9 @@ public class SolverLQNS extends Solver {
                                     }
                                 }
                                 NodeList actResult = actElement.getElementsByTagName("result-activity");
-                                uRes = Double.parseDouble(actResult.item(0).getAttributes().getNamedItem("utilization").getNodeValue());
+                                double uRes = Double.parseDouble(actResult.item(0).getAttributes().getNamedItem("utilization").getNodeValue());
                                 double stRes = Double.parseDouble(actResult.item(0).getAttributes().getNamedItem("service-time").getNodeValue());
-                                tRes = Double.parseDouble(actResult.item(0).getAttributes().getNamedItem("throughput").getNodeValue());
+                                double tRes = Double.parseDouble(actResult.item(0).getAttributes().getNamedItem("throughput").getNodeValue());
                                 String pwResStr = actResult.item(0).getAttributes().getNamedItem("proc-waiting").getNodeValue();
                                 double pwRes = Double.NaN;
                                 if (!pwResStr.isEmpty()) {
@@ -326,7 +331,7 @@ public class SolverLQNS extends Solver {
                                     }
                                     NodeList callResult = callElement.getElementsByTagName("result-call");
                                     double wRes = Double.parseDouble(((Element) callResult.item(0)).getAttribute("waiting"));
-                                    AvgEdgesWaiting.set(callPos-1,wRes);
+                                    AvgEdgesWaiting.set(callPos - 1, wRes);
                                 }
 
                                 // Asynchronous calls
@@ -349,9 +354,8 @@ public class SolverLQNS extends Solver {
                                     }
                                     NodeList callResult = callElement.getElementsByTagName("result-call");
                                     double wRes = Double.parseDouble(((Element) callResult.item(0)).getAttribute("waiting"));
-                                    AvgEdgesWaiting.set(callPos-1,wRes);
+                                    AvgEdgesWaiting.set(callPos - 1, wRes);
                                 }
-
                             }
                         }
                     }
@@ -360,16 +364,16 @@ public class SolverLQNS extends Solver {
         }
         this.result = new LayeredSolverResult();
 
-        ((LayeredSolverResult)this.result).PN = new Matrix(AvgNodesProcUtilization);
-        ((LayeredSolverResult)this.result).SN = new Matrix(AvgNodesPhase1ServiceTime);
-        ((LayeredSolverResult)this.result).TN = new Matrix(AvgNodesThroughput);
-        ((LayeredSolverResult)this.result).UN = new Matrix(AvgNodesUtilization);
-        ((LayeredSolverResult)this.result).RN = new Matrix(AvgNodesProcWaiting);
-        ((LayeredSolverResult)this.result).RN.fill(Double.NaN);
-        ((LayeredSolverResult)this.result).QN = new Matrix(AvgNodesProcWaiting);
-        ((LayeredSolverResult)this.result).QN.fill(Double.NaN);
-        ((LayeredSolverResult)this.result).AN = new Matrix(lqn.nidx,1);
-        ((LayeredSolverResult)this.result).WN = new Matrix(lqn.nidx,1);
+        ((LayeredSolverResult) this.result).PN = new Matrix(AvgNodesProcUtilization);
+        ((LayeredSolverResult) this.result).SN = new Matrix(AvgNodesPhase1ServiceTime);
+        ((LayeredSolverResult) this.result).TN = new Matrix(AvgNodesThroughput);
+        ((LayeredSolverResult) this.result).UN = new Matrix(AvgNodesUtilization);
+        ((LayeredSolverResult) this.result).RN = new Matrix(AvgNodesProcWaiting);
+        ((LayeredSolverResult) this.result).RN.fill(Double.NaN);
+        ((LayeredSolverResult) this.result).QN = new Matrix(AvgNodesProcWaiting);
+        ((LayeredSolverResult) this.result).QN.fill(Double.NaN);
+        ((LayeredSolverResult) this.result).AN = new Matrix(lqn.nidx, 1);
+        ((LayeredSolverResult) this.result).WN = new Matrix(lqn.nidx, 1);
         return result;
     }
 
@@ -425,8 +429,8 @@ public class SolverLQNS extends Solver {
 
         List<String> nodeNames = new ArrayList<>(lqn.names.values());
         List<String> nodeTypes = new ArrayList<>();
-        for (int o=0; o<nodeNames.size(); o++) {
-            switch ((int)lqn.type.get(1+o)) {
+        for (int o = 0; o < nodeNames.size(); o++) {
+            switch ((int) lqn.type.get(1 + o)) {
                 case LayeredNetworkElement.PROCESSOR:
                     nodeTypes.add("Processor");
                     break;

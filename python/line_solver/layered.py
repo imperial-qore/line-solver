@@ -9,6 +9,11 @@ class LayeredNetwork:
     def writeXML(self, filename, abstractNames=False):
         self.obj.writeXML(filename, abstractNames)
 
+    def getNodeIndex(self, node):
+        return self.obj.getNodeIndex(node.obj)
+
+    def getNodeNames(self):
+        return self.obj.getNodeNames()
 
 class Processor:
     def __init__(self, model, name, mult, schedStrategy):

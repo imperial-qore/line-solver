@@ -34,12 +34,15 @@ public class Task extends LayeredNetworkElement{
         this.multiplicity = multiplicity;
         this.scheduling = scheduling;
         this.setThinkTime(thinkTime);
-        model.tasks.put(model.tasks.size(),this);
         this.entries = new ArrayList<>();
         this.activities =new ArrayList<>();
         this.precedences = new ArrayList<>();
         this.replyEntry = new ArrayList<>();
-        if(scheduling == SchedStrategy.REF) model.reftasks.put(model.tasks.size(),this);
+        // link within model
+        model.tasks.put(model.tasks.size(),this);
+        if(scheduling == SchedStrategy.REF) {
+            model.reftasks.put(model.reftasks.size(),this);
+        }
     }
 
     public Task(LayeredNetwork model, String name, int multiplicity, SchedStrategy scheduling) {
