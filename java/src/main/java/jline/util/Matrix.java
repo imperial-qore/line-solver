@@ -180,19 +180,22 @@ public class Matrix extends DMatrixSparseCSC {
 	  int n2 = inSpace2.getNumRows();
 	  int m2 = inSpace2.getNumCols();
 
-	  inSpace1.repmat(n2, 1);
+	  inSpace1 = inSpace1.repmat(n2, 1);
 	  int curStatesStart = 0;
 	  int curStatesEnd = n1;
-
+	  // column wise expansion should only be done once
+	  boolean columnsExpanded = false;
 	  for (int s = 0; s < n2; s++) {
 		Matrix tmp = new Matrix(1, inSpace2.getNumCols());
 		extractRows(inSpace2, s, s + 1, tmp);
-		tmp.repmat(curStatesEnd - 1, 1);
+		tmp = tmp.repmat(curStatesEnd - curStatesStart, 1);
 
 		inSpace1.expandMatrix(
-			inSpace1.getNumRows() + curStatesEnd - 1,
-			inSpace1.getNumCols() + m2,
-			(inSpace1.getNumRows() + curStatesEnd - 1) * (inSpace1.getNumCols() + m2));
+				(int) Maths.max(curStatesEnd,inSpace1.getNumRows()) /*- 1*/,
+				(columnsExpanded) ? inSpace1.getNumCols(): inSpace1.getNumCols() + m2,
+				inSpace1.getNumRows() + (curStatesEnd) * (inSpace1.getNumCols() + m2));
+		columnsExpanded = true;
+;
 		for (int i = curStatesStart; i < curStatesEnd; i++) {
 		  for (int j = m1; j < m1 + m2; j++) {
 			inSpace1.set(i, j, tmp.get(i - curStatesStart, j - m1));
@@ -1571,7 +1574,7 @@ public class Matrix extends DMatrixSparseCSC {
 		return result;
 	}
 
-	public Map<String,Matrix> Schur_decomposition(String method,Integer it_){
+	public Map<String,Matrix> schur(String method, Integer it_){
 		if(numRows!= numCols){
 			throw new RuntimeException("Only square matrix can be decomposed");
 		}
@@ -1602,8 +1605,8 @@ public class Matrix extends DMatrixSparseCSC {
 		return result;
 	}
 
-	public Map<String,Matrix> Schur_decomposition(){
-		return Schur_decomposition("default",null);
+	public Map<String,Matrix> schur(){
+		return schur("default",null);
 	}
 
 	public static Matrix lyap(Matrix A, Matrix B, Matrix C,Matrix D){
@@ -1612,7 +1615,7 @@ public class Matrix extends DMatrixSparseCSC {
 
 	public static Matrix sylv(Matrix A, Matrix B, Matrix C){
 		int n = C.numCols;
-		Map<String,Matrix> schur_decomposition_A = A.Schur_decomposition();
+		Map<String,Matrix> schur_decomposition_A = A.schur();
 		Matrix ZA = schur_decomposition_A.get("U");
 		Matrix TA = schur_decomposition_A.get("T");
 		Matrix ZB;
@@ -1623,7 +1626,7 @@ public class Matrix extends DMatrixSparseCSC {
 			TB = TA.transpose();
 			solver_direction = "backward";
 		}else {
-			Map<String,Matrix> schur_decomposition_B = B.Schur_decomposition();
+			Map<String,Matrix> schur_decomposition_B = B.schur();
 			ZB = schur_decomposition_B.get("U");
 			TB = schur_decomposition_B.get("T");
 			solver_direction = "forward";
@@ -1884,4 +1887,6 @@ public class Matrix extends DMatrixSparseCSC {
 		}
 		return sum;
 	}
+
+
 }

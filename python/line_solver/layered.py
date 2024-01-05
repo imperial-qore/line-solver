@@ -1,10 +1,17 @@
 import jpype
 import jpype.imports
+import numpy as np
+from pprint import pformat
+from . import SchedStrategy
+from .lang import jlineMatrixToArray
 
 
 class LayeredNetwork:
     def __init__(self, name):
         self.obj = jpype.JPackage('jline').lang.layered.LayeredNetwork(name)
+
+    def parseXML(self, filename, verbose=False):
+        self.obj.parseXML(filename, verbose)
 
     def writeXML(self, filename, abstractNames=False):
         self.obj.writeXML(filename, abstractNames)
@@ -14,6 +21,94 @@ class LayeredNetwork:
 
     def getNodeNames(self):
         return self.obj.getNodeNames()
+
+    def getEnsemble(self):
+        return self.obj.getEnsemble()
+
+    def getLayers(self):
+        return self.obj.getLayers()
+
+    def getNumberOfLayers(self):
+        return self.obj.getNumberOfLayers()
+
+    def getNumberOfModels(self):
+        return self.obj.getNumberOfModels()
+
+    def summary(self):
+        return self.obj.summary()
+
+    def parseXML(self, filename, verbose):
+        return self.obj.parseXML(filename, verbose)
+
+    def getStruct(self):
+        jsn = self.obj.getStruct()
+        lsn = LayeredNetworkStruct()
+        lsn.fromJline(jsn)
+        return lsn
+
+
+class LayeredNetworkStruct():
+    def __str__(self):
+        return pformat(vars(self))
+
+    def fromJline(self, jsn):
+        self.nidx = int(jsn.nidx)
+        self.nhosts = int(jsn.nhosts)
+        self.ntasks = int(jsn.ntasks)
+        self.nentries = int(jsn.nentries)
+        self.nacts = int(jsn.nacts)
+        self.ncalls = int(jsn.ncalls)
+
+        self.hshift = int(jsn.hshift)
+        self.tshift = int(jsn.tshift)
+        self.eshift = int(jsn.eshift)
+        self.ashift = int(jsn.ashift)
+        self.cshift = int(jsn.cshift)
+
+        self.schedid = jlineMatrixToArray(jsn.schedid)
+        self.mult = jlineMatrixToArray(jsn.mult)
+        self.repl = jlineMatrixToArray(jsn.repl)
+        self.type = jlineMatrixToArray(jsn.type)
+        self.graph = jlineMatrixToArray(jsn.graph)
+        self.replygraph = jlineMatrixToArray(jsn.replygraph)
+        self.nitems = jlineMatrixToArray(jsn.nitems)
+        self.replacement = jlineMatrixToArray(jsn.replacement)
+        self.parent = jlineMatrixToArray(jsn.parent)
+        self.iscaller = jlineMatrixToArray(jsn.iscaller)
+        self.issynccaller = jlineMatrixToArray(jsn.issynccaller)
+        self.isasynccaller = jlineMatrixToArray(jsn.isasynccaller)
+        self.callpair = jlineMatrixToArray(jsn.callpair)
+        self.taskgraph = jlineMatrixToArray(jsn.taskgraph)
+        self.actpretype = jlineMatrixToArray(jsn.actpretype)
+        self.actposttype = jlineMatrixToArray(jsn.actposttype)
+        self.isref = jlineMatrixToArray(jsn.isref)
+
+        self.names = np.empty(self.nidx, dtype=object)
+        self.hashnames = np.empty(self.nidx, dtype=object)
+        for i in range(int(self.nidx)):
+            self.names[i] = jsn.names.get(jpype.JPackage('java').lang.Integer(1+i))
+            self.hashnames[i] = jsn.hashnames.get(jpype.JPackage('java').lang.Integer(1+i))
+
+        self.callnames = np.empty(self.ncalls, dtype=object)
+        self.callhashnames = np.empty(self.ncalls, dtype=object)
+        for i in range(int(self.ncalls)):
+            self.callnames[i] = jsn.callnames.get(jpype.JPackage('java').lang.Integer(1+i))
+            self.callhashnames[i] = jsn.callhashnames.get(jpype.JPackage('java').lang.Integer(1+i))
+
+        # TODO: finish porting
+        self.nodevisits = None
+        self.tasksof = None
+        self.entriesof = None
+        self.actsof = None
+        self.callsof = None
+        self.hostdem = None
+        self.think = None
+        self.sched = None
+        self.itemcap = None
+        self.itemproc = None
+        self.calltype = None
+        self.callproc = None
+
 
 class Processor:
     def __init__(self, model, name, mult, schedStrategy):
@@ -75,6 +170,7 @@ class ActivityPrecedence:
     def Serial(act0, act1):
         return jpype.JPackage('jline').lang.layered.ActivityPrecedence.Serial(
             jpype.java.util.ArrayList((act0.obj, act1.obj)))
+
     @staticmethod
     def Sequence(act0, act1):
         return jpype.JPackage('jline').lang.layered.ActivityPrecedence.Sequence(

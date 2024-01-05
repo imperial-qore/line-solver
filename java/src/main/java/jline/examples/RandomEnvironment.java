@@ -28,13 +28,6 @@ import java.util.Collections;
  */
 public class RandomEnvironment {
 
-  public static void main(String[] args) {
-
-    SolverEnv envSolver = ex1();
-    envSolver.printAvgTable();
-    // envSolver.printEnsembleAvgTables();
-  }
-
   // For System-Testing and Performance Evaluation
   // Corresponds to example_randomEnvironment_1.m in LINE
   public static SolverEnv ex1() {
@@ -271,8 +264,8 @@ public class RandomEnvironment {
 
     // Model in Stage 2
     Network modelStage2 = new Network("model");
-    Queue queue1Stage2 = new Queue(modelStage2, "Queue1", SchedStrategy.PS);
-    Queue queue2Stage2 = new Queue(modelStage2, "Queue2", SchedStrategy.PS);
+    Queue queue1Stage2 = new Queue(modelStage2, "Queue1", SchedStrategy.FCFS);
+    Queue queue2Stage2 = new Queue(modelStage2, "Queue2", SchedStrategy.FCFS);
     ClosedClass class1Stage2 = new ClosedClass(modelStage2, "Class1", 8, queue1Stage2, 0);
     queue1Stage2.setService(class1Stage2, new Exp(1));
     queue2Stage2.setService(class1Stage2, new Exp(10));
@@ -411,5 +404,13 @@ public class RandomEnvironment {
     model.link(routingMatrix);
 
     return model;
+  }
+
+
+  public static void main(String[] args) {
+
+    SolverEnv envSolver = ex4();
+    envSolver.printAvgTable();
+    // envSolver.printEnsembleAvgTables();
   }
 }

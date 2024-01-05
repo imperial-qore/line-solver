@@ -6,6 +6,8 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
+import jline.examples.ClosedModel;
+import jline.examples.RandomEnvironment;
 import jline.lang.Network;
 import jline.lang.nodes.StatefulNode;
 import jline.util.Maths;
@@ -39,6 +41,8 @@ public class State implements Serializable {
     this.initialState = initialState;
     this.priorInitialState = priorInitialState;
   }
+
+
 
   public static class StateMarginalStatistics {
 
@@ -640,7 +644,6 @@ public class State implements Serializable {
 
     return true;
   }
-
   public static Matrix fromMarginal(NetworkStruct sn, int ind, Matrix n) {
 
     // Generate states such that the marginal queue-lengths are as in vector n
@@ -728,10 +731,134 @@ public class State implements Serializable {
           case LCFSPR:
             System.out.println("Unimplemented code reached in NetworkState fromMarginal 5");
             break;
-          case FCFS: // TODO: without this it is not possible to run the Env solver on FCFS queues
+          case FCFS:
           case HOL:
           case LCFS:
-            System.out.println("Unimplemented code reached in NetworkState fromMarginal 6");
+            // sum(n) - 1 due to Maths.factln including + 1
+            double sizeEstimator = Maths.multinomialln(n) - Maths.factln(n.elementSum() - 1) +
+                    Maths.factln(sn.cap.get(ist));
+            sizeEstimator = Math.round(sizeEstimator/Math.log(10));
+            if (sizeEstimator > 3) {
+              // TODO: Options force and line warning. Line warning commented in MATLAB
+            }
+            if (n.elementSum() == 0) {
+              space = new Matrix(1, (int) (1+phases.elementSum()));
+              if (!sn.nodetypes.get(ind).equals(NodeType.Source)) {
+                for (int r = 0; r < R; r++) {
+                    switch (sn.proctype.get(sn.stations.get(ind)).get(sn.jobclasses.get(ind))) {
+                      case MAP:
+                      case MMPP2:
+                        List<Double> phasesRange = new ArrayList<>();
+                        for (double i = 1; i <= sn.phases.get(ind, r); i++) {
+                          phasesRange.add(i);
+                        }
+                        space = Matrix.decorate(space, new Matrix(phasesRange));
+                    }
+                }
+              }
+            }
+            Matrix vi = new Matrix(0, 0);
+            for (int r = 0; r < R; r++) {
+              if (n.get(0, r) > 0) {
+                Matrix newVi =
+                        new Matrix(1, vi.getNumCols() + (int) n.get(0, r));
+                for (int i = 0; i < vi.getNumCols(); i++) {
+                  newVi.set(0, i, vi.get(0, i));
+                }
+                for (int i = vi.getNumCols(); i < newVi.getNumCols(); i++) {
+                  newVi.set(0, i, r+1);
+                }
+                vi = newVi.clone();
+              }
+            }
+            // gen permutation of their positions in the waiting buffer
+            Matrix mi = Maths.uniquePerms(vi);
+            Matrix mi_buf = new Matrix(0,0);
+            // now generate server states
+            if (mi.isEmpty()) {
+              mi_buf = new Matrix(1, (int) Math.max(0, n.elementSum() - S.get(ist)));
+              mi_buf.zero();
+              state = new Matrix(1, R);
+              state.zero();
+              state = Matrix.decorate(state, mi_buf.concatCols(state));
+            } else {
+              int numCols = (int) Maths.min(n.elementSum(), sn.cap.get(ist));
+              Matrix miClone = mi.clone();
+              mi = new Matrix(mi.getNumRows(), numCols);
+
+              for (int row = 0; row < miClone.getNumRows(); row++) {
+                for (int col = miClone.getNumCols() - numCols; col < miClone.getNumCols(); col++) {
+                  mi.set(row, col, miClone.get(row, col));
+                }
+              }
+
+              int numColumnsRight = (int) Maths.max((mi.getNumCols()-S.get(ist)), 0);
+              Matrix right = new Matrix(mi.getNumRows(), numColumnsRight);
+              Matrix.extract(mi, 0, mi.getNumRows(), 0,
+                      numColumnsRight, right, 0, 0);
+              double x= sn.cap.get(ist);
+              int numColumnsLeft = (int) Maths.max(0, (Maths.min(n.elementSum(), sn.cap.get(ist)) - S.get(ist)
+                      - right.getNumCols()));
+              Matrix left = new Matrix(mi.getNumRows(), numColumnsLeft);
+              mi_buf =  left.concatCols(right);
+              // mi_buf: class of job in buffer position i (0=empty)
+              if (mi_buf.isEmpty()) {
+                mi_buf = new Matrix(mi.getNumRows(), 1);
+                mi_buf.zero();
+              }
+              // mi_srv: class of job running in server i
+              int numColsSrv = (int) Maths.max(S.get(ist), 1);
+              Matrix miSrv = new Matrix(mi.getNumRows(), numColsSrv);
+
+              int colForMiSrv = 0;
+              for (int row = 0; row < miSrv.getNumRows(); row++) {
+                colForMiSrv = 0;
+                for (int col = mi.getNumCols() - numColsSrv; col < mi.getNumCols(); col++) {
+                  miSrv.set(row, colForMiSrv, mi.get(row, col));
+                  colForMiSrv++;
+                }
+              }
+
+              // si: number of class r jobs that are running
+              Matrix si = new Matrix(miSrv.getNumRows(), R);
+              for (int k = 0; k < mi.getNumRows(); k++) {
+                Matrix miSrvKRow = Matrix.extractRows(miSrv,k,k+1,null);
+                Matrix histRow = Maths.hist(miSrvKRow, 1, R);
+                for (int j = 0; j < R; j++) {
+                  si.set(k, j, histRow.get(j));
+                }
+              }
+
+              for (int k = 0; k < si.getNumRows(); k++) {
+                // determine number of class r jobs running in phase
+                // j in server state mi_srv(k,:) and build state
+                Matrix kState = new Matrix(0,0);
+                kState.zero();
+                Matrix map_cols = new Matrix(0, 0);
+                for (int r = 0; r < R; r++) {
+                  Matrix init_r = spaceClosedSingle(phases.get(r), si.get(k, r));
+                  // TODO: MAP, MMP2 case, lines 248-259
+                  kState = Matrix.decorate(kState, init_r).clone();
+                  // TODO: MAP, MMP2 case, lines 261-263
+                }
+                // TODO: modify kState wrt map_cols, line 265
+//                Matrix newState =
+//                        new Matrix(
+//                                1, state.getNumCols() + mi_buf.getNumCols() + kState.getNumCols());
+
+
+//                Matrix newStateRows = new Matrix(mi_buf.getNumCols() + kState.getNumCols(), kState.getNumRows());
+                Matrix miBufreplicated = Matrix.extractRows(mi_buf,k,k+1,null).repmat(kState.getNumRows(),1);
+                miBufreplicated = miBufreplicated.concatCols(kState).clone();
+
+                if (state.isEmpty()) {
+                  state = miBufreplicated;
+                } else {
+                  state = Matrix.concatRows(state, miBufreplicated, null);
+                }
+              }
+            }
+            space = state;
             break;
           case SJF:
           case LJF:
@@ -762,7 +889,7 @@ public class State implements Serializable {
       boolean unique = true;
       for (int j = i + 1; j < space.getNumRows(); j++) {
         Matrix.extractRows(space, j, j + 1, tmp2);
-        if (tmp == tmp2) {
+        if (tmp.isEqualTo(tmp2)) {
           unique = false;
         }
       }

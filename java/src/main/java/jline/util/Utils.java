@@ -5,6 +5,7 @@ import org.apache.commons.math3.special.Gamma;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Miscellaneous utilities
@@ -31,4 +32,11 @@ public class Utils {
         return new ArrayList<T>(new HashSet<>(list));
     }
 
+    public static int findString(Map<Integer, String> map, String target) {
+        int res = 0;
+        for(Map.Entry e : map.entrySet()){
+            if (e.getValue().equals(target)) res = (int) e.getKey();
+        }
+        return res;
+    }
 }

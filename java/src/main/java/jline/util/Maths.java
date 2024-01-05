@@ -124,6 +124,59 @@ public class Maths {
       return C;
     }
 
+    /**
+     * Implementation of MATLAB "hist": puts elements of v into k bins
+     * @param v - vector of elements
+     * @param minVal - lowest number in v
+     * @param maxVal - highest number in v
+     * @return - vector containing number of elements in each bin
+     */
+    public static Matrix hist (Matrix v, int minVal, int maxVal) {
+        Matrix result = new Matrix(1, maxVal - minVal + 1);
+        for (int j = 0; j < v.getNumCols(); j++) {
+            int value = (int) v.get(j);
+            if (value >= minVal && value <= maxVal) {
+                int index = value - minVal;
+                result.set(0, index, result.get(0, index) + 1);
+            }
+        }
+        return result;
+    }
+
+    public static Matrix perms(Matrix vec) {
+        // use length to accept row or column vector
+        Matrix indexes = new Matrix(1, vec.length());
+        indexes.zero();
+        List<Matrix> lPermutations = new ArrayList<>();
+        lPermutations.add(vec.clone());
+
+        int ind = 0;
+        while (ind < vec.length()) {
+            if (indexes.get(ind) < ind) {
+                swap(vec, ind % 2 == 0 ? 0 : (int) indexes.get(ind), ind);
+                lPermutations.add(vec.clone());
+                indexes.set(ind, indexes.get(ind) + 1);
+                ind = 0;
+            } else {
+                indexes.set(ind, 0);
+                ind++;
+            }
+        }
+
+        // Construct permuations matrix from perm vectors
+        Matrix permutations = new Matrix(lPermutations.size(), vec.length());
+        for (int i = 0; i < lPermutations.size(); i++) {
+            Matrix permutation = lPermutations.get(i);
+            for (int j = 0; j < permutations.getNumCols(); j++) {
+                permutations.set(i, j, permutation.get(j));
+            }
+        }
+        return permutations;
+    }
+
+
+
+
     public static Matrix uniquePerms(Matrix vec) {
 
       // Vector is empty
@@ -164,19 +217,41 @@ public class Maths {
 
       // Every element is unique
       if (n == nu) {
-        // TODO: implement this code
-        System.out.println("Warning: unimplemented code reached in Permutations.uniquePerms");
+          return perms(vec);
       }
-
       Matrix[] output = new Matrix[nu];
       for (int i = 0; i < nu; i++) {
         Matrix v = vec.clone();
-        // TODO: implement the rest of this code
-        System.out.println("Warning: unimplemented code reached in Permutations.uniquePerms");
+
+        int ind = -1;
+        double target = uniqueElements.get(i);
+        for (int j = 0; j < v.length(); j++) {
+            if (target == v.get(j)) {
+                ind = j;
+                break;
+            }
+        }
+        Matrix newV = new Matrix(1, v.getNumCols() - 1);
+        for (int j = 0, destCol = 0; j <v.getNumCols(); j++) {
+            if (j != ind) {
+                newV.set(0, destCol++, v.get(j));
+            }
+        }
+        v = newV.clone();
+        Matrix temp = uniquePerms(v);
+        Matrix repeated = new Matrix(temp.getNumRows(), 1);
+        repeated.fill(uniqueElements.get(i));
+        output[i] = repeated.concatCols(temp);
       }
 
-      return new Matrix(0, 0);
+      // TODO: change this to avoid concat rows and fill in a new matrix
+      Matrix result = output[0];
+      for (int i = 1; i < output.length; i++) {
+          result = Matrix.concatRows(result, output[i], null).clone();
+      }
+      return result;
     }
+
 
     /**
        * Computes the combinations of the elements in v taken k at a time
@@ -238,9 +313,13 @@ public class Maths {
         v = new Matrix(1, 1);
         v.set(0, 0, k);
       } else if (k != 0) {
+
+
+
         List<Matrix> tmpSSRows = new ArrayList<>();
         for (int i = 0; i <= k; i++) {
           Matrix w = multiChoose(n - 1, k - i);
+
           Matrix tmpSSRow = new Matrix(w.getNumRows(), w.getNumCols() + 1);
           for (int j = 0; j < w.getNumRows(); j++) {
             tmpSSRow.set(j, 0, i);
@@ -250,10 +329,16 @@ public class Maths {
           }
           tmpSSRows.add(tmpSSRow);
         }
+        int totalRows = 0;
+        for (Matrix m : tmpSSRows) {
+            totalRows += m.getNumRows();
+        }
+        v = new Matrix(totalRows, (int) n);
         int rowForV = 0;
         for (int i = 0; i < tmpSSRows.size(); i++) {
           int rowForTmpSSRows = 0;
-          for (int j = rowForV; j < tmpSSRows.get(i).getNumRows(); j++) {
+          int initialRowForV = rowForV;
+          for (int j = rowForV; j < initialRowForV + tmpSSRows.get(i).getNumRows(); j++) {
             for (int l = 0; l < tmpSSRows.get(i).getNumCols(); l++) {
               v.set(j, l, tmpSSRows.get(i).get(rowForTmpSSRows, l));
             }
@@ -376,4 +461,17 @@ public class Maths {
         int highestOneBit = Integer.highestOneBit(x);
         return (x == highestOneBit) ? x : highestOneBit << 1;
     }
+
+    /**
+     * helper method that swaps elements in a matrix vector around
+     * @param vec - the row/column we are swapping elements within
+     * @param a - index into vec
+     *  @param b - index into vec
+     */
+    private static void swap(Matrix vec, int a, int b) {
+        double tmp = vec.get(a);
+        vec.set(a, vec.get(b));
+        vec.set(b, tmp);
+    }
+
 }

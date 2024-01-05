@@ -63,30 +63,6 @@
 	</executions> 
     </plugin>
         <plugin>
-            <groupId>org.jetbrains.kotlin</groupId>
-            <artifactId>kotlin-maven-plugin</artifactId>
-            <version>${kotlin.version}</version>
-            <executions>
-                <execution>
-                    <id>compile</id>
-                    <phase>compile</phase>
-                    <goals>
-                        <goal>compile</goal>
-                    </goals>
-                </execution>
-                <execution>
-                    <id>test-compile</id>
-                    <phase>test-compile</phase>
-                    <goals>
-                        <goal>test-compile</goal>
-                    </goals>
-                </execution>
-            </executions>
-            <configuration>
-                <jvmTarget>${maven.compiler.target}</jvmTarget>
-            </configuration>
-        </plugin>
-        <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-compiler-plugin</artifactId>
           <version>3.1</version>
@@ -185,28 +161,11 @@
       <scope>system</scope>
       <systemPath>${project.basedir}/lib/lsoda-1.0.jar</systemPath>
     </dependency>
-      <dependency>
-          <groupId>org.jetbrains.kotlin</groupId>
-          <artifactId>kotlin-stdlib-jdk8</artifactId>
-          <version>${kotlin.version}</version>
-      </dependency>
-      <dependency>
-          <groupId>org.jetbrains.kotlin</groupId>
-          <artifactId>kotlin-test</artifactId>
-          <version>${kotlin.version}</version>
-          <scope>test</scope>
-      </dependency>
-      <dependency>
-          <groupId>org.jetbrains.kotlin</groupId>
-          <artifactId>kotlin-stdlib-jdk8</artifactId>
-          <version>${kotlin.version}</version>
-      </dependency>
   </dependencies>
   <properties>
     <maven.compiler.source>11</maven.compiler.source>
     <maven.compiler.target>11</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-      <kotlin.version>2.0.0-Beta2</kotlin.version>
   </properties>
 </project>
