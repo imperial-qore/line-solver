@@ -2,7 +2,7 @@ import jpype
 import jpype.imports
 import numpy as np
 from pprint import pformat
-from . import SchedStrategy
+from . import SchedStrategy, jlineFromDistribution, SchedStrategyType, CallType
 from .lang import jlineMatrixToArray
 
 
@@ -86,29 +86,78 @@ class LayeredNetworkStruct():
         self.names = np.empty(self.nidx, dtype=object)
         self.hashnames = np.empty(self.nidx, dtype=object)
         for i in range(int(self.nidx)):
-            self.names[i] = jsn.names.get(jpype.JPackage('java').lang.Integer(1+i))
-            self.hashnames[i] = jsn.hashnames.get(jpype.JPackage('java').lang.Integer(1+i))
+            self.names[i] = jsn.names.get(jpype.JPackage('java').lang.Integer(1 + i))
+            self.hashnames[i] = jsn.hashnames.get(jpype.JPackage('java').lang.Integer(1 + i))
 
         self.callnames = np.empty(self.ncalls, dtype=object)
         self.callhashnames = np.empty(self.ncalls, dtype=object)
         for i in range(int(self.ncalls)):
-            self.callnames[i] = jsn.callnames.get(jpype.JPackage('java').lang.Integer(1+i))
-            self.callhashnames[i] = jsn.callhashnames.get(jpype.JPackage('java').lang.Integer(1+i))
+            self.callnames[i] = jsn.callnames.get(jpype.JPackage('java').lang.Integer(1 + i))
+            self.callhashnames[i] = jsn.callhashnames.get(jpype.JPackage('java').lang.Integer(1 + i))
 
-        # TODO: finish porting
-        self.nodevisits = None
-        self.tasksof = None
-        self.entriesof = None
-        self.actsof = None
-        self.callsof = None
-        self.hostdem = None
-        self.think = None
-        self.sched = None
-        self.itemcap = None
-        self.itemproc = None
-        self.calltype = None
-        self.callproc = None
+        self.hostdem = np.empty(self.nidx, dtype=object)
+        for i in range(len(jsn.hostdem)):
+            distrib = jsn.hostdem.get(jpype.JPackage('java').lang.Integer(1 + i))
+            self.hostdem[i] = jlineFromDistribution(distrib)
 
+        self.think = np.empty(self.nidx, dtype=object)
+        for i in range(len(jsn.think)):
+            distrib = jsn.think.get(jpype.JPackage('java').lang.Integer(1 + i))
+            self.think[i] = jlineFromDistribution(distrib)
+
+        self.callproc = np.empty(self.nidx, dtype=object)
+        for i in range(len(jsn.callproc)):
+            distrib = jsn.callproc.get(jpype.JPackage('java').lang.Integer(1 + i))
+            self.callproc[i] = jlineFromDistribution(distrib)
+
+        self.itemproc = np.empty(self.nidx, dtype=object)
+        for i in range(len(jsn.itemproc)):
+            distrib = jsn.itemproc.get(jpype.JPackage('java').lang.Integer(1 + i))
+            self.itemproc[i] = jlineFromDistribution(distrib)
+
+        self.itemcap = np.zeros(len(jsn.itemproc), dtype=object)
+        for i in range(len(jsn.itemproc)):
+            self.itemcap[i] = jsn.itemproc.get(jpype.JPackage('java').lang.Integer(1 + i)).intValue()
+
+        self.sched = np.empty(len(jsn.sched), dtype=object)
+        for i in range(len(jsn.sched)):
+            sched_i = jsn.sched.get(jpype.JPackage('java').lang.Integer(1 + i))
+            if sched_i is not None:
+                self.sched[i] = SchedStrategy(sched_i).name
+            else:
+                self.sched[i] = None
+
+        self.calltype = np.empty(self.ncalls, dtype=object)
+        for i in range(len(jsn.calltype)):
+            calltype_i = jsn.calltype.get(jpype.JPackage('java').lang.Integer(1 + i))
+            if calltype_i is not None:
+                self.calltype[i] = CallType(calltype_i).name
+            else:
+                self.calltype[i] = None
+
+        self.entriesof = np.empty(len(jsn.entriesof), dtype=object)
+        for i in range(len(jsn.entriesof)):
+            arrayList = jsn.entriesof.get(jpype.JPackage('java').lang.Integer(1 + i))
+            if arrayList is not None:
+                self.entriesof[i] = list(arrayList)
+
+        self.tasksof = np.empty(len(jsn.tasksof), dtype=object)
+        for i in range(len(jsn.tasksof)):
+            arrayList = jsn.tasksof.get(jpype.JPackage('java').lang.Integer(1 + i))
+            if arrayList is not None:
+                self.tasksof[i] = list(arrayList)
+
+        self.actsof = np.empty(len(jsn.actsof), dtype=object)
+        for i in range(len(jsn.actsof)):
+            arrayList = jsn.actsof.get(jpype.JPackage('java').lang.Integer(1 + i))
+            if arrayList is not None:
+                self.actsof[i] = list(arrayList)
+
+        self.callsof = np.empty(len(jsn.callsof), dtype=object)
+        for i in range(len(jsn.callsof)):
+            arrayList = jsn.callsof.get(jpype.JPackage('java').lang.Integer(1 + i))
+            if arrayList is not None:
+                self.callsof[i] = list(arrayList)
 
 class Processor:
     def __init__(self, model, name, mult, schedStrategy):

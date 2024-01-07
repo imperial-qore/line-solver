@@ -351,6 +351,48 @@ public class Maths {
       return v;
     }
 
+
+    public static Matrix multiChooseCon(Matrix n, double S) {
+      // n row vector
+      // n[i] is number of elements at ith position we have to choose from
+        Matrix v = new Matrix(0,0);
+        List<Integer> indices = new ArrayList<>();
+        for (int i = 0; i < n.getNumElements(); i++) {
+            if (n.get(i) != 0) {
+                indices.add(i);
+            }
+        }
+        if (S == 1) {
+            for (int i : indices) {
+                v.expandMatrix(v.getNumRows() + 1, n.getNumCols(),
+                        (v.getNumRows() + 1) * n.getNumCols());
+                int lastRow = v.getNumRows() - 1;
+                for (int col = 0; col < n.getNumCols(); col++) {
+                    v.set(lastRow, col, 0);
+                }
+                v.set(lastRow, i, 1);
+            }
+            return v;
+        } else {
+            for (int i : indices) {
+                Matrix n1 = n.clone();
+                n1.set(0, i, n1.get(i) - 1);
+                Matrix T = multiChooseCon(n1, S-1);
+                Matrix y = new Matrix(T.getNumRows(), n.getNumCols());
+                y.zero();
+                for (int row = 0; row < y.getNumRows(); row++) {
+                    y.set(row, i, 1);
+                }
+                if (v.isEmpty()) {
+                    v = y.add(1, T);
+                } else {
+                    v = Matrix.concatRows(v, y.add(1,T),null);
+                }
+            }
+            return v;
+        }
+}
+
     /**
      * Cumulative sum of an array, where the value at each index of the result is the
      * sum of all the previous values of the input.

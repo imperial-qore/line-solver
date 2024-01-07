@@ -220,7 +220,7 @@ class Geometric(DiscreteDistribution):
     def __init__(self, *args):
         super().__init__()
         if len(args) == 1:
-            if isinstance(args[0], DiscreteDistribution):
+            if isinstance(args[0], jpype.JPackage('jline').lang.distributions.DiscreteDistribution):
                 self.obj = args[0]
             else:
                 prob = args[0]
