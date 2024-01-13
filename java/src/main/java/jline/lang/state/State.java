@@ -271,7 +271,7 @@ public class State implements Serializable {
         exceeded.add(i);
       }
     }
-    if (exceeded.size() > 0) {
+    if (!exceeded.isEmpty()) {
       for (Integer r : exceeded) {
         if (!sn.proc.isEmpty()
             && !sn.proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(r)).isEmpty()
@@ -313,24 +313,11 @@ public class State implements Serializable {
             state = Matrix.decorate(state, init);
           }
           space = Matrix.decorate(space, state);
-          // TODO: check here, line 65
-          Matrix infinities = new Matrix(space.getNumRows(), 1);
-          for (int i = 0; i < infinities.getNumRows(); i++) {
-            infinities.set(i, 0, Double.POSITIVE_INFINITY);
-          }
-          Matrix newSpace =
-              new Matrix(
-                  infinities.getNumRows(), infinities.getNumCols() + space.getNumCols());
-          for (int i = 0; i < infinities.getNumRows(); i++) {
-            for (int j = 0; j < infinities.getNumRows(); j++) {
-              newSpace.set(i, j, infinities.get(i, j));
-            }
-            for (int j = infinities.getNumCols(); j < newSpace.getNumCols(); j++) {
-              newSpace.set(i, j, space.get(i, j - infinities.getNumCols()));
-            }
-          }
-          space = newSpace.clone();
-          // TODO: down to here
+          Matrix ones = new Matrix(space.getNumRows(), 1);
+          ones.ones();
+          Matrix infBuffer =
+                  ones.mult(new Matrix(1,1).fromArray2D(new double[][]{{Double.POSITIVE_INFINITY}}));
+          space = infBuffer.concatCols(space);
           break;
 
         case INF:
@@ -351,8 +338,34 @@ public class State implements Serializable {
         case SEPT:
           // In these policies we track an un-ordered buffer and the jobs in the servers build list
           // of job classes in the node, with repetition
-          // TODO: implement lines 78 to 100
-          System.out.println("Warning: unimplemented code reached in fromMarginalAndStarted 1");
+          if (n.elementSum() <= S.get(ist)) {
+            for (int r = 0; r < R; r++) {
+              Matrix init = spaceClosedSingle(K.get(0,r), 0);
+              init.set(0,0,n.get(0,r));
+              state = Matrix.decorate(state, init);
+            }
+            Matrix newStates = new Matrix(state.getNumRows(), R);
+            newStates.zero();
+            newStates = newStates.concatCols(state);
+            space = Matrix.decorate(space, newStates);
+          } else {
+            Matrix si = s.clone();
+            Matrix mi_buf = n.repmat(si.getNumRows(),1).sub(1, si); // jobs of class r in buffer
+            for (int k = 0; k < si.getNumRows(); k++) {
+              Matrix kstate = new Matrix(0,0);
+              for (int r = 0; r < R; r++) {
+                Matrix init = spaceClosedSingle(K.get(0,r), 0);
+                init.set(0,0,si.get(k,r));
+                kstate = Matrix.decorate(kstate, init);
+              }
+              state = Matrix.extractRows(mi_buf, k, k+1, null).repmat(kstate.getNumRows(),1).concatCols(kstate);
+              if (space.isEmpty()) {
+                space = state.clone();
+              } else {
+                space = Matrix.concatRows(space, state, null);
+              }
+            }
+          }
           break;
 
         case FCFS:
@@ -489,9 +502,13 @@ public class State implements Serializable {
         case LJF:
           // In these policies the state space includes continuous random variables for the service
           // times in these policies we only track the jobs in the servers
-          // TODO: finish remainder of implementation, lines 251 to 262
-          System.out.println(
-              "Warning: unimplemented code reached in fromMarginalAndStarted for SJF and LJF strategies");
+          for (int r = 0; r < R; r++) {
+            Matrix init = spaceClosedSingle(K.get(0,r), 0);
+            init.set(0,0,n.get(0, r));
+            state = Matrix.decorate(state, init);
+          }
+          space = Matrix.decorate(space, state);
+          System.err.format("The schedyling policy does not admit a discrete state space");
           break;
       }
 
@@ -499,7 +516,8 @@ public class State implements Serializable {
       // TODO: finish remainder of implementation, lines 264 to 272
       System.out.println(
               "Warning: unimplemented code reached in fromMarginalAndStarted for Cache Nodes");
-    } else if (sn.nodetypes.get(ind) == NodeType.Join) {
+    } else if (sn.nodetypes.get(ind) == NodeType.Join ||sn.nodetypes.get(ind) == NodeType.Transition
+            || sn.nodetypes.get(ind) == NodeType.Place  ) {
       space = new Matrix(1, 1);
       space.zero();
     }
@@ -513,7 +531,7 @@ public class State implements Serializable {
       boolean unique = true;
       for (int j = i + 1; j < space.getNumRows(); j++) {
         Matrix.extractRows(space, j, j + 1, tmp2);
-        if (tmp == tmp2) {
+        if (tmp.isEqualTo(tmp2)) {
           unique = false;
         }
       }
@@ -657,10 +675,10 @@ public class State implements Serializable {
 //      NetworkStruct sn = ClosedModel.ex4().getStruct(false);
 //      Matrix m = new Matrix(1, 4);
 //      m.fromArray2D(new int[][]{{2,1,1,1}});
-//      Matrix res = fromMarginal(sn, 1, m);
+//      Matrix res = fromMarginal(sn, 0, m);
 //      System.out.println(res.getNumRows());
 //      System.out.println(res);
-//
+
 
 //      NetworkStruct sn = ClosedModel.ex6().getStruct(false);
 //      Matrix m = new Matrix(1, 2);
@@ -697,21 +715,20 @@ public class State implements Serializable {
 //      Matrix infBuffer = ones.mult(new Matrix(1,1).fromArray2D(new double[][]{{Double.POSITIVE_INFINITY}}));
 //      System.out.println(infBuffer);
 
-
-//      NetworkStruct sn = OpenModel.ex4().getStruct(true);
-//      Matrix m = new Matrix(1, 1);
-//      m.fromArray2D(new int[][]{{4}});
-//      Matrix res = fromMarginal(sn, 1, m);
-//      System.out.println(res.getNumRows());
-//      System.out.println(res);
+      NetworkStruct sn = OpenModel.ex4().getStruct(true);
+      Matrix m = new Matrix(1, 1);
+      m.fromArray2D(new int[][]{{1}});
+      Matrix res = fromMarginal(sn, 1, m);
+      System.out.println(res.getNumRows());
+      System.out.println(res);
 
 //      Matrix m = new Matrix(1, 4).fromArray2D(new int[][]{{5,7,9,2}});
 //      System.out.println(Maths.multiChooseCon(m, 3));
-//      System.out.println(Maths.multiChooseCon(m, 3).getNumRows());
+      System.out.println(Maths.multiChooseCon(m, 3).getNumRows());
 
 //        NetworkStruct sn = ClosedModel.ex7_lcfspr().getStruct(false);
 //        Matrix m = new Matrix(1, 2);
-//        m.fromArray2D(new int[][]{{1,1}});
+//        m.fromArray2D(new int[][]{{3,3}});
 //        Matrix res = fromMarginal(sn, 1, m);
 //        System.out.println(res.getNumRows());
 //        System.out.println(res);
