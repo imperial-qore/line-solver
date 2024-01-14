@@ -432,7 +432,6 @@ public class State implements Serializable {
 
     Matrix state = new Matrix(0, 0);
     Matrix space = new Matrix(0, 0);
-    // TODO: check from this point (line 33)
     LinkedList<Integer> exceeded = new LinkedList<>();
     for (int i = 0; i < sn.classcap.getNumCols(); i++) {
       if (n.get(0, i) > sn.classcap.get(ist, i)) {
@@ -458,7 +457,6 @@ public class State implements Serializable {
         && s.sumSubMatrix(0, s.getNumRows(), 0, s.getNumCols()) > sn.nservers.get(ist, 0)) {
       return space;
     }
-    // TODO: down to this point, line 46
 
     // Generate local-state space
     if ((sn.nodetypes.get(ind) == NodeType.Queue)
@@ -487,7 +485,6 @@ public class State implements Serializable {
                   ones.mult(new Matrix(1,1).fromArray2D(new double[][]{{Double.POSITIVE_INFINITY}}));
           space = infBuffer.concatCols(space);
           break;
-
         case INF:
         case DPS:
         case GPS:
@@ -535,7 +532,6 @@ public class State implements Serializable {
             }
           }
           break;
-
         case FCFS:
         case HOL:
         case LCFS:
@@ -685,7 +681,7 @@ public class State implements Serializable {
       System.out.println(
               "Warning: unimplemented code reached in fromMarginalAndStarted for Cache Nodes");
     } else if (sn.nodetypes.get(ind) == NodeType.Join ||sn.nodetypes.get(ind) == NodeType.Transition
-            || sn.nodetypes.get(ind) == NodeType.Place  ) {
+            || sn.nodetypes.get(ind) == NodeType.Place) {
       space = new Matrix(1, 1);
       space.zero();
     }
