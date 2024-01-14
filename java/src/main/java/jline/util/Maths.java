@@ -144,17 +144,19 @@ public class Maths {
     }
 
     public static Matrix perms(Matrix vec) {
+        // copy to avoid issues with needing vec in outer code as swap modifies inputted vector
+        Matrix vecCopy = vec.clone();
         // use length to accept row or column vector
-        Matrix indexes = new Matrix(1, vec.length());
+        Matrix indexes = new Matrix(1, vecCopy.length());
         indexes.zero();
         List<Matrix> lPermutations = new ArrayList<>();
-        lPermutations.add(vec.clone());
+        lPermutations.add(vecCopy.clone());
 
         int ind = 0;
-        while (ind < vec.length()) {
+        while (ind < vecCopy.length()) {
             if (indexes.get(ind) < ind) {
-                swap(vec, ind % 2 == 0 ? 0 : (int) indexes.get(ind), ind);
-                lPermutations.add(vec.clone());
+                swap(vecCopy, ind % 2 == 0 ? 0 : (int) indexes.get(ind), ind);
+                lPermutations.add(vecCopy.clone());
                 indexes.set(ind, indexes.get(ind) + 1);
                 ind = 0;
             } else {
@@ -162,6 +164,15 @@ public class Maths {
                 ind++;
             }
         }
+        lPermutations.sort((a, b) -> {
+            for (int i = 0; i < a.length(); i++) {
+                if (a.get(i) != b.get(i)) {
+                    return Double.compare(b.get(i), a.get(i));
+                }
+            }
+            return 0;
+        });
+
 
         // Construct permuations matrix from perm vectors
         Matrix permutations = new Matrix(lPermutations.size(), vec.length());
