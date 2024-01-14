@@ -233,6 +233,174 @@ public class State implements Serializable {
     return new StateMarginalStatistics(ni, nir, sir, kir);
   }
 
+
+  public static Matrix fromMarginalAndRunning(NetworkStruct sn, int ind, Matrix n, Matrix s) {
+    return fromMarginalAndStarted(sn, ind, n, s, true);
+  }
+
+  public static Matrix fromMarginalAndRunning(Network sn, int ind, Matrix n, Matrix s) {
+    return fromMarginalAndStarted(sn.getStruct(true), ind, n, s, true);
+  }
+
+  public static Matrix fromMarginalAndRunning(NetworkStruct sn, int ind, Matrix n, Matrix s, boolean optionsForce) {
+    int ist = (int) sn.nodeToStation.get(ind);
+    int isf = (int) sn.nodeToStateful.get(ind);
+
+    // generate one initial state such that the marginal queue-lengths are as in vector n
+    // n(r): number of jobs at the station in class r
+    // s(r): jobs of class r that are running
+    int R = sn.nclasses;
+    Matrix S = sn.nservers;
+    Matrix K = new Matrix(1, R);
+
+    for (int r = 0; r < R; r++) {
+      if (sn.proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(r)).isEmpty()) {
+        K.set(0, r, 0);
+      } else {
+        K.set(0, r, sn.proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(r)).get(0).length());
+      }
+    }
+    Matrix state = new Matrix(0, 0);
+    Matrix space = new Matrix(0, 0);
+    LinkedList<Integer> exceeded = new LinkedList<>();
+    for (int i = 0; i < sn.classcap.getNumCols(); i++) {
+      if (n.get(0, i) > sn.classcap.get(ist, i)) {
+        exceeded.add(i);
+      }
+    }
+    if (!exceeded.isEmpty()) {
+      for (Integer r : exceeded) {
+        if (!sn.proc.isEmpty()
+                && !sn.proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(r)).isEmpty()
+                && sn.proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(r)).get(0).hasNaN()) {
+          System.err.format(
+                  "State vector at station %d exceeds the class capacity. Some service classes are disabled.\n",
+                  ist);
+        } else {
+          System.err.format("State vector at station %d exceeds the class capacity.\n", ist);
+        }
+      }
+      return space;
+    }
+
+    if (sn.nservers.get(ist, 0) > 0
+            && s.sumSubMatrix(0, s.getNumRows(), 0, s.getNumCols()) > sn.nservers.get(ist, 0)) {
+      return space;
+    }
+
+    if ((sn.nodetypes.get(ind) == NodeType.Queue)
+            || (sn.nodetypes.get(ind) == NodeType.Delay)
+            || (sn.nodetypes.get(ind) == NodeType.Source)) {
+      switch (sn.sched.get(sn.stations.get(ist))) {
+        case EXT:
+          break;
+
+        case INF:
+        case PS:
+        case DPS:
+        case GPS:
+          // in these policies we only track the jobs in the servers
+          for (int r = 0; r < R; r++) {
+            Matrix init = spaceClosedSingle(K.get(r), n.get(r));
+            state = Matrix.decorate(state, init);
+          }
+          space = Matrix.decorate(space, state);
+          break;
+        case SIRO:
+        case LEPT:
+        case SEPT:
+          // in these policies we track an un-ordered buffer and the jobs in the servers
+          // we build a list of job classes in the node with repetition
+          if (n.elementSum() <= S.get(ist)) {
+            for (int r = 0; r < R; r++) {
+              Matrix init = spaceClosedSingle(K.get(r), n.get(r));
+              state = Matrix.decorate(state, init);
+            }
+            Matrix newStates = new Matrix(state.getNumRows(), R);
+            newStates.zero();
+            newStates = newStates.concatCols(state);
+            space = Matrix.decorate(space, newStates);
+          }  else {
+            Matrix si = s.clone();
+            Matrix mi_buf = n.repmat(si.getNumRows(), 1).sub(1, si); // jobs of class r in buffer
+            for (int k = 0; k < si.getNumRows(); k++) {
+              Matrix kstate = new Matrix(0, 0);
+              for (int r = 0; r < R; r++) {
+                Matrix init = spaceClosedSingle(K.get(r), si.get(k, r));
+                kstate = Matrix.decorate(kstate, init);
+              }
+              state = Matrix.extractRows(mi_buf, k, k + 1, null).repmat(kstate.getNumRows(), 1).concatCols(kstate);
+              if (space.isEmpty()) {
+                space = state.clone();
+              } else {
+                space = Matrix.concatRows(space, state, null);
+              }
+            }
+          }
+          break;
+        case FCFS:
+        case HOL:
+        case LCFS:
+          break;
+
+        case LCFSPR:
+          break;
+
+        case SJF:
+        case LJF:
+          // in these policies the state space includes continuous random variables
+          // for the service times
+          System.err.format("The scheduling policy does not admit a discrete state space");
+
+      }
+
+
+
+
+    } else if (sn.nodetypes.get(ind) == NodeType.Cache) {
+      // TODO: handle cache node
+    }
+
+    // Required to sort empty state as first
+    List<Matrix> uniqueRows = new ArrayList<>();
+    for (int i = 0; i < space.getNumRows(); i++) {
+      Matrix tmp = new Matrix(1, space.getNumCols());
+      Matrix tmp2 = new Matrix(1, space.getNumCols());
+      Matrix.extractRows(space, i, i + 1, tmp);
+      boolean unique = true;
+      for (int j = i + 1; j < space.getNumRows(); j++) {
+        Matrix.extractRows(space, j, j + 1, tmp2);
+        if (tmp.isEqualTo(tmp2)) {
+          unique = false;
+        }
+      }
+      if (unique) {
+        uniqueRows.add(tmp);
+      }
+    }
+
+    Matrix newSpace = new Matrix(uniqueRows.size(), uniqueRows.get(0).getNumCols());
+    // this ensures that states where jobs start in phase 1 are first, which is used eg
+    // in SSA
+    int row = 0;
+    for (int i = uniqueRows.size() - 1; i >= 0; i--) {
+      for (int j = 0; j < uniqueRows.get(0).getNumCols(); j++) {
+        newSpace.set(row, j, uniqueRows.get(i).get(0, j));
+      }
+      row++;
+    }
+
+    return newSpace;
+  }
+
+
+
+
+
+
+
+
+
   public static Matrix fromMarginalAndStarted(
           NetworkStruct sn, int ind, Matrix n, Matrix s) {
     return fromMarginalAndStarted(sn, ind, n, s, true);
@@ -667,23 +835,33 @@ public class State implements Serializable {
     public static void main(String[] args) {
 //      NetworkStruct sn = ClosedModel.ex3().getStruct(true);
 //      Matrix m = new Matrix(1, 3);
-//      m.fromArray2D(new int[][]{{1,0,0}});
-//      Matrix res = fromMarginal(sn, 1, m);
+//      m.fromArray2D(new int[][]{{1,1,1}});
+//
+//      Matrix s = new Matrix(1, 3);
+//      s.fromArray2D(new int[][]{{1,1,0}});
+//      Matrix res = fromMarginalAndStarted(sn, 1, m, s);
 //      System.out.println(res.getNumRows());
 //      System.out.println(res);
 
 //      NetworkStruct sn = ClosedModel.ex4().getStruct(false);
 //      Matrix m = new Matrix(1, 4);
 //      m.fromArray2D(new int[][]{{2,1,1,1}});
-//      Matrix res = fromMarginal(sn, 0, m);
+//
+//      Matrix s = new Matrix(1,4);
+//      s.fromArray2D(new int[][]{{2,0,1,0}});
+//      Matrix res = fromMarginal(sn, 1, m);
 //      System.out.println(res.getNumRows());
 //      System.out.println(res);
 
-
+//
 //      NetworkStruct sn = ClosedModel.ex6().getStruct(false);
 //      Matrix m = new Matrix(1, 2);
 //      m.fromArray2D(new int[][]{{5,6}});
-//      Matrix res = fromMarginal(sn, 1, m);
+//
+//      Matrix s = new Matrix(1, 2);
+//      s.fromArray2D(new int[][]{{1, 0}});
+//
+//      Matrix res = fromMarginalAndStarted(sn, 1, m, s);
 //      System.out.println(res.getNumRows());
 //      System.out.println(res);
 
@@ -701,7 +879,7 @@ public class State implements Serializable {
 //        Matrix res = fromMarginal(sn, 1, m);
 //        System.out.println(res.getNumRows());
 //        System.out.println(res);
-//
+
 //      Matrix m = new Matrix(3,1);
 //
 //      m.fromArray2D(new double[][]{{Double.POSITIVE_INFINITY}, {3},{3}});
@@ -715,16 +893,12 @@ public class State implements Serializable {
 //      Matrix infBuffer = ones.mult(new Matrix(1,1).fromArray2D(new double[][]{{Double.POSITIVE_INFINITY}}));
 //      System.out.println(infBuffer);
 
-      NetworkStruct sn = OpenModel.ex4().getStruct(true);
-      Matrix m = new Matrix(1, 1);
-      m.fromArray2D(new int[][]{{1}});
-      Matrix res = fromMarginal(sn, 1, m);
-      System.out.println(res.getNumRows());
-      System.out.println(res);
-
-//      Matrix m = new Matrix(1, 4).fromArray2D(new int[][]{{5,7,9,2}});
-//      System.out.println(Maths.multiChooseCon(m, 3));
-      System.out.println(Maths.multiChooseCon(m, 3).getNumRows());
+//      NetworkStruct sn = OpenModel.ex4().getStruct(true);
+//      Matrix m = new Matrix(1, 1);
+//      m.fromArray2D(new int[][]{{1}});
+//      Matrix res = fromMarginal(sn, 1, m);
+//      System.out.println(res.getNumRows());
+//      System.out.println(res);
 
 //        NetworkStruct sn = ClosedModel.ex7_lcfspr().getStruct(false);
 //        Matrix m = new Matrix(1, 2);
@@ -935,7 +1109,6 @@ public class State implements Serializable {
                 Matrix right = new Matrix(mi.getNumRows(), numColumnsRight);
                 Matrix.extract(mi, 0, mi.getNumRows(), 0,
                         numColumnsRight, right, 0, 0);
-                double x = sn.cap.get(ist);
                 int numColumnsLeft = (int) Maths.max(0, (Maths.min(n.elementSum(), sn.cap.get(ist)) - S.get(ist)
                         - right.getNumCols()));
                 Matrix left = new Matrix(mi.getNumRows(), numColumnsLeft);
@@ -982,7 +1155,7 @@ public class State implements Serializable {
                     double job = jobsInBuffer.get(j);
                     if (job > 0) {
                       List<Double> phasesJRange = new ArrayList<>();
-                      for (double i = 1; i <= phases.get(j); i++) {
+                      for (double i = 1; i <= phases.get((int) job - 1); i++) {
                         phasesJRange.add(i);
                       }
                       // no transpose as constructor makes column vector
@@ -1006,6 +1179,7 @@ public class State implements Serializable {
                         colForBufStateTmp++;
                       }
                     }
+                    colForBufStateTmp = 0;
                   }
                   colForBufStateTmp = mi_buf.getNumCols();
                   for (int row = 0; row < bufState.getNumRows(); row++) {
