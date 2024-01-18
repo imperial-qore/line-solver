@@ -50,8 +50,8 @@ public class UndirectedGraph {
 			}
 		});
 		
-		int[] col_idx = param.col_idx;
-		int[] nz_rows = param.nz_rows;
+		int[] col_idx = param.getColIndexes();
+		int[] nz_rows = param.getNonZeroRows();
 		for(int colIdx = 0; colIdx < param.getNumCols(); colIdx++) {
 			int col1 = col_idx[colIdx];
 			int col2 = col_idx[colIdx+1];

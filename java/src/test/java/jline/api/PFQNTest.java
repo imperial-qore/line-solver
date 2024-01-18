@@ -603,8 +603,8 @@ class PFQNTest {
         pfqnComomrmReturn ret = pfqn_comomrm(L, N, Z, m, atol);
         double lG = ret.lG;
         Matrix lGbasis = ret.lGbasis;
-        assertEquals(6, lGbasis.numRows);
-        assertEquals(1, lGbasis.numCols);
+        assertEquals(6, lGbasis.getNumRows());
+        assertEquals(1, lGbasis.getNumCols());
         assertEquals(14.392932838406633, lGbasis.get(0), 1e5*tolerance);
         assertEquals(13.030110328778971, lGbasis.get(1), 1e5*tolerance);
         assertEquals(12.309110365151165, lGbasis.get(2), 1e5*tolerance);
@@ -633,8 +633,8 @@ class PFQNTest {
         pfqnComomrmReturn ret = pfqn_comomrm(L, N, Z, m, atol);
         double lG = ret.lG;
         Matrix lGbasis = ret.lGbasis;
-        assertEquals(6, lGbasis.numRows);
-        assertEquals(1, lGbasis.numCols);
+        assertEquals(6, lGbasis.getNumRows());
+        assertEquals(1, lGbasis.getNumCols());
         assertEquals(16.509667835109035, lGbasis.get(0), 1e5*tolerance);
         assertEquals(15.083238517521064, lGbasis.get(1), 1e5*tolerance);
         assertEquals(14.364043210388438, lGbasis.get(2), 1e5*tolerance);
@@ -663,8 +663,8 @@ class PFQNTest {
         pfqnComomrmReturn ret = pfqn_comomrm(L, N, Z, m, atol);
         double lG = ret.lG;
         Matrix lGbasis = ret.lGbasis;
-        assertEquals(6, lGbasis.numRows);
-        assertEquals(1, lGbasis.numCols);
+        assertEquals(6, lGbasis.getNumRows());
+        assertEquals(1, lGbasis.getNumCols());
         assertEquals(17.144180857969538, lGbasis.get(0), 1e5*tolerance);
         assertEquals(15.023945666602936, lGbasis.get(1), 1e5*tolerance);
         assertEquals(15.714262659486160, lGbasis.get(2), 1e5*tolerance);
@@ -693,8 +693,8 @@ class PFQNTest {
         pfqnComomrmReturn ret = pfqn_comomrm(L, N, Z, m, atol);
         double lG = ret.lG;
         Matrix lGbasis = ret.lGbasis;
-        assertEquals(8, lGbasis.numRows);
-        assertEquals(1, lGbasis.numCols);
+        assertEquals(8, lGbasis.getNumRows());
+        assertEquals(1, lGbasis.getNumCols());
         assertEquals(16.832044959147531, lGbasis.get(0), 1e5*tolerance);
         assertEquals(14.691978795651258, lGbasis.get(1), 1e5*tolerance);
         assertEquals(15.385125976211203, lGbasis.get(2), 1e5*tolerance);
@@ -1132,8 +1132,8 @@ class PFQNTest {
         mu.set(2, 3, 1.4);
         mu.set(2, 4, 1.5);
         Matrix ret = pfqn_mushift(mu, 2);
-        assertEquals(3, ret.numRows);
-        assertEquals(4, ret.numCols);
+        assertEquals(3, ret.getNumRows());
+        assertEquals(4, ret.getNumCols());
         assertEquals(0.1, ret.get(0, 0), tolerance);
         assertEquals(0.2, ret.get(0, 1), tolerance);
         assertEquals(0.3, ret.get(0, 2), tolerance);

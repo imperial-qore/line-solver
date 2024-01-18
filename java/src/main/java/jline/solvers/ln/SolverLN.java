@@ -138,7 +138,7 @@ public class SolverLN extends EnsembleSolver {
 
         // layering generates update maps that we use here to cache the elements that need reset
         this.routereset = new ArrayList<>();
-        for (int i = 1; i < route_prob_updmap.numRows; i++) {
+        for (int i = 1; i < route_prob_updmap.getNumRows(); i++) {
             int buffer = idxhash.get((int) route_prob_updmap.get(i, 1)).intValue();
             if (!routereset.contains(buffer)) { // unique
                 routereset.add(buffer);
@@ -146,13 +146,13 @@ public class SolverLN extends EnsembleSolver {
         }
 
         this.svcreset = new ArrayList<>();
-        for (int i = 1; i < thinkt_classes_updmap.numRows; i++) {
+        for (int i = 1; i < thinkt_classes_updmap.getNumRows(); i++) {
             int buffer = idxhash.get((int) thinkt_classes_updmap.get(i, 1)).intValue();
             if (!svcreset.contains(buffer)) { // unique
                 svcreset.add(buffer);
             }
         }
-        for (int i = 1; i < call_classes_updmap.numRows; i++) {
+        for (int i = 1; i < call_classes_updmap.getNumRows(); i++) {
             int buffer = idxhash.get((int) call_classes_updmap.get(i, 1)).intValue();
             if (!svcreset.contains(buffer)) { // unique
                 svcreset.add(buffer);
@@ -357,11 +357,11 @@ public class SolverLN extends EnsembleSolver {
         //operation before starting to iterate
 
         List<Double> numSet = new ArrayList<Double>();
-        if (this.route_prob_updmap.nz_length == 0) {
+        if (this.route_prob_updmap.getNonZeroLength() == 0) {
             this.unique_route_prob_updmap = this.route_prob_updmap;
         } else {
             this.unique_route_prob_updmap = this.route_prob_updmap.uniqueInCol(0);
-//            for (int i = 1; i < this.route_prob_updmap.numRows; i++) {
+//            for (int i = 1; i < this.route_prob_updmap.getNumRows(); i++) {
 //                boolean unique = true;
 //                // check if this.route_prob_updmap.get(i, 1) is already in numSet
 //                for (double j : numSet) {
@@ -850,8 +850,8 @@ public class SolverLN extends EnsembleSolver {
         }
 
 
-        Matrix isPostAndAct = new Matrix(lqn.actposttype.numRows, lqn.actposttype.numCols, lqn.nacts);
-        Matrix isPreAndAct = new Matrix(lqn.actpretype.numRows, lqn.actpretype.numCols, lqn.actpretype.nz_length);
+        Matrix isPostAndAct = new Matrix(lqn.actposttype.getNumRows(), lqn.actposttype.getNumCols(), lqn.nacts);
+        Matrix isPreAndAct = new Matrix(lqn.actpretype.getNumRows(), lqn.actpretype.getNumCols(), lqn.actpretype.getNonZeroLength());
         for (int i = lqn.nhosts + lqn.ntasks + lqn.nentries + 1; i <= lqn.nidx; i++) {
             if (lqn.actposttype.get(0, i) == ActivityPrecedenceType.ID_POST_AND) {
                 isPostAndAct.set(0, i, 1);
@@ -871,7 +871,7 @@ public class SolverLN extends EnsembleSolver {
         int maxfanout = 1;
         for (int aidx : actsInCaller) {
             List<Integer> successors = new ArrayList<>();
-            for (int i = 1; i < lqn.graph.numCols; i++) {
+            for (int i = 1; i < lqn.graph.getNumCols(); i++) {
                 if (lqn.graph.get(aidx, i) != 0) {
                     successors.add(i);
                 }
@@ -945,7 +945,7 @@ public class SolverLN extends EnsembleSolver {
                     curnjobs = lqn.mult.get(0, tidx_caller) * lqn.repl.get(0, tidx_caller);
                     if (Double.isInfinite(curnjobs)) {
                         curnjobs = 0;
-                        for (int i = 1; i < lqn.mult.numCols; i++) {
+                        for (int i = 1; i < lqn.mult.getNumCols(); i++) {
                             if (Double.isFinite(lqn.mult.get(0, i))) {
                                 curnjobs = curnjobs + lqn.mult.get(0, i) * lqn.repl.get(0, i);
                             }
@@ -1093,7 +1093,7 @@ public class SolverLN extends EnsembleSolver {
                 jobPosKey.set(0, aidx, jobPos);
                 curClassKey.put(aidx, curClass);
                 List<Integer> nextaidxs = new ArrayList<>();
-                for (int i = 1; i < lqn.graph.numCols; i++) {
+                for (int i = 1; i < lqn.graph.getNumCols(); i++) {
                     if (lqn.graph.isAssigned(aidx, i)) {
                         nextaidxs.add(i);
                     }
@@ -1424,10 +1424,10 @@ public class SolverLN extends EnsembleSolver {
     public void updateLayers(int it) {
         //task14: updateLayers function to be written
         // reassign service times
-        for (int r = 1; r < this.thinkt_classes_updmap.numRows; r++) {
+        for (int r = 1; r < this.thinkt_classes_updmap.getNumRows(); r++) {
             int ri;
             if (it != 0) {
-                ri = this.thinkt_classes_updmap.numRows - r;
+                ri = this.thinkt_classes_updmap.getNumRows() - r;
             } else {
                 ri = r;
             }
@@ -1467,10 +1467,10 @@ public class SolverLN extends EnsembleSolver {
         }
 
         // reassign arrival rates
-        for (int r = 1; r < this.arvproc_classes_updmap.numRows; r++) {
+        for (int r = 1; r < this.arvproc_classes_updmap.getNumRows(); r++) {
             int ri;
             if (it != 0) {
-                ri = this.arvproc_classes_updmap.numRows - r;
+                ri = this.arvproc_classes_updmap.getNumRows() - r;
             } else {
                 ri = r;
             }
@@ -1484,10 +1484,10 @@ public class SolverLN extends EnsembleSolver {
         }
 
         // reassign call service time / response time
-        for (int c = 1; c < this.call_classes_updmap.numRows; c++) {
+        for (int c = 1; c < this.call_classes_updmap.getNumRows(); c++) {
             int ci;
             if (it != 0) {
-                ci = this.call_classes_updmap.numRows - c;
+                ci = this.call_classes_updmap.getNumRows() - c;
             } else {
                 ci = c;
             }
@@ -1536,8 +1536,8 @@ public class SolverLN extends EnsembleSolver {
                     for (int i : callers) {
                         multcallers += this.njobsorig.get(i, hidx);
                     }
-                    Matrix rowhidx = new Matrix(1, this.ptaskcallers_step.get(step).numCols + 1,
-                            this.ptaskcallers_step.get(step).numCols);
+                    Matrix rowhidx = new Matrix(1, this.ptaskcallers_step.get(step).getNumCols() + 1,
+                            this.ptaskcallers_step.get(step).getNumCols());
                     Matrix.extractRows(this.ptaskcallers_step.get(step), hidx, hidx + 1, rowhidx);
                     Matrix step_callers = rowhidx.find();
                     int multremote = 0;
@@ -1603,8 +1603,8 @@ public class SolverLN extends EnsembleSolver {
                     for (int i : callers) {
                         multcallers += this.njobsorig.get(i, tidx);
                     }
-                    Matrix rowhidx = new Matrix(1, this.ptaskcallers_step.get(step).numCols,
-                            this.ptaskcallers_step.get(step).numCols);
+                    Matrix rowhidx = new Matrix(1, this.ptaskcallers_step.get(step).getNumCols(),
+                            this.ptaskcallers_step.get(step).getNumCols());
                     Matrix.extractRows(this.ptaskcallers_step.get(step), tidx, tidx, rowhidx);
                     Matrix step_callers = rowhidx.find();
                     int multremote = 0;
@@ -1644,8 +1644,8 @@ public class SolverLN extends EnsembleSolver {
         // this.ilscaling starting from (0,0)
         // this.njobs starting from (1,1)
         this.ilscaling = ilscaling.clone();
-        for (int i = 0; i < this.ilscaling.numRows; i++) {
-            for (int j = 0; j < this.ilscaling.numCols; j++) {
+        for (int i = 0; i < this.ilscaling.getNumRows(); i++) {
+            for (int j = 0; j < this.ilscaling.getNumCols(); j++) {
                 this.njobs.set(i, j, this.njobsorig.get(i, j) * this.ilscaling.get(i, j));
             }
         }
@@ -1654,7 +1654,7 @@ public class SolverLN extends EnsembleSolver {
 
     public void updateThinkTimes(int it) {
         //task16:updateThinkTimes function to be written
-        if (this.lqn.iscaller.numCols > 0) { // ignore models without callers
+        if (this.lqn.iscaller.getNumCols() > 0) { // ignore models without callers
             Matrix torder = new Matrix(1, lqn.ntasks + 1, lqn.ntasks);
             for (int i = 1; i < lqn.ntasks + 1; i++)
                 torder.set(i, i);
@@ -1673,7 +1673,7 @@ public class SolverLN extends EnsembleSolver {
                     double njobs = Matrix.extractRows(this.njobsorig, tidx, tidx + 1, null).elementMax();
 
                     Matrix matrixExtracted = this.results.get(this.results.size()).get(this.idxhash.get(tidx).intValue() - 1).TN;
-                    Matrix serverIdxRow = new Matrix(1, matrixExtracted.numCols, matrixExtracted.numCols);
+                    Matrix serverIdxRow = new Matrix(1, matrixExtracted.getNumCols(), matrixExtracted.getNumCols());
                     int extractRowIndex = (int) this.results.get(this.results.size()).get(this.idxhash.get(tidx).intValue() - 1).TN.
                             get(this.ensemble[this.idxhash.get(tidx).intValue() - 1].getAttribute().getServerIdx());
                     Matrix.extractRows(matrixExtracted, extractRowIndex, extractRowIndex + 1, serverIdxRow);
@@ -1681,7 +1681,7 @@ public class SolverLN extends EnsembleSolver {
 
                     // obtain total self.utilization of task t
                     Matrix UmatrixExtracted = this.results.get(this.results.size()).get(this.idxhash.get(tidx).intValue() - 1).UN;
-                    Matrix UserverIdxRow = new Matrix(1, matrixExtracted.numCols, matrixExtracted.numCols);
+                    Matrix UserverIdxRow = new Matrix(1, matrixExtracted.getNumCols(), matrixExtracted.getNumCols());
                     int UextractRowIndex = (int) this.results.get(this.results.size()).get(this.idxhash.get(tidx).intValue() - 1).UN.
                             get(this.ensemble[this.idxhash.get(tidx).intValue() - 1].getAttribute().getServerIdx());
                     Matrix.extractRows(UmatrixExtracted, UextractRowIndex, UextractRowIndex + 1, UserverIdxRow);
@@ -1719,7 +1719,7 @@ public class SolverLN extends EnsembleSolver {
 
         // obtain the activity service times
         this.servt = new Matrix(1, lqn.nidx, lqn.nidx);
-        for (int r = 1; r < this.servt_classes_updmap.numRows; r++) {
+        for (int r = 1; r < this.servt_classes_updmap.getNumRows(); r++) {
             int idx = (int) this.servt_classes_updmap.get(r, 1);     //layer
             int aidx = (int) this.servt_classes_updmap.get(r, 2);    //activity
             int nodeidx = (int) this.servt_classes_updmap.get(r, 3); //node
@@ -1740,7 +1740,7 @@ public class SolverLN extends EnsembleSolver {
 
         // obtain the call residence time
         this.callresidt = new Matrix(1, lqn.ncalls, lqn.ncalls);
-        for (int r = 1; r < this.call_classes_updmap.numRows; r++) {
+        for (int r = 1; r < this.call_classes_updmap.getNumRows(); r++) {
             int idx = (int) this.call_classes_updmap.get(r, 1);     // layer
             int cidx = (int) this.call_classes_updmap.get(r, 2);    // call
             int nodeidx = (int) this.call_classes_updmap.get(r, 3);// node
@@ -1757,7 +1757,7 @@ public class SolverLN extends EnsembleSolver {
 
         //then resolve the entry servt summming up these contributions
         Matrix out = new Matrix(1, lqn.nidx + lqn.ncalls + 1, lqn.nidx + lqn.ncalls);
-        Matrix entry_servt = new Matrix(this.servtmatrix.numRows, 1, this.servtmatrix.numRows);
+        Matrix entry_servt = new Matrix(this.servtmatrix.getNumRows(), 1, this.servtmatrix.getNumRows());
         Matrix.concatColumns(this.servt, this.callresidt, out);
         this.servtmatrix.mult(out.transpose(), entry_servt);
 
@@ -1806,7 +1806,7 @@ public class SolverLN extends EnsembleSolver {
             this.servt.set(eidx - 1, entry_servt.get(eidx) * task_tput / entry_tput);
         }
 
-        for (int i = 1; i < this.call_classes_updmap.numRows; i++) {
+        for (int i = 1; i < this.call_classes_updmap.getNumRows(); i++) {
             int cidx = (int) this.call_classes_updmap.get(i, 2);
             int eidx = (int) lqn.callpair.get(cidx, 2);
             if (this.call_classes_updmap.get(i, 3) > 1) {
@@ -1816,7 +1816,7 @@ public class SolverLN extends EnsembleSolver {
 
         // determine call response time processes
         // this.callresidt starts from 0
-        for (int i = 1; i < this.call_classes_updmap.numRows; i++) {
+        for (int i = 1; i < this.call_classes_updmap.getNumRows(); i++) {
             int cidx = (int) this.call_classes_updmap.get(i, 2);
             int eidx = (int) lqn.callpair.get(cidx, 2);
             if (this.call_classes_updmap.get(i, 3) > 1) {
@@ -1831,11 +1831,11 @@ public class SolverLN extends EnsembleSolver {
             }
         }
 
-        this.ptaskcallers = new Matrix(this.ptaskcallers.numRows, this.ptaskcallers.numCols,
-                this.ptaskcallers.numRows * this.ptaskcallers.numCols - 1);
+        this.ptaskcallers = new Matrix(this.ptaskcallers.getNumRows(), this.ptaskcallers.getNumCols(),
+                this.ptaskcallers.getNumRows() * this.ptaskcallers.getNumCols() - 1);
 
-        for (int i = 0; i < this.ptaskcallers.numRows; i++) {
-            for (int j = 0; j < this.ptaskcallers.numCols; j++) {
+        for (int i = 0; i < this.ptaskcallers.getNumRows(); i++) {
+            for (int j = 0; j < this.ptaskcallers.getNumCols(); j++) {
                 this.ptaskcallers.set(i, j, 0);
             }
         }
@@ -1881,7 +1881,7 @@ public class SolverLN extends EnsembleSolver {
                     caller_tput.set(caller_idx - lqn.tshift - 1, sum);
                 }
                 double task_tput = 0;
-                for (int i = 1; i < caller_tput.numRows; i++) {
+                for (int i = 1; i < caller_tput.getNumRows(); i++) {
                     task_tput += caller_tput.get(i - 1);
                 }
                 for (int i = 1; i <= lqn.ntasks; i++) {
@@ -1921,22 +1921,22 @@ public class SolverLN extends EnsembleSolver {
 
         // impute call probability using a DTMC random walk on the taskcaller graph
         // for matrix multiplication, let P to be the same size of that in Matlab
-        Matrix P = new Matrix(this.ptaskcallers.numRows - 1, this.ptaskcallers.numCols - 1,
-                (this.ptaskcallers.numRows - 1) * (this.ptaskcallers.numCols - 1));
-        for (int i = 1; i < this.ptaskcallers.numRows; i++) {
-            for (int j = 1; j < this.ptaskcallers.numCols; j++) {
+        Matrix P = new Matrix(this.ptaskcallers.getNumRows() - 1, this.ptaskcallers.getNumCols() - 1,
+                (this.ptaskcallers.getNumRows() - 1) * (this.ptaskcallers.getNumCols() - 1));
+        for (int i = 1; i < this.ptaskcallers.getNumRows(); i++) {
+            for (int j = 1; j < this.ptaskcallers.getNumCols(); j++) {
                 P.set(i - 1, j - 1, this.ptaskcallers.get(i, j));
             }
         }
 
-        for (int i = 0; i < P.numRows; i++) {
+        for (int i = 0; i < P.getNumRows(); i++) {
             if (P.sumRows(i) > 0) {
-                for (int j = 0; j < P.numCols; j++) {
+                for (int j = 0; j < P.getNumCols(); j++) {
                     P.set(i, j, P.get(i, j) / P.sumRows(i));
                 }
                 P.set(i, i, 1 - P.sumRows(i) - P.get(i, i));
             } else {
-                for (int j = 0; j < P.numCols; j++) {
+                for (int j = 0; j < P.getNumCols(); j++) {
                     P.set(i, j, 0);
                 }
                 P.set(i, i, 1);
@@ -1955,27 +1955,27 @@ public class SolverLN extends EnsembleSolver {
                 x0.set(hidx - 1, 1);
                 int step = 1;
                 // start the walk backward to impute probability of indirect callers
-                Matrix x = new Matrix(x0.numRows, P.numCols, x0.numRows * P.numCols);
+                Matrix x = new Matrix(x0.getNumRows(), P.getNumCols(), x0.getNumRows() * P.getNumCols());
                 x0.mult(P, x);
 
                 for (int e = 1; e <= this.nlayers; e++) {
                     step += 1;
-                    Matrix y = new Matrix(x.numRows, P.length(), P.length());
+                    Matrix y = new Matrix(x.getNumRows(), P.length(), P.length());
                     x.mult(P, y);
                     x = y.clone();
                     double sum = 0;
                     Matrix ref_nonzero = lqn.isref.find();
-                    for (int k = 1; k <= ref_nonzero.numCols; k++) {
+                    for (int k = 1; k <= ref_nonzero.getNumCols(); k++) {
                         sum += x.get(k);
                     }
 
                     if (sum > 1.0 - GlobalConstants.CoarseTol)
                         break;
-                    for (int index = 1; index < x.numRows; index++) {
+                    for (int index = 1; index < x.getNumRows(); index++) {
                         this.ptaskcallers_step.get(step).set(index, tidx, x.get(index));
                     }
-                    for (int index = 1; index < x.numRows; index++) {
-                        Matrix out1 = new Matrix(ptaskcallers.numRows, 1, ptaskcallers.numRows);
+                    for (int index = 1; index < x.getNumRows(); index++) {
+                        Matrix out1 = new Matrix(ptaskcallers.getNumRows(), 1, ptaskcallers.getNumRows());
                         out1 = Matrix.extractColumn(this.ptaskcallers, tidx, out1);
                         double x1 = out1.elementMax();
                         double x2 = x.elementMax();
@@ -1991,7 +1991,7 @@ public class SolverLN extends EnsembleSolver {
     public void updateRoutingProbabilities(int it) {
         //task18:updateMetrics function to be written
         int map_length = 0;
-        if (unique_route_prob_updmap.numRows != 0 && unique_route_prob_updmap.numCols != 0) {
+        if (unique_route_prob_updmap.getNumRows() != 0 && unique_route_prob_updmap.getNumCols() != 0) {
             map_length = unique_route_prob_updmap.length();
         }
 
@@ -2082,10 +2082,10 @@ public class SolverLN extends EnsembleSolver {
 
     public Matrix getEntryServiceMatrixRecursion(LayeredNetworkStruct lqn, int aidx, int eidx, Matrix U) {
         //auxiliary function to getServiceMatrix
-        Matrix aidxrow = new Matrix(1, lqn.graph.numCols, lqn.graph.numCols);
+        Matrix aidxrow = new Matrix(1, lqn.graph.getNumCols(), lqn.graph.getNumCols());
         aidxrow = Matrix.extractRows(lqn.graph, aidx, aidx + 1, aidxrow);
         Matrix nextaidxs = aidxrow.find();
-        for (int i = 0; i < nextaidxs.numRows; i++) {
+        for (int i = 0; i < nextaidxs.getNumRows(); i++) {
 
             int nextaidx = (int) nextaidxs.get(i);
             if (lqn.parent.get(aidx) != lqn.parent.get(nextaidx)) {

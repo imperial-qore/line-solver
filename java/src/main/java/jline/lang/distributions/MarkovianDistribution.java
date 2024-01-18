@@ -24,7 +24,7 @@ abstract public class MarkovianDistribution extends Distribution implements Seri
 
 	public long getNumberOfPhases() {
 		Map<Integer, Matrix> PH = this.getRepres();
-		return PH.get(1).numCols;
+		return PH.get(1).getNumCols();
 	}
 
 	public Matrix getD0() {
@@ -39,7 +39,7 @@ abstract public class MarkovianDistribution extends Distribution implements Seri
 
     public Matrix getMu() {
     	Matrix aph_1 = getD0();
-    	int size = Math.min(aph_1.numCols, aph_1.numRows);
+    	int size = Math.min(aph_1.getNumCols(), aph_1.getNumRows());
     	Matrix res = new Matrix(size, 1, size);
     	for(int i = 0; i < size; i++) {
     		res.set(i, 0, -aph_1.get(i, i));
@@ -49,13 +49,13 @@ abstract public class MarkovianDistribution extends Distribution implements Seri
     
     public Matrix getPhi() {
     	Map<Integer, Matrix> aph = this.getRepres();
-    	Matrix ones = new Matrix(aph.get(0).numRows, 1, aph.get(0).numRows);
-    	Matrix res = new Matrix(aph.get(1).numRows, 1);
+    	Matrix ones = new Matrix(aph.get(0).getNumRows(), 1, aph.get(0).getNumRows());
+    	Matrix res = new Matrix(aph.get(1).getNumRows(), 1);
     	Matrix mu = getMu();
     	
     	ones.fill(1.0);
     	aph.get(1).mult(ones, res);
-    	res.divideRows(mu.nz_values, 0);
+    	res.divideRows(mu.getNonZeroValues(), 0);
     	return res;
     }
     
@@ -108,13 +108,13 @@ abstract public class MarkovianDistribution extends Distribution implements Seri
 		Matrix PIE = map_pie(D0,D1);
 		
 //		Matrix A = D0.copy();
-//		Matrix e = new Matrix(PIE.numCols, 1);
+//		Matrix e = new Matrix(PIE.getNumCols(), 1);
 //		CommonOps_DDRM.fill(e, 1);
 //
 //		//pie*inv(s*eye(size(A))-A)*(-A)*e
-//		double[] diagEl = new double[Math.min(A.numRows, A.numCols)];
+//		double[] diagEl = new double[Math.min(A.getNumRows(), A.getNumCols())];
 //		Arrays.fill(diagEl, 1);
-//		Matrix eye = CommonOps_DDRM.diagR(A.numRows, A.numCols, diagEl);
+//		Matrix eye = CommonOps_DDRM.diagR(A.getNumRows(), A.getNumCols(), diagEl);
 //		CommonOps_DDRM.scale(t, eye);
 //		Matrix res = new Matrix();
 //		CommonOps_DDRM.subtract(eye, A, res);

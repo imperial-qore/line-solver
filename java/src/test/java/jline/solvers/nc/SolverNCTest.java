@@ -51,8 +51,8 @@ public class SolverNCTest {
     double G1 = ret1.G;
     double runtime1 = ret1.runtime;
 
-    assertEquals(2, lPr1.numRows);
-    assertEquals(1, lPr1.numCols);
+    assertEquals(2, lPr1.getNumRows());
+    assertEquals(1, lPr1.getNumCols());
 
     assertEquals(-9.341536168923934, lPr1.get(0), 9.341536168923934*tolerance);
     assertEquals(-9.341536168923934, lPr1.get(1), 9.341536168923934*tolerance);
@@ -115,8 +115,8 @@ public class SolverNCTest {
     double G1 = ret1.G;
     double runtime1 = ret1.runtime;
 
-    assertEquals(2, lPr1.numRows);
-    assertEquals(1, lPr1.numCols);
+    assertEquals(2, lPr1.getNumRows());
+    assertEquals(1, lPr1.getNumCols());
 
     assertEquals(-16.104412563027751, lPr1.get(0), 16.104412563027751*tolerance);
     assertEquals(-16.104412563027751, lPr1.get(1), 16.104412563027751*tolerance);
@@ -182,8 +182,8 @@ public class SolverNCTest {
     double G1 = ret1.G;
     double runtime1 = ret1.runtime;
 
-    assertEquals(4, lPr1.numRows);
-    assertEquals(1, lPr1.numCols);
+    assertEquals(4, lPr1.getNumRows());
+    assertEquals(1, lPr1.getNumCols());
 
     assertEquals(-3.041632215808478e2, lPr1.get(0), 3.041632215808478*tolerance);
     assertEquals(-0.018344541300874e2, lPr1.get(1), tolerance);
@@ -251,8 +251,8 @@ public class SolverNCTest {
     double G1 = ret1.G;
     double runtime1 = ret1.runtime;
 
-    assertEquals(4, lPr1.numRows);
-    assertEquals(1, lPr1.numCols);
+    assertEquals(4, lPr1.getNumRows());
+    assertEquals(1, lPr1.getNumCols());
 
     assertEquals(-0.804926658480257e2, lPr1.get(0), 0.804926658480257e2*tolerance);
     assertEquals(-0.008127259006488e2, lPr1.get(1), tolerance);

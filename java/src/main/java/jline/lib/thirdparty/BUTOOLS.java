@@ -73,8 +73,8 @@ public class BUTOOLS {
             method = method_;
         }
         int numit = 0;
-        if(Fpp.numRows==0){
-            Psi = new Matrix(0,Fmm.numRows);
+        if(Fpp.getNumRows()==0){
+            Psi = new Matrix(0,Fmm.getNumRows());
         }else if(method.equals("CR")){
 
         }else if(method.equals("ADDA")||method.equals("SDA")){
@@ -94,8 +94,8 @@ public class BUTOOLS {
                 gamma1 = Math.max(gamma1,gamma2);
                 gamma2 = gamma1;
             }
-            int sA = A.numRows;
-            int sD = D.numRows;
+            int sA = A.getNumRows();
+            int sD = D.getNumRows();
             Matrix IA = Matrix.eye(sA);
             Matrix ID = Matrix.eye(sD);
             Matrix gamma2IA = IA.clone();
@@ -165,13 +165,13 @@ public class BUTOOLS {
             }
             Matrix eh = poly(a);
             eh.scale(-1);
-            Matrix eh_new = new Matrix(1,eh.numCols-2,eh.numCols-2);
-            for(int k=0;k<eh.numCols-2;k++){
-                eh_new.set(k,eh.get(eh.numCols-2-k));
+            Matrix eh_new = new Matrix(1,eh.getNumCols()-2,eh.getNumCols()-2);
+            for(int k=0;k<eh.getNumCols()-2;k++){
+                eh_new.set(k,eh.get(eh.getNumCols()-2-k));
             }
             m.set(i,fm.get(i)+eh_new.mult(Matrix.extractRows(m.transpose(),0,i,null)).get(0));
         }
-        m.reshape(fm.numRows,fm.numCols);
+        m.reshape(fm.getNumRows(),fm.getNumCols());
         return m;
     }
 
@@ -205,7 +205,7 @@ public class BUTOOLS {
         }
 
         Matrix D0 = D.get(0);
-        int N = D0.numRows;
+        int N = D0.getNumRows();
         Matrix Ia = Matrix.eye(N);
         Matrix Da = new Matrix(N,N,N*N);
         for(int q=0;q<K;q++){
@@ -223,7 +223,7 @@ public class BUTOOLS {
             Matrix neg_sk = S.get(k).clone();
             neg_sk.scale(-1);
             mu.set(k,beta.get(k).mult(neg_sk).elementSum());
-            Nsk.set(k,S.get(k).numRows);
+            Nsk.set(k,S.get(k).getNumRows());
             ro =ro+lambda.get(k)/mu.get(k);
         }
 
@@ -262,8 +262,8 @@ public class BUTOOLS {
                     sk_neg_sum.scale(-1);
                     sv.put(q,Matrix.concatRows(sv.get(q),sk_neg_sum,null));
                 }else {
-                    sa.put(q,Matrix.concatColumns(sa.get(q),new Matrix(sigma.get(k).numRows,sigma.get(k).numCols,0),null));
-                    ba.put(q,Matrix.concatColumns(ba.get(q), new Matrix(beta.get(k).numRows,beta.get(k).numCols,0),null));
+                    sa.put(q,Matrix.concatColumns(sa.get(q),new Matrix(sigma.get(k).getNumRows(),sigma.get(k).getNumCols(),0),null));
+                    ba.put(q,Matrix.concatColumns(ba.get(q), new Matrix(beta.get(k).getNumRows(),beta.get(k).getNumCols(),0),null));
                     sv.put(q,Matrix.concatRows(sv.get(q),new Matrix(sigma.get(k).length(),1,0),null));
                 }
             }
@@ -275,13 +275,13 @@ public class BUTOOLS {
             iVec = iVec.add(1,D.get(k+1).kron(sa.get(k)));
         }
 
-        int Ns = Sa.numRows;
+        int Ns = Sa.getNumRows();
         Matrix Is = Matrix.eye(Ns);
         Matrix neg_Sa_row_sum = Sa.sumRows();
         neg_Sa_row_sum.scale(-1);
         Matrix Y0 = FluidFundamentalMatrices(Ia.kron(Sa),Ia.kron(neg_Sa_row_sum),iVec,D0,precision,null,null).get("P");
         Matrix T = Ia.kron(Sa).add(1,Y0.mult(iVec));
-        Matrix pi0 = new Matrix(1,T.numRows,T.numRows);
+        Matrix pi0 = new Matrix(1,T.getNumRows(),T.getNumRows());
         for(int k=0;k<K;k++){
             Matrix ba_mu = ba.get(k).clone();
             ba_mu.scale(1/mu.get(k));
@@ -458,7 +458,7 @@ public class BUTOOLS {
         }
 
         Matrix D0 = D.get(0);
-        int N = D0.numRows;
+        int N = D0.getNumRows();
         Matrix I = Matrix.eye(N);
         Matrix sD = new Matrix(N,N,N*N);
 
@@ -482,8 +482,8 @@ public class BUTOOLS {
         for(int i=0;i<K;i++){
             int bs = N*(int)M.get(i);
             QWPP.insert_sub_matrix(kix,kix,kix+bs,kix+bs,Matrix.eye(N).kron(S.get(i)));
-            QWMP.insert_sub_matrix(0,kix,QWMP.numRows,kix+bs,D.get(i+1).kron(sigma.get(i)));
-            QWPM.insert_sub_matrix(kix,0,kix+bs,QWPM.numCols,Matrix.eye(N).kron(s.get(i)));
+            QWMP.insert_sub_matrix(0,kix,QWMP.getNumRows(),kix+bs,D.get(i+1).kron(sigma.get(i)));
+            QWPM.insert_sub_matrix(kix,0,kix+bs,QWPM.getNumCols(),Matrix.eye(N).kron(s.get(i)));
             kix = kix+bs;
         }
 
@@ -559,15 +559,15 @@ public class BUTOOLS {
             for(int i=k;i<K;i++){
                 int bs = N*(int) M.get(i);
                 Qkwpp.insert_sub_matrix(kix,kix,kix+bs,kix+bs,Matrix.eye(N).kron(S.get(i)));
-                Qkwpm.insert_sub_matrix(kix,0,kix+bs,Qkwpm.numCols,Matrix.eye(N).kron(s.get(i)));
-                Qkwmp.insert_sub_matrix(0,kix,Qkwmp.numRows,kix+bs,D.get(i+1).kron(sigma.get(i)));
+                Qkwpm.insert_sub_matrix(kix,0,kix+bs,Qkwpm.getNumCols(),Matrix.eye(N).kron(s.get(i)));
+                Qkwmp.insert_sub_matrix(0,kix,Qkwmp.getNumRows(),kix+bs,D.get(i+1).kron(sigma.get(i)));
                 kix = kix+bs;
             }
             kix = 0;
             for(int j=0;j<k-1;j++){
                 int bs = N*(int)M.get(j);
                 Qkwzz.insert_sub_matrix(kix,kix,kix+bs,kix+bs,Dlo.kron(Matrix.eye((int) M.get(j))).add(1,Matrix.eye(N).kron(S.get(j))));
-                Qkwzm.insert_sub_matrix(kix,0,kix+bs,Qkwzm.numCols,Matrix.eye(N).kron(s.get(j)));
+                Qkwzm.insert_sub_matrix(kix,0,kix+bs,Qkwzm.getNumCols(),Matrix.eye(N).kron(s.get(j)));
                 kix = kix +bs;
             }
             Matrix neg_Qkwzz = Qkwzz.clone();
@@ -626,8 +626,8 @@ public class BUTOOLS {
             for(int i=0;i<k-1;i++){
                 ztag = ztag.add(1,phi.get(i+1).mult(Ak.get(i).add(-1,Ak.get(i+1)))).add(1,phi.get(0).mult(neg_D0.inv()).mult(D.get(i+1))).mult(Ak.get(i));
             }
-            Matrix Mx = Matrix.eye(Ak.get(k).numCols).add(-1,Ak.get(k));
-            Mx.insert_sub_matrix(0,0,Mx.numRows,1,Matrix.ones(N,1));
+            Matrix Mx = Matrix.eye(Ak.get(k).getNumCols()).add(-1,Ak.get(k));
+            Mx.insert_sub_matrix(0,0,Mx.getNumRows(),1,Matrix.ones(N,1));
             phi.put(k+1,Matrix.concatColumns(new Matrix(pk),Matrix.extractRows(ztag.transpose(),1, ztag.length(), null).transpose(),null).mult(Mx.inv()));
             q0.put(k+1,phi.get(0).mult(neg_D0.inv()));
             qL.put(k+1,new Matrix(0,0,0));
@@ -672,7 +672,7 @@ public class BUTOOLS {
                         CM = Matrix.concatRows(CM,I.kron(s.get(i)),null);
                     }
                 }
-                Matrix Kwu = Matrix.concatRows(Matrix.concatColumns(Kw,Qwpz.get(k).add(1,Psiw.get(k).mult(Qwmz.get(k))).mult(Matrix.negative(Qwzz.get(k)).inv()).mult(DM),null),Matrix.concatColumns(new Matrix(BM.numRows,Kw.numRows,0),BM,null),null);
+                Matrix Kwu = Matrix.concatRows(Matrix.concatColumns(Kw,Qwpz.get(k).add(1,Psiw.get(k).mult(Qwmz.get(k))).mult(Matrix.negative(Qwzz.get(k)).inv()).mult(DM),null),Matrix.concatColumns(new Matrix(BM.getNumRows(),Kw.getNumRows(),0),BM,null),null);
                 Matrix Bwu = Matrix.concatRows(Psiw.get(k).mult(D.get(k+1)),CM,null);
                 Matrix iniw;
                 Matrix pwu;
@@ -686,22 +686,22 @@ public class BUTOOLS {
                 double norm = pwu.elementSum()+iniw.mult(Matrix.negative(Kwu).inv()).mult(Bwu).elementSum();
                 pwu.scale(1/norm);
                 iniw.scale(1/norm);
-                int KN = Kwu.numRows;
-                Matrix Qspp = new Matrix((int)(KN+N*M.sumCols(k+1,M.numCols).elementSum()),(int)(KN+N*M.sumCols(k+1,M.numCols).elementSum()),(int)Math.pow(KN+N*M.sumCols(k+1,M.numCols).elementSum(),2));
-                Matrix Qspm = new Matrix((int)(KN+N*M.sumCols(k+1,M.numCols).elementSum()),N,N*(int)(KN+N*M.sumCols(k+1,M.numCols).elementSum()));
-                Matrix Qsmp = new Matrix(N,(int)(KN+N*M.sumCols(k+1,M.numCols).elementSum()),N*(int)(KN+N*M.sumCols(k+1,M.numCols).elementSum()));
+                int KN = Kwu.getNumRows();
+                Matrix Qspp = new Matrix((int)(KN+N*M.sumCols(k+1,M.getNumCols()).elementSum()),(int)(KN+N*M.sumCols(k+1,M.getNumCols()).elementSum()),(int)Math.pow(KN+N*M.sumCols(k+1,M.getNumCols()).elementSum(),2));
+                Matrix Qspm = new Matrix((int)(KN+N*M.sumCols(k+1,M.getNumCols()).elementSum()),N,N*(int)(KN+N*M.sumCols(k+1,M.getNumCols()).elementSum()));
+                Matrix Qsmp = new Matrix(N,(int)(KN+N*M.sumCols(k+1,M.getNumCols()).elementSum()),N*(int)(KN+N*M.sumCols(k+1,M.getNumCols()).elementSum()));
                 Matrix Qsmm = sD0k.add(1,D.get(k+1));
                 kix=0;
                 for(int i=k+1;i<K;i++){
                     int bs = N*(int)M.get(i);
                     Qspp.insert_sub_matrix(KN+kix,KN+kix,KN+kix+bs,KN+kix+bs,I.kron(S.get(i)));
-                    Qspm.insert_sub_matrix(KN+kix,0,KN+kix+bs,Qspm.numCols,I.kron(s.get(i)));
-                    Qsmp.insert_sub_matrix(0,KN+kix,Qsmp.numRows,KN+kix+bs,D.get(i+1).kron(sigma.get(i)));
+                    Qspm.insert_sub_matrix(KN+kix,0,KN+kix+bs,Qspm.getNumCols(),I.kron(s.get(i)));
+                    Qsmp.insert_sub_matrix(0,KN+kix,Qsmp.getNumRows(),KN+kix+bs,D.get(i+1).kron(sigma.get(i)));
                     kix = kix+bs;
                 }
                 Qspp.insert_sub_matrix(0,0,KN,KN,Kwu);
-                Qspm.insert_sub_matrix(0,0,KN, Qspm.numCols, Bwu);
-                Matrix inis = Matrix.concatColumns(iniw,new Matrix(1,N*(int)M.sumCols(K+1,M.numCols).elementSum()),null);
+                Qspm.insert_sub_matrix(0,0,KN, Qspm.getNumCols(), Bwu);
+                Matrix inis = Matrix.concatColumns(iniw,new Matrix(1,N*(int)M.sumCols(K+1,M.getNumCols()).elementSum()),null);
 
                 Matrix Psis = FluidFundamentalMatrices(Qspp,Qspm,Qsmp,Qsmm,precision,null,null).get("P");
 
@@ -741,10 +741,10 @@ public class BUTOOLS {
                         int t = (int) stCdfPoints.get(o);
                         int L = erlMaxOrder;
                         double lambdae = L/(double)t/2.0;
-                        Matrix Psie = FluidFundamentalMatrices(Qspp.add(-lambdae,Matrix.eye(Qspp.numRows)),Qspm,Qsmp,Qsmm.add(-lambdae,Matrix.eye(Qsmm.numRows)),precision,null,null).get("P");
+                        Matrix Psie = FluidFundamentalMatrices(Qspp.add(-lambdae,Matrix.eye(Qspp.getNumRows())),Qspm,Qsmp,Qsmm.add(-lambdae,Matrix.eye(Qsmm.getNumRows())),precision,null,null).get("P");
                         Map<Integer,Matrix> Pn = new HashMap<>();
                         Pn.put(0,Psis);
-                        double pr = (pwu.elementSum()+inis.mult(Psie).elementSum())*(1-sigma.get(k).mult(Matrix.pow(Matrix.eye(S.get(k).numRows).inv().add(-1/2.0/lambdae,S.get(k)),L)).elementSum());
+                        double pr = (pwu.elementSum()+inis.mult(Psie).elementSum())*(1-sigma.get(k).mult(Matrix.pow(Matrix.eye(S.get(k).getNumRows()).inv().add(-1/2.0/lambdae,S.get(k)),L)).elementSum());
                         for(int n=0;n<=L-1;n++){
                             Matrix A = Qspp.add(1,Psie.mult(Qsmp)).add(-lambdae,Matrix.eye(Qspp.length()));
                             Matrix B = Qsmm.add(1,Qsmp.mult(Psie)).add(-lambdae,Matrix.eye(Qsmm.length()));
@@ -763,7 +763,7 @@ public class BUTOOLS {
                 }
                 if(numOfQLMoms!=null||numOfQLProbs!=null){
                     Matrix W = Matrix.negative(sD.add(-1,D.get(k+1)).kron(Matrix.eye((int)M.get(k)))).add(-1,I.kron(S.get(k))).inv().mult(D.get(k+1).kron(Matrix.eye((int)M.get(k))));
-                    Matrix iW = Matrix.eye(W.numCols).add(-1,W).inv();
+                    Matrix iW = Matrix.eye(W.getNumCols()).add(-1,W).inv();
                     Matrix w = Matrix.eye(N).kron(sigma.get(k));
                     Matrix omega = Matrix.negative(sD.add(-1,D.get(k+1)).kron(Matrix.eye((int)M.get(k)))).add(-1,I.kron(S.get(k))).inv().mult(I.kron(s.get(k)));
                     if(numOfQLMoms!=null){
@@ -833,7 +833,7 @@ public class BUTOOLS {
                     Kw = Qwpp.get(k).add(1,Qwpz.get(k).mult(Matrix.negative(Qwzz.get(k)).inv()).mult(Qwzp.get(k))).add(1,Psiw.get(k).mult(Qwmp.get(k)));
                     Matrix AM = new Matrix(0,0,0);
                     Matrix BM = new Matrix(0,0,0);
-                    Matrix CM = new Matrix(0,s.get(0).numCols,0);
+                    Matrix CM = new Matrix(0,s.get(0).getNumCols(),0);
                     Matrix DM = new Matrix(0,0,0);
                     for(int i=0;i<k-1;i++){
                         AM = AM.createBlockDiagonal(new Matrix(N,1).kron(Matrix.eye((int)M.get(i)).kron(s.get(k))));
@@ -841,9 +841,9 @@ public class BUTOOLS {
                         CM = Matrix.concatRows(CM,s.get(i),null);
                         DM = DM.createBlockDiagonal(D.get(k+1).kron(Matrix.eye((int)M.get(i))));
                     }
-                    Matrix Z = Matrix.concatRows(Matrix.concatColumns(Kw,Matrix.concatRows(AM,new Matrix(N*(int)M.get(k), AM.numCols),null),null),Matrix.concatColumns(new Matrix(BM.numRows,Kw.numCols),BM,null),null);
-                    Matrix z = Matrix.concatRows(Matrix.concatRows(new Matrix(AM.numRows,1,0),Matrix.ones(N,1).kron(s.get(k)),null),CM,null);
-                    Matrix iniw = Matrix.concatColumns(q0.get(k).mult(Qwmp.get(k)).add(1,qL.get(k).mult(Qwzp.get(k))),new Matrix(1, BM.numRows),null);
+                    Matrix Z = Matrix.concatRows(Matrix.concatColumns(Kw,Matrix.concatRows(AM,new Matrix(N*(int)M.get(k), AM.getNumCols()),null),null),Matrix.concatColumns(new Matrix(BM.getNumRows(),Kw.getNumCols()),BM,null),null);
+                    Matrix z = Matrix.concatRows(Matrix.concatRows(new Matrix(AM.getNumRows(),1,0),Matrix.ones(N,1).kron(s.get(k)),null),CM,null);
+                    Matrix iniw = Matrix.concatColumns(q0.get(k).mult(Qwmp.get(k)).add(1,qL.get(k).mult(Qwzp.get(k))),new Matrix(1, BM.getNumRows()),null);
                     Matrix zeta = Matrix.scale_mult(iniw,1/iniw.mult(Matrix.negative(Z).inv()).mult(z).elementSum());
                     if(numOfSTMoms!= null){
                         Matrix rtMomsH = new Matrix(1,numOfSTMoms,numOfSTMoms);
@@ -853,9 +853,9 @@ public class BUTOOLS {
                         result.get("stMoms").put(k,rtMomsH);
                     }
                     if(stCdfPoints!=null){
-                        Matrix rtDistr = zeta.mult(Matrix.negative(Z).inv()).mult(Matrix.eye(Z.numCols).add(-1,Z.mult(Matrix.scale_mult(Z,stCdfPoints.get(0)).expm()))).mult(z);
+                        Matrix rtDistr = zeta.mult(Matrix.negative(Z).inv()).mult(Matrix.eye(Z.getNumCols()).add(-1,Z.mult(Matrix.scale_mult(Z,stCdfPoints.get(0)).expm()))).mult(z);
                         for(int i =1;i<stCdfPoints.length();i++){
-                            rtDistr = Matrix.concatColumns(rtDistr,zeta.mult(Matrix.negative(Z).inv()).mult(Matrix.eye(Z.numCols).add(-1,Z.mult(Matrix.scale_mult(Z,stCdfPoints.get(i)).expm()))).mult(z),null);
+                            rtDistr = Matrix.concatColumns(rtDistr,zeta.mult(Matrix.negative(Z).inv()).mult(Matrix.eye(Z.getNumCols()).add(-1,Z.mult(Matrix.scale_mult(Z,stCdfPoints.get(i)).expm()))).mult(z),null);
                         }
                         result.get("stDistr").put(k,rtDistr);
                     }
@@ -871,20 +871,20 @@ public class BUTOOLS {
                         F.insert_sub_matrix(kix,kix,kix+bs,kix+bs,D.get(k+1).kron(Matrix.eye((int)M.get(i))));
                         L.insert_sub_matrix(kix,kix,kix+bs,kix+bs,sD0k.kron(Matrix.eye((int)M.get(i)).add(1,I.kron(S.get(i)))));
                         if(i<K){
-                            L.insert_sub_matrix(kix,1+N*(int) Matrix.extractRows(M,0,k,null).elementSum(),kix+bs,L.numCols,I.kron(s.get(i).mult(sigma.get(k))));
+                            L.insert_sub_matrix(kix,1+N*(int) Matrix.extractRows(M,0,k,null).elementSum(),kix+bs,L.getNumCols(),I.kron(s.get(i).mult(sigma.get(k))));
                         }else {
-                            B.insert_sub_matrix(kix,1+N*(int) Matrix.extractRows(M,0,k,null).elementSum(),kix+bs,B.numCols,I.kron(s.get(i).mult(sigma.get(k))));
+                            B.insert_sub_matrix(kix,1+N*(int) Matrix.extractRows(M,0,k,null).elementSum(),kix+bs,B.getNumCols(),I.kron(s.get(i).mult(sigma.get(k))));
                         }
                         kix = kix+bs;
                     }
                     Matrix R = QBDFundamentalMatrices (B, L, F, precision,null ,null,null).get("R");
                     Matrix P0 = Matrix.concatColumns(qL.get(k),q0.get(k).mult(I.kron(sigma.get(k))),null);
-                    P0.scale(1/P0.mult(Matrix.eye(R.numRows).add(-1,R).inv()).elementSum());
+                    P0.scale(1/P0.mult(Matrix.eye(R.getNumRows()).add(-1,R).inv()).elementSum());
 
                     if(numOfQLMoms!=null){
                         Matrix qlMoms = new Matrix(1,numOfQLMoms,numOfQLMoms);
                         for(int i=0;i<numOfQLMoms;i++){
-                            qlMoms.set(i,Matrix.scale_mult(P0.mult(Matrix.pow(R,i)).mult(Matrix.pow(Matrix.eye(R.numRows).add(-1,R),i+1).inv()),factorial(i)).elementSum());
+                            qlMoms.set(i,Matrix.scale_mult(P0.mult(Matrix.pow(R,i)).mult(Matrix.pow(Matrix.eye(R.getNumRows()).add(-1,R),i+1).inv()),factorial(i)).elementSum());
                         }
                         result.get("ncMoms").put(k, MomsFromFactorialMoms(qlMoms));
                     }

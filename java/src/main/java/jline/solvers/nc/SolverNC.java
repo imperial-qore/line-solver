@@ -119,8 +119,8 @@ public class SolverNC extends NetworkSolver {
     //V = cellsum(sn.visits);
     Matrix rates = sn.rates;
     Matrix ST = rates.clone();
-    for (int i = 0; i < ST.numRows; i++) {
-      for (int j = 0; j < ST.numCols; j++) {
+    for (int i = 0; i < ST.getNumRows(); i++) {
+      for (int j = 0; j < ST.getNumCols(); j++) {
         ST.set(i, j, 1.0/ST.get(i, j));
       }
     }
@@ -132,8 +132,8 @@ public class SolverNC extends NetworkSolver {
     Matrix Nchain = ret.Nchain;
 
     long startTimeMillis = System.currentTimeMillis();
-    M = STchain.numRows;
-    K = STchain.numCols;
+    M = STchain.getNumRows();
+    K = STchain.getNumCols();
 
     Matrix mu = new Matrix(0, (int) Nchain.elementSum());
     for (int i = 0; i < M; i++) {
@@ -176,8 +176,8 @@ public class SolverNC extends NetworkSolver {
         //nivec_chain = nirvec * sn.chains'; Assume it to be matrix
         Matrix nivec_chain = nirvec.mult(sn.chains.transpose());
 
-        Matrix Lchain_tmp = new Matrix(0, Lchain.numCols);
-        Matrix mu_tmp = new Matrix(0, mu.numCols);
+        Matrix Lchain_tmp = new Matrix(0, Lchain.getNumCols());
+        Matrix mu_tmp = new Matrix(0, mu.getNumCols());
         for (int i = 0; i < sn.nstations; i++) {
           if (i != ist) {
             Matrix Lchain_row_i = Matrix.extractRows(Lchain, i, i+1, null);
@@ -217,8 +217,8 @@ public class SolverNC extends NetworkSolver {
               }
             }
             boolean allZero = true;
-            for (int i = 0; allZero && i < sivec.numRows; i++) {
-              for (int j = 0; allZero && j < sivec.numCols; j++) {
+            for (int i = 0; allZero && i < sivec.getNumRows(); i++) {
+              for (int j = 0; allZero && j < sivec.getNumCols(); j++) {
                 if (Math.abs(sivec.get(i, j)) > 1e-6) {
                   allZero = false;
                 }
@@ -258,8 +258,8 @@ public class SolverNC extends NetworkSolver {
                 }
 
                 Matrix PHr_tmp = PHr.get(0);
-                for (int i = 0; i < PHr_tmp.numRows; i++) {
-                  for (int j = 0; j < PHr_tmp.numCols; j++) {
+                for (int i = 0; i < PHr_tmp.getNumRows(); i++) {
+                  for (int j = 0; j < PHr_tmp.getNumCols(); j++) {
                     PHr_tmp.set(i, j, -1.0*PHr_tmp.get(i, j));
                   }
                 }
@@ -267,8 +267,8 @@ public class SolverNC extends NetworkSolver {
                 Matrix Ar = map_pie(PHr.get(0), PHr.get(1)).mult(PHr_tmp);
 
                 Matrix kir_tmp = Ar.clone();
-                for (int i = 0; i < kir_tmp.numRows; i++) {
-                  for (int j = 0; j < kir_tmp.numCols; j++) {
+                for (int i = 0; i < kir_tmp.getNumRows(); i++) {
+                  for (int j = 0; j < kir_tmp.getNumCols(); j++) {
                     kir_tmp.set(i, j, kir.get(i, j) * Math.log(V.get(ist, r)*kir_tmp.get(i, j)));
                   }
                 }
@@ -283,7 +283,7 @@ public class SolverNC extends NetworkSolver {
             }
             Matrix mu_row_ist = new Matrix(1, (int) sum_kirvec);
             Matrix.extract(mu, ist, ist+1, 0, (int) sum_kirvec, mu_row_ist, 0, 0);
-            for (int i = 0; i < mu_row_ist.numCols; i++) {
+            for (int i = 0; i < mu_row_ist.getNumCols(); i++) {
               mu_row_ist.set(i, Math.log(mu_row_ist.get(i)));
             }
             lF_i += (Maths.factln(sum_kirvec) - mu_row_ist.elementSum());
@@ -297,8 +297,8 @@ public class SolverNC extends NetworkSolver {
                   kir.set(i, kirvec.get(i).get(0, r));
                 }
                 Matrix PHr_tmp = PHr.get(0);
-                for (int i = 0; i < PHr_tmp.numRows; i++) {
-                  for (int j = 0; j < PHr_tmp.numCols; j++) {
+                for (int i = 0; i < PHr_tmp.getNumRows(); i++) {
+                  for (int j = 0; j < PHr_tmp.getNumCols(); j++) {
                     PHr_tmp.set(i, j, -1.0*PHr_tmp.get(i, j));
                   }
                 }
@@ -306,8 +306,8 @@ public class SolverNC extends NetworkSolver {
                 Matrix Ar = map_pie(PHr.get(0), PHr.get(1)).mult(PHr_tmp);
 
                 Matrix kir_tmp = Ar.clone();
-                for (int i = 0; i < kir_tmp.numRows; i++) {
-                  for (int j = 0; j < kir_tmp.numCols; j++) {
+                for (int i = 0; i < kir_tmp.getNumRows(); i++) {
+                  for (int j = 0; j < kir_tmp.getNumCols(); j++) {
                     kir_tmp.set(i, j, kir.get(i, j) * Math.log(V.get(ist, r)*kir_tmp.get(i, j)));
                   }
                 }
@@ -331,8 +331,8 @@ public class SolverNC extends NetworkSolver {
     Matrix S = sn.nservers;
     Matrix rates = sn.rates;
     Matrix ST = rates.clone();
-    for (int i = 0; i < ST.numRows; i++) {
-      for (int j = 0; j < ST.numCols; j++) {
+    for (int i = 0; i < ST.getNumRows(); i++) {
+      for (int j = 0; j < ST.getNumCols(); j++) {
         ST.set(i, j, 1.0/ST.get(i, j));
       }
     }
@@ -343,8 +343,8 @@ public class SolverNC extends NetworkSolver {
     Matrix alpha = ret.alpha;
     Matrix Nchain = ret.Nchain;
     long startTimeMillis = System.currentTimeMillis();
-    int M = STchain.numRows;
-    int K = ST.numCols;
+    int M = STchain.getNumRows();
+    int K = ST.getNumCols();
     Matrix Lchain = new Matrix(0, K);
 
     Matrix mu_chain = new Matrix(0, (int) Nchain.elementSum());
@@ -416,8 +416,8 @@ public class SolverNC extends NetworkSolver {
 
     Matrix rates = sn.rates;
     Matrix ST = rates.clone();
-    for (int i = 0; i < ST.numRows; i++) {
-      for (int j = 0; j < ST.numCols; j++) {
+    for (int i = 0; i < ST.getNumRows(); i++) {
+      for (int j = 0; j < ST.getNumCols(); j++) {
         ST.set(i, j, 1.0/ST.get(i, j));
       }
     }
@@ -554,8 +554,8 @@ public class SolverNC extends NetworkSolver {
       for (int i = 0; i < C; i++) {
         Z_new.set(i, Z.sumCols(i) + Zms.sumCols(i));
       }
-      Matrix Z_tmp_append_0 = new Matrix(1, Z_new.numCols+1);
-      Z_tmp_append_0.set(Z_new.numCols, 0.0);
+      Matrix Z_tmp_append_0 = new Matrix(1, Z_new.getNumCols()+1);
+      Z_tmp_append_0.set(Z_new.getNumCols(), 0.0);
       Matrix.extract(Z_new, 0, 1, 0, Z_new.length(), Z_tmp_append_0, 0, 0);
 
       PFQN.pfqnNcXQReturn ret = pfqn_nc(lambda,Lms,Nchain,Z_new, options);
@@ -576,8 +576,8 @@ public class SolverNC extends NetworkSolver {
         for (int r: closedChains) {
           Matrix Nchain_tmp = Nchain.clone();
           Nchain_tmp.set(r, Nchain_tmp.get(r) - 1);
-          Matrix Nchain_tmp_append_1 = new Matrix(1, Nchain.numCols+1);
-          Nchain_tmp_append_1.set(Nchain.numCols, 1.0);
+          Matrix Nchain_tmp_append_1 = new Matrix(1, Nchain.getNumCols()+1);
+          Nchain_tmp_append_1.set(Nchain.getNumCols(), 1.0);
           Matrix.extract(Nchain_tmp, 0, 1, 0, Nchain_tmp.length(), Nchain_tmp_append_1, 0, 0);
           Xchain.set(r, Math.exp(pfqn_nc(lambda,Lms,Nchain_tmp,Z_new, options).lG - lG));
           for (int i = 0; i < M; i++) {
@@ -589,18 +589,18 @@ public class SolverNC extends NetworkSolver {
                 lambda_tmp.fill(0.0);
                 Matrix.extract(lambda, 0, 1, 0, lambda.length(), lambda_tmp, 0, 0);
 
-                Matrix L_tmp = new Matrix(0, Lms.numCols+1);
-                for (int row = 0; row < Lms.numRows; row++) {
+                Matrix L_tmp = new Matrix(0, Lms.getNumCols()+1);
+                for (int row = 0; row < Lms.getNumRows(); row++) {
                   if (row != i) {
-                    Matrix L_tmp_row = new Matrix(1, Lms.numCols+1);
-                    L_tmp_row.set(Lms.numCols, 0.0);
-                    Matrix.extract(Lms, row, row+1, 0, Lms.numCols, L_tmp_row, 0, 0);
+                    Matrix L_tmp_row = new Matrix(1, Lms.getNumCols()+1);
+                    L_tmp_row.set(Lms.getNumCols(), 0.0);
+                    Matrix.extract(Lms, row, row+1, 0, Lms.getNumCols(), L_tmp_row, 0, 0);
                     L_tmp = Matrix.concatRows(L_tmp, L_tmp_row, null);
                   }
                 }
-                Matrix L_tmp_row = new Matrix(1, Lms.numCols+1);
-                L_tmp_row.set(Lms.numCols, 1.0);
-                Matrix.extract(Lms, i, i+1, 0, Lms.numCols, L_tmp_row, 0, 0);
+                Matrix L_tmp_row = new Matrix(1, Lms.getNumCols()+1);
+                L_tmp_row.set(Lms.getNumCols(), 1.0);
+                Matrix.extract(Lms, i, i+1, 0, Lms.getNumCols(), L_tmp_row, 0, 0);
                 L_tmp = Matrix.concatRows(L_tmp, L_tmp_row, null);
 
                 double res = pfqn_nc(lambda_tmp,L_tmp,Nchain_tmp_append_1,Z_tmp_append_0, options).lG;
@@ -654,23 +654,23 @@ public class SolverNC extends NetworkSolver {
 
       //Z = sum(Z(1:M,:),1);
 
-      Matrix Rchain = new Matrix(Qchain.numRows, Qchain.numCols);
-      for (int i = 0; i < Rchain.numRows; i++) {
-        for (int j = 0; j < Rchain.numCols; j++) {
+      Matrix Rchain = new Matrix(Qchain.getNumRows(), Qchain.getNumCols());
+      for (int i = 0; i < Rchain.getNumRows(); i++) {
+        for (int j = 0; j < Rchain.getNumCols(); j++) {
           Rchain.set(i, j, Qchain.get(i, j)/Xchain.get(j)/Vchain.get(i, j));
         }
       }
 
       for (int i = 0; i < infServers.size(); i++) {
         int row = infServers.get(i);
-        for (int j = 0; j < Rchain.numCols; j++) {
+        for (int j = 0; j < Rchain.getNumCols(); j++) {
           Rchain.set(row, j, Lchain.get(row, j) / Vchain.get(row, j));
         }
       }
 
-      Matrix Tchain = new Matrix(Vchain.numRows, Vchain.numCols);
-      for (int i = 0; i < Tchain.numRows; i++) {
-        for (int j = 0; j < Tchain.numCols; j++) {
+      Matrix Tchain = new Matrix(Vchain.getNumRows(), Vchain.getNumCols());
+      for (int i = 0; i < Tchain.getNumRows(); i++) {
+        for (int j = 0; j < Tchain.getNumCols(); j++) {
           Tchain.set(i, j, Xchain.get(j) * Vchain.get(i, j));
         }
       }

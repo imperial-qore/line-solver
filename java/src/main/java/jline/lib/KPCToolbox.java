@@ -197,7 +197,7 @@ public class KPCToolbox {
     public static Matrix map_cdf(Matrix D0, Matrix D1, Matrix points) {
         Matrix CDFVals = new Matrix(1,points.length());
         Matrix pie = map_pie(D0, D1);
-        Matrix e1 = Matrix.ones(D0.numRows,1);
+        Matrix e1 = Matrix.ones(D0.getNumRows(),1);
 
         double nanVal = 0.0;
         for (int t = 0; t < points.length(); t++) {
@@ -541,8 +541,8 @@ public class KPCToolbox {
         boolean D0_has_inf = false;
         boolean D1_has_inf = false;
 
-        for(int i=0;i<D0.numRows;i++){
-            for (int j=0;j<D0.numCols;j++){
+        for(int i=0;i<D0.getNumRows();i++){
+            for (int j=0;j<D0.getNumCols();j++){
                 if(Double.isInfinite(D0.get(i,j))){
                     D0_has_inf = true;
                     break;
@@ -550,8 +550,8 @@ public class KPCToolbox {
             }
         }
 
-        for(int i=0;i<D1.numRows;i++){
-            for (int j=0;j<D1.numCols;j++){
+        for(int i=0;i<D1.getNumRows();i++){
+            for (int j=0;j<D1.getNumCols();j++){
                 if(Double.isInfinite(D1.get(i,j))){
                     D1_has_inf = true;
                     break;
@@ -569,32 +569,32 @@ public class KPCToolbox {
         Matrix P = neg_D0.inv().mult(D1);
         Matrix Q = D0.add(1,D1);
 
-        for(int i=0;i<D0.numRows;i++){
-            for (int j=0;j<D0.numCols;j++){
+        for(int i=0;i<D0.getNumRows();i++){
+            for (int j=0;j<D0.getNumCols();j++){
                 if(Math.abs(D0.get(i,j))<TOL){
                     D0.set(i,j,0);
                 }
             }
         }
 
-        for(int i=0;i<D1.numRows;i++){
-            for (int j=0;j<D1.numCols;j++){
+        for(int i=0;i<D1.getNumRows();i++){
+            for (int j=0;j<D1.getNumCols();j++){
                 if(Math.abs(D1.get(i,j))<TOL){
                     D1.set(i,j,0);
                 }
             }
         }
 
-        for(int i=0;i<P.numRows;i++){
-            for (int j=0;j<P.numCols;j++){
+        for(int i=0;i<P.getNumCols();i++){
+            for (int j=0;j<P.getNumCols();j++){
                 if(Math.abs(P.get(i,j))<TOL){
                     P.set(i,j,0);
                 }
             }
         }
 
-        for(int i=0;i<Q.numRows;i++){
-            for (int j=0;j<Q.numCols;j++){
+        for(int i=0;i<Q.getNumCols();i++){
+            for (int j=0;j<Q.getNumCols();j++){
                 if(Math.abs(Q.get(i,j))<TOL){
                     Q.set(i,j,0);
                 }

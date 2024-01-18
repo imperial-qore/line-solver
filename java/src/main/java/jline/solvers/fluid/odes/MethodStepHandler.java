@@ -45,8 +45,8 @@ public class MethodStepHandler implements StepHandler {
 
     if (isLast) {
       // Shrinking arrays to minimum number of rows
-      tVec.numRows = stepCount;
-      xVec.numRows = stepCount;
+      tVec.shrinkNumRows(stepCount);
+      xVec.shrinkNumRows(stepCount);
       return;
     }
 

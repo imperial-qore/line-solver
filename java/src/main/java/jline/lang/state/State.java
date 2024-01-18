@@ -1,10 +1,8 @@
 package jline.lang.state;
 
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
+import java.rmi.ServerError;
+import java.util.*;
 
 import jline.examples.ClosedModel;
 import jline.lang.Network;
@@ -419,6 +417,122 @@ public class State implements Serializable {
           break;
 
         case LCFSPR:
+          double sizeEstimatorLPR = Maths.multinomialln(n.sub(1,s));
+          sizeEstimatorLPR = Math.round(sizeEstimatorLPR/Math.log(10));
+          if (sizeEstimatorLPR > 2) {
+            if (!optionsForce) {
+              System.err.format("State space size is very large: 1e%d states. Stopping execution. Set options = true," +
+                      "to bypass this control.\n", Math.round(sizeEstimatorLPR/Math.log(10)));
+            }
+          }
+          if (n.elementSum() == 0) {
+            space = new Matrix(1, (int) (1+K.elementSum()));
+            space.zero();
+            return space;
+          }
+          // in these policies we track an ordered buffer and the jobs in the servers
+
+          // build list of job classes in the buffer with repetition
+          Matrix inbufLpr = new Matrix(0,0);
+          for (int r = 0; r < R; r++) {
+            if (n.get(r) > s.get(r)) {
+              int numNewCols = (int) (n.get(r) - s.get(r));
+              Matrix newInBuf = new Matrix(1, inbufLpr.getNumCols() + numNewCols);
+              for (int i = 0; i < inbufLpr.getNumCols(); i++) {
+                newInBuf.set(0,i,inbufLpr.get(0,i));
+              }
+              for (int i = inbufLpr.getNumCols(); i < newInBuf.getNumCols(); i++) {
+                newInBuf.set(0,i,r+1);
+              }
+              inbufLpr = newInBuf.clone();
+            }
+          }
+
+          // gen permutation of their positions in the FCFS buffer
+          Matrix miLpr = Maths.uniquePerms(inbufLpr);
+          if (miLpr.isEmpty()) {
+            Matrix mi_buf = new Matrix(1, (int) Math.max(0, n.elementSum() - S.get(ist)));
+            mi_buf.zero();
+            state = new Matrix(1, R);
+            state.zero();
+            state = Matrix.decorate(state, mi_buf.concatCols(state));
+          } else {
+            // mi_buf: class of job in buffer position i (0=empty)
+            Matrix mi_buf = new Matrix(0,0);
+            if (n.elementSum() > s.elementSum()) {
+              double sumN = n.elementSum();
+              double sums = s.elementSum();
+              mi_buf = new Matrix(miLpr.getNumRows(), (int) sumN - (int) sums);
+              for (int row = 0; row < mi_buf.getNumRows(); row++) {
+                for (int col = 0; col < sumN - sums; col++) {
+                  mi_buf.set(row, col, miLpr.get(row, col));
+                }
+              }
+            } else {
+              mi_buf = new Matrix(1,1);
+              mi_buf.set(0,0,0);
+            }
+
+            // si: number of class r jobs that are running
+            Matrix si = s.clone();
+            for (int b = 0; b < mi_buf.getNumRows(); b++) {
+              for (int k = 0; k < si.getNumRows(); k++) {
+                Matrix kState = new Matrix(0,0);
+                for (int r = 0; r < R; r++) {
+                  Matrix init = spaceClosedSingle(K.get(r), si.get(k,r));
+                  kState = Matrix.decorate(kState, init);
+                }
+                Matrix bkState = new Matrix(0,0);
+                Matrix jobsInBuffer = Matrix.extractRows(mi_buf, b, b+1, null);
+                for (int j = 0; j < jobsInBuffer.length(); j++) {
+                  double job = jobsInBuffer.get(j);
+                  if (job > 0) {
+                    List<Double> phasesJRange = new ArrayList<>();
+                    for (double i = 1; i <= K.get((int) job - 1); i++) {
+                      phasesJRange.add(i);
+                    }
+                    // no transpose as constructor makes column vector
+                    bkState = Matrix.decorate(bkState, new Matrix(phasesJRange));
+                  } else {
+                    bkState = new Matrix(1,1);
+                    bkState.zero();
+                  }
+                }
+                Matrix bufStateTmp = Matrix.decorate(Matrix.extractRows(mi_buf, b, b + 1, null), bkState);
+                // here we interleave positions of class and phases in buffer
+                Matrix bufState = new Matrix(bufStateTmp.getNumRows(), bufStateTmp.getNumCols());
+                bufState.zero();
+
+                // bufstateTmp has classses followrd by phases. here we interleave the classes and phases
+                int colForBufStateTmp = 0;
+                for (int row = 0; row < bufState.getNumRows(); row++) {
+                  for (int col = 0; col < bufState.getNumCols(); col += 2) {
+                    if (colForBufStateTmp < mi_buf.getNumCols()) {
+                      bufState.set(row, col, bufStateTmp.get(row, colForBufStateTmp));
+                      colForBufStateTmp++;
+                    }
+                  }
+                  colForBufStateTmp = 0;
+                }
+                colForBufStateTmp = mi_buf.getNumCols();
+                for (int row = 0; row < bufState.getNumRows(); row++) {
+                  for (int col = 1; col < bufState.getNumCols(); col += 2) {
+                    if (colForBufStateTmp < bufStateTmp.getNumCols()) {
+                      bufState.set(row, col, bufStateTmp.get(row, colForBufStateTmp));
+                      colForBufStateTmp++;
+                    }
+                  }
+                  colForBufStateTmp = mi_buf.getNumCols();
+                }
+                if (state.isEmpty()) {
+                  state = Matrix.decorate(bufState, kState);
+                } else {
+                  state = Matrix.concatRows(state, Matrix.decorate(bufState, kState), null);
+                }
+              }
+            }
+          }
+          space = state;
           break;
 
         case SJF:
@@ -436,7 +550,7 @@ public class State implements Serializable {
       // TODO: handle cache node
     }
 
-    // Required to sort empty state as first
+     //Required to sort empty state as first
     List<Matrix> uniqueRows = new ArrayList<>();
     for (int i = 0; i < space.getNumRows(); i++) {
       Matrix tmp = new Matrix(1, space.getNumCols());
@@ -450,7 +564,7 @@ public class State implements Serializable {
         }
       }
       if (unique) {
-        uniqueRows.add(0, tmp);
+        uniqueRows.add(tmp);
       }
     }
 
@@ -458,6 +572,18 @@ public class State implements Serializable {
     // this ensures that states where jobs start in phase 1 are first, which is used eg
     // in SSA
     int row = 0;
+    Comparator<Matrix> lexico = (mat1, mat2) -> {
+      for (int col = 0; col < mat1.getNumCols(); col++) {
+        int result = Integer.compare((int) mat1.get(0, col), (int) mat2.get(0, col));
+        if (result != 0) {
+          return result;
+        }
+      }
+      return 0;
+    };
+
+    uniqueRows.sort(lexico);
+
     for (int i = uniqueRows.size() - 1; i >= 0; i--) {
       for (int j = 0; j < uniqueRows.get(0).getNumCols(); j++) {
         newSpace.set(row, j, uniqueRows.get(i).get(0, j));
@@ -755,13 +881,8 @@ public class State implements Serializable {
               }
             }
 
-            // gen permutation of their positions in the fcfs buffer
+            // gen permutation of their positions in the buffer
             mi_lpr = Maths.uniquePerms(inbuf_lpr);
-            Matrix row1 = Matrix.extractRows(mi_lpr, 1, 2, null);
-            Matrix row0 = Matrix.extractRows(mi_lpr, 0,1,null);
-            mi_lpr = Matrix.concatRows(row1, row0,null);
-
-
             mi_buf_lpr = new Matrix(0,0);
             if (mi_lpr.isEmpty()) {
               mi_buf_lpr = new Matrix (1, (int) Maths.max(1, n.elementSum() - S.get(ist)));
@@ -900,10 +1021,21 @@ public class State implements Serializable {
         }
       }
       if (unique) {
-        uniqueRows.add(0, tmp);
+        uniqueRows.add(tmp);
       }
     }
 
+    Comparator<Matrix> lexico = (mat1, mat2) -> {
+      for (int col = 0; col < mat1.getNumCols(); col++) {
+        int result = Integer.compare((int) mat1.get(0, col), (int) mat2.get(0, col));
+        if (result != 0) {
+          return result;
+        }
+      }
+      return 0;
+    };
+
+    uniqueRows.sort(lexico);
     Matrix newSpace = new Matrix(uniqueRows.size(), uniqueRows.get(0).getNumCols());
     // this ensures that states where jobs start in phase 1 are first, which is used eg
     // in SSA
@@ -1039,15 +1171,15 @@ public class State implements Serializable {
 //      System.out.println(res.getNumRows());
 //      System.out.println(res);
 
-      NetworkStruct sn = ClosedModel.ex4().getStruct(false);
-      Matrix m = new Matrix(1, 4);
-      m.fromArray2D(new int[][]{{2,1,1,1}});
-
-      Matrix s = new Matrix(1,4);
-      s.fromArray2D(new int[][]{{2,0,1,0}});
-      Matrix res = fromMarginalAndRunning(sn, 1, m,s);
-      System.out.println(res.getNumRows());
-      System.out.println(res);
+//      NetworkStruct sn = ClosedModel.ex4().getStruct(false);
+//      Matrix m = new Matrix(1, 4);
+//      m.fromArray2D(new int[][]{{2,1,1,1}});
+//
+//      Matrix s = new Matrix(1,4);
+//      s.fromArray2D(new int[][]{{2,0,1,0}});
+//      Matrix res = fromMarginalAndRunning(sn, 1, m,s);
+//      System.out.println(res.getNumRows());
+//      System.out.println(res);
 
 //
 //      NetworkStruct sn = ClosedModel.ex6().getStruct(false);
@@ -1061,10 +1193,14 @@ public class State implements Serializable {
 //      System.out.println(res.getNumRows());
 //      System.out.println(res);
 
-//        NetworkStruct sn = ClosedModel.ex7_fcfs().getStruct(false);
+//        NetworkStruct sn = ClosedModel.ex7_lcfspr().getStruct(false);
 //        Matrix m = new Matrix(1, 2);
-//        m.fromArray2D(new int[][]{{0,2}});
-//        Matrix res = fromMarginal(sn, 1, m);
+//        m.fromArray2D(new int[][]{{2,2}});
+//
+//        Matrix s = new Matrix(1, 2);
+//        s.fromArray2D(new int[][]{{0,1}});
+//
+//        Matrix res = fromMarginalAndStarted(sn, 1, m,s );
 //        System.out.println(res.getNumRows());
 //        System.out.println(res);
 
@@ -1295,6 +1431,7 @@ public class State implements Serializable {
                   mi.set(row, col, miClone.get(row, col));
                 }
               }
+              mi = uniqueAndSort(mi);
 
               // mi_buf: class of job in buffer position i (0=empty)
               int numColumnsRight = (int) Maths.max((mi.getNumCols()-S.get(ist)), 0);
@@ -1547,6 +1684,17 @@ public class State implements Serializable {
       }
     }
 
+    Comparator<Matrix> lexico = (mat1, mat2) -> {
+      for (int col = 0; col < mat1.getNumCols(); col++) {
+        int result = Integer.compare((int) mat1.get(0, col), (int) mat2.get(0, col));
+        if (result != 0) {
+          return result;
+        }
+      }
+      return 0;
+    };
+
+    uniqueRows.sort(lexico);
     Matrix newSpace = new Matrix(uniqueRows.size(), uniqueRows.get(0).getNumCols());
     // So that states with jobs in phase 1 comes earlier
     int row = 0;
@@ -1556,7 +1704,52 @@ public class State implements Serializable {
       }
       row++;
     }
+//    return space;
+    return newSpace;
+  }
+
+
+  // "unique" function in matlab sorts in lexicographic, replicated here
+  private static Matrix uniqueAndSort(Matrix space) {
+    List<Matrix> uniqueRows = new ArrayList<>();
+    for (int i = 0; i < space.getNumRows(); i++) {
+      Matrix tmp = new Matrix(1, space.getNumCols());
+      Matrix tmp2 = new Matrix(1, space.getNumCols());
+      Matrix.extractRows(space, i, i + 1, tmp);
+      boolean unique = true;
+      for (int j = i + 1; j < space.getNumRows(); j++) {
+        Matrix.extractRows(space, j, j + 1, tmp2);
+        if (tmp.isEqualTo(tmp2)) {
+          unique = false;
+        }
+      }
+      if (unique) {
+        uniqueRows.add(tmp);
+      }
+    }
+
+    Comparator<Matrix> lexico = (mat1, mat2) -> {
+      for (int col = 0; col < mat1.getNumCols(); col++) {
+        int result = Integer.compare((int) mat1.get(0, col), (int) mat2.get(0, col));
+        if (result != 0) {
+          return result;
+        }
+      }
+      return 0;
+    };
+
+    uniqueRows.sort(lexico);
+    Matrix newSpace = new Matrix(uniqueRows.size(), uniqueRows.get(0).getNumCols());
+    // So that states with jobs in phase 1 comes earlier
+    for (int i = 0; i <uniqueRows.size(); i++) {
+      for (int j = 0; j < uniqueRows.get(0).getNumCols(); j++) {
+        newSpace.set(i, j, uniqueRows.get(i).get(0, j));
+      }
+    }
 
     return newSpace;
   }
+
 }
+
+

@@ -402,11 +402,11 @@ public class SN {
     				Matrix visits = sn.visits.get(c);
     				double res = 0;
     				int iIdx = (int) sn.stationToStateful.get(i);
-    				for(int col = 0; col < inchain.numCols; col++)
+    				for(int col = 0; col < inchain.getNumCols(); col++)
     					res += visits.get(iIdx, (int) inchain.get(0, col));
     				Vchain.set(i, c, res/visits.get((int) sn.stationToStateful.get((int)sn.refstat.get((int)inchain.get(0,0), 0)), (int)sn.refclass.get(0,c)));
     				//alpha(i,k) = alpha(i,k) + sn.visits{c}(i,k) / sum(sn.visits{c}(i,inchain));
-    				for(int col = 0; col < inchain.numCols; col++) {
+    				for(int col = 0; col < inchain.getNumCols(); col++) {
     					int k = (int)inchain.get(0, col);
     					alpha.set(i, k, alpha.get(i,k) + visits.get(i,k)/res);
     				}
@@ -418,14 +418,14 @@ public class SN {
     				double res1 = 0, res2 = 0;
     				int refIdx = (int) sn.stationToStateful.get((int) sn.refstat.get((int) inchain.get(0,0), 0));
     				int iIdx = (int) sn.stationToStateful.get(i);
-    				for(int col = 0; col < inchain.numCols; col++) {
+    				for(int col = 0; col < inchain.getNumCols(); col++) {
     					int idx = (int) inchain.get(0, col);
     					res1 += visits.get(iIdx, idx);
     					res2 += visits.get(refIdx, idx);
     				}
     				Vchain.set(i, c, res1/res2);
     				//alpha(i,k) = alpha(i,k) + sn.visits{c}(i,k) / sum(sn.visits{c}(i,inchain));
-    				for(int col = 0; col < inchain.numCols; col++) {
+    				for(int col = 0; col < inchain.getNumCols(); col++) {
     					int k = (int)inchain.get(0, col);
     					alpha.set(i, k, alpha.get(i,k) + visits.get(iIdx,k)/res1);
     				}
@@ -437,8 +437,8 @@ public class SN {
     	Vchain.apply(Double.NaN, 0, "equal");
     	for(int c = 0; c < C; c++) {
     		double val = Vchain.get((int) sn.refstat.get((int) sn.inchain.get(c).get(0,0), 0), c);
-    		for(int i = Vchain.col_idx[c]; i < Vchain.col_idx[c+1]; i++)
-    			Vchain.nz_values[i] /= val;
+    		for(int i = Vchain.getColIndexes()[c]; i < Vchain.getColIndexes()[c+1]; i++)
+    			Vchain.getNonZeroValues()[i] /= val;
     	}
     	alpha.apply(Double.POSITIVE_INFINITY, 0, "equal");
     	alpha.apply(Double.NaN, 0, "equal");
@@ -454,7 +454,7 @@ public class SN {
     		//Nchain(c) = sum(N(inchain)); isOpenChain = any(isinf(N(inchain)));
     		boolean isOpenChain = false;
     		double sum = 0;
-    		for(int col = 0; col < inchain.numCols; col++) {
+    		for(int col = 0; col < inchain.getNumCols(); col++) {
     			sum += N.get((int) inchain.get(0, col));
     			if(Double.isInfinite(sum)) {
     				isOpenChain = true;
@@ -467,7 +467,7 @@ public class SN {
     			sum = 0;
     			if (isOpenChain && i == sn.refstat.get((int) inchain.get(0,0),0)) {
     				//STchain(i,c) = 1 / sumfinite(sn.rates(i,inchain));
-    				for(int col = 0; col < inchain.numCols; col++) {
+    				for(int col = 0; col < inchain.getNumCols(); col++) {
     					double val = sn.rates.get(i, (int) inchain.get(0, col));
     					if (Double.isFinite(val))
     						sum += val;
@@ -475,7 +475,7 @@ public class SN {
     				STchain.set(i, c, 1/sum);
     			} else {
     				//STchain(i,c) = ST(i,inchain) * alpha(i,inchain)';
-        			for(int col = 0; col < inchain.numCols; col++) {
+        			for(int col = 0; col < inchain.getNumCols(); col++) {
         				int idx = (int) inchain.get(0, col);
         				sum += ST.get(i, idx) * alpha.get(i, idx);
         			}
@@ -484,7 +484,7 @@ public class SN {
     			Lchain.set(i, c, Vchain.get(i,c) * STchain.get(i,c));
     			//alphachain = sum(alpha(i,inchain(isfinite(SCV(i,inchain))))');
     			double alphachain = 0;
-    			for(int col = 0; col < inchain.numCols; col++) {
+    			for(int col = 0; col < inchain.getNumCols(); col++) {
     				int idx = (int) inchain.get(0, col);
     				double val = scv.get(i, idx);
     				if (Double.isFinite(val))
@@ -492,7 +492,7 @@ public class SN {
     			}
     			if (alphachain > 0) {
     				sum = 0;
-    				for(int col = 0; col < inchain.numCols; col++) {
+    				for(int col = 0; col < inchain.getNumCols(); col++) {
     					int idx = (int) inchain.get(0, col);
     					sum += scv.get(i, idx) * alpha.get(i, idx);
     				}
@@ -500,7 +500,7 @@ public class SN {
     			}
     		}
     		refstatchain.set(c, 0, sn.refstat.get((int) inchain.get(0,0), 0));
-    		for(int col = 1; col < inchain.numCols; col++) {
+    		for(int col = 1; col < inchain.getNumCols(); col++) {
     			int classIdx = (int) inchain.get(0, col);
     			if (sn.refstat.get(classIdx, 0) != refstatchain.get(c, 0))
     				throw new RuntimeException("Class have different reference station");
@@ -556,7 +556,7 @@ public class SN {
         		idxSink = nodeIter.getNodeIdx();
         }
         
-    	Matrix Vsinktmp = new Matrix(sn.nodevisits.get(0).numRows, sn.nodevisits.get(0).numCols);
+    	Matrix Vsinktmp = new Matrix(sn.nodevisits.get(0).getNumRows(), sn.nodevisits.get(0).getNumCols());
     	for(int i = 0; i < sn.nodevisits.size(); i++) {
     		Vsinktmp = Vsinktmp.add(1, sn.nodevisits.get(i));
     	}
@@ -564,9 +564,9 @@ public class SN {
     	for(int c = 0; c < sn.nchains; c++) {
     		Matrix inchain_c = sn.inchain.get(c);
 			double sum = 0;
-			for(int idx = 0; idx < inchain_c.numCols; idx++) 
+			for(int idx = 0; idx < inchain_c.getNumCols(); idx++) 
 				sum += sn.njobs.get((int) inchain_c.get(idx));
-    		for(int idx = 0; idx < inchain_c.numCols; idx++) {
+    		for(int idx = 0; idx < inchain_c.getNumCols(); idx++) {
     			int k = (int) inchain_c.get(0, idx);
     			if (Double.isInfinite(sum))
     				X.set(0, k, Xchain.get(0, c) * Vsink.get(0, k));

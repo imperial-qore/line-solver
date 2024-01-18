@@ -683,10 +683,10 @@ public class ClosingAndStateDepMethodsAnalyzer implements MethodAnalyzer {
       transitionMatrix.set(i,i,p);
     }
 
-    Matrix expandRate = new Matrix(1,rate.numCols * rate.numRows);
-    for (int i = 0; i < rate.numCols * rate.numRows; i++){
-      int r = i / rate.numCols;
-      int c = i % rate.numCols;
+    Matrix expandRate = new Matrix(1,rate.getNumCols() * rate.getNumRows());
+    for (int i = 0; i < rate.getNumCols() * rate.getNumRows(); i++){
+      int r = i / rate.getNumCols();
+      int c = i % rate.getNumCols();
       expandRate.set(0,i,rate.get(r,c));
     }
     transitionMatrix = transitionMatrix.elementMultWithVector(expandRate);

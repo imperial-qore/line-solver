@@ -33,10 +33,10 @@ public class RoutingMatrix implements Serializable {
 
     private Map<JobClass, Map<JobClass, Double>> routingMatrixToMap(Matrix classRouting) {
         Map<JobClass, Map<JobClass, Double>> csm = new HashMap<JobClass, Map<JobClass, Double>>();
-        int[] col_idx = classRouting.col_idx;
-        int[] nz_rows = classRouting.nz_rows;
-        double[] nz_values = classRouting.nz_values;
-        for (int colIdx = 0; colIdx < classRouting.numCols; colIdx++) {
+        int[] col_idx = classRouting.getColIndexes();
+        int[] nz_rows = classRouting.getNonZeroRows();
+        double[] nz_values = classRouting.getNonZeroValues();
+        for (int colIdx = 0; colIdx < classRouting.getNumCols(); colIdx++) {
             int col1 = col_idx[colIdx];
             int col2 = col_idx[colIdx + 1];
 
@@ -277,11 +277,11 @@ public class RoutingMatrix implements Serializable {
             for (int col = 0; col < nClasses; col++) {
                 Matrix nodeRouting = routings.get(row).get(col);
                 if (nodeRouting.getNonZeroLength() > 0) {
-                    int[] col_idx = nodeRouting.col_idx;
-                    int[] nz_rows = nodeRouting.nz_rows;
-                    double[] nz_values = nodeRouting.nz_values;
+                    int[] col_idx = nodeRouting.getColIndexes();
+                    int[] nz_rows = nodeRouting.getNonZeroRows();
+                    double[] nz_values = nodeRouting.getNonZeroValues();
 
-                    for (int colIdx = 0; colIdx < nodeRouting.numCols; colIdx++) {
+                    for (int colIdx = 0; colIdx < nodeRouting.getNumCols(); colIdx++) {
                         int col1 = col_idx[colIdx];
                         int col2 = col_idx[colIdx + 1];
 
@@ -300,7 +300,7 @@ public class RoutingMatrix implements Serializable {
             for (int j = 0; j < nNodes; j++) {
                 Matrix classRouting = csnodematrix.get(i).get(j);
                 Matrix res = classRouting.sumRows();
-                classRouting.divideRows(res.nz_values, 0);
+                classRouting.divideRows(res.getNonZeroValues(), 0);
                 for (int r = 0; r < nClasses; r++) {
                     if (res.get(r) == 0)
                         classRouting.set(r, r, 1.0);
@@ -378,11 +378,11 @@ public class RoutingMatrix implements Serializable {
         for (int r = 0; r < this.jobClasses.size(); r++) {
             Matrix routing = routings.get(r).get(r);
 
-            int[] col_idx = routing.col_idx;
-            int[] nz_rows = routing.nz_rows;
-            double[] nz_values = routing.nz_values;
+            int[] col_idx = routing.getColIndexes();
+            int[] nz_rows = routing.getNonZeroRows();
+            double[] nz_values = routing.getNonZeroValues();
 
-            for (int colIdx = 0; colIdx < routing.numCols; colIdx++) {
+            for (int colIdx = 0; colIdx < routing.getNumCols(); colIdx++) {
                 int col1 = col_idx[colIdx];
                 int col2 = col_idx[colIdx + 1];
 

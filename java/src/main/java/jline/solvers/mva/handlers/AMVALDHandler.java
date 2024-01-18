@@ -34,7 +34,7 @@ public class AMVALDHandler implements MVASolverHandler {
         int M = sn.nstations;
         int K = sn.nchains;
         double Nt = 0;
-        for(int col = 0; col < Nchain.numCols; col++) {
+        for(int col = 0; col < Nchain.getNumCols(); col++) {
             if (Double.isFinite(Nchain.get(0, col)))
                 Nt += Nchain.get(0, col);
         }
@@ -59,8 +59,8 @@ public class AMVALDHandler implements MVASolverHandler {
         }
 
         List<Integer> nnzclasses = new ArrayList<Integer>();
-        Matrix Xchain = new Matrix(1, STchain.numCols);
-        for(int r = 0; r < Nchain.numCols; r++) {
+        Matrix Xchain = new Matrix(1, STchain.getNumCols());
+        for(int r = 0; r < Nchain.getNumCols(); r++) {
             if (Double.isInfinite(Nchain.get(0, r)))
                 Xchain.set(0, r, 1.0/STchain.get((int) refstatchain.get(r,0), r));
             else
@@ -143,7 +143,7 @@ public class AMVALDHandler implements MVASolverHandler {
                             List<Integer> ocl = new ArrayList<Integer>();
                             List<Integer> ccl = new ArrayList<Integer>();
                             List<Integer> nnzclasses_s = new ArrayList<Integer>();
-                            for(int col = 0; col < Nchain_s.numCols; col++) {
+                            for(int col = 0; col < Nchain_s.getNumCols(); col++) {
                                 double val = Nchain_s.get(0, col);
                                 if (Double.isInfinite(val)) {
                                     count_inf++;
@@ -169,7 +169,7 @@ public class AMVALDHandler implements MVASolverHandler {
                                 double prio = sn.classprio.get(0, r);
                                 List<Integer> eprio_list = new ArrayList<Integer>();
                                 List<Integer> hprio_list = new ArrayList<Integer>();
-                                for(int i = 0; i < sn.classprio.numCols; i++) {
+                                for(int i = 0; i < sn.classprio.getNumCols(); i++) {
                                     if (Double.compare(prio, sn.classprio.get(0,i)) == 0)
                                         eprio_list.add(i);
                                     else if (Double.compare(prio, sn.classprio.get(0,i)) < 0)
@@ -204,7 +204,7 @@ public class AMVALDHandler implements MVASolverHandler {
                                     } else {
                                         if (Double.isInfinite(Nchain_s.get(0, r))){
                                             double val = 0;
-                                            for(int row = 0; row < Vchain.numRows; row++)
+                                            for(int row = 0; row < Vchain.getNumRows(); row++)
                                                 val += Vchain.get(row, r) * Wchain_s.get(row, r);
                                             Cchain_s.set(0, r, val);
                                         } else if (Nchain.get(0, r) == 0) {
@@ -212,7 +212,7 @@ public class AMVALDHandler implements MVASolverHandler {
                                             Cchain_s.remove(0, r);
                                         } else {
                                             double val = 0;
-                                            for(int row = 0; row < Vchain.numRows; row++)
+                                            for(int row = 0; row < Vchain.getNumRows(); row++)
                                                 val += Vchain.get(row, r) * Wchain_s.get(row, r);
                                             Cchain_s.set(0, r, val);
                                             Xchain_s.set(0, r, omicron * Nchain_s.get(0, r) / Cchain_s.get(0, r) + (1-omicron) * Xchain_s_1.get(0, r));
@@ -262,7 +262,7 @@ public class AMVALDHandler implements MVASolverHandler {
             List<Integer> ocl = new ArrayList<Integer>();
             List<Integer> ccl = new ArrayList<Integer>();
             List<Integer> nnzclasses_inner = new ArrayList<Integer>();
-            for(int col = 0; col < Nchain.numCols; col++) {
+            for(int col = 0; col < Nchain.getNumCols(); col++) {
                 double val = Nchain.get(0, col);
                 if (Double.isInfinite(val)) {
                     count_inf++;
@@ -288,7 +288,7 @@ public class AMVALDHandler implements MVASolverHandler {
                 double prio = sn.classprio.get(0, r);
                 List<Integer> eprio_list = new ArrayList<Integer>();
                 List<Integer> hprio_list = new ArrayList<Integer>();
-                for(int i = 0; i < sn.classprio.numCols; i++) {
+                for(int i = 0; i < sn.classprio.getNumCols(); i++) {
                     if (Double.compare(prio, sn.classprio.get(0,i)) == 0)
                         eprio_list.add(i);
                     else if (Double.compare(prio, sn.classprio.get(0,i)) < 0)
@@ -567,7 +567,7 @@ public class AMVALDHandler implements MVASolverHandler {
         }
 
         Matrix Wchain = new Matrix(M, K);
-        Matrix STeff = new Matrix(STchain_in.numRows, STchain_in.numCols);
+        Matrix STeff = new Matrix(STchain_in.getNumRows(), STchain_in.getNumCols());
         lldterm = lldterm.repmat(1, K);
         for(Integer r : nnzclasses) {
             for(int k = 0; k < M; k++) {
@@ -798,15 +798,15 @@ public class AMVALDHandler implements MVASolverHandler {
                             break;
 
                         //Uchain_r = Uchain_in ./ repmat(Xchain_in,M,1) .* (repmat(Xchain_in,M,1) + repmat(tau(r,:),M,1));
-                        Matrix Uchain_r = new Matrix(Uchain_in.numRows, Uchain_in.numCols);
-                        for(int i = 0; i < Uchain_in.numRows; i++) {
-                            for(int j = 0; j < Uchain_in.numCols; j++)
+                        Matrix Uchain_r = new Matrix(Uchain_in.getNumRows(), Uchain_in.getNumCols());
+                        for(int i = 0; i < Uchain_in.getNumRows(); i++) {
+                            for(int j = 0; j < Uchain_in.getNumCols(); j++)
                                 Uchain_r.set(i, j, (Uchain_in.get(i,j) / Xchain_in.get(0, j)) * (Xchain_in.get(0,j) + tau.get(r,j)));
                         }
 
                         Matrix Bk = new Matrix(1, K);
                         if (nservers.get(k,0) > 1) {
-                            Matrix deltaclass_r = new Matrix(Xchain_in.numRows, Xchain_in.numCols);
+                            Matrix deltaclass_r = new Matrix(Xchain_in.getNumRows(), Xchain_in.getNumCols());
                             deltaclass_r.fill(1.0);
                             deltaclass_r.set(0, r, deltaclass.get(0, r));
                             //Compute load: deltaclass_r .* Xchain_in .* Vchain_in(k,:) .* STeff(k,:)
@@ -874,9 +874,9 @@ public class AMVALDHandler implements MVASolverHandler {
                         if (STeff.get(k,r) <= 0)
                             break;
 
-                        Uchain_r = new Matrix(Uchain_in.numRows, Uchain_in.numCols);
-                        for(int i = 0; i < Uchain_in.numRows; i++) {
-                            for(int j = 0; j < Uchain_in.numCols; j++)
+                        Uchain_r = new Matrix(Uchain_in.getNumRows(), Uchain_in.getNumCols());
+                        for(int i = 0; i < Uchain_in.getNumRows(); i++) {
+                            for(int j = 0; j < Uchain_in.getNumCols(); j++)
                                 Uchain_r.set(i, j, (Uchain_in.get(i,j) / Xchain_in.get(0, j)) * (Xchain_in.get(0,j) + tau.get(r,j)));
                         }
 

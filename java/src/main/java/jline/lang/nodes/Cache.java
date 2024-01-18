@@ -49,7 +49,7 @@ public class Cache extends StatefulNode implements Serializable {
         this.schedPolicy = SchedStrategyType.NP;
         this.schedStrategy = SchedStrategy.FCFS;
         this.items = new ItemSet(model, name + "_Items", nitems, this);
-        this.nLevels = itemLevelCap.nz_length;
+        this.nLevels = itemLevelCap.getNonZeroLength();
         this.cap = Double.POSITIVE_INFINITY; // job capacity
         this.accessProb = null;
         this.itemLevelCap = itemLevelCap; // item capacity

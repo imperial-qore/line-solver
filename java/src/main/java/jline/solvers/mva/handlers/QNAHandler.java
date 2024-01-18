@@ -31,8 +31,8 @@ public class QNAHandler implements MVASolverHandler{
         Matrix V = Matrix.cellsum(sn.visits);
         Matrix Q = new Matrix(M,K,M*K);
         Matrix QN_1 = Q.clone();
-        for(int i=0;i<QN_1.numRows;i++){
-            for (int j=0;j<QN_1.numCols;j++){
+        for(int i=0;i<QN_1.getNumRows();i++){
+            for (int j=0;j<QN_1.getNumCols();j++){
                 QN_1.set(i,j,Double.POSITIVE_INFINITY);
             }
         }
