@@ -341,9 +341,9 @@ class SolverLNTest {
         assertSame(lqn.sched.get(3),SchedStrategy.REF);
         assertSame(lqn.sched.get(4),SchedStrategy.FCFS);
 
-        assertEquals(lqn.schedid.numCols,5);
-        assertEquals(lqn.schedid.numRows,1);
-        assertEquals(lqn.schedid.nz_length,4);
+        assertEquals(lqn.schedid.getNumCols(),5);
+        assertEquals(lqn.schedid.getNumRows(),1);
+        assertEquals(lqn.schedid.getNonZeroLength(),4);
         assertEquals(lqn.schedid.get(0,1),6);
         assertEquals(lqn.schedid.get(0,2),6);
         assertEquals(lqn.schedid.get(0,3),14);
@@ -373,25 +373,25 @@ class SolverLNTest {
         assertEquals(lqn.hashnames.get(9),"A:A3");
         assertEquals(lqn.hashnames.get(10),"A:A4");
 
-        assertEquals(lqn.mult.numRows,1);
-        assertEquals(lqn.mult.numCols,5);
-        assertEquals(lqn.mult.nz_length,4);
+        assertEquals(lqn.mult.getNumRows(),1);
+        assertEquals(lqn.mult.getNumCols(),5);
+        assertEquals(lqn.mult.getNonZeroLength(),4);
         assertEquals(lqn.mult.get(1),1);
         assertEquals(lqn.mult.get(2),1);
         assertEquals(lqn.mult.get(3),10);
         assertEquals(lqn.mult.get(4),1);
 
-        assertEquals(lqn.repl.numRows,1);
-        assertEquals(lqn.repl.numCols,5);
-        assertEquals(lqn.repl.nz_length,4);
+        assertEquals(lqn.repl.getNumRows(),1);
+        assertEquals(lqn.repl.getNumCols(),5);
+        assertEquals(lqn.repl.getNonZeroLength(),4);
         assertEquals(lqn.repl.get(1),1);
         assertEquals(lqn.repl.get(2),1);
         assertEquals(lqn.repl.get(3),1);
         assertEquals(lqn.repl.get(4),1);
 
-        assertEquals(lqn.type.numRows,1);
-        assertEquals(lqn.type.numCols,11);
-        assertEquals(lqn.type.nz_length,8);
+        assertEquals(lqn.type.getNumRows(),1);
+        assertEquals(lqn.type.getNumCols(),11);
+        assertEquals(lqn.type.getNonZeroLength(),8);
         assertEquals(lqn.type.get(3),1);
         assertEquals(lqn.type.get(4),1);
         assertEquals(lqn.type.get(5),2);
@@ -401,20 +401,20 @@ class SolverLNTest {
         assertEquals(lqn.type.get(9),3);
         assertEquals(lqn.type.get(10),3);
 
-        assertEquals(lqn.nitems.nz_length,0);
+        assertEquals(lqn.nitems.getNonZeroLength(),0);
 
         assertTrue(lqn.itemcap.isEmpty());
 
-        assertEquals(lqn.replacement.nz_length,0);
+        assertEquals(lqn.replacement.getNonZeroLength(),0);
 
         assertTrue(lqn.itemproc.isEmpty());
 
         assertEquals(lqn.calltype.size(),1);
         assertSame(lqn.calltype.get(1), CallType.SYNC);
 
-        assertEquals(lqn.callpair.numCols,3);
-        assertEquals(lqn.callpair.numRows,9);
-        assertEquals(lqn.callpair.nz_length,2);
+        assertEquals(lqn.callpair.getNumCols(),3);
+        assertEquals(lqn.callpair.getNumRows(),9);
+        assertEquals(lqn.callpair.getNonZeroLength(),2);
         assertEquals(lqn.callpair.get(1,1),8);
         assertEquals(lqn.callpair.get(1,2),6);
 
@@ -427,21 +427,21 @@ class SolverLNTest {
         assertEquals(lqn.callhashnames.size(),1);
         assertEquals(lqn.callhashnames.get(1),"A:A2=>E:E2");
 
-        assertEquals(lqn.actpretype.numRows,1);
-        assertEquals(lqn.actpretype.numCols,11);
-        assertEquals(lqn.actpretype.nz_length,2);
+        assertEquals(lqn.actpretype.getNumRows(),1);
+        assertEquals(lqn.actpretype.getNumCols(),11);
+        assertEquals(lqn.actpretype.getNonZeroLength(),2);
         assertEquals(lqn.actpretype.get(0,7),1);
         assertEquals(lqn.actpretype.get(0,9),1);
 
-        assertEquals(lqn.actposttype.numCols,11);
-        assertEquals(lqn.actposttype.numRows,1);
-        assertEquals(lqn.actposttype.nz_length,2);
+        assertEquals(lqn.actposttype.getNumCols(),11);
+        assertEquals(lqn.actposttype.getNumRows(),1);
+        assertEquals(lqn.actposttype.getNonZeroLength(),2);
         assertEquals(lqn.actposttype.get(0,8),11);
         assertEquals(lqn.actposttype.get(0,10),11);
 
-        assertEquals(lqn.graph.numRows,11);
-        assertEquals(lqn.graph.numCols,11);
-        assertEquals(lqn.graph.nz_length,9);
+        assertEquals(lqn.graph.getNumRows(),11);
+        assertEquals(lqn.graph.getNumCols(),11);
+        assertEquals(lqn.graph.getNonZeroLength(),9);
         assertEquals(lqn.graph.get(3,1),1);
         assertEquals(lqn.graph.get(4,2),1);
         assertEquals(lqn.graph.get(3,5),1);
@@ -452,9 +452,9 @@ class SolverLNTest {
         assertEquals(lqn.graph.get(6,9),1);
         assertEquals(lqn.graph.get(9,10),1);
 
-        assertEquals(lqn.parent.nz_length,8);
-        assertEquals(lqn.parent.numRows,1);
-        assertEquals(lqn.parent.numCols,11);
+        assertEquals(lqn.parent.getNonZeroLength(),8);
+        assertEquals(lqn.parent.getNumRows(),1);
+        assertEquals(lqn.parent.getNumCols(),11);
         assertEquals(lqn.parent.get(0,3),1);
         assertEquals(lqn.parent.get(0,4),2);
         assertEquals(lqn.parent.get(0,5),3);
@@ -464,35 +464,35 @@ class SolverLNTest {
         assertEquals(lqn.parent.get(0,9),4);
         assertEquals(lqn.parent.get(0,10),4);
 
-        assertEquals(lqn.replygraph.numCols,11);
-        assertEquals(lqn.replygraph.numRows,11);
-        assertEquals(lqn.replygraph.nz_length,2);
+        assertEquals(lqn.replygraph.getNumCols(),11);
+        assertEquals(lqn.replygraph.getNumRows(),11);
+        assertEquals(lqn.replygraph.getNonZeroLength(),2);
         assertEquals(lqn.replygraph.get(8,5),1);
         assertEquals(lqn.replygraph.get(10,6),1);
 
-        assertEquals(lqn.iscache.nz_length,0);
+        assertEquals(lqn.iscache.getNonZeroLength(),0);
 
-        assertEquals(lqn.iscaller.nz_length,4);
-        assertEquals(lqn.iscaller.numRows,11);
-        assertEquals(lqn.iscaller.numCols,11);
+        assertEquals(lqn.iscaller.getNonZeroLength(),4);
+        assertEquals(lqn.iscaller.getNumRows(),11);
+        assertEquals(lqn.iscaller.getNumCols(),11);
         assertEquals(lqn.iscaller.get(3,4),1);
         assertEquals(lqn.iscaller.get(8,4),1);
         assertEquals(lqn.iscaller.get(3,6),1);
         assertEquals(lqn.iscaller.get(8,6),1);
 
-        assertEquals(lqn.issynccaller.numCols,11);
-        assertEquals(lqn.issynccaller.numRows,11);
-        assertEquals(lqn.issynccaller.nz_length,4);
+        assertEquals(lqn.issynccaller.getNumCols(),11);
+        assertEquals(lqn.issynccaller.getNumRows(),11);
+        assertEquals(lqn.issynccaller.getNonZeroLength(),4);
         assertEquals(lqn.issynccaller.get(3,4),1);
         assertEquals(lqn.issynccaller.get(8,4),1);
         assertEquals(lqn.issynccaller.get(3,6),1);
         assertEquals(lqn.issynccaller.get(8,6),1);
 
-        assertEquals(lqn.isasynccaller.nz_length,0);
+        assertEquals(lqn.isasynccaller.getNonZeroLength(),0);
 
-        assertEquals(lqn.isref.numRows,1);
-        assertEquals(lqn.isref.nz_length,1);
-        assertEquals(lqn.isref.numCols,5);
+        assertEquals(lqn.isref.getNumRows(),1);
+        assertEquals(lqn.isref.getNonZeroLength(),1);
+        assertEquals(lqn.isref.getNumCols(),5);
         assertEquals(lqn.isref.get(0,3),1);
     }
 
@@ -536,7 +536,7 @@ class SolverLNTest {
         assertEquals(network1.getConnectionMatrix().get(0,3),1);
         assertEquals(network1.getConnectionMatrix().get(1,4),1);
         assertEquals(network1.getConnectionMatrix().get(1,5),1);
-        assertEquals(network1.getConnectionMatrix().nz_length,8);
+        assertEquals(network1.getConnectionMatrix().getNonZeroLength(),8);
 
         // test the node types
         for(int i=2;i<network1.getNumberOfNodes();i++){
@@ -599,7 +599,7 @@ class SolverLNTest {
         assertEquals(network2.getConnectionMatrix().get(3,1),1);
         assertEquals(network2.getConnectionMatrix().get(0,2),1);
         assertEquals(network2.getConnectionMatrix().get(0,3),1);
-        assertEquals(network2.getConnectionMatrix().nz_length,5);
+        assertEquals(network2.getConnectionMatrix().getNonZeroLength(),5);
 
         // test the node types
         for(int i=2;i<network2.getNumberOfNodes();i++){

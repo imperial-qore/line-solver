@@ -484,7 +484,7 @@ public abstract class NetworkSolver extends Solver {
                 for (int k = 0; k < K; k++) {
                     // if (QN.get(i, k) + UN.get(i, k) + RN.get(i, k) + TN.get(i, k) > 0) {
                     int c = -1;
-                    for (int row = 0; row < sn.chains.numRows; row++) {
+                    for (int row = 0; row < sn.chains.getNumRows(); row++) {
                         if (sn.chains.get(row, k) > 0) {
                             c = row;
                             break;
@@ -508,7 +508,7 @@ public abstract class NetworkSolver extends Solver {
                         } else {
                             double sum = 0;
                             int row = (int) sn.refstat.get(k);
-                            for (int col = 0; col < sn.chains.numCols; col++) {
+                            for (int col = 0; col < sn.chains.getNumCols(); col++) {
                                 if (sn.chains.get(c, col) > 0) sum += V.get(row, col);
                             }
                             Residval.add(RN.get(i, k) * V.get(i, k) / sum);

@@ -20,37 +20,39 @@ import org.jblas.DoubleMatrix;
 /**
  * A sparse matrix data structure supporting linear algebra functions similar to those available in MATLAB.
  */
-public class Matrix extends DMatrixSparseCSC {
+public class Matrix {
+
+	public DMatrixSparseCSC data;
 
 	public Matrix(double scalar) {
-		super(1, 1, 1);
+		data = new DMatrixSparseCSC(1, 1, 1);
 		this.set(0,0,scalar);
 	}
 
 	public Matrix(int numRows, int numCols, int arrayLength) {
-		super(numRows, numCols, arrayLength);
+		data = new DMatrixSparseCSC(numRows, numCols, arrayLength);
 	}
 
 	public Matrix(int numRows, int numCols) {
-		super(numRows, numCols, 0);
+		data = new DMatrixSparseCSC(numRows, numCols, 0);
 	}
 
 	public Matrix(Matrix matrix) {
-		super(matrix.copy());
+		data = new DMatrixSparseCSC(matrix.data.copy());
 	}
 
 	public Matrix(DMatrixSparseCSC matrix) {
-		super(matrix);
+		data = new DMatrixSparseCSC(matrix);
 	}
 
 	public Matrix(List<Double> array) {
-		super(array.size(), 1, array.size());
+		data = new DMatrixSparseCSC(array.size(), 1, array.size());
 		for(int i = 0; i < array.size(); i++)
 			this.set(i, 0, (double) array.get(i));
 	}
 
 	public Matrix(SimpleMatrix matrix) {
-		super(matrix.numRows(), matrix.numCols());
+		data = new DMatrixSparseCSC(matrix.numRows(), matrix.numCols());
 		for (int i = 0; i < matrix.numRows(); i++) {
 			for (int j = 0; j < matrix.numCols(); j++) {
 				this.set(i, j, matrix.get(i, j));
@@ -162,6 +164,74 @@ public class Matrix extends DMatrixSparseCSC {
 		return (a + Math.log1p(s));
 	}
 
+	public int getNumCols(){
+		return data.getNumCols();
+	}
+
+	public int getNumElements(){
+		return data.getNumElements();
+	}
+
+	public int getNumRows(){
+		return data.getNumRows();
+	}
+
+	public int[] getNonZeroRows() {
+		return data.nz_rows;
+	}
+
+	public double[] getNonZeroValues() {
+		return data.nz_values;
+	}
+
+	public int getNonZeroLength() {
+		return data.getNonZeroLength();
+	}
+
+	public void reshape(int numRows, int numCols){
+		data.reshape(numRows, numCols);
+	}
+
+	public int[] getColIndexes(){
+		return data.col_idx;
+	}
+
+	public void setTo(Matrix m){
+		data.setTo(m.data);
+	}
+
+	public void growMaxColumns(int newmax, boolean preserve) {
+		data.growMaxColumns(newmax, preserve);
+	}
+
+	public void growMaxLength(int newmax, boolean preserve) {
+		data.growMaxLength(newmax, preserve);
+	}
+
+	public void shrinkNumCols(int newmax) {
+		data.numCols = newmax;
+	}
+
+	public void shrinkNumRows(int newmax) {
+		data.numRows = newmax;
+	}
+
+	public boolean isAssigned(int row, int col){
+		return data.isAssigned(row, col);
+	}
+
+	public void unsafe_set(int row, int col, double val) {
+		data.unsafe_set(row,col,val);
+	}
+
+	public void printNonZero() {
+		data.printNonZero();
+	}
+
+	public void reshape(int numRows, int numCols, int arrayLength){
+		data.reshape(numRows, numCols, arrayLength);
+	}
+
 	public static Matrix decorate(Matrix inSpace1, Matrix inSpace2) {
 
 	  // TODO: upfront if clause for 1 parameter, lines 7 to 14
@@ -209,10 +279,10 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public Matrix inv() {
-		DMatrixRMaj inverse = new DMatrixRMaj(this.numRows, this.numCols);
-		Matrix thisinverse = new Matrix(this.numRows, this.numCols);
-		CommonOps_DSCC.invert(this,inverse);
-		DConvertMatrixStruct.convert(inverse,thisinverse);
+		DMatrixRMaj inverse = new DMatrixRMaj(this.data.numRows, this.data.numCols);
+		Matrix thisinverse = new Matrix(this.data.numRows, this.data.numCols);
+		CommonOps_DSCC.invert(this.data,inverse);
+		DConvertMatrixStruct.convert(inverse,thisinverse.data);
 		return thisinverse;
 	}
 
@@ -248,11 +318,11 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public DMatrixSparseCSC toDMatrixSparseCSC() {
-		return this.copy();
+		return this.data.copy();
 	}
 
 	public DMatrixSparseCSC toDMatrixSparseCSC(Matrix matrix) {
-		return matrix.copy();
+		return matrix.data.copy();
 	}
 
 	public void expandMatrix(int rows, int cols, int nz_length) {
@@ -261,32 +331,32 @@ public class Matrix extends DMatrixSparseCSC {
 		}
 
 		DMatrixSparseTriplet nodeRouting = new DMatrixSparseTriplet(rows, cols, nz_length);
-		for(int colIdx = 0; colIdx < this.numCols; colIdx++) {
-			int col1 = this.col_idx[colIdx];
-			int col2 = this.col_idx[colIdx+1];
+		for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {
+			int col1 = data.col_idx[colIdx];
+			int col2 = data.col_idx[colIdx+1];
 
 			for(int i = col1; i < col2; i++) {
-				int rowIdx = this.nz_rows[i];
-				double value = this.nz_values[i];
+				int rowIdx = data.nz_rows[i];
+				double value = data.nz_values[i];
 				nodeRouting.addItem(rowIdx, colIdx, value);
 			}
 		}
-		this.setTo(DConvertMatrixStruct.convert(nodeRouting, (DMatrixSparseCSC)null));
+		data.setTo(DConvertMatrixStruct.convert(nodeRouting, (DMatrixSparseCSC)null));
 	}
 
 	public boolean isDiag() {
-		if (this.numCols != this.numRows)
+		if (data.numCols != data.numRows)
 			return false;
 
-		if (this.getNonZeroLength() != this.numCols)
+		if (data.getNonZeroLength() != data.numCols)
 			return false;
 
-		for(int colIdx = 0; colIdx < this.numCols; colIdx++) {
-			int col1 = this.col_idx[colIdx];
-			int col2 = this.col_idx[colIdx+1];
+		for(int colIdx = 0; colIdx < data.numCols; colIdx++) {
+			int col1 = data.col_idx[colIdx];
+			int col2 = data.col_idx[colIdx+1];
 
 			for(int i = col1; i < col2; i++) {
-				int rowIdx = this.nz_rows[i];
+				int rowIdx = data.nz_rows[i];
 				if (rowIdx != colIdx)
 					return false;
 			}
@@ -300,25 +370,30 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public boolean hasNaN() {
-		for(int i = 0; i < this.nz_length; i++) {
-			if (Double.isNaN(this.nz_values[i]))
+		for(int i = 0; i < this.data.nz_length; i++) {
+			if (Double.isNaN(this.data.nz_values[i]))
 				return true;
 		}
 		return false;
 	}
 
+	public double get(int i, int j) {
+		return data.get(i,j);
+	}
+
+	// get(i,j) is inherited from the data = new DMatrixSparseCSCclass
 	public double get(int idx) {
-		if (idx >= this.numCols * this.numRows)
+		if (idx >= this.data.numCols * this.data.numRows)
 			throw new RuntimeException("Index out of matrix");
 
 		int row = idx % this.getNumRows();
 		int col = idx / this.getNumRows();
 
-		return super.get(row, col);
+		return data.get(row, col);
 	}
 
 	public void set(int idx, double val) {
-		if (idx >= this.numCols * this.numRows)
+		if (idx >= this.data.numCols * this.data.numRows)
 			throw new RuntimeException("Index out of matrix");
 
 		int row = idx % this.getNumRows();
@@ -328,20 +403,20 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public void set(int row, int col, double val) {
-		super.set(row, col, val);
+		data.set(row, col, val);
 
 		//This to ensure the value NaN is replaced
 		if (val == 0)
-			super.remove(row, col); //Remove to ensure that getNonZeroElement not contains the value with 0
+			data.remove(row, col); //Remove to ensure that getNonZeroElement not contains the value with 0
 	}
 
 	public Matrix cumsumViaRow() {
-		Matrix res = new Matrix(this.numRows, this.numCols, this.numRows * this.numCols);
-		for(int i = 0; i < this.numRows; i++)
+		Matrix res = new Matrix(this.data.numRows, this.data.numCols, this.data.numRows * this.data.numCols);
+		for(int i = 0; i < this.data.numRows; i++)
 			res.set(i, 0, this.get(i, 0));
 
-		for(int i = 0; i < this.numRows; i++) {
-			for(int j = 1; j < this.numCols; j++) {
+		for(int i = 0; i < this.data.numRows; i++) {
+			for(int j = 1; j < this.data.numCols; j++) {
 				res.set(i, j, this.get(i, j) + res.get(i, j-1));
 			}
 		}
@@ -349,12 +424,12 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public Matrix cumsumViaCol() {
-		Matrix res = new Matrix(this.numRows, this.numCols, this.numRows * this.numCols);
-		for(int i = 0; i < this.numCols; i++)
+		Matrix res = new Matrix(this.data.numRows, this.data.numCols, this.data.numRows * this.data.numCols);
+		for(int i = 0; i < this.data.numCols; i++)
 			res.set(0, i, this.get(0, i));
 
-		for(int i = 0; i < this.numCols; i++) {
-			for(int j = 1; j < this.numRows; j++) {
+		for(int i = 0; i < this.data.numCols; i++) {
+			for(int j = 1; j < this.data.numRows; j++) {
 				res.set(j, i, this.get(j, i) + res.get(j-1, i));
 			}
 		}
@@ -363,28 +438,28 @@ public class Matrix extends DMatrixSparseCSC {
 
 	public double sumRows(int row) {
 		double sum = 0;
-		for(int i = 0; i < this.numCols; i++) {
+		for(int i = 0; i < this.data.numCols; i++) {
 			sum += this.get(row, i);
 		}
 		return sum;
 	}
 
 	public Matrix sumRows() {
-		DMatrixRMaj sumrows = CommonOps_DSCC.sumRows(this, null);
+		DMatrixRMaj sumrows = CommonOps_DSCC.sumRows(this.data, null);
 		DMatrixSparseCSC tmp = new DMatrixSparseCSC(0,0);
 		DConvertMatrixStruct.convert(sumrows, tmp);
 		return new Matrix(tmp);
 	}
 	public double sumCols(int col) {
 		double sum = 0;
-		for(int i = 0; i < this.numRows; i++) {
+		for(int i = 0; i < this.data.numRows; i++) {
 			sum += this.get(i, col);
 		}
 		return sum;
 	}
 
 	public Matrix sumCols() {
-		DMatrixRMaj sumcols = CommonOps_DSCC.sumCols(this, null);
+		DMatrixRMaj sumcols = CommonOps_DSCC.sumCols(this.data, null);
 		DMatrixSparseCSC tmp = new DMatrixSparseCSC(0,0);
 		DConvertMatrixStruct.convert(sumcols, tmp);
 		return new Matrix(tmp);
@@ -392,7 +467,7 @@ public class Matrix extends DMatrixSparseCSC {
 
 	public double sumAbsCols(int col) {
 		double sum = 0;
-		for(int i = 0; i < this.numRows; i++) {
+		for(int i = 0; i < this.data.numRows; i++) {
 			sum += Math.abs(this.get(i, col));
 		}
 		return sum;
@@ -400,7 +475,7 @@ public class Matrix extends DMatrixSparseCSC {
 
 	public double sumAbsRows(int row) {
 		double sum = 0;
-		for(int i = 0; i < this.numRows; i++) {
+		for(int i = 0; i < this.data.numRows; i++) {
 			sum += Math.abs(this.get(row,i));
 		}
 		return sum;
@@ -410,27 +485,27 @@ public class Matrix extends DMatrixSparseCSC {
 		Matrix res = this.clone();
 		for(int i = 1; i < rows; i++) {
 			Matrix tmp = new Matrix(0,0,0);
-			CommonOps_DSCC.concatRows(res, this, tmp);
+			CommonOps_DSCC.concatRows(res.data, this.data, tmp.data);
 			res = tmp;
 		}
 		for(int i = 1; i < cols; i++) {
 			Matrix tmp = new Matrix(0,0,0);
-			CommonOps_DSCC.concatColumns(res, res, tmp);
+			CommonOps_DSCC.concatColumns(res.data, res.data, tmp.data);
 			res = tmp;
 		}
 		return res;
 	}
 
 	public Matrix find() {
-		Matrix res = new Matrix(this.nz_length, 1, this.nz_length);
+		Matrix res = new Matrix(this.data.nz_length, 1, this.data.nz_length);
 		int count = 0;
-		for(int colIdx = 0; colIdx < this.numCols; colIdx++) {
-			int col1 = this.col_idx[colIdx];
-			int col2 = this.col_idx[colIdx+1];
+		for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {
+			int col1 = data.col_idx[colIdx];
+			int col2 = data.col_idx[colIdx+1];
 
 			for(int i = col1; i < col2; i++) {
-				int rowIdx = this.nz_rows[i];
-				res.set(count++, 0, colIdx * this.numRows + rowIdx);
+				int rowIdx = data.nz_rows[i];
+				res.set(count++, 0, colIdx * this.data.numRows + rowIdx);
 			}
 		}
 		return res;
@@ -438,10 +513,10 @@ public class Matrix extends DMatrixSparseCSC {
 
 	public Matrix findNonNegative() {
 		List<Integer> array = new ArrayList<Integer>();
-		for(int colIdx = 0; colIdx < this.numCols; colIdx++) {
-			for(int rowIdx = 0; rowIdx < this.numRows; rowIdx++) {
+		for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {
+			for(int rowIdx = 0; rowIdx < this.data.numRows; rowIdx++) {
 				if (this.get(rowIdx, colIdx) >= 0)
-					array.add(colIdx * this.numRows + rowIdx);
+					array.add(colIdx * this.data.numRows + rowIdx);
 			}
 		}
 
@@ -454,7 +529,7 @@ public class Matrix extends DMatrixSparseCSC {
 	// find unique elements in the given row
 	public Matrix uniqueInRow(int rowIdx) {
 		List<Integer> array = new ArrayList<Integer>();
-		for(int colIdx = 0; colIdx < this.numCols; colIdx++) {
+		for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {
 			array.add((int)this.get(rowIdx,colIdx));
 		}
 
@@ -468,7 +543,7 @@ public class Matrix extends DMatrixSparseCSC {
 	// find unique elements in the given row
 	public Matrix uniqueNonZerosInRow(int rowIdx) {
 		List<Integer> array = new ArrayList<Integer>();
-		for(int colIdx = 0; colIdx < this.numCols; colIdx++) {
+		for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {
 			int val = (int) this.get(rowIdx,colIdx);
 			if (val != 0) {
 				array.add(val);
@@ -485,7 +560,7 @@ public class Matrix extends DMatrixSparseCSC {
 	// find unique elements in the given row
 	public Matrix uniqueNonNegativeInRow(int rowIdx) {
 		List<Integer> array = new ArrayList<Integer>();
-		for(int colIdx = 0; colIdx < this.numCols; colIdx++) {
+		for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {
 			int val = (int) this.get(rowIdx,colIdx);
 			if (val >0) {
 				array.add(val);
@@ -502,7 +577,7 @@ public class Matrix extends DMatrixSparseCSC {
 	// find unique elements in the given row
 	public Matrix uniqueInCol(int colIdx) {
 		List<Integer> array = new ArrayList<Integer>();
-		for(int rowIdx = 0; rowIdx < this.numRows; rowIdx++) {
+		for(int rowIdx = 0; rowIdx < this.data.numRows; rowIdx++) {
 			array.add((int) this.get(rowIdx,colIdx));
 		}
 
@@ -516,7 +591,7 @@ public class Matrix extends DMatrixSparseCSC {
 	// find unique elements in the given row
 	public Matrix uniqueNonZerosInCol(int colIdx) {
 		List<Integer> array = new ArrayList<Integer>();
-		for(int rowIdx = 0; rowIdx < this.numRows; rowIdx++) {
+		for(int rowIdx = 0; rowIdx < this.data.numRows; rowIdx++) {
 			int val = (int) this.get(rowIdx,colIdx);
 			if (val != 0) {
 				array.add(val);
@@ -533,7 +608,7 @@ public class Matrix extends DMatrixSparseCSC {
 	// find unique elements in the given row
 	public Matrix uniqueNonNegativeInCol(int colIdx) {
 		List<Integer> array = new ArrayList<Integer>();
-		for(int rowIdx = 0; rowIdx < this.numRows; rowIdx++) {
+		for(int rowIdx = 0; rowIdx < this.data.numRows; rowIdx++) {
 			int val = (int) this.get(rowIdx,colIdx);
 			if (val >0) {
 				array.add(val);
@@ -549,11 +624,11 @@ public class Matrix extends DMatrixSparseCSC {
 
 	public int count(double val) {
 		if (val == 0) {
-			return this.getNumCols() * this.getNumRows() - this.getNonZeroLength();
+			return this.getNumCols() * this.getNumRows() - data.getNonZeroLength();
 		} else {
 			int res = 0;
-			for(int i = 0; i < this.nz_length; i++) {
-				if (this.nz_values[i] == val)
+			for(int i = 0; i < this.data.nz_length; i++) {
+				if (this.data.nz_values[i] == val)
 					res++;
 			}
 			return res;
@@ -561,14 +636,14 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public Matrix countEachRow(double val) {
-		Matrix res = new Matrix(this.numRows, 1);
-		for(int colIdx = 0; colIdx < this.numCols; colIdx++) {
-			int col1 = this.col_idx[colIdx];
-			int col2 = this.col_idx[colIdx+1];
+		Matrix res = new Matrix(this.data.numRows, 1);
+		for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {
+			int col1 = data.col_idx[colIdx];
+			int col2 = data.col_idx[colIdx+1];
 
 			for(int i = col1; i < col2; i++) {
-				if (this.nz_values[i] == val) {
-					int rowIdx = this.nz_rows[i];
+				if (this.data.nz_values[i] == val) {
+					int rowIdx = data.nz_rows[i];
 					res.set(rowIdx, 0, res.get(rowIdx,0) + 1);
 				}
 			}
@@ -586,53 +661,53 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public int length() {
-		return Math.max(numRows, numCols);
+		return Math.max(data.numRows, data.numCols);
 	}
 
 	public void abs() {
-		for(int i = 0; i < nz_length; i++) {
-			this.nz_values[i] = Math.abs(this.nz_values[i]);
+		for(int i = 0; i < data.nz_length; i++) {
+			this.data.nz_values[i] = Math.abs(this.data.nz_values[i]);
 		}
 	}
 
 	public void removeNegative() {
 		int offset = 0;
-		for (int i = 0; i < this.numCols; i++) {
-			int idx0 = this.col_idx[i] + offset;
-			int idx1 = this.col_idx[i + 1];
+		for (int i = 0; i < this.data.numCols; i++) {
+			int idx0 = data.col_idx[i] + offset;
+			int idx1 = data.col_idx[i + 1];
 
 			for (int j = idx0; j < idx1; j++) {
-				double val = this.nz_values[j];
+				double val = this.data.nz_values[j];
 				if (val > 0) {
-					this.nz_rows[j - offset] = this.nz_rows[j];
-					this.nz_values[j - offset] = val;
+					data.nz_rows[j - offset] = data.nz_rows[j];
+					this.data.nz_values[j - offset] = val;
 				} else {
 					offset++;
 				}
 			}
-			this.col_idx[i + 1] -= offset;
+			data.col_idx[i + 1] -= offset;
 		}
-		this.nz_length -= offset;
+		this.data.nz_length -= offset;
 	}
 
 	public void removeInfinity() {
 		int offset = 0;
-		for (int i = 0; i < this.numCols; i++) {
-			int idx0 = this.col_idx[i] + offset;
-			int idx1 = this.col_idx[i + 1];
+		for (int i = 0; i < this.data.numCols; i++) {
+			int idx0 = data.col_idx[i] + offset;
+			int idx1 = data.col_idx[i + 1];
 
 			for (int j = idx0; j < idx1; j++) {
-				double val = this.nz_values[j];
+				double val = this.data.nz_values[j];
 				if (Double.isFinite(val)) {
-					this.nz_rows[j - offset] = this.nz_rows[j];
-					this.nz_values[j - offset] = val;
+					data.nz_rows[j - offset] = data.nz_rows[j];
+					this.data.nz_values[j - offset] = val;
 				} else {
 					offset++;
 				}
 			}
-			this.col_idx[i + 1] -= offset;
+			data.col_idx[i + 1] -= offset;
 		}
-		this.nz_length -= offset;
+		this.data.nz_length -= offset;
 	}
 
 
@@ -641,26 +716,26 @@ public class Matrix extends DMatrixSparseCSC {
 			return;
 
 		int offset = 0;
-		for (int i = 0; i < this.numCols; i++) {
-			int idx0 = this.col_idx[i] + offset;
-			int idx1 = this.col_idx[i + 1];
+		for (int i = 0; i < this.data.numCols; i++) {
+			int idx0 = data.col_idx[i] + offset;
+			int idx1 = data.col_idx[i + 1];
 
 			for (int j = idx0; j < idx1; j++) {
-				double val = this.nz_values[j];
+				double val = this.data.nz_values[j];
 				if (!Double.isNaN(val)) {
-					this.nz_rows[j - offset] = this.nz_rows[j];
-					this.nz_values[j - offset] = val;
+					data.nz_rows[j - offset] = data.nz_rows[j];
+					this.data.nz_values[j - offset] = val;
 				} else {
 					offset++;
 				}
 			}
-			this.col_idx[i + 1] -= offset;
+			data.col_idx[i + 1] -= offset;
 		}
-		this.nz_length -= offset;
+		this.data.nz_length -= offset;
 	}
 
 	public boolean isEmpty() {
-		return (this.numCols == 0 || this.numRows == 0);
+		return (this.data.numCols == 0 || this.data.numRows == 0);
 	}
 
 	public void apply(double source, double target, String op) {
@@ -669,42 +744,42 @@ public class Matrix extends DMatrixSparseCSC {
 			case "equal":
 				if (Math.abs(source - 0) < tol) {
 					if (Math.abs(target - 0) < tol) return;
-					for(int i = 0; i < this.numRows; i++) {
-						for(int j = 0; j < this.numCols; j++) {
+					for(int i = 0; i < this.data.numRows; i++) {
+						for(int j = 0; j < this.data.numCols; j++) {
 							if (Math.abs(this.get(i,j) - 0) < tol)
-								super.set(i, j, target);
+								data.set(i, j, target);
 						}
 					}
 				} else if (Double.isNaN(source)) {
-					for(int colIdx = 0; colIdx < this.numCols; colIdx++) {
-						int col1 = this.col_idx[colIdx];
-						int col2 = this.col_idx[colIdx+1];
+					for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {
+						int col1 = data.col_idx[colIdx];
+						int col2 = data.col_idx[colIdx+1];
 
 						for(int i = col1; i < col2; i++) {
-							if (Double.isNaN(this.nz_values[i])) {
-								super.set(this.nz_rows[i], colIdx, target);
+							if (Double.isNaN(this.data.nz_values[i])) {
+								data.set(data.nz_rows[i], colIdx, target);
 							}
 						}
 					}
 				} else if (Double.isInfinite(source)) {
-					for(int colIdx = 0; colIdx < this.numCols; colIdx++) {
-						int col1 = this.col_idx[colIdx];
-						int col2 = this.col_idx[colIdx+1];
+					for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {
+						int col1 = data.col_idx[colIdx];
+						int col2 = data.col_idx[colIdx+1];
 
 						for(int i = col1; i < col2; i++) {
-							if (Double.isInfinite(this.nz_values[i])) {
-								super.set(this.nz_rows[i], colIdx, target);
+							if (Double.isInfinite(this.data.nz_values[i])) {
+								data.set(data.nz_rows[i], colIdx, target);
 							}
 						}
 					}
 				} else {
-					for(int colIdx = 0; colIdx < this.numCols; colIdx++) {
-						int col1 = this.col_idx[colIdx];
-						int col2 = this.col_idx[colIdx+1];
+					for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {
+						int col1 = data.col_idx[colIdx];
+						int col2 = data.col_idx[colIdx+1];
 
 						for(int i = col1; i < col2; i++) {
-							if (Math.abs(this.nz_values[i] - source) < tol){
-								super.set(this.nz_rows[i], colIdx, target);
+							if (Math.abs(this.data.nz_values[i] - source) < tol){
+								data.set(data.nz_rows[i], colIdx, target);
 							}
 						}
 					}
@@ -712,38 +787,38 @@ public class Matrix extends DMatrixSparseCSC {
 				break;
 			case "notequal":
 				if (Math.abs(source - 0) < tol) {
-					if (Math.abs(target - 0) < tol) this.zero();
-					for(int colIdx = 0; colIdx < this.numCols; colIdx++) {
-						int col1 = this.col_idx[colIdx];
-						int col2 = this.col_idx[colIdx+1];
+					if (Math.abs(target - 0) < tol) this.data.zero();
+					for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {
+						int col1 = data.col_idx[colIdx];
+						int col2 = data.col_idx[colIdx+1];
 
 						for(int i = col1; i < col2; i++) {
-							if ((Math.abs(this.nz_values[i] - 0) >= tol) || (Double.isNaN(this.nz_values[i]))) {
-								super.set(this.nz_rows[i], colIdx, target);
+							if ((Math.abs(this.data.nz_values[i] - 0) >= tol) || (Double.isNaN(this.data.nz_values[i]))) {
+								data.set(data.nz_rows[i], colIdx, target);
 							}
 						}
 					}
 				} else if (Double.isNaN(source)) {
-					for(int row = 0; row < this.numRows; row++) {
-						for(int col = 0; col < this.numCols; col++) {
+					for(int row = 0; row < this.data.numRows; row++) {
+						for(int col = 0; col < this.data.numCols; col++) {
 							if (!Double.isNaN(this.get(row, col))) {
-								super.set(row, col, target);
+								data.set(row, col, target);
 							}
 						}
 					}
 				} else if (Double.isInfinite(source)) {
-					for(int row = 0; row < this.numRows; row++) {
-						for(int col = 0; col < this.numCols; col++) {
+					for(int row = 0; row < this.data.numRows; row++) {
+						for(int col = 0; col < this.data.numCols; col++) {
 							if (!Double.isInfinite(this.get(row, col))) {
-								super.set(row, col, target);
+								data.set(row, col, target);
 							}
 						}
 					}
 				} else {
-					for(int row = 0; row < this.numRows; row++) {
-						for(int col = 0; col < this.numCols; col++) {
+					for(int row = 0; row < this.data.numRows; row++) {
+						for(int col = 0; col < this.data.numCols; col++) {
 							if ((Math.abs(this.get(row, col) - source) >= tol) || (Double.isNaN(this.get(row, col)))) {
-								super.set(row, col, target);
+								data.set(row, col, target);
 							}
 						}
 					}
@@ -751,10 +826,10 @@ public class Matrix extends DMatrixSparseCSC {
 				break;
 			case "great":
 				if (Math.abs(source - 0) < tol) {
-					for(int i = 0; i < this.numRows; i++) {
-						for(int j = 0; j < this.numCols; j++) {
+					for(int i = 0; i < this.data.numRows; i++) {
+						for(int j = 0; j < this.data.numCols; j++) {
 							if (Math.abs(this.get(i,j) - 0) >= tol && Double.compare(this.get(i,j), 0) > 0) {
-								super.set(i, j, target);
+								data.set(i, j, target);
 							}
 						}
 					}
@@ -763,10 +838,10 @@ public class Matrix extends DMatrixSparseCSC {
 				} else if (Double.isInfinite(source)) {
 					throw new RuntimeException("Cannot compare with Infinite");
 				} else {
-					for (int row = 0; row < this.numRows; row++) {
-						for(int col = 0; col < this.numCols; col++) {
+					for (int row = 0; row < this.data.numRows; row++) {
+						for(int col = 0; col < this.data.numCols; col++) {
 							if (Math.abs(this.get(row, col) - source) >= tol && Double.compare(this.get(row, col), source) > 0) {
-								super.set(row, col, target);
+								data.set(row, col, target);
 							}
 						}
 					}
@@ -774,11 +849,11 @@ public class Matrix extends DMatrixSparseCSC {
 				break;
 			case "greatequal":
 				if (Math.abs(source - 0) < tol) {
-					for(int i = 0; i < this.numRows; i++) {
-						for(int j = 0; j < this.numCols; j++) {
+					for(int i = 0; i < this.data.numRows; i++) {
+						for(int j = 0; j < this.data.numCols; j++) {
 							if ((Math.abs(this.get(i,j) - 0) < tol) ||
 											(Math.abs(this.get(i,j) - 0) >= tol && Double.compare(this.get(i,j), 0) > 0)) {
-								super.set(i, j, target);
+								data.set(i, j, target);
 							}
 						}
 					}
@@ -787,11 +862,11 @@ public class Matrix extends DMatrixSparseCSC {
 				} else if (Double.isInfinite(source)) {
 					throw new RuntimeException("Cannot compare with Infinite");
 				} else {
-					for (int row = 0; row < this.numRows; row++) {
-						for(int col = 0; col < this.numCols; col++) {
+					for (int row = 0; row < this.data.numRows; row++) {
+						for(int col = 0; col < this.data.numCols; col++) {
 							if ((Math.abs(this.get(row, col) - source) < tol) ||
 											(Math.abs(this.get(row, col) - source) >= tol && Double.compare(this.get(row, col), source) > 0)) {
-								super.set(row, col, target);
+								data.set(row, col, target);
 							}
 						}
 					}
@@ -799,10 +874,10 @@ public class Matrix extends DMatrixSparseCSC {
 				break;
 			case "less":
 				if (Math.abs(source - 0) < tol) {
-					for(int i = 0; i < this.numRows; i++) {
-						for(int j = 0; j < this.numCols; j++) {
+					for(int i = 0; i < this.data.numRows; i++) {
+						for(int j = 0; j < this.data.numCols; j++) {
 							if (Math.abs(this.get(i,j) - 0) >= tol && Double.compare(this.get(i,j), 0) < 0) {
-								super.set(i, j, target);
+								data.set(i, j, target);
 							}
 						}
 					}
@@ -811,10 +886,10 @@ public class Matrix extends DMatrixSparseCSC {
 				} else if (Double.isInfinite(source)) {
 					throw new RuntimeException("Cannot compare with Infinite");
 				} else {
-					for (int row = 0; row < this.numRows; row++) {
-						for(int col = 0; col < this.numCols; col++) {
+					for (int row = 0; row < this.data.numRows; row++) {
+						for(int col = 0; col < this.data.numCols; col++) {
 							if (Math.abs(this.get(row, col) - source) >= tol && Double.compare(this.get(row, col), source) < 0) {
-								super.set(row, col, target);
+								data.set(row, col, target);
 							}
 						}
 					}
@@ -822,11 +897,11 @@ public class Matrix extends DMatrixSparseCSC {
 				break;
 			case "lessequal":
 				if (Math.abs(source - 0) < tol) {
-					for(int i = 0; i < this.numRows; i++) {
-						for(int j = 0; j < this.numCols; j++) {
+					for(int i = 0; i < this.data.numRows; i++) {
+						for(int j = 0; j < this.data.numCols; j++) {
 							if ((Math.abs(this.get(i,j) - 0) < tol) ||
 											(Math.abs(this.get(i,j) - 0) >= tol && Double.compare(this.get(i,j), 0) < 0)) {
-								super.set(i, j, target);
+								data.set(i, j, target);
 							}
 						}
 					}
@@ -835,11 +910,11 @@ public class Matrix extends DMatrixSparseCSC {
 				} else if (Double.isInfinite(source)) {
 					throw new RuntimeException("Cannot compare with Infinite");
 				} else {
-					for (int row = 0; row < this.numRows; row++) {
-						for(int col = 0; col < this.numCols; col++) {
+					for (int row = 0; row < this.data.numRows; row++) {
+						for(int col = 0; col < this.data.numCols; col++) {
 							if ((Math.abs(this.get(row, col) - source) < tol) ||
 											(Math.abs(this.get(row, col) - source) >= tol && Double.compare(this.get(row, col), source) < 0)) {
-								super.set(row, col, target);
+								data.set(row, col, target);
 							}
 						}
 					}
@@ -850,13 +925,13 @@ public class Matrix extends DMatrixSparseCSC {
 		}
 
 		if (target == 0)
-			CommonOps_DSCC.removeZeros(this, 0);
+			CommonOps_DSCC.removeZeros(this.data, 0);
 	}
 
 	public Matrix elementIncrease(double val) {
 		Matrix res = this.clone();
-		for(int row = 0; row < this.numRows; row++) {
-			for(int col = 0; col < this.numCols; col++) {
+		for(int row = 0; row < this.data.numRows; row++) {
+			for(int col = 0; col < this.data.numCols; col++) {
 				res.set(row, col, res.get(row, col) + val);
 			}
 		}
@@ -864,17 +939,17 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public Matrix meanCol() {
-		Matrix res = new Matrix(1, this.numCols);
-		for(int col = 0; col < this.numCols; col++) {
-			res.set(0, col, this.sumCols(col) / this.numRows);
+		Matrix res = new Matrix(1, this.data.numCols);
+		for(int col = 0; col < this.data.numCols; col++) {
+			res.set(0, col, this.sumCols(col) / this.data.numRows);
 		}
 		return res;
 	}
 
 	public Matrix meanRow() {
-		Matrix res = new Matrix(this.numRows, 1);
-		for(int row = 0; row < this.numRows; row++) {
-			res.set(row, 0, this.sumRows(row) / this.numCols);
+		Matrix res = new Matrix(this.data.numRows, 1);
+		for(int row = 0; row < this.data.numRows; row++) {
+			res.set(row, 0, this.sumRows(row) / this.data.numCols);
 		}
 		return res;
 	}
@@ -882,14 +957,14 @@ public class Matrix extends DMatrixSparseCSC {
 	public Matrix power(double t) {
 		Matrix res = this.clone();
 		if (t == 0) {
-			CommonOps_DSCC.fill(res, 1);
+			CommonOps_DSCC.fill(res.data, 1);
 		} else if (t != 1) {
-			for(int colIdx = 0; colIdx < this.numCols; colIdx++) {
-				int col1 = this.col_idx[colIdx];
-				int col2 = this.col_idx[colIdx+1];
+			for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {
+				int col1 = data.col_idx[colIdx];
+				int col2 = data.col_idx[colIdx+1];
 
 				for(int i = col1; i < col2; i++) {
-					int rowIdx = this.nz_rows[i];
+					int rowIdx = data.nz_rows[i];
 					res.set(rowIdx, colIdx, Math.pow(res.get(rowIdx,colIdx), t));
 				}
 			}
@@ -906,6 +981,10 @@ public class Matrix extends DMatrixSparseCSC {
 		return this;
 	}
 
+	public void zero() {
+		data.zero();
+	}
+
 	public Matrix fromArray2D(double[][] matrix){
 		for (int i = 0; i< matrix.length; i++) {
 			for (int j = 0; j < matrix[i].length; j++) {
@@ -916,60 +995,70 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public void fill(double val) {
-		CommonOps_DSCC.fill(this, val);
+		CommonOps_DSCC.fill(this.data, val);
 	}
 
 	public Matrix transpose() {
 		Matrix res = new Matrix(0,0);
-		CommonOps_DSCC.transpose(this, res, null);
+		CommonOps_DSCC.transpose(this.data, res.data, null);
 		return res;
 	}
 
 	public Matrix sub(double alpha, Matrix matrix) {
-		return new Matrix(CommonOps_DSCC.add(1, this, -alpha, matrix, null, null, null));
+		return new Matrix(CommonOps_DSCC.add(1, this.data, -alpha, matrix.data, null, null, null));
 	}
 
 	public Matrix add(double alpha, Matrix matrix) {
-		return new Matrix(CommonOps_DSCC.add(1, this, alpha, matrix, null, null, null));
+		return new Matrix(CommonOps_DSCC.add(1, this.data, alpha, matrix.data, null, null, null));
 	}
 
 
 	public void divide(double scalar, Matrix outputB, boolean flag) {
 		if(flag)
-			CommonOps_DSCC.divide(this, scalar, outputB);
+			CommonOps_DSCC.divide(this.data, scalar, outputB.data);
 		else
-			CommonOps_DSCC.divide(scalar, this, outputB);
+			CommonOps_DSCC.divide(scalar, this.data, outputB.data);
 	}
 
 	public void divideRows(double[] diag, int offset) {
-		CommonOps_DSCC.divideRows(diag, offset, this);
+		CommonOps_DSCC.divideRows(diag, offset, this.data);
 	}
 
 	public void multEq(Matrix B) {
-		Matrix output = new Matrix(CommonOps_DSCC.mult(this, B, null));
-		this.setTo(output);
+		Matrix output = new Matrix(CommonOps_DSCC.mult(this.data, B.data, null));
+		this.data.setTo(output.data);
 	}
 
 	public Matrix mult(Matrix B) {
-		return new Matrix(CommonOps_DSCC.mult(this, B, null));
+		return new Matrix(CommonOps_DSCC.mult(this.data, B.data, null));
 	}
 
 	public Matrix mult(Matrix B, Matrix out) {
-		return new Matrix(CommonOps_DSCC.mult(this, B, out));
+		if (out == null ) {
+			return new Matrix(CommonOps_DSCC.mult(this.data, B.data, null));
+		} else {
+			return new Matrix(CommonOps_DSCC.mult(this.data, B.data, out.data));
+		}
 	}
 
 	public double elementSum() {
-		return CommonOps_DSCC.elementSum(this);
+		return CommonOps_DSCC.elementSum(this.data);
 	}
 	public double elementMin() {
-		return CommonOps_DSCC.elementMin(this);
+		return CommonOps_DSCC.elementMin(this.data);
 	}
 	public double elementMax() {
-		return CommonOps_DSCC.elementMax(this);
+		return CommonOps_DSCC.elementMax(this.data);
 	}
 
 	public Matrix elementMult(Matrix B, Matrix output) {
-		return new Matrix(CommonOps_DSCC.elementMult(this, B, output, null, null));
+		DMatrixSparseCSC m;
+		if (output == null) {
+			m = CommonOps_DSCC.elementMult(this.data, B.data, null, null, null);
+		} else {
+			m = CommonOps_DSCC.elementMult(this.data, B.data, output.data, null, null);
+		}
+		return new Matrix(m);
 	}
 
 	/**
@@ -1011,60 +1100,64 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public void removeZeros(double val) {
-		CommonOps_DSCC.removeZeros(this, val);
+		CommonOps_DSCC.removeZeros(this.data, val);
 	}
 
 	public void changeSign() {
-		CommonOps_DSCC.changeSign(this, this);
+		CommonOps_DSCC.changeSign(this.data, this.data);
 	}
 
 	public static void extract(Matrix src, int srcX0, int srcX1, int srcY0, int srcY1,
 														 Matrix dst, int dstY0, int dstX0) {
-		CommonOps_DSCC.extract(src, srcX0, srcX1, srcY0, srcY1, dst, dstY0, dstX0);
+		CommonOps_DSCC.extract(src.data, srcX0, srcX1, srcY0, srcY1, dst.data, dstY0, dstX0);
 	}
 
 	public static Matrix extractRows(Matrix A, int row0, int row1, Matrix out ) {
 		if (out == null) {
-			return new Matrix(CommonOps_DSCC.extractRows(A, row0, row1, out));
+			return new Matrix(CommonOps_DSCC.extractRows(A.data, row0, row1, null));
 		} else {
-			CommonOps_DSCC.extractRows(A, row0, row1, out);
+			CommonOps_DSCC.extractRows(A.data, row0, row1, out.data);
 			return out;
 		}
 	}
 
 	public static Matrix extractColumn(Matrix A, int column, Matrix out ) {
 		if (out == null) {
-			return new Matrix(CommonOps_DSCC.extractColumn(A, column, out));
+			return new Matrix(CommonOps_DSCC.extractColumn(A.data, column, null));
 		} else {
-			CommonOps_DSCC.extractColumn(A, column, out);
+			CommonOps_DSCC.extractColumn(A.data, column, out.data);
 			return out;
 		}
 	}
 
 	public static void extractDiag(Matrix A, Matrix outputB ) {
-		CommonOps_DSCC.extractDiag(A, outputB);
+		CommonOps_DSCC.extractDiag(A.data, outputB.data);
 	}
 
 	public static Matrix concatColumns(Matrix left, Matrix right, Matrix out ) {
 		if (out == null) {
-			return new Matrix(CommonOps_DSCC.concatColumns(left, right, out));
+			return new Matrix(CommonOps_DSCC.concatColumns(left.data, right.data, null));
 		} else {
-			CommonOps_DSCC.concatColumns(left, right, out);
+			CommonOps_DSCC.concatColumns(left.data, right.data, out.data);
 			return out;
 		}
 	}
 
 	public static Matrix concatRows(Matrix top, Matrix bottom, Matrix out) {
 		if (out == null) {
-			return new Matrix(CommonOps_DSCC.concatRows(top, bottom, out));
+			return new Matrix(CommonOps_DSCC.concatRows(top.data, bottom.data, null));
 		} else {
-			CommonOps_DSCC.concatRows(top, bottom, out);
+			CommonOps_DSCC.concatRows(top.data, bottom.data, out.data);
 			return out;
 		}
 	}
 
 	public static Matrix diagMatrix(Matrix A, double[] values, int offset, int length) {
-		return new Matrix(CommonOps_DSCC.diag(A, values, offset, length));
+		if (A==null) {
+			return new Matrix(CommonOps_DSCC.diag(null, values, offset, length));
+		} else {
+			return new Matrix(CommonOps_DSCC.diag(A.data, values, offset, length));
+		}
 	}
 
 	public static Matrix diag(double... values ) {
@@ -1072,10 +1165,10 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public double[] toArray1D(){
-		double[] array = new double[numRows*numCols];
+		double[] array = new double[data.numRows*data.numCols];
 		int k = 0;
-		for (int i=0;i<numRows;i++){
-			for(int j=0;j<numCols;j++){
+		for (int i=0;i<data.numRows;i++){
+			for(int j=0;j<data.numCols;j++){
 				array[k] = this.get(i,j);
 				k++;
 			}
@@ -1085,8 +1178,8 @@ public class Matrix extends DMatrixSparseCSC {
 
 	public List<Double> toList1D(){
 		List<Double> list= new ArrayList<Double>();
-		for (int i=0;i<numRows;i++){
-			for(int j=0;j<numCols;j++){
+		for (int i=0;i<data.numRows;i++){
+			for(int j=0;j<data.numCols;j++){
 				list.add(this.get(i,j));
 			}
 		}
@@ -1094,9 +1187,9 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public double[][] toArray2D(){
-		double[][] array = new double[numRows][numCols];
-		for (int i=0;i<numRows;i++){
-			for(int j=0;j<numCols;j++){
+		double[][] array = new double[data.numRows][data.numCols];
+		for (int i=0;i<data.numRows;i++){
+			for(int j=0;j<data.numCols;j++){
 				array[i][j] = this.get(i,j);
 			}
 		}
@@ -1109,9 +1202,9 @@ public class Matrix extends DMatrixSparseCSC {
 
 	public List<List<Double>> toDoubleList(){
 		List<List<Double>> array = new ArrayList<>();
-		for (int i=0;i<numRows;i++){
+		for (int i=0;i<data.numRows;i++){
 			List<Double> row = new ArrayList<>();
-			for(int j=0;j<numCols;j++){
+			for(int j=0;j<data.numCols;j++){
 				row.add(this.get(i,j));
 			}
 			array.add(row);
@@ -1120,7 +1213,7 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public static boolean solve(Matrix a, Matrix b, Matrix x ) {
-		return CommonOps_DSCC.solve(a, b, x);
+		return CommonOps_DSCC.solve(a.data, b.data, x.data);
 	}
 
 	public double sumSubMatrix(int startRow, int endRow, int startCol, int endCol) {
@@ -1168,7 +1261,7 @@ public class Matrix extends DMatrixSparseCSC {
 		int rows = this.getNumRows();
 		int cols = this.getNumCols();
 
-		if (this.getNumElements() != rows * cols) {
+		if (this.data.getNumElements() != rows * cols) {
 			throw new RuntimeException("Matrix is too small to fill with ones");
 		}
 
@@ -1182,8 +1275,8 @@ public class Matrix extends DMatrixSparseCSC {
 	// Kronecker sum of matrices A and B
 	public Matrix krons(Matrix other) {
 
-		DMatrixRMaj A = new DMatrixRMaj(this);
-		DMatrixRMaj B = new DMatrixRMaj(other);
+		DMatrixRMaj A = new DMatrixRMaj(this.data);
+		DMatrixRMaj B = new DMatrixRMaj(other.data);
 		DMatrixRMaj C = CommonOps_DDRM.kron(A, CommonOps_DDRM.identity(B.numRows), null);
 		DMatrixRMaj D = CommonOps_DDRM.kron(CommonOps_DDRM.identity(A.numRows), B, null);
 		DMatrixRMaj output = CommonOps_DDRM.add(C, D, null);
@@ -1228,17 +1321,17 @@ public class Matrix extends DMatrixSparseCSC {
 
 	public Matrix expm() {
 
-		DoubleMatrix inputToEXPM = new DoubleMatrix(this.numRows, this.numCols);
-		for (int i = 0; i < this.numRows; i++) {
-			for (int j = 0; j < this.numCols; j++) {
+		DoubleMatrix inputToEXPM = new DoubleMatrix(this.data.numRows, this.data.numCols);
+		for (int i = 0; i < this.data.numRows; i++) {
+			for (int j = 0; j < this.data.numCols; j++) {
 				inputToEXPM.put(i, j, this.get(i, j));
 			}
 		}
 
 		DoubleMatrix outputFromEXPM = org.jblas.MatrixFunctions.expm(inputToEXPM);
 		Matrix output = new Matrix(outputFromEXPM.rows, outputFromEXPM.columns);
-		for (int i = 0; i < output.numRows; i++) {
-			for (int j = 0; j < output.numCols; j++) {
+		for (int i = 0; i < output.data.numRows; i++) {
+			for (int j = 0; j < output.data.numCols; j++) {
 				output.set(i, j, outputFromEXPM.get(i, j));
 			}
 		}
@@ -1247,17 +1340,17 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public double elementMaxAbs() {
-		return CommonOps_DSCC.elementMaxAbs(this);
+		return CommonOps_DSCC.elementMaxAbs(this.data);
 	}
 
 	public void scale(double scalar) {
 		Matrix output = new Matrix(this);
-		CommonOps_DSCC.scale(scalar, this, output);
-		this.setTo(output);
+		CommonOps_DSCC.scale(scalar, this.data, output.data);
+		this.data.setTo(output.data);
 	}
 
 	public void scale(double scalar, Matrix output) {
-		CommonOps_DSCC.scale(scalar, this, output);
+		CommonOps_DSCC.scale(scalar, this.data, output.data);
 	}
 
 	/**
@@ -1312,7 +1405,7 @@ public class Matrix extends DMatrixSparseCSC {
 	 * @return - true if there is a non-zero element in the matrix, false otherwise
 	 */
 	public boolean any(){
-		return this.nz_length > 0;
+		return this.data.nz_length > 0;
 	}
 
 	/**
@@ -1324,7 +1417,7 @@ public class Matrix extends DMatrixSparseCSC {
 			// Not a row/column vector
 			throw new IllegalArgumentException("Argument should be a row/column vector");
 		}
-		if(this.nz_length < this.getNumRows() * this.getNumCols()){
+		if(this.data.nz_length < this.getNumRows() * this.getNumCols()){
 			// Some elements are 0, so the product will automatically be 0
 			return 0;
 		}
@@ -1365,18 +1458,18 @@ public class Matrix extends DMatrixSparseCSC {
 		Matrix b = a.clone();
 		b.abs();
 		double norm = 0;
-		for(int i=0;i<a.numCols;i++){
+		for(int i=0;i<a.data.numCols;i++){
 			norm = Math.max(norm,a.sumCols(i));
 		}
 		return norm;
 	}
 
 	public void insert_sub_matrix(int start_row, int start_col, int end_row, int end_col, Matrix matrix_to_be_inserted){
-		if(end_col-start_col!=matrix_to_be_inserted.numCols || end_row-start_row!=matrix_to_be_inserted.numRows){
+		if(end_col-start_col!=matrix_to_be_inserted.data.numCols || end_row-start_row!=matrix_to_be_inserted.data.numRows){
 			throw new RuntimeException("matrix_to_be_inserted doesn't fit");
 		}
-		for(int i=0;i<matrix_to_be_inserted.numRows;i++){
-			for (int j=0;j<matrix_to_be_inserted.numCols;j++){
+		for(int i=0;i<matrix_to_be_inserted.data.numRows;i++){
+			for (int j=0;j<matrix_to_be_inserted.data.numCols;j++){
 				this.set(start_row+i,start_col+j,matrix_to_be_inserted.get(i,j));
 			}
 		}
@@ -1384,8 +1477,8 @@ public class Matrix extends DMatrixSparseCSC {
 
 	public static Matrix negative(Matrix a){
 		Matrix b = a.clone();
-		for(int i=0;i<b.nz_length;i++){
-			b.nz_values[i] = -b.nz_values[i];
+		for(int i=0;i<b.data.nz_length;i++){
+			b.data.nz_values[i] = -b.data.nz_values[i];
 		}
 		return b;
 	}
@@ -1398,18 +1491,18 @@ public class Matrix extends DMatrixSparseCSC {
 
 	public Matrix eigenvalue(){
 
-		if(this.numCols!=this.numRows){
+		if(this.data.numCols!=this.data.numRows){
 			throw new RuntimeException("Only square matrix can be eigen decomposited");
 		}
-		DMatrixRMaj matrix = new DMatrixRMaj(this.numRows ,this.numCols);
-		DConvertMatrixStruct.convert(this,matrix);
+		DMatrixRMaj matrix = new DMatrixRMaj(this.data.numRows ,this.data.numCols);
+		DConvertMatrixStruct.convert(this.data, matrix);
 
 
 		EigenDecomposition_F64<DMatrixRMaj> eig = DecompositionFactory_DDRM.eig(matrix.numCols, true);
 		eig.decompose(matrix);
 
-		Matrix result = new Matrix(1,numCols,numCols);
-		for(int i=0;i<numCols;i++){
+		Matrix result = new Matrix(1,data.numCols,data.numCols);
+		for(int i=0;i<data.numCols;i++){
 			if(eig.getEigenvalue(i).isReal()) {
 				result.set(i, eig.getEigenvalue(i).getReal());
 			}else {
@@ -1424,25 +1517,25 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public Matrix eigenvector(){
-		if(this.numCols!=this.numRows){
+		if(this.data.numCols!=this.data.numRows){
 			throw new RuntimeException("Only square matrix can be eigen decomposited");
 		}
-		DMatrixRMaj matrix = new DMatrixRMaj(this.numRows ,this.numCols);
-		DConvertMatrixStruct.convert(this,matrix);
+		DMatrixRMaj matrix = new DMatrixRMaj(this.data.numRows ,this.data.numCols);
+		DConvertMatrixStruct.convert(this.data,matrix);
 
 
 		EigenDecomposition_F64<DMatrixRMaj> eig = DecompositionFactory_DDRM.eig(matrix.numCols, true);
 		eig.decompose(matrix);
 
-		Matrix result = new Matrix(numRows,numCols,numRows);
-		for(int i=0;i<numCols;i++){
+		Matrix result = new Matrix(data.numRows,data.numCols,data.numRows);
+		for(int i=0;i<data.numCols;i++){
 			if(eig.getEigenvalue(i).isReal()) {
 				DMatrixRMaj vector = eig.getEigenVector(i);
-				for (int j=0;j<numRows;j++){
+				for (int j=0;j<data.numRows;j++){
 					result.set(i,j,vector.get(j));
 				}
 			}else {
-				for (int j=0;j<numRows;j++){
+				for (int j=0;j<data.numRows;j++){
 					result.set(i,j,Double.NaN);
 				}
 			}
@@ -1459,7 +1552,7 @@ public class Matrix extends DMatrixSparseCSC {
 	public Matrix safe_mult(Matrix B){
 		if(B.length()==1&&this.length()!=1){
 			return Matrix.scale_mult(this,B.get(0));
-		}else if(this.numCols==B.numRows){
+		}else if(this.data.numCols==B.data.numRows){
 			return this.mult(B);
 		}else {
 			throw new RuntimeException("matrix product of X and Y failed");
@@ -1467,15 +1560,15 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public int rank(){
-		DMatrixRMaj matrix = new DMatrixRMaj(this.numRows ,this.numCols);
-		DConvertMatrixStruct.convert(this,matrix);
+		DMatrixRMaj matrix = new DMatrixRMaj(this.data.numRows ,this.data.numCols);
+		DConvertMatrixStruct.convert(this.data, matrix);
 		return MatrixFeatures_DDRM.rank(matrix);
 	}
 
 	public Matrix element_power(double a){
 		Matrix b = this.clone();
-		for(int i=0;i<this.nz_length;i++){
-			b.nz_values[i] = Math.pow(nz_values[i],a);
+		for(int i=0;i<this.data.nz_length;i++){
+			b.data.nz_values[i] = Math.pow(data.nz_values[i],a);
 		}
 		return b;
 	}
@@ -1487,7 +1580,7 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public double det() {
-		return CommonOps_DSCC.det(this);
+		return CommonOps_DSCC.det(this.data);
 	}
 
 	public static Matrix cellsum(Map<Integer,Matrix> cell_array){
@@ -1497,7 +1590,7 @@ public class Matrix extends DMatrixSparseCSC {
 
 		Matrix result = cell_array.get(0).clone();
 		for(int i=1;i<cell_array.size();i++){
-			if(cell_array.get(i).numRows!=result.numRows||cell_array.get(i).numCols!=result.numCols){
+			if(cell_array.get(i).data.numRows!=result.data.numRows||cell_array.get(i).data.numCols!=result.data.numCols){
 				throw new RuntimeException("Matrix have incompatible sizes for add operation");
 			}
 			result = result.add(1,cell_array.get(i));
@@ -1505,26 +1598,30 @@ public class Matrix extends DMatrixSparseCSC {
 		return result;
 	}
 
+	public void remove(int row, int col) {
+		data.remove(row, col);
+	}
+
 	public void removeINF() {
 		int offset = 0;
-		for (int i = 0; i < this.numCols; i++) {
-			for (int j=0;j<this.numRows;j++){
+		for (int i = 0; i < this.data.numCols; i++) {
+			for (int j=0;j<this.data.numRows;j++){
 				if(Double.isInfinite(get(j,i))){
 					set(j,i,0);
 				}
 			}
-			this.col_idx[i + 1] -= offset;
+			data.col_idx[i + 1] -= offset;
 		}
-		this.nz_length -= offset;
+		this.data.nz_length -= offset;
 	}
 
 	public Matrix element_divide(Matrix b){
-		if(numCols!=b.numCols || numRows!=b.numRows){
+		if(data.numCols!=b.data.numCols || data.numRows!=b.data.numRows){
 			throw new RuntimeException("Element divide function requires two Matrix have the same size");
 		}
-		Matrix result = new Matrix(numRows,numCols,numRows*numCols);
-		for(int i=0;i<numRows;i++){
-			for (int j=0;j<numCols;j++){
+		Matrix result = new Matrix(data.numRows,data.numCols,data.numRows*data.numCols);
+		for(int i=0;i<data.numRows;i++){
+			for (int j=0;j<data.numCols;j++){
 				result.set(i,j,get(i,j)/b.get(i,j));
 			}
 		}
@@ -1532,13 +1629,13 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public static Matrix createLike (Matrix B){
-		return new Matrix(B.createLike());
+		return new Matrix(B.data.createLike());
 	}
 
 	public boolean hasDuplicates(){
 		HashSet<Double> values = new HashSet<>();
-		for(int i=0;i<numRows;i++){
-			for (int j=0;j<numCols;j++){
+		for(int i=0;i<data.numRows;i++){
+			for (int j=0;j<data.numCols;j++){
 				if(values.contains(get(i,j))){
 					return true;
 				}
@@ -1553,7 +1650,7 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public Matrix left_matrix_divide(Matrix b){
-		if(numRows==numCols){
+		if(data.numRows==data.numCols){
 			Matrix x = new Matrix(0,0,0);
 			solve(this,b,x);
 			return x;
@@ -1563,7 +1660,7 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public Map<String,Matrix> QR_decomposition(){
-		if(numRows!= numCols){
+		if(data.numRows!= data.numCols){
 			throw new RuntimeException("Only square matrix can be decomposed");
 		}
 		QRSparseDecomposition<DMatrixSparseCSC> decomposition = new QrLeftLookingDecomposition_DSCC(null);
@@ -1575,12 +1672,12 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public Map<String,Matrix> schur(String method, Integer it_){
-		if(numRows!= numCols){
+		if(data.numRows!= data.numCols){
 			throw new RuntimeException("Only square matrix can be decomposed");
 		}
-		if(this.nz_length==0){
+		if(this.data.nz_length==0){
 			Map<String,Matrix> result = new HashMap<>();
-			result.put("U",Matrix.eye(numRows));
+			result.put("U",Matrix.eye(data.numRows));
 			result.put("T",this.clone());
 			return result;
 		}
@@ -1591,7 +1688,7 @@ public class Matrix extends DMatrixSparseCSC {
 		Map<String,Matrix> result = new HashMap<>();
 		if(method.equals("default")){
 			Matrix A = clone();
-			Matrix U = Matrix.eye(numRows);
+			Matrix U = Matrix.eye(data.numRows);
 			for (int i=0;i<it;i++){
 				Matrix Q = A.QR_decomposition().get("Q");
 				A = A.QR_decomposition().get("R").mult(Q);
@@ -1614,7 +1711,7 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public static Matrix sylv(Matrix A, Matrix B, Matrix C){
-		int n = C.numCols;
+		int n = C.data.numCols;
 		Map<String,Matrix> schur_decomposition_A = A.schur();
 		Matrix ZA = schur_decomposition_A.get("U");
 		Matrix TA = schur_decomposition_A.get("T");
@@ -1648,26 +1745,26 @@ public class Matrix extends DMatrixSparseCSC {
 //			return ZA.mult(L.elementMult(F,null)).mult(ZB.transpose());
 //		}
 
-		Matrix Y = new Matrix(C.numRows,C.numCols,C.numRows*C.numCols);
+		Matrix Y = new Matrix(C.data.numRows,C.data.numCols,C.data.numRows*C.data.numCols);
 		Matrix P = new Matrix(0,0,0);
 		Matrix.extractDiag(TA,P);
 
 		if(solver_direction.equals( "backward")){
 			for(int k=n-1;k>0;k--){
 				Matrix rhs = Matrix.extractColumn(F,k,null).add(1,Y.mult(Matrix.extractColumn(TB,k,null)));
-				for (int i=0;i<TA.numRows;i++){
+				for (int i=0;i<TA.data.numRows;i++){
 					TA.set(i,i, P.get(i)+TB.get(k,k));
 				}
-				Y.insert_sub_matrix(0,k,Y.numRows,k+1,TA.left_matrix_divide(Matrix.scale_mult(rhs,-1)));
+				Y.insert_sub_matrix(0,k,Y.data.numRows,k+1,TA.left_matrix_divide(Matrix.scale_mult(rhs,-1)));
 			}
 		}else{
 			for (int k=0;k<n;k++){
 				Matrix rhs = Matrix.extractColumn(F,k,null).add(1,Y.mult(Matrix.extractColumn(TB,k,null)));
-				for (int i=0;i<TA.numRows;i++){
+				for (int i=0;i<TA.data.numRows;i++){
 					TA.set(i,i, P.get(i)+TB.get(k,k));
 				}
 				Matrix c = TA.left_matrix_divide(Matrix.scale_mult(rhs,-1));
-				Y.insert_sub_matrix(0,k,Y.numRows,k+1,TA.left_matrix_divide(Matrix.scale_mult(rhs,-1)));
+				Y.insert_sub_matrix(0,k,Y.data.numRows,k+1,TA.left_matrix_divide(Matrix.scale_mult(rhs,-1)));
 			}
 		}
 
@@ -1676,8 +1773,8 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public boolean isDiag_withintol() {
-		for(int i=0;i<numRows;i++){
-			for (int j=0;j<numCols;j++){
+		for(int i=0;i<data.numRows;i++){
+			for (int j=0;j<data.numCols;j++){
 				if(i!=j&&get(i,j)>GlobalConstants.FineTol){
 					return false;
 				}
@@ -1687,7 +1784,7 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public Matrix compatible_sizes_add(Matrix b){
-		if(numRows == b.numRows && numCols==b.numCols){
+		if(data.numRows == b.data.numRows && data.numCols==b.data.numCols){
 			return this.add(1,b);
 		}
 
@@ -1699,19 +1796,19 @@ public class Matrix extends DMatrixSparseCSC {
 			return elementIncrease(b.get(0));
 		}
 
-		if((numCols==1||numRows==1) && b.numCols!=1 && b.numRows!=1){
+		if((data.numCols==1||data.numRows==1) && b.data.numCols!=1 && b.data.numRows!=1){
 			return matrix_add_vector(b,this);
 		}
 
-		if(numCols!=1 && numRows!=1 && (b.numRows==1||b.numCols==1) ){
+		if(data.numCols!=1 && data.numRows!=1 && (b.data.numRows==1||b.data.numCols==1) ){
 			return matrix_add_vector(this,b);
 		}
 
-		if(numCols == 1 && b.numRows==1 ){
+		if(data.numCols == 1 && b.data.numRows==1 ){
 			return col_vector_add_row_vector(this,b);
 		}
 
-		if(numRows==1 && b.numCols==1){
+		if(data.numRows==1 && b.data.numCols==1){
 			return col_vector_add_row_vector(b,this);
 		}
 
@@ -1720,12 +1817,12 @@ public class Matrix extends DMatrixSparseCSC {
 
 	public static Matrix matrix_add_vector(Matrix matrix, Matrix vector){
 		Matrix result = matrix.clone();
-		if(vector.numCols==1 && vector.numRows == matrix.numRows){
-			for(int i=0; i< vector.numRows;i++){
+		if(vector.data.numCols==1 && vector.data.numRows == matrix.data.numRows){
+			for(int i=0; i< vector.data.numRows;i++){
 				result.row_increase(i, vector.get(i));
 			}
-		}else if (vector.numRows==1 && vector.numCols==matrix.numCols ){
-			for (int i=0;i<vector.numCols;i++){
+		}else if (vector.data.numRows==1 && vector.data.numCols==matrix.data.numCols ){
+			for (int i=0;i<vector.data.numCols;i++){
 				result.col_increase(i, vector.get(i));
 			}
 		}else {
@@ -1735,8 +1832,8 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public void row_increase(int row, double a){
-		if(row>=0 && row<numRows) {
-			for (int i = 0; i < numCols; i++) {
+		if(row>=0 && row<data.numRows) {
+			for (int i = 0; i < data.numCols; i++) {
 				set(row, i, get(row, i) + a);
 			}
 		}else {
@@ -1745,8 +1842,8 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public void col_increase(int col, double a){
-		if(col>=0 && col<numCols) {
-			for (int i = 0; i < numRows; i++) {
+		if(col>=0 && col<data.numCols) {
+			for (int i = 0; i < data.numRows; i++) {
 				set(i,col, get(i,col) + a);
 			}
 		}else {
@@ -1755,9 +1852,9 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public static Matrix col_vector_add_row_vector(Matrix col_vector, Matrix row_vector){
-		Matrix result = new Matrix(row_vector.numRows,col_vector.numCols, row_vector.numRows* col_vector.numCols);
-		for(int i=0;i<col_vector.numCols;i++){
-			for(int j=0;j< row_vector.numRows;j++){
+		Matrix result = new Matrix(row_vector.data.numRows,col_vector.data.numCols, row_vector.data.numRows* col_vector.data.numCols);
+		for(int i=0;i<col_vector.data.numCols;i++){
+			for(int j=0;j< row_vector.data.numRows;j++){
 				result.set(i,j, col_vector.get(i)+row_vector.get(j));
 			}
 		}
@@ -1765,8 +1862,8 @@ public class Matrix extends DMatrixSparseCSC {
 	}
 
 	public Matrix kron(Matrix b){
-		DMatrixRMaj A = new DMatrixRMaj(this);
-		DMatrixRMaj B = new DMatrixRMaj(b);
+		DMatrixRMaj A = new DMatrixRMaj(this.data);
+		DMatrixRMaj B = new DMatrixRMaj(b.data);
 		DMatrixRMaj C = CommonOps_DDRM.kron(A, B, null);
 		return new Matrix(SimpleMatrix.wrap(C));
 	}
@@ -1811,7 +1908,7 @@ public class Matrix extends DMatrixSparseCSC {
 				}
 			}
 		}
-		this.setTo(newMatrix);
+		this.data.setTo(newMatrix.data);
 	}
 
 	/**
@@ -1836,7 +1933,7 @@ public class Matrix extends DMatrixSparseCSC {
 				}
 			}
 		}
-		this.setTo(newMatrix);
+		this.data.setTo(newMatrix.data);
 	}
 
 	/**
@@ -1869,7 +1966,7 @@ public class Matrix extends DMatrixSparseCSC {
 	 */
 	public double powerSumRows(int row, double alpha){
 		double sum = 0;
-		for(int i = 0; i < this.numCols; i++) {
+		for(int i = 0; i < this.data.numCols; i++) {
 			sum += Math.pow(Math.abs(this.get(row, i)),alpha);
 		}
 		return sum;
@@ -1882,7 +1979,7 @@ public class Matrix extends DMatrixSparseCSC {
 	 */
 	public double powerSumCols(int col, double alpha){
 		double sum = 0;
-		for(int i = 0; i < this.numRows; i++) {
+		for(int i = 0; i < this.data.numRows; i++) {
 			sum += Math.pow(Math.abs(this.get(i, col)),alpha);
 		}
 		return sum;

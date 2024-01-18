@@ -39,7 +39,7 @@ public class SMCSolver {
         Matrix.extractDiag(A1,A1_diag);
         boolean continues = true;
         double lamb = Matrix.negative(A1_diag).elementMax();
-        int m = A1.numRows;
+        int m = A1.getNumRows();
         if(!RAPComp){
             continues = false;
             if(A1_diag.elementSum()<0){
@@ -175,7 +175,7 @@ public class SMCSolver {
         Matrix.extractDiag(A1,A1_diag);
         boolean continues = true;
         double lamb = Matrix.negative(A1_diag).elementMax();
-        int m = A1.numRows;
+        int m = A1.getNumRows();
         if(!RAPComp){
             continues = false;
             if(A1_diag.elementSum()<0){
@@ -310,7 +310,7 @@ public class SMCSolver {
         Matrix.extractDiag(A1,A1_diag);
         boolean continues = true;
         double lamb = Matrix.negative(A1_diag).elementMax();
-        int m = A1.numRows;
+        int m = A1.getNumRows();
         if(!RAPComp){
             continues = false;
             if(A1_diag.elementSum()<0){
@@ -401,7 +401,7 @@ public class SMCSolver {
         int MaxNumIt = 10000;
         boolean Verbose = false;
         boolean RAPComp = false;
-        int m = A1.numRows;
+        int m = A1.getNumRows();
         Matrix StartValue = new Matrix(m,m,m*m);
 
         if(StartValue_!=null){
@@ -559,7 +559,7 @@ public class SMCSolver {
         int MaxNumIt = 50;
         boolean Verbose = false;
         boolean RAPComp = false;
-        int m = A1.numRows;
+        int m = A1.getNumRows();
 
         if(MaxNumIt_!=null){
             MaxNumIt = MaxNumIt_;
@@ -664,19 +664,19 @@ public class SMCSolver {
     }
 
     public static void QBD_ParsePara(Matrix A0, Matrix A1, Matrix A2){
-        if(A0.numCols!=A0.numRows){
+        if(A0.getNumCols()!=A0.getNumRows()){
             throw new RuntimeException("A0 is not a square matrix");
         }
-        if(A1.numCols!=A1.numRows){
+        if(A1.getNumCols()!=A1.getNumRows()){
             throw new RuntimeException("A1 is not a square matrix");
         }
-        if(A2.numCols!=A2.numRows){
+        if(A2.getNumCols()!=A2.getNumRows()){
             throw new RuntimeException("A2 is not a square matrix");
         }
-        if(A0.numCols!=A1.numCols){
+        if(A0.getNumCols()!=A1.getNumCols()){
             throw new RuntimeException("The matrices A0 and A1 do not have the same dimension");
         }
-        if(A0.numCols!=A2.numCols){
+        if(A0.getNumCols()!=A2.getNumCols()){
             throw new RuntimeException("The matrices A0 and A2 do not have the same dimension");
         }
         if(A0.elementMin()<=-Math.pow(-10,-14)){
@@ -698,7 +698,7 @@ public class SMCSolver {
         Matrix G = new Matrix(0,0,0);
         Matrix R = new Matrix(0,0,0);
         Matrix U = new Matrix(0,0,0);
-        int m = A1.numRows;
+        int m = A1.getNumRows();
         Matrix theta = stat(A0.add(1,A1).add(1,A2));
         double drift= theta.safe_mult(A0.sumRows()).get(0) - theta.safe_mult(A2.sumRows()).get(0);
         if(drift >0){
@@ -706,7 +706,7 @@ public class SMCSolver {
                 // matlab rank
                 int non_zero_row = 0;
                 Matrix row_sum = A0.sumRows();
-                for(int i=0;i<A0.numRows;i++){
+                for(int i=0;i<A0.getNumRows();i++){
                     if(row_sum.get(i)>0){
                         non_zero_row = i;
                         break;
@@ -787,7 +787,7 @@ public class SMCSolver {
     }
 
     public static Matrix stat(Matrix A){
-        int S = A.numRows;
+        int S = A.getNumRows();
         Matrix e = Matrix.ones(S,1);
         Matrix B = Matrix.concatColumns(A.add(-1,Matrix.eye(S)),e,null);
         Matrix y = Matrix.concatColumns(new Matrix(1,S),new Matrix(1),null);

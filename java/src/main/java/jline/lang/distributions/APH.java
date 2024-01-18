@@ -88,7 +88,7 @@ public class APH extends MarkovianDistribution {
 		Map<Integer, Matrix> res = new HashMap<Integer, Matrix>();
 		Matrix T = getSubgenerator();
 
-		Matrix ones = new Matrix(T.numCols,1,T.numCols);
+		Matrix ones = new Matrix(T.getNumCols(),1,T.getNumCols());
 		Matrix Te = new Matrix(0,0,0);
 		Matrix Tepie = new Matrix(0,0,0);
 		ones.fill(1.0);

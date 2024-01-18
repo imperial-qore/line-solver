@@ -484,7 +484,7 @@ public class SolverJMT extends NetworkSolver {
         if (sn.isstation.get(ind) == 0 || Double.isInfinite(cap)) {
             valueNode.appendChild(simDoc.createTextNode(String.valueOf(-1)));
         } else {
-            if (cap == Arrays.stream(sn.njobs.nz_values).sum()) {
+            if (cap == Arrays.stream(sn.njobs.getNonZeroValues()).sum()) {
                 valueNode.appendChild(simDoc.createTextNode(String.valueOf(-1)));
             } else {
                 valueNode.appendChild(simDoc.createTextNode(String.valueOf((int) cap)));
@@ -1669,8 +1669,8 @@ public class SolverJMT extends NetworkSolver {
 
         NetworkStruct sn = getStruct();
 
-        for (int j = 0; j < sn.connmatrix.numCols; j++) {
-            for (int i = 0; i < sn.connmatrix.numRows; i++) {
+        for (int j = 0; j < sn.connmatrix.getNumCols(); j++) {
+            for (int i = 0; i < sn.connmatrix.getNumRows(); i++) {
                 if (sn.connmatrix.get(i, j) != 0) {
                     Element connectionNode = simDoc.createElement("connection");
                     connectionNode.setAttribute("source", sn.nodenames.get(i));
@@ -3350,10 +3350,10 @@ public class SolverJMT extends NetworkSolver {
             Matrix NK = sn.njobs.transpose();  // initial population per class
             int C = sn.nchains;
             Matrix SCV = sn.scv;
-            Matrix ST = new Matrix(sn.rates.numRows, sn.rates.numCols);
+            Matrix ST = new Matrix(sn.rates.getNumRows(), sn.rates.getNumCols());
 
-            for (int i = 0; i < sn.rates.numRows; i++) {
-                for (int j = 0; j < sn.rates.numCols; j++) {
+            for (int i = 0; i < sn.rates.getNumRows(); i++) {
+                for (int j = 0; j < sn.rates.getNumCols(); j++) {
 
                     double currentRate = sn.rates.get(i, j);
                     if (Double.isNaN(currentRate)) {
@@ -3388,7 +3388,7 @@ public class SolverJMT extends NetworkSolver {
             for (int c = 0; c < sn.nchains; c++) {
                 Element classElem;
                 double sumOfNJobs = 0.0;
-                for (int i = 0; i < sn.chains.numCols; i++) {
+                for (int i = 0; i < sn.chains.getNumCols(); i++) {
                     sumOfNJobs += sn.njobs.get((int) sn.chains.get(c, i));
                 }
                 if (Double.isFinite(sumOfNJobs)) {
@@ -3399,7 +3399,7 @@ public class SolverJMT extends NetworkSolver {
                     double rateSum = 0.0;
                     for (int i = 0; i < sourceid.length; i++) {
                         if (sourceid[i]) {
-                            for (int j = 0; j < sn.chains.numCols; j++) {
+                            for (int j = 0; j < sn.chains.getNumCols(); j++) {
                                 rateSum += sn.rates.get(i, (int) sn.chains.get(c, j));
                             }
                         }
@@ -3510,7 +3510,7 @@ public class SolverJMT extends NetworkSolver {
     private static void setAlgTypeName(Element algTypeElement, Matrix nservers, String method, String name) {
         double maxFiniteValue = Double.NEGATIVE_INFINITY;  // initial value set to negative infinity
 
-        for (int i = 0; i < nservers.numRows; i++) {
+        for (int i = 0; i < nservers.getNumRows(); i++) {
             if (Double.isFinite(nservers.get(i, 0))) {
                 double currentValue = nservers.get(i, 0);
                 if (currentValue > maxFiniteValue) {

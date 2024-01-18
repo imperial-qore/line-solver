@@ -744,7 +744,7 @@ public class Network extends Model implements Serializable {
             routing.put(node, map);
         }
 
-        sn.nclosedjobs = DoubleStream.of(njobs.nz_values).boxed().filter(val -> !Double.isInfinite(val)).reduce(0.0, (a, b) -> a + b);
+        sn.nclosedjobs = DoubleStream.of(njobs.getNonZeroValues()).boxed().filter(val -> !Double.isInfinite(val)).reduce(0.0, (a, b) -> a + b);
         sn.nservers = numservers;
         sn.isstation = getIsStationArray();
         sn.nstations = stations.size();
@@ -1539,7 +1539,7 @@ public class Network extends Model implements Serializable {
             mu.put(station, mu_i);
             phi.put(station, phi_i);
             for (Integer r : classSet) {
-                double[] mu_val = mu_i.get(this.jobClasses.get(r)).nz_values;
+                double[] mu_val = mu_i.get(this.jobClasses.get(r)).getNonZeroValues();
                 boolean flag = true;
                 for (int idx = 0; idx < mu_val.length; idx++)
                     flag = flag && Double.isNaN(mu_val[idx]);
@@ -1649,7 +1649,7 @@ public class Network extends Model implements Serializable {
                 if (ph_i_r == null)
                     phases.set(i, r, 1.0);
                 else if (!(ph_i_r.get(0).hasNaN() || ph_i_r.get(1).hasNaN()))
-                    phases.set(i, r, ph_i_r.get(0).numCols);
+                    phases.set(i, r, ph_i_r.get(0).getNumCols());
                 //Other situation set to 0 (The matrix initial value is 0)
             }
         }
@@ -1965,7 +1965,7 @@ public class Network extends Model implements Serializable {
             idxSource = this.sn.nodetypes.indexOf(NodeType.Source);
             idxSink = this.sn.nodetypes.indexOf(NodeType.Sink);
             idxOpenClasses = new ArrayList<Integer>();
-            for (int col = 0; col < this.sn.njobs.numCols; col++) {
+            for (int col = 0; col < this.sn.njobs.getNumCols(); col++) {
                 if (Double.isInfinite((this.sn.njobs.get(0, col))))
                     idxOpenClasses.add(col);
             }
@@ -2298,7 +2298,7 @@ public class Network extends Model implements Serializable {
         //Split chains block
         List<Integer> splitChains = new ArrayList<Integer>();
         Matrix sumCol = chains.sumCols();
-        for (int i = 0; i < sumCol.numCols; i++) {
+        for (int i = 0; i < sumCol.getNumCols(); i++) {
             if (sumCol.get(i) > 1) {
                 //rows = find(chains(:,col));
                 List<Integer> rows = new ArrayList<Integer>();
@@ -2324,10 +2324,10 @@ public class Network extends Model implements Serializable {
         }
 
         if (splitChains.size() > 0) {
-            Matrix newChains = new Matrix(chains.numRows - splitChains.size(), chains.numCols);
-            for (int i = 0; i < chains.numRows; i++) {
+            Matrix newChains = new Matrix(chains.getNumRows() - splitChains.size(), chains.getNumCols());
+            for (int i = 0; i < chains.getNumRows(); i++) {
                 if (!splitChains.contains(i)) {
-                    for (int j = 0; j < chains.numCols; j++)
+                    for (int j = 0; j < chains.getNumCols(); j++)
                         newChains.set(i, j, chains.get(i, j));
                 }
             }
@@ -2637,13 +2637,13 @@ public class Network extends Model implements Serializable {
             //ceil(self.sn.rt);
             Matrix rt = this.sn.rt;
             rtmask = new Matrix(rt.getNumRows(), rt.getNumCols());
-            for (int colIdx = 0; colIdx < rt.numCols; colIdx++) {
-                int col1 = rt.col_idx[colIdx];
-                int col2 = rt.col_idx[colIdx + 1];
+            for (int colIdx = 0; colIdx < rt.getNumCols(); colIdx++) {
+                int col1 = rt.getColIndexes()[colIdx];
+                int col2 = rt.getColIndexes()[colIdx + 1];
 
                 for (int i = col1; i < col2; i++) {
-                    int rowIdx = rt.nz_rows[i];
-                    double value = rt.nz_values[i];
+                    int rowIdx = rt.getNonZeroRows()[i];
+                    double value = rt.getNonZeroValues()[i];
                     rtmask.set(rowIdx, colIdx, Math.ceil(value));
                 }
             }

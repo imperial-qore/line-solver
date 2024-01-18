@@ -28,13 +28,13 @@ public class CTMC {
 		// B = abs(Q+Q')>0
 		Matrix B = Qmat.sub(1, Qmat.transpose());
 		B.abs();
-		for (int colIdx = 0; colIdx < B.numCols; colIdx++) {
-			int col1 = B.col_idx[colIdx];
-			int col2 = B.col_idx[colIdx + 1];
+		for (int colIdx = 0; colIdx < B.getNumCols(); colIdx++) {
+			int col1 = B.getColIndexes()[colIdx];
+			int col2 = B.getColIndexes()[colIdx + 1];
 
 			for (int i = col1; i < col2; i++) {
-				if (B.nz_values[i] > 0)
-					B.nz_values[i] = 1;
+				if (B.getNonZeroValues()[i] > 0)
+					B.getNonZeroValues()[i] = 1;
 			}
 		}
 
@@ -106,17 +106,17 @@ public class CTMC {
 			}
 
 			// Qnnz = Qnnz(nnzel, nnzel);
-			Matrix new_Qnnz = new Matrix(nnzel.numCols, nnzel.numCols);
-			for (int i = 0; i < nnzel.numCols; i++) {
-				for (int j = 0; j < nnzel.numCols; j++) {
+			Matrix new_Qnnz = new Matrix(nnzel.getNumCols(), nnzel.getNumCols());
+			for (int i = 0; i < nnzel.getNumCols(); i++) {
+				for (int j = 0; j < nnzel.getNumCols(); j++) {
 					new_Qnnz.set(i, j, Qnnz.get((int) nnzel.get(0, i), (int) nnzel.get(0, j)));
 				}
 			}
 			Qnnz = new_Qnnz;
 
 			// bnnz = bnnz(nnzel);
-			Matrix new_bnnz = new Matrix(nnzel.numCols, 1);
-			for (int i = 0; i < nnzel.numCols; i++) {
+			Matrix new_bnnz = new Matrix(nnzel.getNumCols(), 1);
+			for (int i = 0; i < nnzel.getNumCols(); i++) {
 				new_bnnz.set(i, 0, bnnz.get((int) nnzel.get(0, i), 0));
 			}
 			bnnz = new_bnnz;
@@ -124,8 +124,8 @@ public class CTMC {
 			// Qnnz = ctmc_makeinfgen(Qnnz);
 			Qnnz = ctmc_makeinfgen(Qnnz);
 
-			if ((Qnnz.numCols * Qnnz.numRows == Qnnz_1.numCols * Qnnz_1.numRows)
-					&& (bnnz.numCols * bnnz.numRows == bnnz_1.numCols * bnnz_1.numRows)) {
+			if ((Qnnz.getNumCols() * Qnnz.getNumRows() == Qnnz_1.getNumCols() * Qnnz_1.getNumRows())
+					&& (bnnz.getNumCols() * bnnz.getNumRows() == bnnz_1.getNumCols() * bnnz_1.getNumRows())) {
 				goon = false;
 			} else {
 				Qnnz_1 = Qnnz.clone();
@@ -152,20 +152,20 @@ public class CTMC {
 		Matrix solve_res = new Matrix(0, 0);
 		Matrix.solve(Qnnz.transpose(), bnnz, solve_res);
 		solve_res.removeZeros(1e-10);
-		for (int i = 0; i < nnzel.numCols; i++)
+		for (int i = 0; i < nnzel.getNumCols(); i++)
 			p.set(0, (int) nnzel.get(0, i), solve_res.get(i, 0));
 
 		if (p.hasNaN()) {
 			// B = abs(Qnnz+Qnnz')>0;
 			B = Qnnz.add(1, Qnnz.transpose());
 			B.abs();
-			for (int colIdx = 0; colIdx < B.numCols; colIdx++) {
-				int col1 = B.col_idx[colIdx];
-				int col2 = B.col_idx[colIdx + 1];
+			for (int colIdx = 0; colIdx < B.getNumCols(); colIdx++) {
+				int col1 = B.getColIndexes()[colIdx];
+				int col2 = B.getColIndexes()[colIdx + 1];
 
 				for (int i = col1; i < col2; i++) {
-					if (B.nz_values[i] > 0)
-						B.nz_values[i] = 1;
+					if (B.getNonZeroValues()[i] > 0)
+						B.getNonZeroValues()[i] = 1;
 				}
 			}
 
@@ -173,7 +173,7 @@ public class CTMC {
 			sets = Matrix.weaklyConnect(B, null);
 			if (sets.size() > 1) {
 				// p(nnzel) = zeros(1,n);
-				for (int i = 0; i < nnzel.numCols; i++)
+				for (int i = 0; i < nnzel.getNumCols(); i++)
 					p.remove(0, (int) nnzel.get(0, i));
 
 				for (Set<Integer> set_c : sets) {
@@ -191,7 +191,7 @@ public class CTMC {
 					// p(intersect(find(connComp==c),nnzel)) = ctmc_solve(Qc);
 					Matrix ctmc_solve_Qc = ctmc_solve(Qc);
 					int idx = 0;
-					for (int i = 0; i < nnzel.numCols; i++) {
+					for (int i = 0; i < nnzel.getNumCols(); i++) {
 						int val = (int) nnzel.get(0, i);
 						if (set_c.contains(val))
 							p.set(0, val, ctmc_solve_Qc.get(0, idx++));
@@ -217,7 +217,7 @@ public class CTMC {
 		double tol = 1e-12;
 		int maxiter = 100;
 		double q = 0;
-		int n = Q.numCols;
+		int n = Q.getNumCols();
 		for (int i = 0; i < n; i++) {
 			q = Math.max(q, 1.1 * Math.abs(Q.get(i, i)));
 		}
@@ -272,7 +272,7 @@ public class CTMC {
 
 		Matrix diag_sum_A_row = new Matrix(0, 0);
 		Matrix sum_A_row = A.sumRows();
-		Matrix.diagMatrix(diag_sum_A_row, sum_A_row.nz_values, 0, sum_A_row.nz_length);
+		Matrix.diagMatrix(diag_sum_A_row, sum_A_row.getNonZeroValues(), 0, sum_A_row.getNonZeroLength());
 
 		Q = A.sub(1, diag_sum_A_row);
 		Q.removeZeros(0);

@@ -42,7 +42,7 @@ public class NPFQN {
      */
     public static Map<Integer, Matrix> npfqn_traffic_merge_cs(Map<Integer, Map<Integer, Matrix>> MMAPs, Matrix prob, String config) {
         int n = MMAPs.size();
-        int R = prob.numCols;
+        int R = prob.getNumCols();
         Map<Integer, Map<Integer, Matrix>> MMAP_copy = new HashMap<>();
         for (Map.Entry<Integer, Map<Integer, Matrix>> entry : MMAPs.entrySet()) {
             Integer key = entry.getKey();
@@ -92,16 +92,16 @@ public class NPFQN {
      */
     public static Map<Integer, Map<Integer, Matrix>> npfqn_traffic_split_cs(Map<Integer, Matrix> MMAP, Matrix P) {
         int n = MMAP.size();
-        int R = P.numRows;
-        int J = P.numCols;
+        int R = P.getNumRows();
+        int J = P.getNumCols();
         int M = Math.round(J / (float) R);
         Map<Integer, Map<Integer, Matrix>> SMMAP = new HashMap<>();
         for (int j = 0; j < M; j++) {
             SMMAP.put(j, new HashMap<>());
             SMMAP.get(j).put(0, MMAP.get(0).add(1, MMAP.get(1)));
-            SMMAP.get(j).put(1, new Matrix(MMAP.get(1).numRows, MMAP.get(1).numCols));
+            SMMAP.get(j).put(1, new Matrix(MMAP.get(1).getNumRows(), MMAP.get(1).getNumCols()));
             for (int s = 0; s < R; s++) {
-                SMMAP.get(j).put(2 + s, new Matrix(SMMAP.get(j).get(0).numRows, SMMAP.get(j).get(0).numCols));
+                SMMAP.get(j).put(2 + s, new Matrix(SMMAP.get(j).get(0).getNumRows(), SMMAP.get(j).get(0).getNumCols()));
                 for (int r = 0; r < R; r++) {
                     Matrix a = MMAP.get(2 + r).clone();
                     a.scale(P.get(r, (j - 1) * R + s));

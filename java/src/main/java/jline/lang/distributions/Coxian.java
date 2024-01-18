@@ -130,25 +130,25 @@ public class Coxian extends MarkovianDistribution{
 			Matrix mu = getMu();
 			Matrix phi = getPhi();
 			//diag(mu(1:end-1).*(1-phi(1:end-1)),1)
-			Matrix expression1 = new Matrix(mu.numRows, mu.numRows, mu.numRows - 1);
-			for(int i = 0; i < mu.numRows - 1; i++)
+			Matrix expression1 = new Matrix(mu.getNumRows(), mu.getNumRows(), mu.getNumRows() - 1);
+			for(int i = 0; i < mu.getNumRows() - 1; i++)
 				expression1.set(i, i+1, mu.get(i, 0) * (1 - phi.get(i, 0)));
 			
 			//diag(-mu)
 			Matrix tmp = mu.clone();
 			tmp.changeSign();
-			Matrix expression2 = Matrix.diag(tmp.nz_values);
+			Matrix expression2 = Matrix.diag(tmp.getNonZeroValues());
 			
 			//diag(-mu)+diag(mu(1:end-1).*(1-phi(1:end-1)),1)
 			Matrix expression3 = expression1.add(1, expression2);
 			
 			//phi.*mu
-			Matrix expression4 = new Matrix(mu.numRows, 1);
-			for(int i = 0; i < mu.numRows; i++)
+			Matrix expression4 = new Matrix(mu.getNumRows(), 1);
+			for(int i = 0; i < mu.getNumRows(); i++)
 				expression4.set(i, 0, mu.get(i, 0) * (phi.get(i, 0)));
 
 			//zeros(length(mu),length(mu)-1)
-			Matrix expression5 = new Matrix(mu.numRows, mu.numRows - 1);
+			Matrix expression5 = new Matrix(mu.getNumRows(), mu.getNumRows() - 1);
 			
 			//[phi.*mu,zeros(length(mu),length(mu)-1)]
 			Matrix expression6 = new Matrix(0,0,0);

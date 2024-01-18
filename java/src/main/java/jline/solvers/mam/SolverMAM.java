@@ -111,7 +111,7 @@ public class SolverMAM extends NetworkSolver {
 
         for(int i=0;i<sn.nstations;i++){
             if(sn.sched.get(sn.stations.get(i))==SchedStrategy.EXT){
-                for(int j=0;j<result.TN.numCols;j++){
+                for(int j=0;j<result.TN.getNumCols();j++){
                     result.TN.set(i,j,sn.rates.get(i,j));
                 }
             }
@@ -496,8 +496,8 @@ public class SolverMAM extends NetworkSolver {
         boolean isOpen = false;
         boolean isClosed = false;
 
-        for(int i=0; i<sn.njobs.numRows;i++){
-            for(int j=0; j< sn.njobs.numCols;j++){
+        for(int i=0; i<sn.njobs.getNumRows();i++){
+            for(int j=0; j< sn.njobs.getNumCols();j++){
                 if(!Double.isFinite(sn.njobs.get(i,j))){
                     isOpen = true;
                     break;
@@ -505,8 +505,8 @@ public class SolverMAM extends NetworkSolver {
             }
         }
 
-        for(int i=0; i<sn.njobs.numRows;i++){
-            for(int j=0; j< sn.njobs.numCols;j++){
+        for(int i=0; i<sn.njobs.getNumRows();i++){
+            for(int j=0; j< sn.njobs.getNumCols();j++){
                 if(Double.isFinite(sn.njobs.get(i,j))){
                     isClosed = true;
                     break;
@@ -523,23 +523,23 @@ public class SolverMAM extends NetworkSolver {
         HashMap<Integer, Matrix> lambdas_inchain = new HashMap<>(C);
         for(int c=0;c<C;c++){
             Matrix inchain = sn.inchain.get(c);
-            lambdas_inchain.put(c, new Matrix(inchain.numCols,1,inchain.numCols));
+            lambdas_inchain.put(c, new Matrix(inchain.getNumCols(),1,inchain.getNumCols()));
             int ist = (int)sn.refstat.get((int)inchain.get(0,0),0);
             if(!PH.containsKey(sn.stations.get(ist))){
                 PH.put(sn.stations.get(ist),new HashMap<>());
             }
-            for(int j=0; j<inchain.numCols;j++) {
+            for(int j=0; j<inchain.getNumCols();j++) {
                 lambdas_inchain.get(c).set(j,0,sn.rates.get(ist,(int)inchain.get(0,j)));
             }
             double sum = 0;
-            for(int k=0;k<lambdas_inchain.get(c).numRows;k++){
+            for(int k=0;k<lambdas_inchain.get(c).getNumRows();k++){
                 if(Double.isFinite(lambdas_inchain.get(c).get(k,0))){
                     sum += lambdas_inchain.get(c).get(k,0);
                 }
             }
             lambda.set(0,c,sum);
             boolean openChain = false;
-            for(int j=0;j<inchain.numCols;j++){
+            for(int j=0;j<inchain.getNumCols();j++){
                 if(Double.isInfinite(sn.njobs.get((int)inchain.get(0,j)))){
                     openChain = true;
                     break;
@@ -570,14 +570,14 @@ public class SolverMAM extends NetworkSolver {
                     MMAPS.get(1).put(2,PH.get(sn.stations.get(ist)).get(sn.jobclasses.get((int) k)).get(1));
                     chainSysArrivals.put(c,mmap_super_safe(MMAPS,conifg.space_max,"default"));
                 }
-                for(int i=0;i<inchain.numCols;i++){
+                for(int i=0;i<inchain.getNumCols();i++){
                     TN.set(ist, (int) inchain.get(0,i),lambdas_inchain.get(c).get(i,0));
                 }
             }
         }
 
-        Matrix sd = new Matrix(sn.nservers.numRows,sn.nservers.numCols,sn.nservers.nz_length);
-        for(int i=0; i<sn.nservers.numRows;i++){
+        Matrix sd = new Matrix(sn.nservers.getNumRows(),sn.nservers.getNumCols(),sn.nservers.getNonZeroLength());
+        for(int i=0; i<sn.nservers.getNumRows();i++){
             if(Double.isFinite(sn.nservers.get(i,0))){
                 sd.set(i,0,1);
             }
@@ -608,7 +608,7 @@ public class SolverMAM extends NetworkSolver {
                 for(int c=0;c<C;c++){
                     Matrix inchain = sn.inchain.get(c);
                     boolean openChain = false;
-                    for(int j=0;j<inchain.numCols;j++){
+                    for(int j=0;j<inchain.getNumCols();j++){
                         if(Double.isInfinite(sn.njobs.get((int)inchain.get(0,j)))){
                             openChain = true;
                             break;
@@ -659,7 +659,7 @@ public class SolverMAM extends NetworkSolver {
                             Matrix inchain = sn.inchain.get(c);
                             for(int i=0;i<inchain.length();i++){
                                 int fanin =0;
-                                for(int j=0;j<sn.rtnodes.numRows;j++){
+                                for(int j=0;j<sn.rtnodes.getNumRows();j++){
                                     if(sn.rtnodes.get(j,(int)((ind-1)*K+inchain.get(i)))!=0){
                                         fanin++;
                                     }
@@ -719,9 +719,9 @@ public class SolverMAM extends NetworkSolver {
                                 markProb.removeNaN();
                                 chainArrivalAtNode.put(c, mmap_mark(chainSysArrivals.get(c), markProb));
                                 chainArrivalAtNode.put(c, mmap_normalize(chainArrivalAtNode.get(c)));
-                                Matrix b = new Matrix(rates.get(ist).get(c).numRows, rates.get(ist).get(c).numCols, rates.get(ist).get(c).numRows * rates.get(ist).get(c).numCols);
-                                for(int i=0;i<b.numRows;i++){
-                                    for (int j=0;j<b.numCols;j++){
+                                Matrix b = new Matrix(rates.get(ist).get(c).getNumRows(), rates.get(ist).get(c).getNumCols(), rates.get(ist).get(c).getNumRows() * rates.get(ist).get(c).getNumCols());
+                                for(int i=0;i<b.getNumRows();i++){
+                                    for (int j=0;j<b.getNumCols();j++){
                                         b.set(i,j,1/rates.get(ist).get(c).get(i,j));
                                     }
                                 }
@@ -823,7 +823,7 @@ public class SolverMAM extends NetworkSolver {
                             }
                             for (int k = 0; k < K; k++) {
                                 int c = 0;
-                                for(int i=0;i<sn.chains.numRows;i++){
+                                for(int i=0;i<sn.chains.getNumRows();i++){
                                     if(sn.chains.get(i,k)!=0){
                                         c = i;
                                         break;
@@ -863,7 +863,7 @@ public class SolverMAM extends NetworkSolver {
                         QNc = QNc + QN.sumCols((int) inchain.get(j));
                     }
                     for(int m=0;m<inchain.length();m++){
-                        for(int n=0;n<QN.numRows;n++){
+                        for(int n=0;n<QN.getNumRows();n++){
                             QN.set(n,(int)inchain.get(m),QN.get(n,(int)inchain.get(m))*(Nc/QNc));
                         }
                     }
@@ -887,16 +887,16 @@ public class SolverMAM extends NetworkSolver {
                     }
                 }
                 if(Nc==0){
-                    for(int k =0;k<QN.numRows;k++){
+                    for(int k =0;k<QN.getNumRows();k++){
                         QN.set(k,c,0);
                     }
-                    for(int k =0;k<UN.numRows;k++){
+                    for(int k =0;k<UN.getNumRows();k++){
                         UN.set(k,c,0);
                     }
-                    for(int k =0;k<RN.numRows;k++){
+                    for(int k =0;k<RN.getNumRows();k++){
                         RN.set(k,c,0);
                     }
-                    for(int k =0;k<TN.numRows;k++){
+                    for(int k =0;k<TN.getNumRows();k++){
                         TN.set(k,c,0);
                     }
                     CN.set(0,c,0);
@@ -956,7 +956,7 @@ public class SolverMAM extends NetworkSolver {
         Matrix chain = new Matrix(1,K,K);
 
         for(int k=0;k<K;k++){
-            for(int i=0;i<chain.numCols;i++){
+            for(int i=0;i<chain.getNumCols();i++){
                 if(sn.chains.get(i,k)!=0){
                     chain.set(0,k,i);
                     break;
@@ -978,7 +978,7 @@ public class SolverMAM extends NetworkSolver {
             Map<Integer, Map<Integer, Matrix>> D0 = new HashMap<>();
             for (int ist = 0; ist < M; ist++) {
                 if (sn.sched.get(sn.stations.get(ist)) == SchedStrategy.EXT) {
-                    for (int i = 0; i < TN.numCols; i++) {
+                    for (int i = 0; i < TN.getNumCols(); i++) {
                         if (!Double.isNaN(sn.rates.get(ist, i))) {
                             TN.set(ist, i, sn.rates.get(ist, i));
                         }
@@ -1035,7 +1035,7 @@ public class SolverMAM extends NetworkSolver {
                         for (int k = 0; k < K; k++) {
                             QN.set(ist, k, Qret.get(k).elementSum());
                         }
-                        TN.insert_sub_matrix(ist, 0, ist + 1, TN.numCols, mmap_lambda(ARV.get(ind)));
+                        TN.insert_sub_matrix(ist, 0, ist + 1, TN.getNumCols(), mmap_lambda(ARV.get(ind)));
                     }
                     for (int k=0;k<K;k++){
                         UN.set(ist,k,TN.get(ist,k)*map_mean(PH.get(sn.stations.get(ist)).get(sn.jobclasses.get(k)).get(0),PH.get(sn.stations.get(ist)).get(sn.jobclasses.get(k)).get(1)));

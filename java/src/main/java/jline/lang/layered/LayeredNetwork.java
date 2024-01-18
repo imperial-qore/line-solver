@@ -650,7 +650,7 @@ public class LayeredNetwork extends Ensemble {
             int tidx = lqn.tshift + t + 1;
             for (int aidx : lqn.actsof.get(tidx)) {
                 List<Integer> postaidxs = new ArrayList<>();
-                for (int col = 0; col < lqn.graph.numCols; col++) {
+                for (int col = 0; col < lqn.graph.getNumCols(); col++) {
                     if (lqn.graph.get(aidx, col) != 0) {
                         postaidxs.add(col);
                     }
@@ -670,7 +670,7 @@ public class LayeredNetwork extends Ensemble {
                     int parentidx = aidx;
                     while (lqn.type.get(parentidx) != LayeredNetworkElement.ENTRY) {
                         List<Integer> ancestors = new ArrayList<>();
-                        for (int row = 0; row < lqn.graph.numRows; row++) {
+                        for (int row = 0; row < lqn.graph.getNumRows(); row++) {
                             if (lqn.graph.get(row, parentidx) != 0) {
                                 ancestors.add(row);
                             }
@@ -695,7 +695,7 @@ public class LayeredNetwork extends Ensemble {
         for (int tidx : tidxs) {
             if (lqn.type.get(tidx) == LayeredNetworkElement.TASK) {
                 List<Integer> callers = new ArrayList<>();
-                for (int row = 0; row < lqn.taskgraph.numRows; row++) {
+                for (int row = 0; row < lqn.taskgraph.getNumRows(); row++) {
                     if (lqn.taskgraph.get(row, tidx) != 0) {
                         callers.add(row);
                     }
@@ -711,7 +711,7 @@ public class LayeredNetwork extends Ensemble {
             }
         }
         lqn.isref = new Matrix(1, lqn.nhosts + lqn.ntasks + 1, lqn.ntasks);
-        for (int col = 1; col < lqn.schedid.numCols; col++) {
+        for (int col = 1; col < lqn.schedid.getNumCols(); col++) {
             if (lqn.schedid.get(0, col) == SchedStrategy.toID(SchedStrategy.REF)) {
                 lqn.isref.set(0, col, 1);
 

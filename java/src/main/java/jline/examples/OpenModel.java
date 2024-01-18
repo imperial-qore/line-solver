@@ -224,7 +224,7 @@ public class OpenModel {
         node5.setService(jobclass3, Exp.fitMean(0.150000)); // (Queue 2,Class C)
 
         ClassSwitchMatrix C = node3.initClassSwitchMatrix();
-        C = new ClassSwitchMatrix(Matrix.eye(C.numRows));
+        C = new ClassSwitchMatrix(Matrix.eye(C.getNumRows()));
         node3.setClassSwitchingMatrix(C);
 
         // Block 3: topology

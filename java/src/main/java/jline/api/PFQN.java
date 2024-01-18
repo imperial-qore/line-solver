@@ -61,11 +61,11 @@ public class PFQN {
 		}
 
 		Matrix Qopen = new Matrix(0, lambda_new.length());
-		Matrix Ut = new Matrix(1, L_new.numRows);
+		Matrix Ut = new Matrix(1, L_new.getNumRows());
 		double lGopen = 0.0;
-		for (int i = 0; i < L_new.numRows; i++) {
-			Matrix L_row_i = new Matrix(1, L_new.numCols);
-			Matrix.extract(L_new, i, i+1, 0, L_new.numCols, L_row_i, 0, 0);
+		for (int i = 0; i < L_new.getNumRows(); i++) {
+			Matrix L_row_i = new Matrix(1, L_new.getNumCols());
+			Matrix.extract(L_new, i, i+1, 0, L_new.getNumCols(), L_row_i, 0, 0);
 			Ut.set(i, 1-lambda_new.mult(L_row_i.transpose()).get(0));
 			if (Double.isNaN(Ut.get(i))) {
 				Ut.set(i, 0);
@@ -73,7 +73,7 @@ public class PFQN {
 			for (int j = 0; j < L_row_i.length(); j++) {
 				L_new.set(i, j, L_new.get(i, j)/Ut.get(i));
 			}
-			Matrix.extract(L_new, i, i+1, 0, L_new.numCols, L_row_i, 0, 0);
+			Matrix.extract(L_new, i, i+1, 0, L_new.getNumCols(), L_row_i, 0, 0);
 			for (int j = 0; j < L_row_i.length(); j++) {
 				L_row_i.set(j, L_row_i.get(j)/Ut.get(i));
 			}
@@ -87,10 +87,10 @@ public class PFQN {
 			}
 		}
 
-		Matrix L_tmp = new Matrix(L_new.numRows, 0);
-		Matrix N_tmp = new Matrix(N_new.numRows, 0);
-		Matrix Z_tmp = new Matrix(Z_new.numRows, 0);
-		Matrix lambda_tmp = new Matrix(lambda_new.numRows, 0);
+		Matrix L_tmp = new Matrix(L_new.getNumRows(), 0);
+		Matrix N_tmp = new Matrix(N_new.getNumRows(), 0);
+		Matrix Z_tmp = new Matrix(Z_new.getNumRows(), 0);
+		Matrix lambda_tmp = new Matrix(lambda_new.getNumRows(), 0);
 		for (int i = 0; i < N_new.length(); i++) {
 			if (Math.abs(N_new.get(i)) >= GlobalConstants.FineTol) {
 				Matrix L_col = Matrix.extractColumn(L_new, i, null);
@@ -118,15 +118,15 @@ public class PFQN {
 		Matrix scalevec = new Matrix(1, R);
 		scalevec.fill(1.0);
 		for (int r = 0; r < R; r++) {
-			Matrix L_col_r = new Matrix(L_new.numRows, 1);
-			Matrix.extract(L_new, 0, L_new.numRows, r, r+1, L_col_r, 0, 0);
-			Matrix Z_col_r = new Matrix(Z_new.numRows, 1);
-			Matrix.extract(Z_new, 0, Z_new.numRows, r, r+1, Z_col_r, 0, 0);
+			Matrix L_col_r = new Matrix(L_new.getNumRows(), 1);
+			Matrix.extract(L_new, 0, L_new.getNumRows(), r, r+1, L_col_r, 0, 0);
+			Matrix Z_col_r = new Matrix(Z_new.getNumRows(), 1);
+			Matrix.extract(Z_new, 0, Z_new.getNumRows(), r, r+1, Z_col_r, 0, 0);
 			scalevec.set(r, Math.max(L_col_r.elementMax(), Z_col_r.elementMax()));
 		}
 
-		for (int i = 0; i < L_new.numRows; i++) {
-			for (int j = 0; j < L_new.numCols; j++) {
+		for (int i = 0; i < L_new.getNumRows(); i++) {
+			for (int j = 0; j < L_new.getNumCols(); j++) {
 				L_new.set(i, j, L_new.get(i, j)/scalevec.get(j));
 			}
 		}
@@ -135,25 +135,25 @@ public class PFQN {
 			Z_new.set(i, Z_new.get(i)/scalevec.get(i));
 		}
 
-		Matrix Lsum = new Matrix(L_new.numRows, 1);
-		Matrix Lmax = new Matrix(L_new.numRows, 1);
+		Matrix Lsum = new Matrix(L_new.getNumRows(), 1);
+		Matrix Lmax = new Matrix(L_new.getNumRows(), 1);
 
-		for (int i = 0; i < L_new.numRows; i++) {
-			Matrix L_row_i = new Matrix(1, L_new.numCols);
-			Matrix.extract(L_new, i, i+1, 0, L_new.numCols, L_row_i, 0, 0);
+		for (int i = 0; i < L_new.getNumRows(); i++) {
+			Matrix L_row_i = new Matrix(1, L_new.getNumCols());
+			Matrix.extract(L_new, i, i+1, 0, L_new.getNumCols(), L_row_i, 0, 0);
 			Lsum.set(i, L_new.sumRows(i));
 			Lmax.set(i, L_row_i.elementMax());
 		}
 
 		List<Integer> demStations = new ArrayList<>();
 		List<Integer> noDemStations = new ArrayList<>();
-		L_tmp = new Matrix(0, L_new.numCols);
+		L_tmp = new Matrix(0, L_new.getNumCols());
 
-		for (int i = 0; i < L_new.numRows; i++) {
+		for (int i = 0; i < L_new.getNumRows(); i++) {
 			if (!Double.isNaN(Lmax.get(i)/Lsum.get(i)) && Lmax.get(i)/Lsum.get(i)> GlobalConstants.FineTol) {
 				demStations.add(i);
-				Matrix L_row_i = new Matrix(1, L_new.numCols);
-				Matrix.extract(L_new, i, i+1, 0, L_new.numCols, L_row_i, 0, 0);
+				Matrix L_row_i = new Matrix(1, L_new.getNumCols());
+				Matrix.extract(L_new, i, i+1, 0, L_new.getNumCols(), L_row_i, 0, 0);
 				L_tmp = Matrix.concatRows(L_tmp, L_row_i,null);
 			} else {
 				noDemStations.add(i);
@@ -185,8 +185,8 @@ public class PFQN {
 			return new pfqnNcXQReturn(lG, X, Q, method);
 		}
 
-		int M = L_new.numRows;
-		R = L_new.numCols;
+		int M = L_new.getNumRows();
+		R = L_new.getNumCols();
 
 		if (L_new.isEmpty() || L_new.elementSum() < options.tol) {
 			if (Z_new.isEmpty() || Z_new.elementSum() < options.tol) {
@@ -227,15 +227,15 @@ public class PFQN {
 
 		double lGzdem;
 		Matrix Nz;
-		Matrix Zz = new Matrix(Z_new.numRows, 0);
+		Matrix Zz = new Matrix(Z_new.getNumRows(), 0);
 		for (int i: zeroDemandClasses) {
-			Matrix Z_col_i = new Matrix(Z_new.numRows, 1);
-			Matrix.extract(Z_new, 0, Z_new.numRows, i, i+1, Z_col_i, 0, 0);
+			Matrix Z_col_i = new Matrix(Z_new.getNumRows(), 1);
+			Matrix.extract(Z_new, 0, Z_new.getNumRows(), i, i+1, Z_col_i, 0, 0);
 			Zz = Matrix.concatColumns(Zz, Z_col_i, null);
 		}
 
 		flag = true;
-		for (int i = 0; i < Zz.numCols; i++) {
+		for (int i = 0; i < Zz.getNumCols(); i++) {
 			if (Zz.sumCols(i) >= options.tol) {
 				flag = false;
 				break;
@@ -276,19 +276,19 @@ public class PFQN {
 			}
 		}
 
-		L_tmp = new Matrix(L_new.numRows, 0);
+		L_tmp = new Matrix(L_new.getNumRows(), 0);
 		N_tmp = new Matrix(1, 0);
-		Z_tmp = new Matrix(Z_new.numRows, 0);
+		Z_tmp = new Matrix(Z_new.getNumRows(), 0);
 		Matrix scalevecz = new Matrix(1, 0);
 
 		for (int i: nonzeroDemandClasses) {
-			Matrix L_col_i = new Matrix(L_new.numRows, 1);
+			Matrix L_col_i = new Matrix(L_new.getNumRows(), 1);
 			Matrix N_col_i = new Matrix(1, 1);
-			Matrix Z_col_i = new Matrix(Z_new.numRows, 1);
+			Matrix Z_col_i = new Matrix(Z_new.getNumRows(), 1);
 			Matrix scalevec_col_i = new Matrix(1, 1);
-			Matrix.extract(L_new, 0, L_new.numRows, i, i+1, L_col_i, 0, 0);
+			Matrix.extract(L_new, 0, L_new.getNumRows(), i, i+1, L_col_i, 0, 0);
 			Matrix.extract(N_new, 0, 1, i, i+1, N_col_i, 0, 0);
-			Matrix.extract(Z_new, 0, Z_new.numRows, i, i+1, Z_col_i, 0, 0);
+			Matrix.extract(Z_new, 0, Z_new.getNumRows(), i, i+1, Z_col_i, 0, 0);
 			Matrix.extract(scalevec, 0, 1, i, i+1, scalevec_col_i, 0, 0);
 			L_tmp = Matrix.concatColumns(L_tmp, L_col_i, null);
 			N_tmp = Matrix.concatColumns(N_tmp, N_col_i, null);
@@ -333,20 +333,20 @@ public class PFQN {
 		String method = options.method;
 
 		Matrix mu_new;
-		if ((int) N.elementSum() >= mu.numCols) {
+		if ((int) N.elementSum() >= mu.getNumCols()) {
 			mu_new = mu.clone();
 		} else {
-			mu_new = new Matrix(mu.numRows, 0);
+			mu_new = new Matrix(mu.getNumRows(), 0);
 			for (int i = 0; i < N.elementSum(); i++) {
-				Matrix mu_col_i = new Matrix(mu.numRows, 1);
-				Matrix.extract(mu, 0, mu.numRows, i, i+1, mu_col_i, 0, 0);
+				Matrix mu_col_i = new Matrix(mu.getNumRows(), 1);
+				Matrix.extract(mu, 0, mu.getNumRows(), i, i+1, mu_col_i, 0, 0);
 				mu_new = Matrix.concatColumns(mu_new, mu_col_i, null);
 			}
 		}
 
-		Matrix L_new = new Matrix(L.numRows, 0);
-		Matrix N_new = new Matrix(N.numRows, 0);
-		Matrix Z_new = new Matrix(Z.numRows, 0);
+		Matrix L_new = new Matrix(L.getNumRows(), 0);
+		Matrix N_new = new Matrix(N.getNumRows(), 0);
+		Matrix Z_new = new Matrix(Z.getNumRows(), 0);
 		for (int i = 0; i < N.length(); i++) {
 			if (Math.abs(N.get(i)) >= GlobalConstants.FineTol) {
 				Matrix L_col_i = Matrix.extractColumn(L, i, null);
@@ -358,7 +358,7 @@ public class PFQN {
 			}
 		}
 
-		int R = N_new.numCols;
+		int R = N_new.getNumCols();
 		Matrix scalevec = new Matrix(1,R);
 		scalevec.fill(1.0);
 		for (int r = 0; r < R; r++) {
@@ -367,35 +367,35 @@ public class PFQN {
 			scalevec.set(r, Math.max(L_col_r.elementMax(), Z_col_r.elementMax()));
 		}
 
-		for (int i = 0; i < L_new.numRows; i++) {
-			for (int j = 0; j < L_new.numCols; j++) {
+		for (int i = 0; i < L_new.getNumRows(); i++) {
+			for (int j = 0; j < L_new.getNumCols(); j++) {
 				L_new.set(i, j, L_new.get(i, j)/scalevec.get(j));
 			}
 		}
 
-		for (int j = 0; j < Z_new.numCols; j++) {
+		for (int j = 0; j < Z_new.getNumCols(); j++) {
 			Z_new.set(j, Z_new.get(j)/scalevec.get(j));
 		}
 
-		Matrix Lsum = new Matrix(L_new.numRows, 1);
-		Matrix Lmax = new Matrix(L_new.numRows, 1);
+		Matrix Lsum = new Matrix(L_new.getNumRows(), 1);
+		Matrix Lmax = new Matrix(L_new.getNumRows(), 1);
 
-		for (int i = 0; i < L_new.numRows; i++) {
-			Matrix L_row_i = new Matrix(1, L_new.numCols);
-			Matrix.extract(L_new, i, i+1, 0, L_new.numCols, L_row_i, 0, 0);
+		for (int i = 0; i < L_new.getNumRows(); i++) {
+			Matrix L_row_i = new Matrix(1, L_new.getNumCols());
+			Matrix.extract(L_new, i, i+1, 0, L_new.getNumCols(), L_row_i, 0, 0);
 			Lsum.set(i, L_new.sumRows(i));
 			Lmax.set(i, L_row_i.elementMax());
 		}
 
 		List<Integer> demStations = new ArrayList<>();
-		Matrix L_tmp = new Matrix(0, L_new.numCols);
-		Matrix mu_tmp = new Matrix(0, mu_new.numCols);
+		Matrix L_tmp = new Matrix(0, L_new.getNumCols());
+		Matrix mu_tmp = new Matrix(0, mu_new.getNumCols());
 
-		for (int i = 0; i < L_new.numRows; i++) {
+		for (int i = 0; i < L_new.getNumRows(); i++) {
 			if (!Double.isNaN(Lmax.get(i)/Lsum.get(i)) && Lmax.get(i)/Lsum.get(i)> GlobalConstants.FineTol) {
 				demStations.add(i);
-				Matrix L_row_i = new Matrix(1, L_new.numCols);
-				Matrix.extract(L_new, i, i+1, 0, L_new.numCols, L_row_i, 0, 0);
+				Matrix L_row_i = new Matrix(1, L_new.getNumCols());
+				Matrix.extract(L_new, i, i+1, 0, L_new.getNumCols(), L_row_i, 0, 0);
 				L_tmp = Matrix.concatRows(L_tmp, L_row_i,null);
 				Matrix mu_row_i = Matrix.extractRows(mu_new, i, i+1, null);
 				mu_tmp = Matrix.concatRows(mu_tmp, mu_row_i, null);
@@ -405,7 +405,7 @@ public class PFQN {
 		mu_new = mu_tmp.clone();
 
 		boolean flag = false;
-		for (int i = 0; i < N_new.numCols; i++) {
+		for (int i = 0; i < N_new.getNumCols(); i++) {
 			if (Math.abs(L_new.sumCols(i)+Z_new.sumCols(i))<GlobalConstants.FineTol && N_new.get(i) > GlobalConstants.FineTol) {
 				flag = true;
 				break;
@@ -429,8 +429,8 @@ public class PFQN {
 			return new pfqnNcReturn(G, lG, method);
 		}
 
-		int M = L_new.numRows;
-		R = L_new.numCols;
+		int M = L_new.getNumRows();
+		R = L_new.getNumCols();
 
 		if (L_new.isEmpty() || L_new.elementSum() < options.tol) {
 			if (Z_new.isEmpty() || Z_new.elementSum() < options.tol) {
@@ -475,15 +475,15 @@ public class PFQN {
 
 		double lGzdem;
 		Matrix Nz;
-		Matrix Zz = new Matrix(Z_new.numRows, 0);
+		Matrix Zz = new Matrix(Z_new.getNumRows(), 0);
 		for (int i: zeroDemandClasses) {
-			Matrix Z_col_i = new Matrix(Z_new.numRows, 1);
-			Matrix.extract(Z_new, 0, Z_new.numRows, i, i+1, Z_col_i, 0, 0);
+			Matrix Z_col_i = new Matrix(Z_new.getNumRows(), 1);
+			Matrix.extract(Z_new, 0, Z_new.getNumRows(), i, i+1, Z_col_i, 0, 0);
 			Zz = Matrix.concatColumns(Zz, Z_col_i, null);
 		}
 
 		flag = true;
-		for (int i = 0; i < Zz.numCols; i++) {
+		for (int i = 0; i < Zz.getNumCols(); i++) {
 			if (Zz.sumCols(i) >= options.tol) {
 				flag = false;
 				break;
@@ -524,19 +524,19 @@ public class PFQN {
 			}
 		}
 
-		L_tmp = new Matrix(L_new.numRows, 0);
+		L_tmp = new Matrix(L_new.getNumRows(), 0);
 		Matrix N_tmp = new Matrix(1, 0);
-		Matrix Z_tmp = new Matrix(Z_new.numRows, 0);
+		Matrix Z_tmp = new Matrix(Z_new.getNumRows(), 0);
 		Matrix scalevecz = new Matrix(1, 0);
 
 		for (int i: nonzeroDemandClasses) {
-			Matrix L_col_i = new Matrix(L_new.numRows, 1);
+			Matrix L_col_i = new Matrix(L_new.getNumRows(), 1);
 			Matrix N_col_i = new Matrix(1, 1);
-			Matrix Z_col_i = new Matrix(Z_new.numRows, 1);
+			Matrix Z_col_i = new Matrix(Z_new.getNumRows(), 1);
 			Matrix scalevec_col_i = new Matrix(1, 1);
-			Matrix.extract(L_new, 0, L_new.numRows, i, i+1, L_col_i, 0, 0);
+			Matrix.extract(L_new, 0, L_new.getNumRows(), i, i+1, L_col_i, 0, 0);
 			Matrix.extract(N_new, 0, 1, i, i+1, N_col_i, 0, 0);
-			Matrix.extract(Z_new, 0, Z_new.numRows, i, i+1, Z_col_i, 0, 0);
+			Matrix.extract(Z_new, 0, Z_new.getNumRows(), i, i+1, Z_col_i, 0, 0);
 			Matrix.extract(scalevec, 0, 1, i, i+1, scalevec_col_i, 0, 0);
 			L_tmp = Matrix.concatColumns(L_tmp, L_col_i, null);
 			N_tmp = Matrix.concatColumns(N_tmp, N_col_i, null);
@@ -574,8 +574,8 @@ public class PFQN {
 	 * @return normalizing constant and its logarithm
 	 */
 	public static pfqnNcReturn pfqn_gld(Matrix L, Matrix N, Matrix mu, SolverOptions options) {
-		int M = L.numRows;
-		int R = L.numCols;
+		int M = L.getNumRows();
+		int R = L.getNumCols();
 		Matrix lambda = new Matrix(1, R);
 		Double G;
 		Double lG;
@@ -594,7 +594,7 @@ public class PFQN {
 				}
 			}
 			Matrix mu_new;
-			if ((int) N.elementSum() >= mu.numCols) {
+			if ((int) N.elementSum() >= mu.getNumCols()) {
 				mu_new = Matrix.extractRows(mu, 0, 1, null);
 			} else {
 				mu_new = new Matrix(1, 0);
@@ -649,7 +649,7 @@ public class PFQN {
 			Matrix mu_row_i = new Matrix(1, (int)N.elementSum());
 			Matrix.extract(mu_new, i, i+1, 0, (int)N.elementSum(), mu_row_i, 0, 0);
 			boolean flag = true;
-			for (int j = 0; j < mu_row_i.numCols; j++) {
+			for (int j = 0; j < mu_row_i.getNumCols(); j++) {
 				if (Math.abs(mu_row_i.get(j)-(j+1))>GlobalConstants.FineTol) {
 					flag = false;
 					break;
@@ -667,8 +667,8 @@ public class PFQN {
 		}
 
 		if (!isLoadDep) {
-			Matrix Lli = new Matrix(0, L.numCols);
-			Matrix Zli = new Matrix(0, L.numCols);
+			Matrix Lli = new Matrix(0, L.getNumCols());
+			Matrix Zli = new Matrix(0, L.getNumCols());
 			for (int i = 0; i < M; i++) {
 				Matrix L_row_i = Matrix.extractRows(L, i, i+1, null);
 				if (isInfServer[i]) {
@@ -736,8 +736,8 @@ public class PFQN {
 	 * @return normalizing constant and its logarithm
 	 */
 	public static Matrix pfqn_mushift(Matrix mu, int k) {
-		int M = mu.numRows;
-		int N = mu.numCols;
+		int M = mu.getNumRows();
+		int N = mu.getNumCols();
 		Matrix mushift = new Matrix(M, N-1);
 		Matrix.extract(mu, 0, M, 0, N-1, mushift, 0, 0);
 		for (int j = 0; j < N-1; j++) {
@@ -755,8 +755,8 @@ public class PFQN {
 	 * @return normalizing constant, its logarithm, and mean performance metrics computed as a by-product
 	 */
 	public static pfqnNcXQReturn compute_norm_const(Matrix L, Matrix N, Matrix Z, SolverOptions options) {
-		int M = L.numRows;
-		int R = L.numCols;
+		int M = L.getNumRows();
+		int R = L.getNumCols();
 		Matrix X = new Matrix(0, 0);
 		Matrix Q = new Matrix(0, 0);
 		String method = options.method;
@@ -784,7 +784,7 @@ public class PFQN {
 							method = "le";
 						}
 					}
-				} else if (Z_colSum.numCols == 1 && Math.abs(Z_colSum.get(0)) < GlobalConstants.FineTol) {
+				} else if (Z_colSum.getNumCols() == 1 && Math.abs(Z_colSum.get(0)) < GlobalConstants.FineTol) {
 					Matrix tmp = L.clone();
 					for (int i = 0; i < tmp.length(); i++) {
 						tmp.set(i, Math.log(tmp.get(i)));
@@ -812,7 +812,7 @@ public class PFQN {
 			}
 			case "mmint2":
 			case "gleint": {
-				if (L.numRows > 1) {
+				if (L.getNumRows() > 1) {
 					throw new RuntimeException("The " + options.method + " method requires a model with a delay and a single queueing station.");
 				} else {
 					pfqnNcReturn ret = pfqn_mmint2_gausslegendre(L,N,Z.sumCols(),null);
@@ -881,17 +881,17 @@ public class PFQN {
 	 */
 	//TODO: other cases to be implemented
 	public static pfqnNcReturn compute_norm_const_ld(Matrix L, Matrix N, Matrix Z, Matrix mu, SolverOptions options) {
-		int M = L.numRows;
-		int R = L.numCols;
+		int M = L.getNumRows();
+		int R = L.getNumCols();
 		String method = options.method;
 		Double lG = null;
 
 		switch (options.method) {
 			case "default":
 			case "exact": {
-				int D = Z.numRows;
+				int D = Z.getNumRows();
 				Matrix Lz = Matrix.concatRows(L, Z, null);
-				Matrix tmp = new Matrix(1, mu.numCols);
+				Matrix tmp = new Matrix(1, mu.getNumCols());
 				for (int i = 0; i < tmp.length(); i++) {
 					tmp.set(i, i+1);
 				}
@@ -1065,14 +1065,14 @@ public class PFQN {
 		Matrix y = new Matrix(1, n);
 		y.fill(0.0);
 
-		if (!(Z.numRows == L.numRows && Z.numCols == L.numCols)) {
+		if (!(Z.getNumRows() == L.getNumRows() && Z.getNumCols() == L.getNumCols())) {
 			throw new RuntimeException("The dimensions of Z and L are not the same.");
 		}
 		for (int i = 0; i < n; i++) {
 			Matrix tmp = L.clone();
 
-			for (int j = 0; j < tmp.numRows; j++) {
-				for (int k = 0; k < tmp.numCols; k++) {
+			for (int j = 0; j < tmp.getNumRows(); j++) {
+				for (int k = 0; k < tmp.getNumCols(); k++) {
 					tmp.set(j, k, Math.log(Z.get(j, k) + gausslegendreNodes.get(i)*tmp.get(j, k)));
 				}
 			}
@@ -1160,8 +1160,8 @@ public class PFQN {
 		A.set(K-1, K-1, 1.0);
 
 		for (int r = 0; r < R; r++) {
-			Matrix L_col_r = new Matrix(L.numRows, 1);
-			Matrix.extract(L, 0, L.numRows, r, r+1, L_col_r, 0, 0);
+			Matrix L_col_r = new Matrix(L.getNumRows(), 1);
+			Matrix.extract(L, 0, L.getNumRows(), r, r+1, L_col_r, 0, 0);
 			A.set(K-1, K-1,
 							A.get(K-1, K-1)-(csi.get(r)*csi.get(r)/N.get(r))*Z.get(r)*u.mult(L_col_r).get(0));
 		}
@@ -1170,8 +1170,8 @@ public class PFQN {
 
 		for (int i = 0; i < K-1; i++) {
 			for (int r = 0; r < R; r++) {
-				Matrix L_col_r = new Matrix(L.numRows, 1);
-				Matrix.extract(L, 0, L.numRows, r, r+1, L_col_r, 0, 0);
+				Matrix L_col_r = new Matrix(L.getNumRows(), 1);
+				Matrix.extract(L, 0, L.getNumRows(), r, r+1, L_col_r, 0, 0);
 				A.set(i, K-1, A.get(i, K-1)+
 								v*u.get(i)*((csi.get(r)*csi.get(r)/N.get(r))*Lhat.get(i,r)
 												*(u.mult(L_col_r).get(0))-csi.get(r)*L.get(i,r)));
@@ -1190,8 +1190,8 @@ public class PFQN {
 	 * @return normalizing constant and its logarithm
 	 */
 	protected static Matrix pfqn_le_hessian(Matrix L, Matrix N, Matrix u0) {
-		int M = L.numRows;
-		int R = L.numCols;
+		int M = L.getNumRows();
+		int R = L.getNumCols();
 		double Ntot = N.elementSum();
 		Matrix hu = new Matrix(M-1, M-1);
 		hu.fill(0.0);
@@ -1201,8 +1201,8 @@ public class PFQN {
 				if (i != j) {
 					hu.set(i, j, -(Ntot+M)*u0.get(i)*u0.get(j));
 					for (int r = 0; r < R; r++) {
-						Matrix L_col_r = new Matrix(L.numRows, 1);
-						Matrix.extract(L, 0, L.numRows, r, r+1, L_col_r, 0, 0);
+						Matrix L_col_r = new Matrix(L.getNumRows(), 1);
+						Matrix.extract(L, 0, L.getNumRows(), r, r+1, L_col_r, 0, 0);
 						hu.set(i, j, hu.get(i,j)
 										+N.get(r)*L.get(i,r)*L.get(j,r)*u0.get(i)*u0.get(j)
 										/(u0.mult(L_col_r).get(0)*u0.mult(L_col_r).get(0)));
@@ -1210,8 +1210,8 @@ public class PFQN {
 				} else {
 					hu.set(i, j, (Ntot+M)*u0.get(i)*(Matrix.allbut(u0,i).elementSum()));
 					for (int r = 0; r < R; r++) {
-						Matrix L_col_r = new Matrix(L.numRows, 1);
-						Matrix.extract(L, 0, L.numRows, r, r+1, L_col_r, 0, 0);
+						Matrix L_col_r = new Matrix(L.getNumRows(), 1);
+						Matrix.extract(L, 0, L.getNumRows(), r, r+1, L_col_r, 0, 0);
 						Matrix tmp_L = Matrix.allbut(L_col_r, i).transpose();
 
 						hu.set(i, j, hu.get(i,j)
@@ -1232,8 +1232,8 @@ public class PFQN {
 	 * @return fixed point
 	 */
 	protected static pfqnLeFpiReturn pfqn_le_fpi(Matrix L, Matrix N) {
-		int M = L.numRows;
-		int R = L.numCols;
+		int M = L.getNumRows();
+		int R = L.getNumCols();
 		Matrix u = new Matrix(M, 1);
 		for (int i = 0; i < M; i++) {
 			u.set(i, 1.0/M);
@@ -1252,8 +1252,8 @@ public class PFQN {
 			for (int i = 0; i < M; i++) {
 				u.set(i, 1/(N.elementSum()+M));
 				for (int r = 0; r < R; r++) {
-					Matrix L_col_r = new Matrix(L.numRows, 1);
-					Matrix.extract(L, 0, L.numRows, r, r+1, L_col_r, 0, 0);
+					Matrix L_col_r = new Matrix(L.getNumRows(), 1);
+					Matrix.extract(L, 0, L.getNumRows(), r, r+1, L_col_r, 0, 0);
 					u.set(i, u.get(i)
 						+N.get(r)/(N.elementSum()+M)*L.get(i,r)*u_1.get(i)
 						/(u_1.transpose().mult(L_col_r).get(0)));
@@ -1279,8 +1279,8 @@ public class PFQN {
 	 * @return fixed point
 	 */
 	protected static pfqnLeFpiZReturn pfqn_le_fpiZ(Matrix L, Matrix N, Matrix Z) {
-		int M = L.numRows;
-		int R = L.numCols;
+		int M = L.getNumRows();
+		int R = L.getNumCols();
 		double eta = N.elementSum() + M;
 		Matrix u = new Matrix(M, 1);
 		for (int i = 0; i < M; i++) {
@@ -1303,8 +1303,8 @@ public class PFQN {
 			for (int i = 0; i < M; i++) {
 				u.set(i, 1/eta);
 				for (int r = 0; r < R; r++) {
-					Matrix L_col_r = new Matrix(L.numRows, 1);
-					Matrix.extract(L, 0, L.numRows, r, r+1, L_col_r, 0, 0);
+					Matrix L_col_r = new Matrix(L.getNumRows(), 1);
+					Matrix.extract(L, 0, L.getNumRows(), r, r+1, L_col_r, 0, 0);
 					u.set(i, u.get(i)
 									+N.get(r)/eta*(Z.get(r)+v*L.get(i,r))*u_1.get(i)
 									/(Z.get(r)+v*u_1.transpose().mult(L_col_r).get(0)));
@@ -1313,8 +1313,8 @@ public class PFQN {
 
 			Matrix xi = new Matrix(1, R);
 			for (int r = 0; r < R; r++) {
-				Matrix L_col_r = new Matrix(L.numRows, 1);
-				Matrix.extract(L, 0, L.numRows, r, r+1, L_col_r, 0, 0);
+				Matrix L_col_r = new Matrix(L.getNumRows(), 1);
+				Matrix.extract(L, 0, L.getNumRows(), r, r+1, L_col_r, 0, 0);
 				xi.set(r, N.get(r)/(Z.get(r)+v*u_1.transpose().mult(L_col_r).get(0)));
 			}
 			v = eta + 1;
@@ -1365,13 +1365,13 @@ public class PFQN {
 	 * @return normalizing constant and its logarithm
 	 */
 	public static pfqnNcReturn pfqn_le(Matrix L, Matrix N, Matrix Z) {
-		int M = L.numRows;
-		int R = L.numCols;
+		int M = L.getNumRows();
+		int R = L.getNumCols();
 		double lGn;
 		double Gn;
 
 		if (L.isEmpty() || N.isEmpty() || N.elementSum() == 0 || L.elementSum() < GlobalConstants.CoarseTol) {
-			Matrix tmp = new Matrix(1, Z.numCols);
+			Matrix tmp = new Matrix(1, Z.getNumCols());
 			for (int i = 0; i < tmp.length(); i++) {
 				tmp.set(i, Math.log(Z.sumCols(i)));
 			}
@@ -1384,8 +1384,8 @@ public class PFQN {
 			Matrix A = pfqn_le_hessian(L,N,umax.transpose());
 			double S = 0.0;
 			for (int r = 0; r < R; r++) {
-				Matrix L_col_r = new Matrix(L.numRows, 1);
-				Matrix.extract(L, 0, L.numRows, r, r+1, L_col_r, 0, 0);
+				Matrix L_col_r = new Matrix(L.getNumRows(), 1);
+				Matrix.extract(L, 0, L.getNumRows(), r, r+1, L_col_r, 0, 0);
 				S += N.get(r) * Math.log(umax.transpose().mult(L_col_r).get(0));
 			}
 
@@ -1407,8 +1407,8 @@ public class PFQN {
 			Matrix A = pfqn_le_hessianZ(L, N, Z, umax.transpose(), vmax);
 			double S = 0;
 			for (int r = 0; r < R; r++) {
-				Matrix L_col_r = new Matrix(L.numRows, 1);
-				Matrix.extract(L, 0, L.numRows, r, r+1, L_col_r, 0, 0);
+				Matrix L_col_r = new Matrix(L.getNumRows(), 1);
+				Matrix.extract(L, 0, L.getNumRows(), r, r+1, L_col_r, 0, 0);
 				S += N.get(r) * Math.log(Z.get(r)+vmax*umax.transpose().mult(L_col_r).get(0));
 			}
 			Matrix log_umax = umax.clone();
@@ -1445,8 +1445,8 @@ public class PFQN {
 	 * @return normalizing constant and its logarithm
 	 */
 	public static pfqnNcReturn pfqn_ls(Matrix L, Matrix N, Matrix Z, int I, long seed) {
-		int M = L.numRows;
-		int R = L.numCols;
+		int M = L.getNumRows();
+		int R = L.getNumCols();
 		Matrix Lsum = new Matrix(M, 1);
 		for (int i = 0; i < M; i++) {
 			Lsum.set(i, L.sumRows(i));
@@ -1459,14 +1459,14 @@ public class PFQN {
 				L_new = Matrix.concatRows(L_new, L_row_i, null);
 			}
 		}
-		M = L_new.numRows;
-		R = L_new.numCols;
+		M = L_new.getNumRows();
+		R = L_new.getNumCols();
 		double[][] sample = null;
 		double lGn;
 		double Gn;
 
 		if (L_new.isEmpty() || N.isEmpty() || N.elementSum() == 0 || L_new.elementSum() < GlobalConstants.CoarseTol) {
-			Matrix tmp = new Matrix(1, Z.numCols);
+			Matrix tmp = new Matrix(1, Z.getNumCols());
 			for (int i = 0; i < tmp.length(); i++) {
 				tmp.set(i, Math.log(Z.sumCols(i)));
 			}
@@ -1477,8 +1477,8 @@ public class PFQN {
 			Matrix umax = ret.u;
 			Matrix A = pfqn_le_hessian(L_new,N,umax.transpose());
 			Matrix A_t = A.transpose();
-			for (int i = 0; i < A.numRows; i++) {
-				for (int j = 0; j < A.numCols; j++) {
+			for (int i = 0; i < A.getNumRows(); i++) {
+				for (int j = 0; j < A.getNumCols(); j++) {
 					A.set(i, j, (A.get(i,j)+A_t.get(i,j))/2.0);
 				}
 			}
@@ -1492,10 +1492,10 @@ public class PFQN {
 			for (int i = 0; i < M-1; i++) {
 				x0_array[i] = x0.get(i);
 			}
-			double[][] iA_array = new double[iA.numRows][];
-			for (int i = 0; i < iA.numRows; i++) {
-				double[] tmp_row = new double[iA.numCols];
-				for (int j = 0; j < iA.numCols; j++) {
+			double[][] iA_array = new double[iA.getNumRows()][];
+			for (int i = 0; i < iA.getNumRows(); i++) {
+				double[] tmp_row = new double[iA.getNumCols()];
+				for (int j = 0; j < iA.getNumCols(); j++) {
 					tmp_row[j] = iA.get(i, j);
 				}
 				iA_array[i] = tmp_row;
@@ -1529,8 +1529,8 @@ public class PFQN {
 			double vmax = ret.v;
 			Matrix A = pfqn_le_hessianZ(L_new, N, Z, umax.transpose(), vmax);
 			Matrix A_t = A.transpose();
-			for (int i = 0; i < A.numRows; i++) {
-				for (int j = 0; j < A.numCols; j++) {
+			for (int i = 0; i < A.getNumRows(); i++) {
+				for (int j = 0; j < A.getNumCols(); j++) {
 					A.set(i, j, (A.get(i,j)+A_t.get(i,j))/2.0);
 				}
 			}
@@ -1545,10 +1545,10 @@ public class PFQN {
 			for (int i = 0; i < M; i++) {
 				x0_array[i] = x0.get(i);
 			}
-			double[][] iA_array = new double[iA.numRows][];
-			for (int i = 0; i < iA.numRows; i++) {
-				double[] tmp_row = new double[iA.numCols];
-				for (int j = 0; j < iA.numCols; j++) {
+			double[][] iA_array = new double[iA.getNumRows()][];
+			for (int i = 0; i < iA.getNumRows(); i++) {
+				double[] tmp_row = new double[iA.getNumCols()];
+				for (int j = 0; j < iA.getNumCols(); j++) {
 					tmp_row[j] = iA.get(i, j);
 				}
 				iA_array[i] = tmp_row;
@@ -1597,16 +1597,16 @@ public class PFQN {
 		tmp2 *= -eta;
 		res += (tmp1 + tmp2);
 
-		Matrix L_row_K = new Matrix(1, L.numCols);
-		Matrix L_first_K_minus_one_rows = new Matrix(K-1, L.numCols);
+		Matrix L_row_K = new Matrix(1, L.getNumCols());
+		Matrix L_first_K_minus_one_rows = new Matrix(K-1, L.getNumCols());
 		Matrix x_first_K_minus_one_elements = new Matrix(1, K-1);
-		Matrix.extract(L, K-1, K, 0, L.numCols, L_row_K, 0, 0);
-		Matrix.extract(L, 0, K-1, 0, L.numCols, L_first_K_minus_one_rows, 0, 0);
+		Matrix.extract(L, K-1, K, 0, L.getNumCols(), L_row_K, 0, 0);
+		Matrix.extract(L, 0, K-1, 0, L.getNumCols(), L_first_K_minus_one_rows, 0, 0);
 		for (int i = 0; i < K-1; i++) {
 			x_first_K_minus_one_elements.set(i, Math.exp(x[i]));
 		}
 		for (int i = 0; i < K-1; i++) {
-			for (int j = 0; j < L.numCols; j++) {
+			for (int j = 0; j < L.getNumCols(); j++) {
 				L_first_K_minus_one_rows.set(i, j,
 								L_first_K_minus_one_rows.get(i, j)*Math.exp(x[K-1])+Z.get(j));
 			}
@@ -1635,10 +1635,10 @@ public class PFQN {
 		Matrix Z_new = Z.clone();
 		L_new.removeNaN();
 		Z_new.removeNaN();
-		Matrix L_tmp = new Matrix(L_new.numRows, 0);
-		Matrix N_tmp = new Matrix(N.numRows, 0);
-		Matrix Z_tmp = new Matrix(Z_new.numRows, 0);
-		Matrix lambda_tmp = new Matrix(lambda.numRows, 0);
+		Matrix L_tmp = new Matrix(L_new.getNumRows(), 0);
+		Matrix N_tmp = new Matrix(N.getNumRows(), 0);
+		Matrix Z_tmp = new Matrix(Z_new.getNumRows(), 0);
+		Matrix lambda_tmp = new Matrix(lambda.getNumRows(), 0);
 		for (int i = 0; i < N.length(); i++) {
 			if (Math.abs(N.get(i)) >= GlobalConstants.FineTol && !(L_new.sumCols(i)+Z_new.sumCols(i) < atol)) {
 				Matrix L_col = Matrix.extractColumn(L_new, i, null);
@@ -1658,14 +1658,14 @@ public class PFQN {
 
 		double lGremaind= 0.0;
 
-		Matrix L_zeroDemand = new Matrix(L_new.numRows, 0);
-		Matrix Z_zeroDemand = new Matrix(Z_new.numRows, 0);
-		Matrix N_zeroDemand = new Matrix(N_new.numRows, 0);
-		L_tmp = new Matrix(L_new.numRows, 0);
-		N_tmp = new Matrix(N_new.numRows, 0);
-		Z_tmp = new Matrix(Z_new.numRows, 0);
+		Matrix L_zeroDemand = new Matrix(L_new.getNumRows(), 0);
+		Matrix Z_zeroDemand = new Matrix(Z_new.getNumRows(), 0);
+		Matrix N_zeroDemand = new Matrix(N_new.getNumRows(), 0);
+		L_tmp = new Matrix(L_new.getNumRows(), 0);
+		N_tmp = new Matrix(N_new.getNumRows(), 0);
+		Z_tmp = new Matrix(Z_new.getNumRows(), 0);
 
-		for (int i = 0; i < L_new.numCols; i++) {
+		for (int i = 0; i < L_new.getNumCols(); i++) {
 			Matrix L_col = Matrix.extractColumn(L_new, i, null);
 			Matrix N_col = Matrix.extractColumn(N_new, i, null);
 			Matrix Z_col = Matrix.extractColumn(Z_new, i, null);
@@ -1683,14 +1683,14 @@ public class PFQN {
 		Matrix log_Z_zeroDemand = Z_zeroDemand.clone();
 		Matrix log_N_zeroDemand = N_zeroDemand.clone();
 
-		for (int i = 0; i < Z_zeroDemand.numRows; i++) {
-			for (int j = 0; j < Z_zeroDemand.numCols; j++) {
+		for (int i = 0; i < Z_zeroDemand.getNumRows(); i++) {
+			for (int j = 0; j < Z_zeroDemand.getNumCols(); j++) {
 				log_Z_zeroDemand.set(i, j, Math.log(Z_zeroDemand.get(i, j)));
 			}
 		}
 
-		for (int i = 0; i < N_zeroDemand.numRows; i++) {
-			for (int j = 0; j < N_zeroDemand.numCols; j++) {
+		for (int i = 0; i < N_zeroDemand.getNumRows(); i++) {
+			for (int j = 0; j < N_zeroDemand.getNumCols(); j++) {
 				log_N_zeroDemand.set(i, j, Math.log(N_zeroDemand.get(i, j)));
 			}
 		}
@@ -1703,25 +1703,25 @@ public class PFQN {
 		N_new = N_tmp;
 
 		if (!L_new.isEmpty()) {
-			Matrix Lmax = new Matrix(1, L_new.numCols);
+			Matrix Lmax = new Matrix(1, L_new.getNumCols());
 				for (int i = 0; i < Lmax.length(); i++) {
 					Matrix L_col_i = Matrix.extractColumn(L_new, i, null);
 					Lmax.set(i, L_col_i.elementMax());
 				}
 			if (Lmax.isEmpty()) {
-				Lmax = new Matrix(1, Z_new.numCols);
+				Lmax = new Matrix(1, Z_new.getNumCols());
 				Lmax.ones();
 			}
-			Matrix repmat_Lmax_L = Lmax.repmat(L_new.numRows, 1);
-			Matrix repmat_Lmax_Z = Lmax.repmat(Z_new.numRows, 1);
-			for (int i = 0; i < L_new.numRows; i++) {
-				for (int j = 0; j < L_new.numCols; j++) {
+			Matrix repmat_Lmax_L = Lmax.repmat(L_new.getNumRows(), 1);
+			Matrix repmat_Lmax_Z = Lmax.repmat(Z_new.getNumRows(), 1);
+			for (int i = 0; i < L_new.getNumRows(); i++) {
+				for (int j = 0; j < L_new.getNumCols(); j++) {
 					L_new.set(i, j, L_new.get(i, j) / repmat_Lmax_L.get(i, j));
 				}
 			}
 
-			for (int i = 0; i < Z_new.numRows; i++) {
-				for (int j = 0; j < Z_new.numCols; j++) {
+			for (int i = 0; i < Z_new.getNumRows(); i++) {
+				for (int j = 0; j < Z_new.getNumCols(); j++) {
 					Z_new.set(i, j, Z_new.get(i, j) / repmat_Lmax_Z.get(i, j));
 				}
 			}
@@ -1733,12 +1733,12 @@ public class PFQN {
 			lGremaind += N_new.mult(Lmax_log).get(0);
 
 			if (!Z_new.isEmpty()) {
-				Integer[] index = new Integer[Z_new.numCols];
+				Integer[] index = new Integer[Z_new.getNumCols()];
 				for (int i = 0; i < index.length; i++) {
 					index[i] = i;
 				}
 
-				Matrix Z_sum_col = new Matrix(1, Z_new.numCols);
+				Matrix Z_sum_col = new Matrix(1, Z_new.getNumCols());
 				for (int i = 0; i < Z_sum_col.length(); i++) {
 					Z_sum_col.set(i, Z_new.sumCols(i));
 				}
@@ -1749,9 +1749,9 @@ public class PFQN {
 					}
 				});
 
-				L_tmp = new Matrix(L_new.numRows, 0);
-				Z_tmp = new Matrix(Z_new.numRows, 0);
-				N_tmp = new Matrix(N_new.numRows, 0);
+				L_tmp = new Matrix(L_new.getNumRows(), 0);
+				Z_tmp = new Matrix(Z_new.getNumRows(), 0);
+				N_tmp = new Matrix(N_new.getNumRows(), 0);
 
 				for (int i = 0; i < index.length; i++) {
 					if (!L_new.isEmpty()) {
@@ -1779,8 +1779,8 @@ public class PFQN {
 	 * @return sanitized parameters
 	 */
 	public static pfqnComomrmReturn pfqn_comomrm(Matrix L, Matrix N, Matrix Z, Integer m, double atol) {
-		int M = L.numRows;
-		int R = L.numCols;
+		int M = L.getNumRows();
+		int R = L.getNumCols();
 		if (M != 1) {
 			throw new RuntimeException("pfqn_comomrm: The solver accepts at most a single queueing station.");
 		}
@@ -1904,8 +1904,8 @@ public class PFQN {
 					}
 					h_1 = h;
 					Matrix tmp_mat = F1r.clone();
-					for (int i = 0; i < tmp_mat.numRows; i++) {
-						for (int j = 0; j < tmp_mat.numCols; j++) {
+					for (int i = 0; i < tmp_mat.getNumRows(); i++) {
+						for (int j = 0; j < tmp_mat.getNumCols(); j++) {
 							tmp_mat.set(i, j, F1r.get(i, j)+F2r.get(i, j)/nvec.get(r-1));
 						}
 					}
@@ -1932,8 +1932,8 @@ public class PFQN {
 
 	/** Auxiliary function used by pfqn_gld to computer the normalizing constant in a single-class load-dependent model.*/
 	public static pfqnNcReturn pfqn_gldsingle(Matrix L, Matrix N, Matrix mu, SolverOptions options) {
-		int M = L.numRows;
-		int R = L.numCols;
+		int M = L.getNumRows();
+		int R = L.getNumCols();
 
 		if (R > 1) {
 			throw new RuntimeException("pfqn_gldsingle: multiclass model detected. pfqn_gldsingle is for single class models.");
@@ -2002,7 +2002,7 @@ public class PFQN {
 		int M = n.length();
 		Matrix r = new Matrix(M, 1);
 		r.fill(1.0);
-		int smax = lldscaling.numCols;
+		int smax = lldscaling.getNumCols();
 		double alpha = 20;
 
 		for(int i = 0; i < M; i++) {
@@ -2791,8 +2791,8 @@ public class PFQN {
 		}
 		int Nt = mu.getNumCols(); // Compute extra elements if present
 		int oldEnd = mu.getNumCols() - 1;
-		mu.expandMatrix(mu.getNumRows(), mu.getNumCols() + 2 + (int) b.elementMax(), mu.nz_length +
-				(2 + (int) b.elementMax()) * Matrix.extractColumn(mu, oldEnd, null).nz_length);
+		mu.expandMatrix(mu.getNumRows(), mu.getNumCols() + 2 + (int) b.elementMax(), mu.getNonZeroLength() +
+				(2 + (int) b.elementMax()) * Matrix.extractColumn(mu, oldEnd, null).getNonZeroLength());
 		for(int i = 0; i < mu.getNumRows(); i++){
 			for(int j = oldEnd + 1; j < mu.getNumCols(); j++){
 				mu.set(i, j, mu.get(i, oldEnd));

@@ -366,7 +366,7 @@ public class M3A {
         if(MMAP.isEmpty()){
             return null;
         }
-        int K = MMAP.get(0).numRows;
+        int K = MMAP.get(0).getNumRows();
         int C = MMAP.size()-2;
 
         for(int i=0;i<K;i++){
@@ -377,12 +377,12 @@ public class M3A {
             }
         }
 
-        MMAP.put(1, new Matrix(MMAP.get(0).numRows,MMAP.get(0).numCols,MMAP.get(0).numRows*MMAP.get(0).numCols));
+        MMAP.put(1, new Matrix(MMAP.get(0).getNumRows(),MMAP.get(0).getNumCols(),MMAP.get(0).getNumRows()*MMAP.get(0).getNumCols()));
 
         for(int c=0;c<C;c++){
             MMAP.get(2+c).removeNegative();
             if(Double.isNaN(MMAP.get(2+c).get(0))){
-                MMAP.put(2+c,new Matrix(MMAP.get(2+c).numRows,MMAP.get(2+c).numCols,MMAP.get(2+c).numRows*MMAP.get(2+c).numCols));
+                MMAP.put(2+c,new Matrix(MMAP.get(2+c).getNumRows(),MMAP.get(2+c).getNumCols(),MMAP.get(2+c).getNumRows()*MMAP.get(2+c).getNumCols()));
             }
             MMAP.put(1,MMAP.get(1).add(1,MMAP.get(2+c)));
         }
@@ -406,8 +406,8 @@ public class M3A {
      * @return a new MMAP with S tpyes
      */
     public static Map<Integer,Matrix> mmap_mark(Map<Integer,Matrix> MMAP, Matrix prob){
-        int K = prob.numRows;
-        int R = prob.numCols;
+        int K = prob.getNumRows();
+        int R = prob.getNumCols();
         Map<Integer,Matrix> mmap = new HashMap<>(2+R);
         mmap.put(0, MMAP.get(0).clone());
         mmap.put(1, MMAP.get(1).clone());
@@ -451,7 +451,7 @@ public class M3A {
 
         }else {
             SCALED.put(0,MMAP.get(0).clone());
-            SCALED.put(1,new Matrix(MMAP.get(0).numRows,MMAP.get(0).numCols,MMAP.get(0).numRows*MMAP.get(0).numCols));
+            SCALED.put(1,new Matrix(MMAP.get(0).getNumRows(),MMAP.get(0).getNumCols(),MMAP.get(0).getNumRows()*MMAP.get(0).getNumCols()));
             Matrix l = mmap_count_lambda(MMAP);
             for(int c=0;c<C;c++){
                 if(l.get(c)>0){
@@ -460,7 +460,7 @@ public class M3A {
                     SCALED.put(2+c,a);
                     SCALED.put(1,SCALED.get(1).add(1,a));
                 }else {
-                    SCALED.put(2+c,new Matrix(MMAP.get(2+c).numRows,MMAP.get(2+c).numCols,MMAP.get(2+c).numRows*MMAP.get(2+c).numCols));
+                    SCALED.put(2+c,new Matrix(MMAP.get(2+c).getNumRows(),MMAP.get(2+c).getNumCols(),MMAP.get(2+c).getNumRows()*MMAP.get(2+c).getNumCols()));
                 }
             }
 
@@ -477,7 +477,7 @@ public class M3A {
      * @return the vector with the rate for each job class
      */
     public static Matrix mmap_count_lambda(Map<Integer,Matrix> mmap){
-        int n = mmap.get(0).numRows;
+        int n = mmap.get(0).getNumRows();
         int K = mmap.size()-2;
 
         // symbolic map haven't been implemented
@@ -582,7 +582,7 @@ public class M3A {
         mmap.put(0,MMAP.get(0));
         mmap.put(1,MMAP.get(1));
         for(int i=0;i<types.length();i++){
-            mmap.put((int) (2+types.get(2+i)),new Matrix(MMAP.get(0).numRows,MMAP.get(0).numRows));
+            mmap.put((int) (2+types.get(2+i)),new Matrix(MMAP.get(0).getNumRows(),MMAP.get(0).getNumRows()));
         }
 
         return mmap_normalize(mmap);
@@ -624,7 +624,7 @@ public class M3A {
 
     public static mmap_mixture_fit_return_type mmap_mixture_fit(Map<Integer[],Matrix> P2, Matrix M1, Matrix M2, Matrix M3){
         mmap_mixture_fit_return_type result = new mmap_mixture_fit_return_type();
-        int m = M1.numRows;
+        int m = M1.getNumRows();
         for(int i=0;i<m;i++){
             for(int j=0;j<m;j++){
                 result.PHs.put(new Integer[]{i,j},aph2_fit(M1.get(i,j),M2.get(i,j),M3.get(i,j)).APH);
