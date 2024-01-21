@@ -1,7 +1,7 @@
 function [QN,UN,RN,TN,CN,XN,InfGen,StateSpace,StateSpaceAggr,EventFiltration,runtime,fname,sncopy] = solver_ctmc_analyzer(sn, options)
 % [QN,UN,RN,TN,CN,XN,INFGEN,STATESPACE,STATESPACEAGGR,EVENTFILTRATION,RUNTIME,FNAME,sn] = SOLVER_CTMC_ANALYZER(sn, OPTIONS)
 %
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 %if options.remote

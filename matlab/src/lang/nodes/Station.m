@@ -1,7 +1,7 @@
 classdef Station < StatefulNode
     % An abstract class for nodes where jobs station
     %
-    % Copyright (c) 2012-2023, Imperial College London
+    % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
 
     properties

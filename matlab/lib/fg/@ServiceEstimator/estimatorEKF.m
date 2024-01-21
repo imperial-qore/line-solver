@@ -5,7 +5,7 @@ function [estVal] = estimatorEKF(self, node)
 % Kumar, Dinesh and Tantawi, Asser and Zhang, Li
 % Real-Time Performance Modeling for Adaptive Software Systems 2009
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 % This code is released under the 3-Clause BSD License.
 

@@ -1,7 +1,7 @@
 function [Pnir,runtime,fname] = solver_ctmc_joint(sn, options)
 % [PNIR,RUNTIME,FNAME] = SOLVER_CTMC_JOINT(QN, OPTIONS)
 %
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 M = sn.nstations;    %number of stations

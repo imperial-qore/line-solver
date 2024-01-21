@@ -1,7 +1,7 @@
 function LQN2JAVA(lqnmodel, modelName, fid)
 % LQN2JAVA(MODEL, MODELNAME, FID)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if nargin<2%~exist('modelName','var')

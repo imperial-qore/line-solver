@@ -1,7 +1,7 @@
 function inspace1 = decorate(inspace1, inspace2)
 % INSPACE1 = DECORATE(INSPACE1, INSPACE2)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if nargin<2 && iscell(inspace1)

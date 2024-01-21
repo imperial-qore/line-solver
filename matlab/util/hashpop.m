@@ -3,7 +3,7 @@ function idx=hashpop(n,N,R,prods)
 % idx=HASHPOP(n,N,R,prods) where prods(r)=prod(N(1:r-1)+1) (faster)
 % Hash a vector n on an integer lattice defined by vector N
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 idx=1;
 if nargin==2

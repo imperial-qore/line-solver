@@ -1,7 +1,7 @@
 function [RD] = solver_mam_passage_time(sn, PH, options)
 % [RD] = SOLVER_MAM_PASSAGE_TIME(QN, PH, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 %% generate local state spaces

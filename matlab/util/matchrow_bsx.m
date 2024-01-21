@@ -3,7 +3,7 @@ function pos = matchrow_bsx(matrix, row)
 % Finds position of row r in matrix M if unique
 % Returns -1 otherwise
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if all(matrix(end,:) == row)

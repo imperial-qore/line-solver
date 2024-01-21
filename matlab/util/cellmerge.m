@@ -2,7 +2,7 @@ function d = cellmerge(c)
 % D=CELLMERGE(C)
 % Vertically stacks the matrix elements of a cell array C.
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 d = c{1};
 for i=2:length(c)

@@ -2,7 +2,7 @@ function lf=factln(n)
 % lf=FACTLN(n)
 % Compure the logarithm of n!       
  %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.  
                                                                                                                                                                           
 lf = gammaln(1+n);                                                                                                                                                                                                 

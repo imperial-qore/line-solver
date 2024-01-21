@@ -1,7 +1,7 @@
 function QN2JAVA(model, modelName, fid, headers)
 % QN2JAVA(MODEL, MODELNAME, FID, HEADERS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 %global GlobalConstants.CoarseTol; % Tolerance for distribution fitting

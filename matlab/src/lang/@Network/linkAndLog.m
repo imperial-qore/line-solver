@@ -2,7 +2,7 @@
 function [loggerBefore,loggerAfter] = linkAndLog(self, P, isNodeLogged, logPath)
 % [LOGGERBEFORE,LOGGERAFTER] = LINKANDLOG(P, ISNODELOGGED, LOGPATH)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 self.resetStruct; % important to regenerate the sn with the loggers

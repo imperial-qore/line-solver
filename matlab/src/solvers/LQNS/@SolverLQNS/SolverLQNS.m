@@ -1,7 +1,7 @@
 classdef SolverLQNS < LayeredNetworkSolver
     % A solver that interfaces the LQNS to LINE.
     %
-    % Copyright (c) 2012-2023, Imperial College London
+    % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
     
     methods

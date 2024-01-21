@@ -2,7 +2,7 @@ classdef RandomSource < InputSection
     % An input section generating arrivals from the external world at random
     % times
     %
-    % Copyright (c) 2012-2023, Imperial College London
+    % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
     
     properties

@@ -1,7 +1,7 @@
 function sn=NetworkStruct()
  % Data structure representation for a Network object
  %
- % Copyright (c) 2012-2023, Imperial College London
+ % Copyright (c) 2012-2024, Imperial College London
  % All rights reserved.
  
  sn=[]; %faster than sn=struct();

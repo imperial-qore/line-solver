@@ -1,7 +1,7 @@
 function [rates, scv, hasRateChanged, hasSCVChanged] = refreshRates(self, statSet, classSet)
 % [RATES, SCV] = REFRESHRATES()
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 hasRateChanged = false;

@@ -1,7 +1,7 @@
 function [QN, UN, RN, TN, CN, XN, t, QNt, UNt, TNt, xvec, iter] = solver_fluid_analyzer(sn, options)
 % [QN, UN, RN, TN, CN, XN, T, QNT, UNT, TNT, XVEC, iter] = SOLVER_FLUID_ANALYZER(QN, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 %global GlobalConstants.Immediate
 %global GlobalConstants.FineTol

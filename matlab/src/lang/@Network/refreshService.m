@@ -1,6 +1,6 @@
 function [rates,scv,mu,phi,phases,lst,proctypes] = refreshService(self, statSet, classSet)
 % [RATES,SCV, MU,PHI,PHASES,LT,PROCTYPES] = REFRESHSERVICE(STATSET,CLASSSET)
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if nargin==1

@@ -1,7 +1,7 @@
 classdef Activity < LayeredNetworkElement
     % A stage of service in a Task of a LayeredNetwork.
     %
-    % Copyright (c) 2012-2023, Imperial College London
+    % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
         
     properties

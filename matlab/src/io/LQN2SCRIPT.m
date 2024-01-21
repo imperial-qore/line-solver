@@ -1,7 +1,7 @@
 function LQN2SCRIPT(lqnmodel, modelName, fid)
 % LQN2SCRIPT(MODEL, MODELNAME, FID)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if nargin<2%~exist('modelName','var')

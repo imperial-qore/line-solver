@@ -1,7 +1,7 @@
 function [outspace, outrate, outprob] =  afterEvent(sn, ind, inspace, event, class, isSimulation)
 % [OUTSPACE, OUTRATE, OUTPROB] =  AFTEREVENT(QN, IND, INSPACE, EVENT, CLASS, ISSIMULATION)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 % outprob: event probability if the action is passive

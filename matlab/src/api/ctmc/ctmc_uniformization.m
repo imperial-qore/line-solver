@@ -1,7 +1,7 @@
 function [pi,kmax]=ctmc_uniformization(pi0,Q,t,tol,maxiter)
 % [PI,KMAX]=CTMC_UNIFORMIZATION(PI0,Q,T,TOL,MAXITER)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 if nargin<4%~exist('tol','var')
     tol = 1e-12;

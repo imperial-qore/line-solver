@@ -185,9 +185,6 @@ public class Maths {
         return permutations;
     }
 
-
-
-
     public static Matrix uniquePerms(Matrix vec) {
 
       // Vector is empty

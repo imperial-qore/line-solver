@@ -2,7 +2,7 @@ function s = cellat(c,t)
 % s=CELLAT(c,t)
 % Returns element in position t of cell array t
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 s = c{t};
 end

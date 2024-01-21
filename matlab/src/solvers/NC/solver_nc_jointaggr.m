@@ -1,7 +1,7 @@
 function [Pr,G,runtime] = solver_nc_jointaggr(sn, options)
 % [PR,G,RUNTIME] = SOLVER_NC_JOINTAGGR(QN, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 Tstart = tic;

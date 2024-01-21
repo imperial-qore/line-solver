@@ -1,7 +1,7 @@
 function [QN,UN,RN,TN,CN,XN,runtime] = solver_mam_analyzer(sn, options)
 % [QN,UN,RN,TN,CN,XN,RUNTIME] = SOLVER_MAM_ANALYZER(QN, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 Tstart = tic;

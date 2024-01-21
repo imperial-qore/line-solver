@@ -2,7 +2,7 @@ function [ph, mu, phi, phases] = refreshServicePhases(self, statSet, classSet)
 % [PH, MU, PHI, PHASES] = REFRESHSERVICEPHASES()
 % Obtain information about phases of service and arrival processes.
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 M = getNumberOfStations(self);

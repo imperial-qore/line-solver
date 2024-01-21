@@ -1,7 +1,7 @@
 function [QN,UN,RN,TN,CN,XN,runtime,tranSysState,tranSync,sn] = solver_ssa_analyzer(sn, options)
 % [QN,UN,RN,TN,CN,XN,RUNTIME,TRANSYSSTATE] = SOLVER_SSA_ANALYZER(QN, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 Tstart = tic;

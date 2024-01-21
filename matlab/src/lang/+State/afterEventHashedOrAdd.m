@@ -1,7 +1,7 @@
 function [outhash, outrate, outprob, sn] =  afterEventHashedOrAdd(sn, ind, inhash, event, class)
 % [OUTHASH, OUTRATE, OUTPROB, QN] =  AFTEREVENTHASHEDORADD(QN, IND, INHASH, EVENT, CLASS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 if inhash == 0
     outhash = -1;

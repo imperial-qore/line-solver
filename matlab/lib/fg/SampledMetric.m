@@ -1,7 +1,7 @@
 classdef SampledMetric < Copyable
     % Observed data for a metric
     %
-    % Copyright (c) 2012-2022, Imperial College London
+    % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
     
     properties

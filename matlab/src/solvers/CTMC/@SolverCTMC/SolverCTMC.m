@@ -1,7 +1,7 @@
 classdef SolverCTMC < NetworkSolver
     % A solver based on continuous-time Markov chain (CTMC) formalism.
     %
-    % Copyright (c) 2012-2023, Imperial College London
+    % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
     
     methods

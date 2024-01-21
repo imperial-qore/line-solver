@@ -9,7 +9,7 @@ function [Q,U,R,T,A,W] = getAvgHandles(self)
 % A(i,r): mean arrival rate of class r at node i
 % W(i,r): mean residence time of class r at node i
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 % Q = self.getAvgQLenHandles;
 % U = self.getAvgUtilHandles;

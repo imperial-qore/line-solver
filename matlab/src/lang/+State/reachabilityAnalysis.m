@@ -1,7 +1,7 @@
 function [SS] = reachabilityAnalysis(sn, cutoff, options)
 % [SS] = RECHABILITYANALSYSIS(QN, CUTOFF)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 % LINE state space generator limited to states reachable from the initial

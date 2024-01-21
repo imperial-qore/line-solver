@@ -1,7 +1,7 @@
 function [QN, UN, RN, TN, CN, XN, t, QNt, UNt, TNt, xvec] = solver_fluid_analyzer_jline(network, options)
 % [QN, UN, RN, TN, CN, XN, T, QNT, UNT, TNT, XVEC] = SOLVER_FLUID_ANALYZER_JLINE(QN, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 %%%% Returning Result from JLINE %%%%

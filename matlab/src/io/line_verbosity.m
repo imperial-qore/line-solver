@@ -1,7 +1,7 @@
 function line_verbosity(level)
 % LINE_VERBOSITY(LEVEL)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 global LINEVerbose;

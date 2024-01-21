@@ -1,7 +1,7 @@
 function [QN,xvec_it,QNt,UNt,xvec_t,t,iters,runtime] = solver_fluid(sn, options)
 % [QN,XVEC_IT,QNT,UNT,XVEC_T,T,ITERS,RUNTIME] = SOLVER_FLUID(QN, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 M = sn.nstations;    %number of stations

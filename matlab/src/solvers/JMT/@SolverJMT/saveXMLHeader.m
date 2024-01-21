@@ -1,7 +1,7 @@
 function [simElem,simDoc] = saveXMLHeader(self, logPath)
 % [SIMELEM,SIMDOC] = SAVEXMLHEADER(LOGPATH)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 xmlnsXsi = 'http://www.w3.org/2001/XMLSchema-instance';
 fname = [getFileName(self), ['.', 'jsimg']];

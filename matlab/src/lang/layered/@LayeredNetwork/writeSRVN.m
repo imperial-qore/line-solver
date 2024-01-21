@@ -1,6 +1,6 @@
 function writeSRVN(self, filename)
 % WRITESRVN(FILENAME)
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 fid = fopen(filename,'w+');
 fprintf(fid,'G\n');

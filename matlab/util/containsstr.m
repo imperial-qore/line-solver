@@ -2,7 +2,7 @@ function retval = containsstr(varargin)
 % R = CONTAINSSTR(STR)
 % Determine if pattern is in string
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if length(varargin) == 2

@@ -2,7 +2,7 @@ function [AvgTable,QT,UT,RT,WT,TT,AT] = getAvgTable(self,Q,U,R,T,A,W,keepDisable
 % [AVGTABLE,QT,UT,RT,WT,TT,AT] = GETAVGTABLE(SELF,Q,U,R,T,A,W,KEEPDISABLED)
 % Return table of average station metrics
 %
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 if GlobalConstants.DummyMode
     AvgTable = Table();

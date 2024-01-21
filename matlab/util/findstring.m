@@ -3,7 +3,7 @@ function idx = findstring(myCell, myStr)
 % corresponding to the string B in a cell of strings A.
 % It returns -1 if the string B is not in A.
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if iscell(myStr)

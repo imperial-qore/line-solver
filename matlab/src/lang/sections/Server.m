@@ -1,7 +1,7 @@
 classdef Server < ServiceSection
     % A service section for serving jobs non-preemptively
     %
-    % Copyright (c) 2012-2023, Imperial College London
+    % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
     
     methods

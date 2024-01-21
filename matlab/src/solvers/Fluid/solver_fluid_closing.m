@@ -1,7 +1,7 @@
 function [QN, UN, RN, TN, xvec_it, QNt, UNt, TNt, xvec_t, t, iters, runtime] = solver_fluid_closing(sn, options)
 % [QN, UN, RN, TN, XVEC, QNt, UNt, TNt, XVEC_T, T, ITERS, RUNTIME] = SOLVER_FLUID_CLOSING(QN, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 chains = sn.chains;
 

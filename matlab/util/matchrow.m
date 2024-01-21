@@ -2,7 +2,7 @@ function pos = matchrow(matrix, row)
 % pos = matchrow(M, r)
 % Return position of row r in matrix M if unique, -1 otherwise
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if size(matrix,2) ~= size(row,2)

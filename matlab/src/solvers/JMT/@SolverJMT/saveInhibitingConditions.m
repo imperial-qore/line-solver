@@ -1,7 +1,7 @@
 function [simDoc, section] = saveInhibitingConditions(self, simDoc, section, ind)
 % [SIMDOC, SECTION] = SAVEINHIBITINGCONDITIONS(SIMDOC, SECTION, NODEIDX)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 inhibitingConditionsNode = simDoc.createElement('parameter');

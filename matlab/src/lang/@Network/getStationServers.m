@@ -1,7 +1,7 @@
 function S = getStationServers(self)
 % S = GETSTATIONSERVERS()
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 for i=1:getNumberOfStations(self)

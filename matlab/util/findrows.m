@@ -2,7 +2,7 @@ function idxs = findrows(M, r)
 % idxs = FINDROWS(M, r)
 % Find index of rows in matrix M identical to row vector r
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 I = size(M,1);
 idxs=1:I;

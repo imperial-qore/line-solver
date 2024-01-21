@@ -1,7 +1,7 @@
 function [QN,UN,RN,TN,CN,XN,lG,hitprob,missprob,runtime,it] = solver_nc_cacheqn_analyzer(self, options)
 % [Q,U,R,T,C,X,LG,RUNTIME,ITER] = SOLVER_NC_CACHEQN_ANALYZER(SELF, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 snorig = self.getStruct;

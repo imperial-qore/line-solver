@@ -1,7 +1,7 @@
 classdef JNetwork < Model
     % JLINE extended queueing network model.
     %
-    % Copyright (c) 2012-2023, Imperial College London
+    % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
 
     properties (Access=public)

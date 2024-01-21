@@ -1,7 +1,7 @@
 function [Pnir,pi,runtime,fname] = solver_ctmc_margaggr(sn, options)
 % [PNIR,PI,RUNTIME,FNAME] = SOLVER_CTMC_MARGAGGR(QN, OPTIONS)
 %
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 

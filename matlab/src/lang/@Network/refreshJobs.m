@@ -2,7 +2,7 @@ function refreshJobs(self)
 % REFRESHJOBS()
 % Updates sn structure after a change in a closed class population
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 refreshStruct(self);

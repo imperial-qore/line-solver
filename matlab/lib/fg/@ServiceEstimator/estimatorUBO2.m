@@ -5,7 +5,7 @@ function [estVal,fObjFun] = estimatorUBO2(self, node)
 % Daniel A. Menasc
 % Computing Missing Service Demand Parameters for Performance Models
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 % This code is released under the 3-Clause BSD License.
 

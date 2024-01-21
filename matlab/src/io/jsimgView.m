@@ -2,7 +2,7 @@ function jsimgView(filename)
 % JSIMGVIEW(FILENAME)
 % Open model in JSIMgraph
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 [path] = fileparts(filename);
 if isempty(path)

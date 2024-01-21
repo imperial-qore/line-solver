@@ -2,7 +2,7 @@ function [N]=oner(N,r)
 % N=ONER(N,r)
 % Decrement element in position of r of input vector
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 for s=r(:)'
     if s~=0

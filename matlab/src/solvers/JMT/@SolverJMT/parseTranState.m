@@ -1,7 +1,7 @@
 function [state, evtype, evclass, evjob] = parseTranState(fileArv, fileDep, nodePreload)
 % [STATE, EVTYPE, EVCLASS, EVJOB] = PARSETRANSTATE(FILEARV, FILEDEP, NODEPRELOAD)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 load(fileArv,'jobArvTS','jobArvClassID','jobArvID');

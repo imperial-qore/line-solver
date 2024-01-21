@@ -1,7 +1,7 @@
 function [Pr,G,lG,runtime] = solver_nc_joint(sn, options)
 % [PR,G,LG,RUNTIME] = SOLVER_NC_JOINT(QN, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 %% initialization

@@ -2,7 +2,7 @@ classdef SolverAuto
     %A solver that selects the solution method automatically based on the
     %model characteristics.
 
-    %Copyright (c) 2012-2023, Imperial College London
+    %Copyright (c) 2012-2024, Imperial College London
     %All rights reserved.
 
     properties (Hidden, Access = public)

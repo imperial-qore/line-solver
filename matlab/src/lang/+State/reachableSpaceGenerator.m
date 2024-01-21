@@ -4,7 +4,7 @@ function [SSq,SSh,sn] = reachableSpaceGenerator(sn,options)
 % This differs from spaceGenerator as it is restricted to states reachable
 % from the initial state.
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 % By default the jobs are all initialized in the first valid state

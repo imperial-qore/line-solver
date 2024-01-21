@@ -1,7 +1,7 @@
 function space = fromMarginalBounds(sn, ind, lb, ub, cap, options)
 % SPACE = FROMMARGINALBOUNDS(QN, IND, LB, UB, CAP, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if nargin<6 %~exist('options','var')

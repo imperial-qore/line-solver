@@ -3,7 +3,7 @@ function [AvgTable,TT] = getAvgTputTable(self,T,keepDisabled)
 
 % Return table of average station metrics
 %
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 if nargin<3 %~exist('keepDisabled','var')
     keepDisabled = false;

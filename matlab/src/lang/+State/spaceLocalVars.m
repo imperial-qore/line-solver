@@ -1,7 +1,7 @@
 function space = spaceLocalVars(sn, ind)
 % SPACE = SPACELOCALVARS(QN, IND)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 % Generate state space for local state variables

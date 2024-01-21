@@ -1,7 +1,7 @@
 function [lPr,G,runtime] = solver_nc_marg(sn, options, lG)
 % [PR,G,RUNTIME] = SOLVER_NC_MARG(QN, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 

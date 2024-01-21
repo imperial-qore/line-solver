@@ -2,7 +2,7 @@ function lqn = getStruct(self)
 % LQN = GETSTRUCT(SELF)
 %
 %
-% Copyright 2012-2023, Imperial College London
+% Copyright 2012-2024, Imperial College London
 
 lqn = LayeredNetworkStruct();
 lqn.nidx = 0;  % total number of hosts, tasks, entries, and activities, except the reference tasks

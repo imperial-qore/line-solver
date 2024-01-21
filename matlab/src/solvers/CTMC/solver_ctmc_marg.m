@@ -1,7 +1,7 @@
 function [Pnir,runtime,fname] = solver_ctmc_marg(sn, options)
 % [PNIR,RUNTIME,FNAME] = SOLVER_CTMC_MARG(QN, OPTIONS)
 %
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 

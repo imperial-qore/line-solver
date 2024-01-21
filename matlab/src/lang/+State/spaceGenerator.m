@@ -1,7 +1,7 @@
 function [SS,SSh,sn,Adj,ST] = spaceGenerator(sn, cutoff, options)
 % [SS,SSH,QN] = SPACEGENERATOR(QN, CUTOFF)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 % LINE state space generator. The function generates all possible states,

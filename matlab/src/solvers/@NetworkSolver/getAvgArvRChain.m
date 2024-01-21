@@ -2,7 +2,7 @@ function [AN] = getAvgArvRChain(self,A)
 % [AN] = GETAVGARVRCHAIN(SELF,A)
 % Return average arrival rates aggregated by chain
 %
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 sn = self.model.getStruct();

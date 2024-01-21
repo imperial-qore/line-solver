@@ -1,7 +1,7 @@
 function [Q,U,R,T,C,X,lG,totiter] = solver_qna(sn, options)
 % [Q,U,R,T,C,X,lG,totiter] = SOLVER_QNA(QN, OPTIONS)
 %
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 %
 % Implementation as per Section 7.2.3 of N. Gautaum, Analysis of Queues, CRC Press, 2012.

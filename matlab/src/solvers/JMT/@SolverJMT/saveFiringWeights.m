@@ -1,7 +1,7 @@
 function [simDoc, section] = saveFiringWeights(self, simDoc, section, ind)
 % [SIMDOC, SECTION] = SAVEFIRINGWEIGHTS(SIMDOC, SECTION, NODEIDX)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 firingWeightsNode = simDoc.createElement('parameter');

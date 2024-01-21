@@ -1,7 +1,7 @@
 function [QN,UN,RN,TN,CN,XN] = solver_custom(sn, options)
 % [Q,U,R,T,C,X] = SOLVER_CUSTOM(QN, OPTIONS)
 
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 M = sn.nstations; % number of stations

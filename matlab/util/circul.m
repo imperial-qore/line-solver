@@ -2,7 +2,7 @@ function C=circul(c)
 % C=CIRCUL(c)
 % Returns a circulant matrix of order c 
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 v=[];
 if length(c)==1

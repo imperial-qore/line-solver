@@ -1,7 +1,7 @@
 function [ode_h,q_indices] = solver_fluid_odes(sn, N, Mu, phi, PH, P, nservers, sched, schedparam, options)
 % [ODE_H,Q_INDICES] = SOLVER_FLUID_ODES(sn, N, MU, PHI, PH, P, NSERVERS, SCHED, SCHEDPARAM)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 M = length(nservers);    % number of stations

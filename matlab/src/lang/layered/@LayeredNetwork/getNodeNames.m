@@ -1,7 +1,7 @@
 function [names,hostnames,tasknames,entrynames,actnames] = getNodeNames(self)
 % NAME = GETNODENAMES(SELF)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 hostnames = cellfun(@(x)x.name,self.hosts,'UniformOutput',false);
 tasknames = cellfun(@(x)x.name,self.tasks,'UniformOutput',false);

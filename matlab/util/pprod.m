@@ -9,7 +9,7 @@ function [n]=pprod(n,N)
 %   n=pprod(n,N);
 % end
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
     if nargin==1
         N=n;

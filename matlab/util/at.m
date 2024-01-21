@@ -2,7 +2,7 @@ function [a,i]=at(A,r,i)
 % s=AT(c,t)
 % Returns element in position t of array t
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if ~iscell(A)

@@ -4,7 +4,7 @@ function pos=maxpos(v,n)
 % pos = MAXPOS(v,n)
 % Position of n largest elements in vector v
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 if nargin<2, n=1; end
 

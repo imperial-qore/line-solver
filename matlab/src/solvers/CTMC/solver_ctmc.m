@@ -1,7 +1,7 @@
 function [Q,stateSpace,stateSpaceAggr,Dfilt,arvRates,depRates,sn]=solver_ctmc(sn,options)
 % [Q,SS,SSQ,DFILT,ARVRATES,DEPRATES,QN]=SOLVER_CTMC(QN,OPTIONS)
 %
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 %% generate state space

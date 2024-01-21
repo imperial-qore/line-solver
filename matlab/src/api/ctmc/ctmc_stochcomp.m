@@ -1,6 +1,6 @@
 function [S,Q11,Q12,Q21,Q22,T]=ctmc_stochcomp(Q,I)
 % [S,Q11,Q12,Q21,Q22,T] = CTMC_STOCHCOMP(Q,I)
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 if nargin==1
     I=1:ceil(length(Q)/2);

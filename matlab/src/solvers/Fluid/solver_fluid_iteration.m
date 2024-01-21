@@ -1,7 +1,7 @@
 function [xvec_it, xvec_t, t, iter] = solver_fluid_iteration(sn, N, Mu, Phi, PH, P, S, xvec_it, ydefault, slowrate, Tstart, max_time, options)
 % [XVEC_IT, XVEC_T, T, ITER] = SOLVER_FLUID_ITERATION(QN, N, MU, PHI, PH, P, S, YMEAN, YDEFAULT, SLOWRATE, TSTART, MAX_TIME, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 iter_max = options.iter_max;

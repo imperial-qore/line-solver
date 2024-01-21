@@ -2,7 +2,7 @@ function pos = matchcol(matrix, col)
 % pos = MATCHCOL(M, c)
 % Return position of column c in matrix M if unique, -1 otherwise
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if all(matrix(:,end) == col)

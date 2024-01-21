@@ -3,7 +3,7 @@ function [QN,UN,RN,TN] = getAvgChain(self,~,~,~,~)
 
 % Return average station metrics aggregated by chain
 %
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 QN = self.getAvgQLenChain;
 UN = self.getAvgUtilChain;

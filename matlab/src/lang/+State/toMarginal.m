@@ -5,7 +5,7 @@ function [ni, nir, sir, kir] = toMarginal(sn, ind, state_i, phasesz, phaseshift,
 % SIR: total jobs in service per class in node IND
 % KIR: totak jobs in service per class and per phase in node IND
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if ~isstruct(sn) % the input can be a Network object too

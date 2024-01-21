@@ -1,7 +1,7 @@
 function [pi,SSq,arvRates,depRates,tranSysState,tranSync,sn]=solver_ssa(sn,options)
 % [PI,SSQ,ARVRATES,DEPRATES,TRANSYSSTATE,QN]=SOLVER_SSA(QN,OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 % by default the jobs are all initialized in the first valid state

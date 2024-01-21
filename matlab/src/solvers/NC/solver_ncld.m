@@ -1,7 +1,7 @@
 function [Q,U,R,T,C,X,lG,runtime,iter,method] = solver_ncld(sn, options)
 % [Q,U,R,T,C,X,LG,RUNTIME,ITER.METHOD] = SOLVER_NCLD(QN, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 M = sn.nstations;    %number of stations
 K = sn.nclasses;

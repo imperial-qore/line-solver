@@ -1,7 +1,7 @@
 classdef Linkage < OutputSection
     % An output section dispatching jobs to a destination
     %
-    % Copyright (c) 2012-2023, Imperial College London
+    % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
     
     methods

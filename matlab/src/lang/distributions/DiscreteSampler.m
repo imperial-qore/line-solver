@@ -1,7 +1,7 @@
 classdef DiscreteSampler < DiscreteDistribution
     % A class for discrete distributions specified from the probability mass function
     %
-    % Copyright (c) 2012-2023, Imperial College London
+    % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
     
     methods

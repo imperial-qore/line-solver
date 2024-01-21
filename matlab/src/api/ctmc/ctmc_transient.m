@@ -1,7 +1,7 @@
 function [pi,t]=ctmc_transient(Q,pi0,t0,t1)
 % [PI,T]=CTMC_TRANSIENT(Q,PI0,T0,T1)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 if nargin==2
     t1=pi0;

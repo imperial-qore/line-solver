@@ -3,7 +3,7 @@ function [chains, visits, rt, nodevisits, rtnodes] = refreshChains(self, propaga
 %
 % PROPAGATE : true if the change needs to trigger recomputation of visits and station capacities (default: true)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if nargin<2 || nargin<3

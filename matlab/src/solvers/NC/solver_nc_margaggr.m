@@ -1,7 +1,7 @@
 function [Pr,G,lG,runtime] = solver_nc_margaggr(sn, options, lG)
 % [PR,G,LG,RUNTIME] = SOLVER_NC_MARGAGGR(QN, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 M = sn.nstations;    %number of stations

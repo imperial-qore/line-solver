@@ -1,7 +1,7 @@
 function sourceidx = getIndexSourceStation(self)
 % INDEX = GETINDEXSOURCESTATION()
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 if isempty(self.sourceidx)
     if hasOpenClasses(self)

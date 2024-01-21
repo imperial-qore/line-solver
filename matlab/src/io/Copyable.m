@@ -1,7 +1,7 @@
 classdef Copyable < handle
     % Copyable allows to perform deep-copy of objects via the copy() method.
     %
-    % Copyright (c) 2012-2023, Imperial College London
+    % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
 
     methods

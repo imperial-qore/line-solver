@@ -2,7 +2,7 @@ classdef SharedServer < ServiceSection
     % A service section for serving jobs with processor sharing type
     % policies
     %
-    % Copyright (c) 2012-2023, Imperial College London
+    % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
     
     methods

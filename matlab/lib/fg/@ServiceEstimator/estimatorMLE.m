@@ -1,7 +1,7 @@
 function [estVal,fObjFun] = estimatorMCMC(self, node)
 % Gibbs Sampling MCMC-based optimization
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 % This code is released under the 3-Clause BSD License.
 

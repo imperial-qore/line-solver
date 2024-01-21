@@ -1,7 +1,7 @@
 function line_error(caller,MSG)
 % LINE_ERROR(CALLER, ERRMSG)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 try
     MSG = strrep(MSG,'\n','');

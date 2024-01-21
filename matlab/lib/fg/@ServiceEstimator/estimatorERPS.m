@@ -10,7 +10,7 @@ function estVal = estimatorERPS(self, node)
 %           of each class observed by each sample
 % NCORES:   number of cores
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 %%

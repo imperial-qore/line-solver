@@ -4,7 +4,7 @@ function estVal = estimatorRNN(self, nodes)
     %
     % Adapted using:
     % Garbi, G et al. (2020). Learning Queueing Networks by Recurrent Neural Networks
-    % Copyright (c) 2012-2022, Imperial College London
+    % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
     % This code is released under the 3-Clause BSD License.
     

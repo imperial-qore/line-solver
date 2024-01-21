@@ -2,7 +2,7 @@ function [M,nanM]=maxpe(approx, exact)
 % M = MAXPE(approx, exact)
 % Returns maximum absolute percentage error of approx with respect to exact
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 M = max(abs(1-approx(exact>0)./exact(exact>0)));
 if nargout > 1

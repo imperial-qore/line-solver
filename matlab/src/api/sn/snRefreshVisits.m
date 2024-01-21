@@ -4,7 +4,7 @@ function [visits, nodevisits, sn] = snRefreshVisits(sn, chains, rt, rtnodes)
 % Solver traffic equations for the model average number visits to nodes
 % and stations.
 %
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 I = sn.nnodes;

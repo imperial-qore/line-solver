@@ -2,7 +2,7 @@ classdef MarkedMMPP < MarkovModulated
     % Marked Markov-Modulated Poisson Process
     % Also referred to as a M3PP model
     %
-    % Copyright (c) 2012-2023, Imperial College London
+    % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
 
     methods

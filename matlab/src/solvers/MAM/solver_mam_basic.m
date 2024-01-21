@@ -5,7 +5,7 @@ function [QN,UN,RN,TN,CN,XN] = solver_mam_basic(sn, options)
 % traffic equations by using visits to rescale the flows into the queue
 % inputs.
 %
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 config = options.config;

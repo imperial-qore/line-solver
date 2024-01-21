@@ -1,7 +1,7 @@
 function [SSq,SSh,sn] = solver_ssa_reachability(sn,options)
 % [SSQ,SSH,QN] = SOLVER_SSA_REACHABILITY(QN,OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 % By default the jobs are all initialized in the first valid state

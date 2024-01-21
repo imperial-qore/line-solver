@@ -1,7 +1,7 @@
 function line_warning(caller, MSG, varargin)
 % LINE_WARNING(CALLER, ERRMSG)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 %global GlobalConstants.Verbose

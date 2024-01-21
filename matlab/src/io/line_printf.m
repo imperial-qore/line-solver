@@ -1,7 +1,7 @@
 function line_printf(MSG,varargin)
 % LINE_PRINTF(MSG, VARARGIN)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if GlobalConstants.Verbose ~= VerboseLevel.SILENT

@@ -1,7 +1,7 @@
 function [ni, nir] = toMarginalAggr(sn, ind, state_i, K, Ks, space_buf, space_srv, space_var) %#ok<INUSD>
 % [NI, NIR] = TOMARGINALAGGR(QN, IND, STATE_I, K, KS, SPACE_BUF, SPACE_SRV, SPACE_VAR) %#OK<INUSD>
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if ~isstruct(sn) % the input can be a Network object too

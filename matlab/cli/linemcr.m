@@ -2,7 +2,7 @@ function ret = linemcr(varargin)
 % LINEMCR is the main (wrapper) script of the LINECLI tool
 % This function receives the model and solves it
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 % arguments
@@ -57,7 +57,7 @@ for v=1:2:length(varargin)
         case {'-h','--help'}
             fprintf('--------------------------------------------------------------------\n');
             fprintf('LINE Solver - Command Line Interface\n');
-            fprintf('Copyright (c) 2012-2023, QORE group, Imperial College London\n');
+            fprintf('Copyright (c) 2012-2024, QORE group, Imperial College London\n');
             fprintf(sprintf('Version %s. All rights reserved.\n',Model('').getVersion()));
             fprintf('--------------------------------------------------------------------\n');
             fprintf('-p, --port     : run in server mode on the specified port \n');
@@ -84,7 +84,7 @@ if serverMode
     lineserver(serverPort);  % start LINE server mode
     fprintf('--------------------------------------------------------------------\n');
     fprintf('LINE Solver - Command Line Interface\n');
-    fprintf('Copyright (c) 2012-2022, QORE group, Imperial College London\n');
+    fprintf('Copyright (c) 2012-2024, QORE group, Imperial College London\n');
     fprintf(sprintf('Version %s. All rights reserved.\n',Model('').getVersion()));
     fprintf('--------------------------------------------------------------------\n');
     fprintf(sprintf('Running in server mode on port %d.\n',serverPort));

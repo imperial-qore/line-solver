@@ -1,7 +1,7 @@
 function [Q,U,R,T,C,X,lG,runtime,iter] = solver_mvald_analyzer(sn, options)
 % [Q,U,R,T,C,X,RUNTIME,ITER] = SOLVER_MVALD_ANALYZER(SN, OPTIONS)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 Tstart = tic;

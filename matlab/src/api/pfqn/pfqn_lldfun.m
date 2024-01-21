@@ -3,7 +3,7 @@ function r = pfqn_lldfun(n,lldscaling, nservers)
 
 % AMVA-QD queue-dependence function
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 M = length(n);

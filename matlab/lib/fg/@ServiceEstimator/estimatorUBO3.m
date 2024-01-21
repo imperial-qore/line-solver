@@ -6,7 +6,7 @@ function [estVal,fObjFun] = estimatorUBO3(self, nodes)
 % Parameter inference of queueing models for IT systems using end-to-end measurements
 % Performance Evaluation, Elsevier, 2006.
 %
-% Copyright (c) 2012-2022, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 % This code is released under the 3-Clause BSD License.
 

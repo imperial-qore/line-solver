@@ -1,7 +1,7 @@
 function [init_sol, state] = solver_fluid_initsol(sn, options) %#ok<INUSD>
 % [INIT_SOL, STATE] = SOLVER_FLUID_INITSOL(QN, OPTIONS) %#OK<INUSD>
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if nargin<2 %~exist('options','var')

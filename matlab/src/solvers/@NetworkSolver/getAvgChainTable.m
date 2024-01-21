@@ -1,7 +1,7 @@
 function [AvgChain,QTc,UTc,RTc,WTc,TTc] = getAvgChainTable(self,Q,U,R,T)
 % [AVGCHAIN,QTC,UTC,RTC,WTc,TTC] = GETAVGCHAINTABLE(SELF,Q,U,R,T)
 
-% Copyright (c) 2012-2023, Imperial College London
+% Copyright (c) 2012-2024, Imperial College London
 % All rights reserved.
 
 if GlobalConstants.DummyMode
