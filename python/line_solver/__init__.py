@@ -37,7 +37,7 @@ def jlineStart():
             urlretrieve("https://github.com/imperial-qore/line-solver/raw/main/python/line_solver/jline.jar",
                         jar_file_path)
         jpype.startJVM()
-        # jpype.startJVM("-Xint", "-Xdebug", "-Xnoagent","-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005")
+        #jpype.startJVM("-Xint", "-Xdebug", "-Xnoagent","-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005")
         jpype.addClassPath('jline.jar')
         from jline.lang.constant import GlobalConstants
         from jline.lang import Chain, Element, Ensemble, Metric

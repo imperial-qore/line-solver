@@ -2,6 +2,7 @@ package jline.api;
 
 import jline.lang.constant.GlobalConstants;
 import jline.lang.constant.SchedStrategy;
+import jline.lang.constant.SolverType;
 import jline.lang.nodes.Station;
 import jline.util.Maths;
 import jline.util.SerializableFunction;
@@ -912,16 +913,19 @@ public class PFQN {
 		return new pfqnNcReturn(G, lG, method);
 	}
 
+	public static pfqnNcReturn pfqn_panacea(Matrix L, Matrix N, Matrix Z) {
+		return pfqn_panacea(L, N, Z, new SolverOptions());
+	}
+
 	/**
 	 * Compute the PANACEA approximation
 	 * @param L - demands at all stations
 	 * @param N - number of jobs for each class
 	 * @param Z - think time for each class
 	 * @param options - solver options
-	 * @return product of terms Z[k]^n[k]/n[k]! for all classes k
+	 * @return normalizing constant and its logarithm
 	 */
 	public static pfqnNcReturn pfqn_panacea(Matrix L, Matrix N, Matrix Z, SolverOptions options) {
-		// TODO: this method has not been tested
 		String method = options.method;
 		int M = L.getNumRows();
 		int R = L.getNumCols();
@@ -931,6 +935,7 @@ public class PFQN {
 			Z = Z.clone();
 			Z = Z.add(GlobalConstants.FineTol, Z);
 		}
+
 
 		if (L.isEmpty() || L.elementSum() < options.tol) {
 			{
@@ -963,8 +968,9 @@ public class PFQN {
 		// Compute beta = N / Nt
 		Matrix beta = new Matrix(1, R);
 		for (int j = 0; j < R; j++) {
-			beta.set(0, j, N.get(0, j) / N.elementSum());
+			beta.set(0, j, (double) N.get(0, j) / Nt);
 		}
+
 		// Compute gamma = r * Nt
 		Matrix gamma = new Matrix(M, R);
 		for (int i = 0; i < M; i++) {
@@ -978,7 +984,7 @@ public class PFQN {
 		for (int i = 0; i < M; i++) {
 			double sum = 0;
 			for (int j = 0; j < R; j++) {
-				sum += N.get(i) * r.get(i, j);
+				sum += N.get(j) * r.get(i, j);
 			}
 			alpha.set(0, i, 1 - sum);
 		}
@@ -1035,7 +1041,7 @@ public class PFQN {
 			tmp1.set(i, N.get(i) * Math.log(tmp1.get(i)));
 		}
 		lG = -Matrix.factln(N).elementSum() + tmp1.elementSum();
-		lG += A0 + A1/Nt + A2/Nt/Nt;
+		lG += Math.log(A0 + A1/Nt + A2/Nt/Nt);
 		for (int s = 0; s < R; s++) {
 			lG -= Math.log(alpha.get(0,s));
 		}
@@ -1077,7 +1083,6 @@ public class PFQN {
 	 * Compute the normalizing constant using the convolution algorithm
 	 * @param L - demands at all stations
 	 * @param N - number of jobs for each class
-	 * @param Z - think times
 	 * @return normalizing constant and its logarithm
 	 */
 	public static pfqnNcReturn pfqn_ca(Matrix L, Matrix N) {

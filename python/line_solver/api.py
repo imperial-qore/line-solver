@@ -57,6 +57,11 @@ def pfqn_ca(L, N, Z):
                                                             jlineMatrixFromArray(Z))
     return pfqnNcReturn.G, pfqnNcReturn.lG
 
+def pfqn_panacea(L, N, Z):
+    pfqnNcReturn = jpype.JPackage('jline').api.PFQN.pfqn_panacea(jlineMatrixFromArray(L), jlineMatrixFromArray(N),
+                                                            jlineMatrixFromArray(Z))
+    return pfqnNcReturn.G, pfqnNcReturn.lG
+
 
 def pfqn_bs(L, N, Z):
     pfqnBSReturn = jpype.JPackage('jline').api.PFQN.pfqn_bs(jlineMatrixFromArray(L), jlineMatrixFromArray(N),
