@@ -913,6 +913,143 @@ public class PFQN {
 	}
 
 	/**
+	 * Compute the PANACEA approximation
+	 * @param L - demands at all stations
+	 * @param N - number of jobs for each class
+	 * @param Z - think time for each class
+	 * @param options - solver options
+	 * @return product of terms Z[k]^n[k]/n[k]! for all classes k
+	 */
+	public static pfqnNcReturn pfqn_panacea(Matrix L, Matrix N, Matrix Z, SolverOptions options) {
+		// TODO: this method has not been tested
+		String method = options.method;
+		int M = L.getNumRows();
+		int R = L.getNumCols();
+		double lG = Double.NaN;
+		double G = Double.NaN;
+		if (Z.isEmpty() || Z.elementSum() < options.tol) {
+			Z = Z.clone();
+			Z = Z.add(GlobalConstants.FineTol, Z);
+		}
+
+		if (L.isEmpty() || L.elementSum() < options.tol) {
+			{
+				Matrix tmp1 = Z.sumCols();
+				for (int i = 0; i < tmp1.length(); i++) {
+					tmp1.set(i, N.get(i) * Math.log(tmp1.get(i)));
+				}
+				lG = -Matrix.factln(N).elementSum() + tmp1.elementSum();
+			}
+			G = Math.exp(lG);
+			return new pfqnNcReturn(G, lG, method);
+		}
+
+		// Compute r = L./repmat(Z,q,1)
+		Matrix r = new Matrix(M, R);
+		for (int i = 0; i < M; i++) {
+			for (int j = 0; j < R; j++) {
+				r.set(i, j, L.get(i, j) / Z.get(0, j));
+			}
+		}
+
+		// Find Nt = max(1./r)
+		double Nt = Double.MIN_VALUE;
+		for (int i = 0; i < M; i++) {
+			for (int j = 0; j < R; j++) {
+				Nt = Math.max(Nt, 1.0 / r.get(i, j));
+			}
+		}
+
+		// Compute beta = N / Nt
+		Matrix beta = new Matrix(1, R);
+		for (int j = 0; j < R; j++) {
+			beta.set(0, j, N.get(0, j) / N.elementSum());
+		}
+		// Compute gamma = r * Nt
+		Matrix gamma = new Matrix(M, R);
+		for (int i = 0; i < M; i++) {
+			for (int j = 0; j < R; j++) {
+				gamma.set(i, j, r.get(i, j) * Nt);
+			}
+		}
+
+		// Compute alpha = 1 - N * r'
+		Matrix alpha = new Matrix(1, M);
+		for (int i = 0; i < M; i++) {
+			double sum = 0;
+			for (int j = 0; j < R; j++) {
+				sum += N.get(i) * r.get(i, j);
+			}
+			alpha.set(0, i, 1 - sum);
+		}
+
+		// Compute gammatilde = gamma ./ repmat(alpha', 1, p)
+		Matrix gammatilde = new Matrix(M, R);
+		for (int i = 0; i < M; i++) {
+			for (int j = 0; j < R; j++) {
+				gammatilde.set(i, j, gamma.get(i, j % R) / alpha.get(0, i));
+			}
+		}
+
+		// Check if min(alpha) < 0
+		double minAlpha = Double.MAX_VALUE;
+		for (int i = 0; i < M; i++) {
+			minAlpha = Math.min(minAlpha, alpha.get(0, i));
+		}
+		if (minAlpha < 0) {
+			System.out.println("Warning: Model is not in normal usage");
+			lG = Double.NaN;
+			G = Double.NaN;
+			return new pfqnNcReturn(G, lG, method);
+		}
+
+		double A0 = 1;
+		double A1 = 0;
+		for (int j = 0; j < R; j++) {
+			Matrix m = new Matrix(1,R);
+			m.set(0,j,2.0);
+			A1 -= beta.get(j) * pfqn_ca(gammatilde, m).G;
+		}
+
+		double A2 = 0;
+		for (int j = 0; j < R; j++) {
+			Matrix m = new Matrix(1,R);
+			m.set(0,j,3.0);
+			A2 += 2 * beta.get(j) * pfqn_ca(gammatilde, m).G;
+
+			m.set(0,j,4.0);
+			A2 += 3 * Math.pow(beta.get(j), 2) * pfqn_ca(gammatilde, m).G;
+
+			for (int k = 0; k < R; k++) {
+				if (k == j) continue;
+				m.zero();
+				m.set(0,j,2.0);
+				m.set(0,k,2.0);
+				A2 = A2 + 0.5 * beta.get(j) * beta.get(k) * pfqn_ca(gammatilde, m).G;
+			}
+		}
+
+		//TODO: to be completed
+		Matrix tmp1 = Z.sumCols();
+		for (int i = 0; i < tmp1.length(); i++) {
+			tmp1.set(i, N.get(i) * Math.log(tmp1.get(i)));
+		}
+		lG = -Matrix.factln(N).elementSum() + tmp1.elementSum();
+		lG += A0 + A1/Nt + A2/Nt/Nt;
+		for (int s = 0; s < R; s++) {
+			lG -= Math.log(alpha.get(0,s));
+		}
+		G = Math.exp(lG);
+
+		// if ~isfinite(lGn)
+		if (!Double.isFinite(lG)) {
+			G = Double.NaN;
+			lG = Double.NaN;
+		}
+		return new pfqnNcReturn(G, lG, method);
+	}
+
+	/**
 	 * Compute the product-form factor relatively to a Delay station
 	 * @param Z - think times at the Delay station
 	 * @param n - number of jobs for each class
@@ -943,6 +1080,19 @@ public class PFQN {
 	 * @param Z - think times
 	 * @return normalizing constant and its logarithm
 	 */
+	public static pfqnNcReturn pfqn_ca(Matrix L, Matrix N) {
+		Matrix Z = N.clone();
+		Z.zero();
+		return pfqn_ca(L, N, Z);
+	}
+
+		/**
+         * Compute the normalizing constant using the convolution algorithm
+         * @param L - demands at all stations
+         * @param N - number of jobs for each class
+         * @param Z - think times
+         * @return normalizing constant and its logarithm
+         */
 	public static pfqnNcReturn pfqn_ca(Matrix L, Matrix N, Matrix Z) {
 		int M = L.getNumRows();
 		int R = L.getNumCols();
