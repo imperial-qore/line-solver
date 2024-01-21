@@ -1,0 +1,4 @@
+# Source files
+# ============
+*.m             text diff=matlab
+*.mat           binary
