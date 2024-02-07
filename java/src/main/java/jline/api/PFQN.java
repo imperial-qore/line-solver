@@ -17,13 +17,14 @@ import java.io.FileNotFoundException;
 import java.net.URISyntaxException;
 import java.util.*;
 
+import static jline.util.Maths.max;
 import static jline.util.Matrix.oner;
 import static jline.util.PopulationLattice.hashpop;
 import static jline.util.PopulationLattice.pprod;
 
 /**
 * APIs for evaluating Product-Form Queueing Networks.
-*/    
+*/
 public class PFQN {
 
 	/**
@@ -2149,7 +2150,7 @@ public class PFQN {
 	 * Evaluate limited-load dependent (LLD) function
 	 *
 	 * @param n Queue-length values. The values can be continuous.
-	 * @param lldscaling If not null, then the LLD function uses lldscaling to interpolate continuous values of n  
+	 * @param lldscaling If not null, then the LLD function uses lldscaling to interpolate continuous values of n
 	 * @param nservers If not null, then the LLD function is set to be for a multi-server with nserver stations
 	 * @return Interpolated LLD function values
 	 */
@@ -2196,7 +2197,7 @@ public class PFQN {
 	 * @param nvec Per-class queue-length values. The values can be continuous.
 	 * @param cdscaling CD function
 	 * @param stations Station objects
-	 * @return 
+	 * @return
 	 */
 	public static Matrix pfqn_cdfun(Matrix nvec, Map<Station, SerializableFunction<Matrix, Double>> cdscaling, List<Station> stations) {
 		int M = nvec.getNumRows();
@@ -2844,7 +2845,7 @@ public class PFQN {
 				for(int k = 0; k < nc; k++){
 					sumpc += Pc[i].get(1 + k, hnvec);
 				}
-				Pc[i].set(0, hnvec, Maths.max(Math.ulp(1.0), 1 - sumpc));
+				Pc[i].set(0, hnvec, max(Math.ulp(1.0), 1 - sumpc));
 			}
 			Matrix nvecFind = nvec.find();
 			if(!nvecFind.isEmpty()){
@@ -3598,7 +3599,7 @@ public class PFQN {
 			for(int i = 0; i < QN.getNumRows(); i++){
 				for(int j = 0; j < QN.getNumCols(); j++){
 					double val = Math.abs(1 - QN.get(i, j) / QN_1.get(i, j));
-					maxabs = Maths.max(maxabs, val);
+					maxabs = max(maxabs, val);
 				}
 			}
 			if(maxabs < tol){
@@ -4042,6 +4043,157 @@ public class PFQN {
 		}
 		return new pfqnLinearizerReturn(QN, UN, WN, CN, XN, totiter);
 	}
+		public static pfqnRdReturn pfqn_rd(Matrix L, Matrix N, Matrix Z, Matrix mu, SolverOptions options) {
+			int M = L.getNumRows();
+			int R = L.getNumCols();
+			Matrix lambda = new Matrix(1, R);
+			lambda.zero();
+			if (N.elementSum() < 0) {
+				return new pfqnRdReturn(Double.NEGATIVE_INFINITY);
+			}
+			if (options == null) {
+				options = SolverNC.defaultOptions();
+			}
+			for(int i=0; i<M; i++) {
+				for (int j=1; j<R; j++) {
+					if (mu.get(i, j) != mu.get(i, 0)) {
+						break;
+					}
+				}
+				for (int j=1; j<R; j++) {
+					L.set(i, j, L.get(i, j) / mu.get(i, 0));
+				}
+			}
+			if (N.elementSum() == 0) {
+				return new pfqnRdReturn(0.0);
+			}
+
+			Matrix gamma = new Matrix(M, (int) Math.ceil(N.elementSum()));
+			gamma.ones();
+
+			Matrix mu_new;
+			if ((int) N.elementSum() >= mu.getNumCols()) {
+				mu_new = mu.clone();
+			} else {
+				mu_new = new Matrix(mu.getNumRows(), 0);
+				for (int i = 0; i < N.elementSum(); i++) {
+					Matrix mu_col_i = new Matrix(mu.getNumRows(), 1);
+					Matrix.extract(mu, 0, mu.getNumRows(), i, i+1, mu_col_i, 0, 0);
+					mu_new = Matrix.concatColumns(mu_new, mu_col_i, null);
+				}
+			}
+
+			for (int i=0; i<mu_new.getNumRows(); i++) {
+				for (int j=0; j<mu_new.getNumCols(); j++) {
+					if (Double.isNaN(mu_new.get(i, j))) {
+						mu_new.set(i, j, Double.POSITIVE_INFINITY);
+					}
+				}
+			}
+			Matrix s = new Matrix(M, 1);
+			for (int i=0; i<M; i++) {
+				if (mu.get(i, mu.getNumCols() - 1) != Double.POSITIVE_INFINITY) {
+					Matrix mu_i = new Matrix(1, mu.getNumCols());
+					for (int j=0; j<mu.getNumCols(); j++) {
+						double mu_ij = Math.abs(mu.get(i, j) - mu.get(i, mu.getNumCols() - 1));
+						mu_i.set(j, mu_ij < options.tol ? 1 : 0);
+					}
+					s.set(i, mu_i.find().elementMin());
+//					if (s.get(i) == -1) {
+//						s.set(i, N.elementSum() - 1);
+//					}
+				} else {
+					s.set(i, N.elementSum() - 1);
+				}
+			}
+			Matrix isDelay = new Matrix(new ArrayList<>(Collections.nCopies(M, 0.0)));
+			Matrix isLI = new Matrix(new ArrayList<>(Collections.nCopies(M, 0.0)));
+			Matrix y = L.clone();
+
+			for (int i=0; i<M; i++) {
+				if (Double.isInfinite(mu.get(i, (int) s.get(i)))) {
+					for (int j=mu.getNumCols() - 1; j>=0; j--) {
+						if (Double.isInfinite(mu.get(i, j))) {
+							s.set(i, mu.get(i, j));
+							break;
+						}
+					}
+				}
+				for (int j=0; j<mu.getNumCols(); j++) {
+					y.set(i, j, y.get(i, j) / mu.get(i, (int) s.get(i)));
+				}
+			}
+			for (int i=0; i<M; i++) {
+				for (int j=0; j<gamma.getNumCols(); j++) {
+					gamma.set(i, j, mu.get(i, j) / mu.get(i, (int) s.get(i)));
+				}
+				double max = Double.NaN;
+				double Ncum = 0.0;
+				for (int j=0; j<mu.getNumCols(); j++) {
+					Ncum += N.get(i);
+					double x = Math.abs(mu.get(i, j) - (Ncum));
+					if (Double.isNaN(max) || x > max) {
+						max = x;
+					}
+				}
+				if (max < options.tol) {
+					isDelay.set(i, 1);
+				}
+			}
+			//% eliminating the delays seems to produce problems
+			//% Z = sum([Z; L(isDelay,:)],1);
+			//% L(isDelay,:)=[];
+			//% mu(isDelay,:)=[];
+			//% gamma(isDelay,:)=[];
+			//% y(isDelay,:)=[];
+			//% isLI(isDelay) = [];
+			//% M = M - sum(isDelay);
+			Matrix beta = Matrix.ones(M, (int) Math.ceil(N.elementSum()));
+			for (int i=0; i<M; i++) {
+				double beta_ij = gamma.get(i, 0) / (1 - gamma.get(i, 0));
+				beta.set(i, 0, Double.isNaN(beta_ij) ? Double.POSITIVE_INFINITY : beta_ij);
+				for (int j=1; j<Math.ceil(N.elementSum()); j++) {
+					beta_ij = (1 - gamma.get(i, j-1)) * (gamma.get(i, j) / (1 - gamma.get(i, j)));
+					beta.set(i, j, Double.isNaN(beta_ij) ? Double.POSITIVE_INFINITY : beta_ij);
+				}
+			}
+			boolean isInf = true;
+			int idx = 0;
+			while (isInf && idx < beta.getNumElements()) {
+				if (Double.isFinite(beta.get(idx))) {
+					isInf = false;
+				}
+			}
+			if (isInf) {
+				options.method = "default";
+				return new pfqnRdReturn(pfqn_nc(lambda, L, N, Z, options).lG);
+			}
+			double Cgamma = 0;
+			List<Double> sld = new ArrayList<>();
+			for (int i=0; i<s.getNumElements(); i++) {
+				if (s.get(i) > 1) {
+					sld.add(s.get(i));
+				}
+			}
+			Matrix sldM = new Matrix(sld);
+			int vmax = Math.min( (int) sldM.elementSum() - sldM.getNumElements(), (int) Math.ceil(N.elementSum()));
+			Matrix Y = pfqn_mva(y, N, Matrix.scale_mult(N, 0), Matrix.ones(1,M)).XN;
+			Matrix rhoN = y.mult(Y.transpose());
+			Matrix lEN = new Matrix(1, vmax + 2);
+			lEN.zero();
+			for (int vtot=0; vtot<=vmax; vtot++) {
+				lEN.set(vtot + 1, pfqn_gldsingle(rhoN, new Matrix(vtot + 1), beta, options).lG);
+			}
+			double EN;
+			for (int vtot=0; vtot < lEN.getNumElements(); vtot++) {
+				EN = Math.exp(lEN.get(vtot));
+				Cgamma += ((N.elementSum() - max(0, vtot - 1)) / N.elementSum()) * EN;
+			}
+			options.method = "default";
+			double lGN = pfqn_nc(lambda, y, N, Z, options).lG;
+			lGN += Math.log(Cgamma);
+			return new pfqnRdReturn(lGN, Cgamma);
+		}
 
     public static class pfqnMVAReturn {
         public Matrix XN;
@@ -4333,4 +4485,20 @@ public class PFQN {
             this.method = method;
         }
     }
+
+		public static class pfqnRdReturn {
+		    public Double lGN;
+        public Double Cgamma;
+
+        public pfqnRdReturn(Double lGN, Double Cgamma) {
+            this.lGN = lGN;
+            this.Cgamma = Cgamma;
+        }
+
+				public pfqnRdReturn(Double lGN) {
+					this.lGN = lGN;
+					this.Cgamma = null;
+				}
+
+		}
 }

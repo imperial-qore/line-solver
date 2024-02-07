@@ -2748,4 +2748,38 @@ class PFQNTest {
         assertEquals(0.618932044546223, ret.X.get(0,1), tolerance);
         assertEquals(109, ret.totiter);
     }
+
+    @Test
+    void pfqn_rdTest1(){
+        Matrix L = new Matrix(2, 3);
+        Matrix N = new Matrix(1, 3);
+        Matrix Z = new Matrix(1, 3);
+        Matrix mu = new Matrix(2, 3);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 9.87);
+        L.set(0, 1, 8.47);
+        L.set(0, 2, 1.224);
+        L.set(1, 0, 0.224);
+        L.set(1, 1, 0.9874);
+        L.set(1, 2, 0.008);
+        N.set(0, 0, 1);
+        N.set(0, 1, 0);
+        N.set(0, 2, 2);
+        Z.set(0, 0, 0.442);
+        Z.set(0, 1, 0.1948);
+        Z.set(0, 2, 0.99983);
+        mu.set(0, 0, 1);
+        mu.set(0, 1, 2);
+        mu.set(0, 2, 3);
+        mu.set(1, 0, 1);
+        mu.set(1, 1, 1);
+        mu.set(1, 2, 1);
+        pfqnRdReturn ret = pfqn_rd(L, N, Z, mu, options);
+
+        assertEquals(3.295093718091397, ret.lGN, tolerance);
+
+        assertEquals(3.999899012106980, ret.Cgamma, tolerance);
+
+    }
 }
