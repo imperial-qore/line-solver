@@ -1655,6 +1655,7 @@ public class Matrix {
 			solve(this,b,x);
 			return x;
 		}else {
+			// TODO: implement, needed in afterEvent
 			throw new RuntimeException("left matrix divide of rectangular matrix haven't been implemented!");
 		}
 	}

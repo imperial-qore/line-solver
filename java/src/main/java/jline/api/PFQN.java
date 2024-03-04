@@ -17,6 +17,7 @@ import java.io.FileNotFoundException;
 import java.net.URISyntaxException;
 import java.util.*;
 
+import static java.lang.Math.abs;
 import static jline.util.Maths.max;
 import static jline.util.Matrix.oner;
 import static jline.util.PopulationLattice.hashpop;
@@ -94,7 +95,7 @@ public class PFQN {
 		Matrix Z_tmp = new Matrix(Z_new.getNumRows(), 0);
 		Matrix lambda_tmp = new Matrix(lambda_new.getNumRows(), 0);
 		for (int i = 0; i < N_new.length(); i++) {
-			if (Math.abs(N_new.get(i)) >= GlobalConstants.FineTol) {
+			if (abs(N_new.get(i)) >= GlobalConstants.FineTol) {
 				Matrix L_col = Matrix.extractColumn(L_new, i, null);
 				Matrix N_col = Matrix.extractColumn(N_new, i, null);
 				Matrix Z_col = Matrix.extractColumn(Z_new, i, null);
@@ -165,7 +166,7 @@ public class PFQN {
 
 		boolean flag = false;
 		for (int i = 0; i < N_new.length(); i++) {
-			if (Math.abs(L_new.sumCols(i)+Z_new.sumCols(i))<GlobalConstants.FineTol && N_new.get(i) > GlobalConstants.FineTol) {
+			if (abs(L_new.sumCols(i)+Z_new.sumCols(i))<GlobalConstants.FineTol && N_new.get(i) > GlobalConstants.FineTol) {
 				flag = true;
 				break;
 			}
@@ -350,7 +351,7 @@ public class PFQN {
 		Matrix N_new = new Matrix(N.getNumRows(), 0);
 		Matrix Z_new = new Matrix(Z.getNumRows(), 0);
 		for (int i = 0; i < N.length(); i++) {
-			if (Math.abs(N.get(i)) >= GlobalConstants.FineTol) {
+			if (abs(N.get(i)) >= GlobalConstants.FineTol) {
 				Matrix L_col_i = Matrix.extractColumn(L, i, null);
 				Matrix N_col_i = Matrix.extractColumn(N, i, null);
 				Matrix Z_col_i = Matrix.extractColumn(Z, i, null);
@@ -408,7 +409,7 @@ public class PFQN {
 
 		boolean flag = false;
 		for (int i = 0; i < N_new.getNumCols(); i++) {
-			if (Math.abs(L_new.sumCols(i)+Z_new.sumCols(i))<GlobalConstants.FineTol && N_new.get(i) > GlobalConstants.FineTol) {
+			if (abs(L_new.sumCols(i)+Z_new.sumCols(i))<GlobalConstants.FineTol && N_new.get(i) > GlobalConstants.FineTol) {
 				flag = true;
 				break;
 			}
@@ -652,13 +653,13 @@ public class PFQN {
 			Matrix.extract(mu_new, i, i+1, 0, (int)N.elementSum(), mu_row_i, 0, 0);
 			boolean flag = true;
 			for (int j = 0; j < mu_row_i.getNumCols(); j++) {
-				if (Math.abs(mu_row_i.get(j)-(j+1))>GlobalConstants.FineTol) {
+				if (abs(mu_row_i.get(j)-(j+1))>GlobalConstants.FineTol) {
 					flag = false;
 					break;
 				}
 			}
 
-			if (Math.abs(mu_row_i.elementMin()-1)<GlobalConstants.FineTol && Math.abs(mu_row_i.elementMax()-1)<GlobalConstants.FineTol) {
+			if (abs(mu_row_i.elementMin()-1)<GlobalConstants.FineTol && abs(mu_row_i.elementMax()-1)<GlobalConstants.FineTol) {
 				isInfServer[i] = false;
 			} else if (flag) {
 				isInfServer[i] = true;
@@ -699,7 +700,7 @@ public class PFQN {
 			return new pfqnNcReturn(G, lG);
 		}
 
-		if (Math.abs(N.elementMax())<GlobalConstants.FineTol && Math.abs(N.elementMin())<GlobalConstants.FineTol) {
+		if (abs(N.elementMax())<GlobalConstants.FineTol && abs(N.elementMin())<GlobalConstants.FineTol) {
 			G = 1.0;
 			lG = Math.log(G);
 			return new pfqnNcReturn(G, lG);
@@ -786,7 +787,7 @@ public class PFQN {
 							method = "le";
 						}
 					}
-				} else if (Z_colSum.getNumCols() == 1 && Math.abs(Z_colSum.get(0)) < GlobalConstants.FineTol) {
+				} else if (Z_colSum.getNumCols() == 1 && abs(Z_colSum.get(0)) < GlobalConstants.FineTol) {
 					Matrix tmp = L.clone();
 					for (int i = 0; i < tmp.length(); i++) {
 						tmp.set(i, Math.log(tmp.get(i)));
@@ -1152,7 +1153,7 @@ public class PFQN {
 		G.fill(1.0);
 		Matrix n = pprod(N);
 
-		while (Math.abs(n.sumRows().sumCols().get(0)+1) > GlobalConstants.FineTol) {
+		while (abs(n.sumRows().sumCols().get(0)+1) > GlobalConstants.FineTol) {
 			int idxn = hashpop(n, N);
 			G.set(0, idxn, pfqn_pff_delay(Z, n));
 			for (int m = 1; m < M+1; m++) {
@@ -1400,7 +1401,7 @@ public class PFQN {
 		Matrix u_abs_diff = new Matrix(M, 1);
 
 		for (int i = 0; i < M; i++) {
-			u_abs_diff.set(i, Math.abs(u.get(i)-u_1.get(i)));
+			u_abs_diff.set(i, abs(u.get(i)-u_1.get(i)));
 		}
 
 		while (u_abs_diff.elementSum() > 1e-10) {
@@ -1417,7 +1418,7 @@ public class PFQN {
 			}
 
 			for (int i = 0; i < M; i++) {
-				u_abs_diff.set(i, Math.abs(u.get(i)-u_1.get(i)));
+				u_abs_diff.set(i, abs(u.get(i)-u_1.get(i)));
 			}
 
 
@@ -1450,7 +1451,7 @@ public class PFQN {
 		Matrix u_abs_diff = new Matrix(M, 1);
 
 		for (int i = 0; i < M; i++) {
-			u_abs_diff.set(i, Math.abs(u.get(i)-u_1.get(i)));
+			u_abs_diff.set(i, abs(u.get(i)-u_1.get(i)));
 		}
 
 		while (u_abs_diff.elementSum() > 1e-10) {
@@ -1479,10 +1480,10 @@ public class PFQN {
 			}
 
 			for (int i = 0; i < M; i++) {
-				u_abs_diff.set(i, Math.abs(u.get(i)-u_1.get(i)));
+				u_abs_diff.set(i, abs(u.get(i)-u_1.get(i)));
 			}
 
-			d = Matrix.concatRows(d, u_abs_diff.transpose().elementIncrease(Math.abs(v-v_1)), null);
+			d = Matrix.concatRows(d, u_abs_diff.transpose().elementIncrease(abs(v-v_1)), null);
 		}
 
 		return new pfqnLeFpiZReturn(u, v, d);
@@ -1796,7 +1797,7 @@ public class PFQN {
 		Matrix Z_tmp = new Matrix(Z_new.getNumRows(), 0);
 		Matrix lambda_tmp = new Matrix(lambda.getNumRows(), 0);
 		for (int i = 0; i < N.length(); i++) {
-			if (Math.abs(N.get(i)) >= GlobalConstants.FineTol && !(L_new.sumCols(i)+Z_new.sumCols(i) < atol)) {
+			if (abs(N.get(i)) >= GlobalConstants.FineTol && !(L_new.sumCols(i)+Z_new.sumCols(i) < atol)) {
 				Matrix L_col = Matrix.extractColumn(L_new, i, null);
 				Matrix N_col = Matrix.extractColumn(N, i, null);
 				Matrix Z_col = Matrix.extractColumn(Z_new, i, null);
@@ -2067,9 +2068,9 @@ public class PFQN {
 					}
 					h = tmp_mat.mult(h_1);
 					nt = nvec.elementSum();
-					scale.set((int) nt-1, Math.abs(h.elementSum()));
+					scale.set((int) nt-1, abs(h.elementSum()));
 					for (int i = 0; i < h.length(); i++) {
-						h.set(i, Math.abs(h.get(i))/scale.get((int) nt-1));
+						h.set(i, abs(h.get(i))/scale.get((int) nt-1));
 					}
 				}
 			}
@@ -3598,7 +3599,7 @@ public class PFQN {
 			double maxabs = Double.MIN_VALUE;
 			for(int i = 0; i < QN.getNumRows(); i++){
 				for(int j = 0; j < QN.getNumCols(); j++){
-					double val = Math.abs(1 - QN.get(i, j) / QN_1.get(i, j));
+					double val = abs(1 - QN.get(i, j) / QN_1.get(i, j));
 					maxabs = max(maxabs, val);
 				}
 			}
@@ -4054,14 +4055,18 @@ public class PFQN {
 			if (options == null) {
 				options = SolverNC.defaultOptions();
 			}
+			boolean isLi = true;
 			for(int i=0; i<M; i++) {
 				for (int j=1; j<R; j++) {
 					if (mu.get(i, j) != mu.get(i, 0)) {
+						isLi = false;
 						break;
 					}
 				}
-				for (int j=1; j<R; j++) {
-					L.set(i, j, L.get(i, j) / mu.get(i, 0));
+				if (isLi) {
+					for (int j = 1; j < R; j++) {
+						L.set(i, j, L.get(i, j) / mu.get(i, 0));
+					}
 				}
 			}
 			if (N.elementSum() == 0) {
@@ -4095,7 +4100,7 @@ public class PFQN {
 				if (mu.get(i, mu.getNumCols() - 1) != Double.POSITIVE_INFINITY) {
 					Matrix mu_i = new Matrix(1, mu.getNumCols());
 					for (int j=0; j<mu.getNumCols(); j++) {
-						double mu_ij = Math.abs(mu.get(i, j) - mu.get(i, mu.getNumCols() - 1));
+						double mu_ij = abs(mu.get(i, j) - mu.get(i, mu.getNumCols() - 1));
 						mu_i.set(j, mu_ij < options.tol ? 1 : 0);
 					}
 					s.set(i, mu_i.find().elementMin());
@@ -4119,7 +4124,7 @@ public class PFQN {
 						}
 					}
 				}
-				for (int j=0; j<mu.getNumCols(); j++) {
+				for (int j=0; j<y.getNumCols(); j++) {
 					y.set(i, j, y.get(i, j) / mu.get(i, (int) s.get(i)));
 				}
 			}
@@ -4130,8 +4135,8 @@ public class PFQN {
 				double max = Double.NaN;
 				double Ncum = 0.0;
 				for (int j=0; j<mu.getNumCols(); j++) {
-					Ncum += N.get(i);
-					double x = Math.abs(mu.get(i, j) - (Ncum));
+					Ncum += 1;
+					double x = abs(mu.get(i, j) - (Ncum));
 					if (Double.isNaN(max) || x > max) {
 						max = x;
 					}
@@ -4171,18 +4176,18 @@ public class PFQN {
 			double Cgamma = 0;
 			List<Double> sld = new ArrayList<>();
 			for (int i=0; i<s.getNumElements(); i++) {
-				if (s.get(i) > 1) {
+				if (s.get(i) > 0) {
 					sld.add(s.get(i));
 				}
 			}
 			Matrix sldM = new Matrix(sld);
-			int vmax = Math.min( (int) sldM.elementSum() - sldM.getNumElements(), (int) Math.ceil(N.elementSum()));
+			int vmax = Math.min( (int) sldM.elementSum(), (int) Math.ceil(N.elementSum()));
 			Matrix Y = pfqn_mva(y, N, Matrix.scale_mult(N, 0), Matrix.ones(1,M)).XN;
 			Matrix rhoN = y.mult(Y.transpose());
-			Matrix lEN = new Matrix(1, vmax + 2);
+			Matrix lEN = new Matrix(1, vmax + 1);
 			lEN.zero();
-			for (int vtot=0; vtot<=vmax; vtot++) {
-				lEN.set(vtot + 1, pfqn_gldsingle(rhoN, new Matrix(vtot + 1), beta, options).lG);
+			for (int vtot=0; vtot < vmax; vtot++) {
+				lEN.set(vtot + 1, Math.log(Math.abs(pfqn_gldsingle(rhoN, new Matrix(vtot + 1), beta, options).G)));
 			}
 			double EN;
 			for (int vtot=0; vtot < lEN.getNumElements(); vtot++) {

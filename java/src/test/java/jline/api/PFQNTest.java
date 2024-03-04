@@ -2751,35 +2751,161 @@ class PFQNTest {
 
     @Test
     void pfqn_rdTest1(){
-        Matrix L = new Matrix(2, 3);
-        Matrix N = new Matrix(1, 3);
-        Matrix Z = new Matrix(1, 3);
-        Matrix mu = new Matrix(2, 3);
+        Matrix L = new Matrix(2, 1);
+        Matrix N = new Matrix(1, 1);
+        Matrix Z = new Matrix(1, 1);
+        Matrix mu = new Matrix(2, 16);
         SolverOptions options = new SolverOptions();
         options.method = "default";
-        L.set(0, 0, 9.87);
-        L.set(0, 1, 8.47);
-        L.set(0, 2, 1.224);
-        L.set(1, 0, 0.224);
-        L.set(1, 1, 0.9874);
-        L.set(1, 2, 0.008);
-        N.set(0, 0, 1);
-        N.set(0, 1, 0);
-        N.set(0, 2, 2);
-        Z.set(0, 0, 0.442);
-        Z.set(0, 1, 0.1948);
-        Z.set(0, 2, 0.99983);
+        L.set(0, 0, 2.0 / 3);
+        L.set(1, 0, 1.0);
+        N.set(0, 0, 16);
+        Z.set(0, 0, 0);
+        for (int i=0; i<16; i++) {
+            mu.set(0, i, i + 1);
+        }
+        mu.set(1, 0, 1);
+        for (int i=1; i<16; i++) {
+            mu.set(1, i, 2);
+        }
+        pfqnRdReturn ret = pfqn_rd(L, N, Z, mu, options);
+
+        assertEquals(-9.120855161272257, ret.lGN, tolerance);
+
+        assertEquals(6.569832586711733, ret.Cgamma, tolerance);
+
+    }
+
+    @Test
+    void pfqn_rdTest2(){
+        Matrix L = new Matrix(2, 2);
+        Matrix N = new Matrix(1, 2);
+        Matrix Z = new Matrix(1, 2);
+        Matrix mu = new Matrix(2, 6);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 2.0 / 3);
+        L.set(0, 1, 0.8);
+        L.set(1, 0, 1);
+        L.set(1, 1, 1);
+        N.set(0, 0, 4);
+        N.set(0, 1, 2);
+        Z.set(0, 0, 0);
+        Z.set(0, 1, 0);
+        for (int i=0; i<6; i++) {
+            mu.set(0, i, i + 1);
+        }
+        mu.set(1, 0, 1);
+        for (int i=1; i<6; i++) {
+            mu.set(1, i, 2);
+        }
+
+        pfqnRdReturn ret = pfqn_rd(L, N, Z, mu, options);
+
+        assertEquals(0.526401647774762, ret.lGN, tolerance);
+
+        assertEquals(5.511730546381030, ret.Cgamma, tolerance);
+
+    }
+
+    @Test
+    void pfqn_rdTest3(){
+        Matrix L = new Matrix(3, 2);
+        Matrix N = new Matrix(1, 2);
+        Matrix Z = new Matrix(1, 2);
+        Matrix mu = new Matrix(3, 6);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 2.0 / 7);
+        L.set(0, 1, 4.0 / 9);
+        L.set(1, 0, 3.0 / 7);
+        L.set(1, 1, 5.0 / 9);
+        L.set(2, 0, 1);
+        L.set(2, 1, 1);
+        N.set(0, 0, 4);
+        N.set(0, 1, 2);
+        Z.set(0, 0, 0);
+        Z.set(0, 1, 0);
         mu.set(0, 0, 1);
         mu.set(0, 1, 2);
         mu.set(0, 2, 3);
+        mu.set(0, 3, 4);
+        mu.set(0, 4, 5);
+        mu.set(0, 5, 6);
         mu.set(1, 0, 1);
-        mu.set(1, 1, 1);
-        mu.set(1, 2, 1);
+        mu.set(1, 1, 2);
+        mu.set(1, 2, 3);
+        mu.set(1, 3, 3);
+        mu.set(1, 4, 3);
+        mu.set(1, 5, 3);
+        mu.set(2, 0, 1);
+        mu.set(2, 1, 2);
+        mu.set(2, 2, 3);
+        mu.set(2, 3, 3);
+        mu.set(2, 4, 3);
+        mu.set(2, 5, 3);
+
         pfqnRdReturn ret = pfqn_rd(L, N, Z, mu, options);
 
-        assertEquals(3.295093718091397, ret.lGN, tolerance);
+        assertEquals(-0.264097214680063, ret.lGN, tolerance);
 
-        assertEquals(3.999899012106980, ret.Cgamma, tolerance);
-
+        assertEquals(16.566171738940422, ret.Cgamma, tolerance);
     }
+
+    @Test
+    void pfqn_rdTest4(){
+        Matrix L = new Matrix(2, 1);
+        Matrix N = new Matrix(1, 1);
+        Matrix Z = new Matrix(1, 1);
+        Matrix mu = new Matrix(2, 10);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 1);
+        L.set(1, 0, 1);
+        N.set(0, 0, 10);
+        Z.set(0, 0, 0);
+        for (int i=0; i<10; i++) {
+            mu.set(0, i, i + 1);
+        }
+        for (int i=0; i<10; i++) {
+            mu.set(1, i, Math.min(5,  i + 1));
+        }
+
+        pfqnRdReturn ret = pfqn_rd(L, N, Z, mu, options);
+
+        assertEquals(-8.635479492422949, ret.lGN, tolerance);
+
+        assertEquals(8.680426521339080e+02, ret.Cgamma, tolerance);
+    }
+
+    @Test
+    void pfqn_rdTest5(){
+        Matrix L = new Matrix(2, 2);
+        Matrix N = new Matrix(1, 2);
+        Matrix Z = new Matrix(1, 2);
+        Matrix mu = new Matrix(2, 24);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 2.0 / 3);
+        L.set(0, 1, 0.8);
+        L.set(1, 0, 1);
+        L.set(1, 1, 1);
+        N.set(0, 0, 16);
+        N.set(0, 1, 8);
+        Z.set(0, 0, 0);
+        Z.set(0, 1, 0);
+        for (int i=0; i<24; i++) {
+            mu.set(0, i, i + 1);
+        }
+        for (int i=0; i<24; i++) {
+            mu.set(1, i, 1);
+        }
+
+        pfqnRdReturn ret = pfqn_rd(L, N, Z, mu, options);
+
+        assertEquals(14.211561934863019, ret.lGN, tolerance);
+
+        assertEquals(1.960536983667250, ret.Cgamma, tolerance);
+    }
+
 }
