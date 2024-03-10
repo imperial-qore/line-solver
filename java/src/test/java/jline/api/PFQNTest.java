@@ -2908,4 +2908,30 @@ class PFQNTest {
         assertEquals(1.960536983667250, ret.Cgamma, tolerance);
     }
 
+    @Test
+    void pfqn_nrl_Test1(){
+        Matrix L = new Matrix(2, 1);
+        Matrix N = new Matrix(1, 1);
+        Matrix Z = new Matrix(1, 1);
+        Matrix mu = new Matrix(2, 16);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 2.0 / 3);
+        L.set(1, 0, 1.0);
+        N.set(0, 0, 16);
+        Z.set(0, 0, 0);
+        for (int i=0; i<16; i++) {
+            mu.set(0, i, i + 1);
+        }
+        mu.set(1, 0, 1);
+        for (int i=1; i<16; i++) {
+            mu.set(1, i, 2);
+        }
+        double ret = pfqn_nrl(L, N, Z, mu, options);
+
+        assertEquals(-8.838083105162221, ret, tolerance);
+
+
+    }
+
 }

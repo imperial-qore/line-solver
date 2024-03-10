@@ -9,6 +9,7 @@ import jline.util.SerializableFunction;
 import jline.solvers.SolverOptions;
 import jline.solvers.nc.SolverNC;
 import jline.util.Matrix;
+import org.apache.commons.math3.complex.Complex;
 import org.apache.commons.math3.analysis.interpolation.SplineInterpolator;
 import org.apache.commons.math3.distribution.MultivariateNormalDistribution;
 
@@ -731,6 +732,144 @@ public class PFQN {
 		}
 		lG = Math.log(G);
 		return new pfqnNcReturn(G, lG);
+	}
+
+	public static pfqnNcComplexReturn pfqn_gld_complex(Matrix L_real, Matrix L_complex, Matrix N, Matrix mu, SolverOptions options) {
+		int M = L_real.getNumRows();
+		int R = L_real.getNumCols();
+		Matrix lambda = new Matrix(1, R);
+		Complex G;
+		Complex lG;
+
+		if (M == 1) {
+			Matrix N_tmp = new Matrix(1, 0);
+			Matrix L_real_tmp = new Matrix(1, 0);
+			Matrix L_complex_tmp = new Matrix(1, 0);
+			for (int i = 0; i < R; i++) {
+				if (L_real.get(i) > GlobalConstants.FineTol || L_complex.get(i) > GlobalConstants.FineTol) {
+					Matrix N_tmp2 = new Matrix(1, 1);
+					N_tmp2.fill(N.get(i));
+					Matrix L_real_tmp2 = new Matrix(1, 1);
+					Matrix L_complex_tmp2 = new Matrix(1, 1);
+					L_real_tmp2.fill(0.5 * Math.log(Math.pow(L_real.get(0, i), 2) + Math.pow(L_complex.get(0, i), 2)));
+					L_complex_tmp2.fill(Math.log(Math.atan(L_complex.get(0, i) / L_real.get(0, i))));
+					N_tmp = Matrix.concatColumns(N_tmp, N_tmp2, null);
+					L_real_tmp = Matrix.concatColumns(L_real_tmp, L_real_tmp2, null);
+					L_complex_tmp = Matrix.concatColumns(L_complex_tmp, L_complex_tmp2, null);
+				}
+			}
+			Matrix mu_new;
+			if ((int) N.elementSum() >= mu.getNumCols()) {
+				mu_new = Matrix.extractRows(mu, 0, 1, null);
+			} else {
+				mu_new = new Matrix(1, 0);
+				for (int i = 0; i < N.elementSum(); i++) {
+					Matrix mu_col_i = new Matrix(1, 1);
+					Matrix.extract(mu, 0, 1, i, i + 1, mu_col_i, 0, 0);
+					mu_new = Matrix.concatColumns(mu_new, mu_col_i, null);
+				}
+			}
+
+			for (int i = 0; i < mu_new.length(); i++) {
+				mu_new.set(i, Math.log(mu_new.get(i)));
+			}
+			// TODO: Run through this in MATLAB implementation for complex L.
+			lG = new Complex(N_tmp.mult(L_real_tmp.transpose()).get(0), N_tmp.mult(L_complex_tmp.transpose()).get(0))
+					.add(Maths.factln(N.elementSum()) - Matrix.factln(N).elementSum()).subtract(mu_new.elementSum());
+			G = lG.exp();
+			return new pfqnNcComplexReturn(G, lG);
+		}
+
+		if (R == 1) {
+			pfqnNcComplexReturn ret = pfqn_gldsingle_complex(L_real, L_complex, N, mu, null);
+			lG = ret.lG;
+			G = ret.G;
+			return new pfqnNcComplexReturn(G, lG);
+		}
+
+		if ((L_real == null || L_complex == null) || (L_complex.isEmpty() && L_real.isEmpty())) {
+			G = new Complex(0.0);
+			lG = new Complex(Double.NEGATIVE_INFINITY);
+			return new pfqnNcComplexReturn(G, lG);
+		}
+
+		Matrix mu_new;
+		if (mu == null) {
+			mu_new = new Matrix(M, (int) N.elementSum());
+			mu_new.fill(1.0);
+		} else {
+			mu_new = mu.clone();
+		}
+
+		SolverOptions options_new;
+		if (options == null) {
+			options_new = SolverNC.defaultOptions();
+		} else {
+			options_new = options;
+		}
+
+		boolean isLoadDep = false;
+		boolean[] isInfServer = new boolean[M];
+		for (int i = 0; i < M; i++) {
+			Matrix mu_row_i = new Matrix(1, (int) N.elementSum());
+			Matrix.extract(mu_new, i, i + 1, 0, (int) N.elementSum(), mu_row_i, 0, 0);
+			boolean flag = true;
+			for (int j = 0; j < mu_row_i.getNumCols(); j++) {
+				if (abs(mu_row_i.get(j) - (j + 1)) > GlobalConstants.FineTol) {
+					flag = false;
+					break;
+				}
+			}
+
+			if (abs(mu_row_i.elementMin() - 1) < GlobalConstants.FineTol && abs(mu_row_i.elementMax() - 1) < GlobalConstants.FineTol) {
+				isInfServer[i] = false;
+			} else if (flag) {
+				isInfServer[i] = true;
+			} else {
+				isInfServer[i] = false;
+				isLoadDep = true;
+			}
+		}
+		if (!isLoadDep) {
+			throw new RuntimeException("pfqn_gld_complex is only implemented for load dependent models.");
+		}
+
+		G = new Complex(0.0);
+		if (M == 0) {
+			lG = G.log();
+			return new pfqnNcComplexReturn(G, lG);
+		}
+
+		if (abs(N.elementMax()) < GlobalConstants.FineTol && abs(N.elementMin()) < GlobalConstants.FineTol) {
+			G = new Complex(1.0);
+			lG = G.log();
+			return new pfqnNcComplexReturn(G, lG);
+		}
+
+		if (R == 1) {
+			return pfqn_gldsingle_complex(L_real, L_complex, N, mu_new, null);
+		}
+
+		G.add(pfqn_gld_complex(Matrix.extractRows(L_real, 0, M - 1, null), Matrix.extractRows(L_complex, 0, M - 1, null), N,
+				Matrix.extractRows(mu_new, 0, M - 1, null), options_new).G);
+
+		for (int r = 0; r < R; r++) {
+			if (N.get(r) > GlobalConstants.FineTol) {
+				Matrix N_1 = N.clone();
+				if (R > 1) {
+					N_1.set(r, N_1.get(r) - 1);
+				} else {
+					for (int i = 0; i < N_1.length(); i++) {
+						N_1.set(i, N_1.get(i) - 1);
+					}
+				}
+				G.add(new Complex(L_real.get(M - 1, r), L_complex.get(M - 1, r))
+						.divide(mu_new.get(M - 1, 0))
+						.multiply(pfqn_gld_complex(L_real, L_complex, N_1, pfqn_mushift(mu, M - 1), options_new).G));
+			}
+		}
+		lG = G.log();
+		return new pfqnNcComplexReturn(G, lG);
 	}
 
 	/**
@@ -2118,6 +2257,36 @@ public class PFQN {
 		double lG = Math.log(G);
 		return new pfqnNcReturn(G, lG);
 	}
+
+	public static pfqnNcComplexReturn pfqn_gldsingle_complex(Matrix L_real, Matrix L_complex, Matrix N, Matrix mu, SolverOptions options) {
+		int M = L_real.getNumRows();
+		int R = L_real.getNumCols();
+
+		if (R > 1) {
+			throw new RuntimeException("pfqn_gldsingle_complex: multiclass model detected. pfqn_gldsingle_complex is for single class models.");
+		}
+		Map<pfqnGldIndex, Complex> g = new HashMap<>();
+		g.put(new pfqnGldIndex(1, 1, 1), Complex.valueOf(0.0));
+		for (int n = 1; n <= N.get(0); n++) {
+			g.put(new pfqnGldIndex(1, n + 1, 2), Complex.valueOf(0.0));
+		}
+		for (int m = 1; m <= M; m++) {
+			for (int tm = 1; tm <= N.get(0) + 1; tm++) {
+				g.put(new pfqnGldIndex(m + 1, 1, tm + 1), Complex.valueOf(1.0));
+			}
+			for (int n = 1; n <= N.get(0); n++) {
+				for (int tm = 1; tm <= N.get(0) - n + 1; tm++) {
+					g.put(new pfqnGldIndex(m + 1, n + 1, tm + 1),
+							g.get(new pfqnGldIndex(m, n + 1, 2)).add(
+									new Complex(L_real.get(m - 1), L_complex.get(m - 1)).multiply(g.get(new pfqnGldIndex(m + 1, n, tm + 2))).divide(mu.get(m - 1, tm - 1))));
+				}
+			}
+		}
+		Complex G = g.get(new pfqnGldIndex(M + 1, (int) N.get(0) + 1, 2));
+		Complex lG = G.log();
+		return new pfqnNcComplexReturn(G, lG);
+	}
+
 
 	/** Auxiliary class used to index interim results in pfqn_gld */
 	protected static class pfqnGldIndex {
@@ -4200,6 +4369,143 @@ public class PFQN {
 			return new pfqnRdReturn(lGN, Cgamma);
 		}
 
+	private static double h(Matrix x, Matrix L, Matrix tsubtb, double Nt, Matrix alpha) {
+		int M = L.getNumRows();
+		Matrix c_real = new Matrix(tsubtb.getNumRows(), tsubtb.getNumCols());
+		Matrix c_im = new Matrix(tsubtb.getNumRows(), tsubtb.getNumCols());
+		for (int i = 0; i < c_real.getNumElements(); i++) {
+			c_real.set(i, Math.cos(2 * Math.PI * tsubtb.get(i)));
+			c_im.set(i, Math.sin(2 * Math.PI * tsubtb.get(i)));
+		}
+		Matrix L_real = L.elementMult(c_real.repmat(M, 1), null);
+		Matrix L_im = L.elementMult(c_im.repmat(M, 1), null);
+		Matrix exp_x = x.clone();
+		for (int i = 0; i < x.getNumElements(); i++) {
+			exp_x.set(i, Math.exp(x.get(i)) / Math.pow(1 + Math.exp(x.get(i)), 2));
+		}
+		return pfqn_gld_complex(L_real, L_im, new Matrix(Nt), alpha, null).G.getReal() * exp_x.prodVector();
+	}
+
+	public static Matrix infradius_h(Matrix x, Matrix L, Matrix N, Matrix alpha) {
+
+		int M = L.getNumRows();
+		double Nt = N.elementSum();
+		Matrix beta = new Matrix(N.getNumRows(), N.getNumCols());
+		N.divide(Nt, beta, true);
+		Matrix t = new Matrix(x.getNumRows(), x.getNumCols());
+		Matrix tb_mat = new Matrix(x.getNumRows(), 1);
+		for (int i = 0; i < x.getNumRows(); i++) {
+			double tb_row = 0.0;
+			for (int j = 0; j < x.getNumCols(); j++) {
+				t.set(i, j, Math.exp(x.get(i, j)) / (1 + Math.exp(x.get(i, j))));
+				tb_row += beta.get(i, j) * Math.exp(x.get(i, j)) / (1 + Math.exp(x.get(i, j)));
+			}
+			tb_mat.set(i, tb_row);
+		}
+		double tb = tb_mat.elementSum();
+		Matrix tsubtb = t.clone();
+		for (int i = 0; i < t.getNumElements(); i++) {
+			tsubtb.set(i, tsubtb.get(i) - tb);
+		}
+		Matrix y = new Matrix(x.getNumRows(), 1);
+		for (int i = 0; i < x.getNumRows(); i++) {
+			y.set(i, h(Matrix.extractRows(x, i, x.getNumRows(), null), L, tsubtb, Nt, alpha));
+		}
+		return y;
+	}
+
+	public static double pfqn_nrl(Matrix L, Matrix N, Matrix Z, Matrix alpha, SolverOptions options) {
+		double Nt = N.elementSum();
+		if (Nt < 0) {
+			return Double.NEGATIVE_INFINITY;
+		}
+		if (Nt == 0) {
+			return 0.0;
+		}
+		int M = L.getNumRows();
+		int R = L.getNumCols();
+		if (Z.elementSum() < 0) {
+			L = Matrix.concatRows(L, Z, null);
+			List<Double> Ntrange = new ArrayList<>();
+			for (double i = 1.0; i < Nt; i++) {
+				Ntrange.add(i);
+			}
+			alpha = Matrix.concatRows(alpha, new Matrix(Ntrange), null);
+		}
+		if (M == 1 && Z.elementSum() == 0) {
+			return pfqn_gld(L, N, alpha, options).lG;
+		}
+
+		double Lmax = L.elementMax();
+		Matrix Lmax_mat = new Matrix(Lmax).repmat(1, R);
+		Matrix L_final = L.element_divide(Lmax_mat.repmat(M, 1));
+		Matrix x0 = new Matrix(1, R);
+		x0.zero();
+		double lG = laplaceapprox_h(x0, L_final, N, alpha).logI;
+		Matrix Lmax_log_mat = Lmax_mat.clone();
+		for (int i = 0; i < Lmax_mat.getNumElements(); i++) {
+			Lmax_log_mat.set(i, Math.log(Lmax_mat.get(i)));
+		}
+		return lG + N.mult(Lmax_log_mat.transpose()).get(0);
+	}
+
+	public static laplaceApproxReturn laplaceapprox_h(Matrix x0, Matrix L, Matrix N, Matrix alpha) {
+		int d = x0.getNumCols();
+		double tol = 1e-5;
+		double detnH = -1;
+		Matrix H = new Matrix(0);
+		while (detnH < 0 && tol <= 1e-3) {
+			H = num_hess_h(x0, tol, L, N, alpha);
+			Matrix nH = H.clone();
+			nH.scale(-1);
+			detnH = nH.det();
+			tol *= 10;
+		}
+		if (detnH < 0) {
+			System.out.println("Warning: laplaceapprox_h: det(-H)<0.");
+		}
+		Matrix infrad = infradius_h(x0, L, N, alpha);
+		assert(infrad.getNumElements() == 1);
+		double I = infrad.get(0) * Math.sqrt(Math.pow(2 * Math.PI, d) / detnH);
+		double logI = Math.log(infrad.get(0)) + ((double) d / 2) * Math.log(2 * Math.PI) - Math.log(detnH);
+		return new laplaceApproxReturn(H, I, logI);
+	}
+
+	public static Matrix num_hess_h(Matrix x0, double h, Matrix L, Matrix N, Matrix alpha) {
+		Matrix H = new Matrix(0, x0.getNumElements());
+		H.zero();
+		for (int i = 0; i < x0.getNumElements(); i++) {
+			Matrix x1 = x0.clone();
+			x1.set(i, x1.get(i) - h);
+			Matrix df1 = num_grad_h(x1, h, L, N, alpha);
+
+			Matrix x2 = x0.clone();
+			x2.set(i, x2.get(i) + h);
+			Matrix df2 = num_grad_h(x2, h, L, N, alpha);
+			Matrix d2f = new Matrix(1, x0.getNumElements());
+			for (int j=0; j<d2f.getNumElements(); j++) {
+				d2f.set(j, (df2.get(j) - df1.get(j)) / (2 * h));
+			}
+			H = Matrix.concatRows(H, d2f, null);
+		}
+		return H;
+	}
+
+	public static Matrix num_grad_h(Matrix x0, double h,  Matrix L, Matrix N, Matrix alpha) {
+		Matrix df = x0.clone();
+		df.zero();
+		for (int i = 0; i < x0.getNumCols(); i++) {
+			Matrix x1 = x0.clone();
+			Matrix x2 = x0.clone();
+			x1.set(i, x0.get(i) - h);
+			x2.set(i, x0.get(i) + h);
+			double y1 = Math.log(infradius_h(x1, L, N, alpha).get(0));
+			double y2 = Math.log(infradius_h(x2, L, N, alpha).get(0));
+			df.set(i, (y2 - y1) / (2 * h));
+		}
+		return df;
+	}
+
     public static class pfqnMVAReturn {
         public Matrix XN;
         public Matrix QN;
@@ -4492,18 +4798,44 @@ public class PFQN {
     }
 
 		public static class pfqnRdReturn {
-		    public Double lGN;
-        public Double Cgamma;
+			public Double lGN;
+			public Double Cgamma;
 
-        public pfqnRdReturn(Double lGN, Double Cgamma) {
-            this.lGN = lGN;
-            this.Cgamma = Cgamma;
-        }
+			public pfqnRdReturn(Double lGN, Double Cgamma) {
+				this.lGN = lGN;
+				this.Cgamma = Cgamma;
+			}
 
-				public pfqnRdReturn(Double lGN) {
-					this.lGN = lGN;
-					this.Cgamma = null;
-				}
+			public pfqnRdReturn(Double lGN) {
+				this.lGN = lGN;
+				this.Cgamma = null;
+			}
 
 		}
+
+		public static class pfqnNcComplexReturn {
+			public Complex G;
+			public Complex lG;
+			public String method;
+
+			public pfqnNcComplexReturn(Complex G, Complex lG) {
+				this.G = G;
+				this.lG = lG;
+				this.method = null;
+			}
+		}
+
+	public static class laplaceApproxReturn {
+		public Matrix H;
+		public double I;
+		public double logI;
+
+		public laplaceApproxReturn(Matrix H, double I, double logI) {
+			this.H = H;
+			this.I = I;
+			this.logI = logI;
+		}
+	}
+
+
 }

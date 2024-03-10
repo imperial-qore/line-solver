@@ -1984,17 +1984,17 @@ public StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 
       int spaceVarCols = (int) V;
       spaceVar = new Matrix(inspaceRows, spaceVarCols);
-      Matrix.extract(inspace, (int) (inspace.getNumCols() - V), inspace.getNumCols(), 0,
+      Matrix.extract(inspace, (int) (inspace.getNumCols() - V + 1), inspace.getNumCols(), 0,
               inspaceRows, spaceVar, 0,0); // local state variables
 
       int spaceSrvCols = (int) K.elementSum();
       spaceSrv = new Matrix(inspaceRows, spaceSrvCols);
-      Matrix.extract(inspace, (int) (inspace.getNumCols() - K.elementSum() - V), (int) (inspace.getNumCols() - V), 0,
+      Matrix.extract(inspace, (int) (inspace.getNumCols() - K.elementSum() - V + 1), (int) (inspace.getNumCols() - V), 0,
               inspaceRows, spaceSrv, 0,0 ); // server state
 
       int spaceBufCols = (int) (inspace.getNumCols() - K.elementSum() - V);
       spaceBuf = new Matrix(inspaceRows, spaceBufCols);
-      Matrix.extract(inspace, 0, spaceBufCols - 1, 0, inspaceRows,
+      Matrix.extract(inspace, 0, spaceBufCols, 0, inspaceRows,
               spaceBuf, 0, 0); // buffer state
 
 
@@ -2004,12 +2004,12 @@ public StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 
       int spaceVarCols = (int) V;
       spaceVar = new Matrix(inspaceRows, spaceVarCols);
-      Matrix.extract(inspace, (int) (inspace.getNumCols() - V), inspace.getNumCols(), 0,
+      Matrix.extract(inspace, (int) (inspace.getNumCols() - V + 1), inspace.getNumCols(), 0,
               inspaceRows, spaceVar, 0,0); // local state variables
 
       int spaceSrvCols = R;
       spaceSrv = new Matrix(inspaceRows, spaceSrvCols);
-      Matrix.extract(inspace, (int) (inspace.getNumCols() - R - V), (int) (inspace.getNumCols() - V), 0,
+      Matrix.extract(inspace, (int) (inspace.getNumCols() - R - V + 1), (int) (inspace.getNumCols() - V), 0,
               inspaceRows, spaceSrv, 0,0 ); // server state
 
     }
@@ -2018,80 +2018,258 @@ public StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
         case ARV:
           // return if no space to accept the arrival, otherwise check scheduling strategy
           StateMarginalStatistics stats = toMarginalAggr(sn, ind, inspace, K, Ks, spaceBuf, spaceSrv, spaceVar);
+          Matrix ni = stats.ni;
+          Matrix nir = stats.nir;
           Matrix pentry = pie.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass));
-          Matrix outprobK = new Matrix(0,0);
+          Matrix outprobK = new Matrix(0, 0);
           for (int kentry = 0; kentry < K.get(jobClass); kentry++) {
             Matrix spaceVarK = spaceVar.clone();
             Matrix spaceSrvK = spaceSrv.clone();
             Matrix spaceBufK = spaceBuf.clone();
-            switch(sn.sched.get(sn.stations.get(ist))) {
-                case EXT: // source, can receive any "virtual" arrival from the sink as long as it is from an open class
-                    if (Double.isInfinite(sn.njobs.get(jobClass))) {
-                        outspace = inspace.clone();
-                        outrate = new Matrix(outspace.getNumRows(), outspace.getNumRows());
-                        outrate.zero();
-                        outprob = new Matrix(outspace.getNumRows(), outspace.getNumRows());
-                        outprob.ones();
-                    }
-                  break;
-                case PS:
-                case INF:
-                case DPS:
-                case GPS:
-                  // due to nature of these policies, a new job enters service immediately.
+            switch (sn.sched.get(sn.stations.get(ist))) {
+              case EXT: // source, can receive any "virtual" arrival from the sink as long as it is from an open class
+                if (Double.isInfinite(sn.njobs.get(jobClass))) {
+                  outspace = inspace.clone();
+                  outrate = new Matrix(outspace.getNumRows(), outspace.getNumRows());
+                  outrate.zero();
+                  outprob = new Matrix(outspace.getNumRows(), outspace.getNumRows());
+                  outprob.ones();
+                }
+                break;
+              case PS:
+              case INF:
+              case DPS:
+              case GPS:
+                // due to nature of these policies, a new job enters service immediately.
 
-                  boolean exceedsClassCap = false;
-                  double istCap = classcap.get(ist, jobClass);
-                  int col = (int) (Ks.get(jobClass) + kentry);
+                boolean exceedsClassCap = false;
+                double istCap = classcap.get(ist, jobClass);
+                int col = (int) (Ks.get(jobClass) + kentry);
+                for (int row = 0; row < spaceSrvK.getNumRows(); row++) {
+                  if (spaceSrvK.get(row, col) >= istCap) {
+                    exceedsClassCap = true;
+                  }
+                }
+                if (!exceedsClassCap) {
+                  // increment spacesrvk by one
                   for (int row = 0; row < spaceSrvK.getNumRows(); row++) {
-                    if (spaceSrvK.get(row, col) >= istCap) {
-                      exceedsClassCap = true;
-                    }
+                    spaceSrvK.set(row, col, spaceSrvK.get(row, col) + 1);
                   }
-                  if (!exceedsClassCap) {
-                    // increment spacesrvk by one
-                    for (int row = 0; row < spaceSrvK.getNumRows(); row++) {
-                      spaceSrvK.set(row, col, spaceSrvK.get(row, col) + 1);
-                    }
-                    outprobK = new Matrix(spaceSrvK.getNumRows(), spaceSrvK.getNumRows());
-                    outprobK.fill(pentry.get(kentry));
-                  } else {
-                    outprobK = new Matrix(spaceSrvK.getNumRows(), spaceSrvK.getNumRows());
-                    outprobK.zero();
+                  outprobK = new Matrix(spaceSrvK.getNumRows(), spaceSrvK.getNumRows());
+                  outprobK.fill(pentry.get(kentry));
+                } else {
+                  outprobK = new Matrix(spaceSrvK.getNumRows(), spaceSrvK.getNumRows());
+                  outprobK.zero();
+                }
+                break;
+              case SIRO:
+              case SEPT:
+              case LEPT:
+                // TODO: implement
+                throw new RuntimeException("SIRO/SEPT/LEPT scheduling not supported");
+
+              case FCFS:
+              case HOL:
+              case LCFS:
+                // find states with all servers busy
+                // if MAP service, when empty restart from the phase stored in spaceVar for this class
+                // sn.nvars(ind,1:class)):
+
+                Matrix nVarsAtInd = new Matrix(1, jobClass);
+                Matrix.extract(sn.nvars, 0, jobClass, ind, ind + 1, nVarsAtInd, 0, 0);
+                int sum = (int) nVarsAtInd.elementSum();
+                if (ismkvmodclass.get(jobClass) == 0 || (ismkvmodclass.get(jobClass) == 1 && kentry == spaceVar.get(sum))) {
+                  if (ismkvmodclass.get(jobClass) == 1) {
+                    pentry.zero();
+                    pentry.set(kentry, 1);
                   }
-                  break;
-                case SIRO:
-                case SEPT:
-                case LEPT:
-                    // TODO: implement
-                    throw new RuntimeException("SIRO/SEPT/LEPT scheduling not supported");
-
-                case FCFS:
-                case HOL:
-                case LCFS:
-                    // find states with all servers busy
-                    // if MAP service, when empty restart from the phase stored in spaceVar for this class
-                    // sn.nvars(ind,1:class)):
-
-                    Matrix nVarsAtInd = new Matrix(1, jobClass);
-                    Matrix.extract(sn.nvars, 0, jobClass, ind, ind + 1, nVarsAtInd, 0, 0);
-                    int sum = (int) nVarsAtInd.elementSum();
-                    if (ismkvmodclass.get(jobClass) == 0 || (ismkvmodclass.get(jobClass) == 1 && kentry == spaceVar.get(sum))) {
-                        if (ismkvmodclass.get(jobClass) == 1) {
-                            pentry.zero();
-                            pentry.set(kentry,  1);
-                        }
-
-
+                  // construct all_busy_srv, a matrix with 0s where sum of that row in space_srv_k is >= S.get(ist) and 1s where its <
+                  Matrix all_busy_srv = new Matrix(spaceSrvK.getNumRows(), 1);
+                  for (int i = 0; i < spaceSrvK.getNumRows(); i++) {
+                    Matrix row = Matrix.extractRows(spaceSrvK, i, i + 1, null);
+                    int rowSum = (int) row.elementSum();
+                    if (rowSum >= S.get(ist)) {
+                      all_busy_srv.set(i, 0, 1);
                     } else {
-                        outprobK = new Matrix(spaceSrvK.getNumRows(), 1);
-                        outprobK.zero(); // zero probability event
+                      all_busy_srv.set(i, 0, 0);
+                    }
+                  }
+
+                  // find and modify states with an idle server
+                  Matrix idle_srv = new Matrix(spaceSrvK.getNumRows(), 1);
+                  for (int i = 0; i < spaceSrvK.getNumRows(); i++) {
+                    Matrix row = Matrix.extractRows(spaceSrvK, i, i + 1, null);
+                    int rowSum = (int) row.elementSum();
+                    if (rowSum < S.get(ist)) {
+                      idle_srv.set(i, 0, 1);
+                    } else {
+                      idle_srv.set(i, 0, 0);
+                    }
+                  }
+                  // job enters service, increments idle server terms in space_srv_k
+                  int colSrvK = (int) (spaceSrvK.getNumCols() - K.elementSum() + Ks.get(jobClass) + kentry);
+                  for (int row = 0; row < spaceSrvK.getNumRows(); row++) {
+                    if (idle_srv.get(row, 0) == 1) {
+                      spaceSrvK.set(row, colSrvK, spaceSrvK.get(row, colSrvK) + 1);
+                    }
+                  }
+                  // this section dynamically grows the number of elements in the buffer
+                  //  ni is an Mx1
+                  // check if there is space in buffer
+                  boolean spaceInBuffer = false;
+                  for (int i = 0; i < ni.getNumRows(); i++) {
+                    if (ni.get(i, 0) < capacity.get(ist)) {
+                      spaceInBuffer = true;
+                    }
+                  }
+                  if (spaceInBuffer) {
+                    boolean spaceForClass = false;
+                    for (int i = 0; i < nir.getNumRows(); i++) {
+                      if (nir.get(i, jobClass) < classcap.get(ist, jobClass)) {
+                        spaceForClass = true;
+                      }
+                    }
+                    if (spaceForClass) {
+                      // there is room for the job, check if buffer has empty slots. If not, append job slot
+                      boolean emptySlots = false;
+                      for (int i = 0; i < spaceBufK.getNumRows(); i++) {
+                        if (spaceBufK.get(i, 0) == 0) {
+                          emptySlots = true;
+                        }
+                      }
+                      if (!emptySlots) {
+                        // append job slot
+                        Matrix left = new Matrix(spaceBufK.getNumRows(), 1);
+                        left.zero();
+                        spaceBufK = Matrix.concatColumns(left, spaceBufK, null);
+                      }
+                    }
+                  }
+                  // get position of first empty slot in buffer
+                  Matrix empty_slots = new Matrix(all_busy_srv.getNumRows(), 1);
+                  empty_slots.fill(-1);
+                  int spaceBufKCols = spaceBufK.getNumCols();
+                  if (spaceBufKCols == 0) {
+                    //set empty_slots(all_busy_srv) = false;
+                    for (int i = 0; i < all_busy_srv.getNumRows(); i++) {
+                      if (all_busy_srv.get(i, 0) == 1) {
+                        empty_slots.set(i, 0, 0);
+                      }
+                    }
+                  } else if (spaceBufKCols == 1) {
+                    // set empty_slots(all_busy_srv) = space_buf_k(all_busy_srv,:)==0;
+                    for (int i = 0; i < all_busy_srv.getNumRows(); i++) {
+                      if (all_busy_srv.get(i, 0) == 1) {
+                        if (spaceBufK.get(i, 0) == 0) {
+                          empty_slots.set(i, 0, 1);
+                        } else {
+                          empty_slots.set(i, 0, 0);
+                        }
+                      }
                     }
 
+                  } else {
+                    // set empty_slots(all_busy_srv) = max(bsxfun(@times, space_buf_k(all_busy_srv,:)==0, [1:size(space_buf_k,2)]),[],2);
+                    // create matrix wwith  space_buf_k(all_busy_srv,:)==0
+                    Matrix spaceBufKAllBusySrv = new Matrix(0, 0);
+                    for (int i = 0; i < spaceBufK.getNumRows(); i++) {
+                      if (all_busy_srv.get(i, 0) == 1) {
+                        if (spaceBufKAllBusySrv.isEmpty()) {
+                          spaceBufKAllBusySrv = Matrix.extractRows(spaceBufK, i, i + 1, null);
+                        } else {
+                          spaceBufKAllBusySrv = Matrix.concatRows(spaceBufKAllBusySrv, Matrix.extractRows(spaceBufK, i, i + 1, null), null);
+                        }
+                      }
+                    }
+                    Matrix sizeSpaceBufK = new Matrix(1, spaceBufK.getNumCols());
+                    // TODO: check if this should be i instead of i+1
+                    for (int i = 0; i < sizeSpaceBufK.getNumCols(); i++) {
+                      sizeSpaceBufK.set(0, i, i + 1);
+                    }
 
-                case LCFSPR:
-                    // TODO: implement
-                    throw new RuntimeException("LCFSPR scheduling not supported");
+                    Matrix elementMult = spaceBufKAllBusySrv.elementMultWithVector(sizeSpaceBufK);
+                    // TODO: is elementMax correct function here
+                    int max = (int) elementMult.elementMax();
+                    for (int i = 0; i < all_busy_srv.getNumRows(); i++) {
+                      if (all_busy_srv.get(i, 0) == 1) {
+                        empty_slots.set(i, 0, max);
+                      }
+                    }
+                  }
+                  // ignore states where buffer has no empty slots
+                  // set wbuf_empty = empty_slots >0
+                  Matrix wbuf_empty = new Matrix(empty_slots.getNumRows(), 1);
+                  boolean space_available = false;
+                  for (int i = 0; i < empty_slots.getNumRows(); i++) {
+                    if (empty_slots.get(i, 0) > 0) {
+                      wbuf_empty.set(i, 0, 1);
+                      space_available = true;
+                    } else {
+                      wbuf_empty.set(i, 0, 0);
+                    }
+                  }
+                  if (space_available) {
+                    // space_srv_k set to the rows of s[ace_srv_k where wbuf_empty = 1
+                    Matrix spaceSrvKTmp = new Matrix(0, 0);
+                    for (int i = 0; i < wbuf_empty.getNumRows(); i++) {
+                      if (wbuf_empty.get(i, 0) == 1) {
+                        if (spaceSrvKTmp.isEmpty()) {
+                          spaceSrvKTmp = Matrix.extractRows(spaceSrvK, i, i + 1, null);
+                        } else {
+                          spaceSrvKTmp = Matrix.concatRows(spaceSrvKTmp, Matrix.extractRows(spaceSrvK, i, i + 1, null), null);
+                        }
+                      }
+                    }
+                    spaceSrvK = spaceSrvKTmp;
+                    Matrix spaceBufKTmp = new Matrix(0, 0);
+                    for (int i = 0; i < wbuf_empty.getNumRows(); i++) {
+                      if (wbuf_empty.get(i, 0) == 1) {
+                        if (spaceBufKTmp.isEmpty()) {
+                          spaceBufKTmp = Matrix.extractRows(spaceBufK, i, i + 1, null);
+                        } else {
+                          spaceBufKTmp = Matrix.concatRows(spaceBufKTmp, Matrix.extractRows(spaceBufK, i, i + 1, null), null);
+                        }
+                      }
+                    }
+                    spaceBufK = spaceSrvKTmp;
+                    Matrix spaceVarKTmp = new Matrix(0, 0);
+                    for (int i = 0; i < wbuf_empty.getNumRows(); i++) {
+                      if (wbuf_empty.get(i, 0) == 1) {
+                        if (spaceVarKTmp.isEmpty()) {
+                          spaceVarKTmp = Matrix.extractRows(spaceVarK, i, i + 1, null);
+                        } else {
+                          spaceVarKTmp = Matrix.concatRows(spaceVarKTmp, Matrix.extractRows(spaceVarK, i, i + 1, null), null);
+                        }
+                      }
+                    }
+                    spaceVarK = spaceVarKTmp;
+                    Matrix emptySlotsTmp = new Matrix(0, 0);
+                    for (int i = 0; i < wbuf_empty.getNumRows(); i++) {
+                      if (wbuf_empty.get(i, 0) == 1) {
+                        if (emptySlotsTmp.isEmpty()) {
+                          emptySlotsTmp = Matrix.extractRows(empty_slots, i, i + 1, null);
+                        } else {
+                          emptySlotsTmp = Matrix.concatRows(emptySlotsTmp, Matrix.extractRows(empty_slots, i, i + 1, null), null);
+                        }
+                      }
+                    }
+                    empty_slots = emptySlotsTmp;
+                    for (int i = 0; i < spaceBufK.getNumRows(); i++) {
+                      // TODO: check this: space_buf_k(sub2ind(size(space_buf_k),1:size(space_buf_k,1),empty_slots')) = class;
+                      spaceBufK.set(i, (int) empty_slots.get(i, 0), jobClass);
+                    }
+                  }
+                  outprobK = new Matrix(spaceSrvK.getNumRows(), 1);
+                  outprobK.fill(pentry.get(kentry));
+                } else {
+                  outprobK = new Matrix(spaceSrvK.getNumRows(), 1);
+                  outprobK.zero(); // zero probability event
+                }
+
+
+              case LCFSPR:
+                // TODO: implement
+                throw new RuntimeException("LCFSPR scheduling not supported");
             }
             // form the new state
             Matrix outspaceKTmp = Matrix.concatColumns(spaceBufK, spaceSrvK, null);
@@ -2142,7 +2320,7 @@ public StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
             } else {
               outspace = Matrix.concatRows(outspace, outspace_k_en_o, null);
             }
-            Matrix newRates = new Matrix(outspace_k_en_o.getNumRows(),  1);
+            Matrix newRates = new Matrix(outspace_k_en_o.getNumRows(), 1);
             newRates.fill(-1);
             outrate = Matrix.concatRows(outrate, newRates, null);
             outprob = Matrix.concatRows(outprob, outspace_k_en_o, null);
@@ -2150,36 +2328,426 @@ public StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
           if (isSimulation) {
             if (outprob.getNumRows() > 1) {
               // need java equivalent of:                     cum_prob = cumsum(outprob) / sum(outprob);
-                Matrix cum_sum = outprob.cumsumViaCol();
-                Matrix sum_by_col = outprob.sumCols();
-                Matrix cum_prob = cum_sum.left_matrix_divide(sum_by_col);
+              Matrix cum_sum = outprob.cumsumViaCol();
+              Matrix sum_by_col = outprob.sumCols();
+              Matrix cum_prob = cum_sum.left_matrix_divide(sum_by_col);
 
 
-                int firing_ctr = 0;
-                double rand = Math.random();
-                // we need the indicies where rand is bigger than cum_prob
-                for (int row = 0; row < cum_prob.getNumRows(); row++) {
-                  if (rand > cum_prob.get(row, 0)) {
-                    firing_ctr = row;
-                  }
+              int firing_ctr = 0;
+              double rand = Math.random();
+              // we need the indicies where rand is bigger than cum_prob
+              for (int row = 0; row < cum_prob.getNumRows(); row++) {
+                if (rand > cum_prob.get(row, 0)) {
+                  firing_ctr = row;
                 }
-                firing_ctr++;
-                outspace = Matrix.extractRows(outspace, firing_ctr, firing_ctr + 1, null);
-                outrate = new Matrix(1,1);
-                outrate.set(0,0,-1);
-                outprob = new Matrix(1,1);
-                outprob.set(0,0,1);
+              }
+              firing_ctr++;
+              outspace = Matrix.extractRows(outspace, firing_ctr, firing_ctr + 1, null);
+              outrate = new Matrix(1, 1);
+              outrate.set(0, 0, -1);
+              outprob = new Matrix(1, 1);
+              outprob.set(0, 0, 1);
             }
           }
 
         case DEP:
+          boolean busy = false;
+          for (int row = 0; row < spaceSrv.getNumRows(); row++) {
+            for (int col = (int) (Ks.get(jobClass) + 1); col < (Ks.get(jobClass) + K.get(jobClass)); col++) {
+              if (spaceSrv.get(row, col) > 0) {
+                busy = true;
+              }
+            }
+          }
+          if (busy) {
+            SchedStrategy strategy = sn.sched.get(sn.stations.get(ist));
+            Matrix sir = new Matrix(0, 0);
+            List<Matrix> kir = new ArrayList<>();
+            if (hasOnlyExp && (strategy == PS || strategy == INF || strategy == DPS || strategy == GPS)) {
+              nir = spaceSrv.clone();
+              // set ni to sum of nir row-wise
+              ni = nir.sumRows();
+              sir = nir.clone();
+              kir.add(sir.clone());
+            } else {
+              StateMarginalStatistics dep_stats = toMarginal(sn, ind, inspace, K, Ks, spaceBuf, spaceSrv, spaceVar);
+              ni = dep_stats.ni;
+              nir = dep_stats.nir;
+              sir = dep_stats.sir;
+              kir = dep_stats.kir;
+            }
 
-        case PHASE:
-          throw new RuntimeException("Unimplemented");
+            if (sn.routing.get(sn.nodes.get(ind)).get(sn.jobclasses.get(jobClass)) == RoutingStrategy.RROBIN) {
+              // TODO: implement
+            }
+            if (sir.get(jobClass) > 0) {
+              outprob = new Matrix(0, 0);
+              for (int k = 0; k < K.get(jobClass); k++) {
+                Matrix.extract(inspace, (int) (inspace.getNumCols() - K.elementSum() - V + 1), (int) (inspace.getNumCols() - V), 0,
+                        inspace.getNumRows(), spaceSrv, 0, 0); // server state
+                int spaceBufCols = (int) (inspace.getNumCols() - K.elementSum() - V);
+                Matrix.extract(inspace, 0, spaceBufCols, 0, inspace.getNumRows(),
+                        spaceBuf, 0, 0); // buffer state
+                Matrix rate = new Matrix(spaceSrv.getNumRows(), 1);
+                rate.zero();
+                Matrix en = new Matrix(spaceSrv.getNumRows(), 1);
+                boolean en_set = false;
+                for (int row = 0; row < spaceSrv.getNumRows(); row++) {
+                  if (spaceSrv.get(row, (int) (Ks.get(jobClass) + k)) > 0) {
+                    en.set(row, 0, 1);
+                    en_set = true;
+                  } else {
+                    en.set(row, 0, 0);
+                  }
+                }
+                if (en_set) {
+                  switch (sn.sched.get(sn.stations.get(ist))) {
+                    case EXT:
+                      // source, can produce an arrival from phase-k as long as it is from an open class
+                      if (Double.isInfinite(sn.njobs.get(jobClass))) {
+                        pentry = pie.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass));
+                        for (int kentry = 0; kentry < K.get(jobClass); kentry++) {
+                          Matrix.extract(inspace, (int) (inspace.getNumCols() - K.elementSum() - V + 1), (int) (inspace.getNumCols() - V), 0,
+                                  inspace.getNumRows(), spaceSrv, 0, 0); // server state
+
+                          // record a departure
+                          for (int row = 0; row < spaceSrv.getNumRows(); row++) {
+                            if (en.get(row, 0) == 1) {
+                              spaceSrv.set(row, (int) (Ks.get(jobClass) + k), spaceSrv.get(row, (int) (Ks.get(jobClass) + k)) - 1);
+                            }
+                          }
+                          // record a new job arriving
+                          for (int row = 0; row < spaceSrv.getNumRows(); row++) {
+                            if (en.get(row, 0) == 1) {
+                              spaceSrv.set(row, (int) (Ks.get(jobClass) + kentry), spaceSrv.get(row, (int) (Ks.get(jobClass) + kentry)) + 1);
+                            }
+                          }
+                          // extract all rows of spaceBuf where en==1 rto space_buf_en
+                          Matrix inspaceEn = new Matrix(0, 0);
+                          Matrix spaceBufEn = new Matrix(0, 0);
+                          Matrix spaceSrvEn = new Matrix(0, 0);
+                          Matrix spaceVarEn = new Matrix(0, 0);
+                          for (int row = 0; row < en.getNumRows(); row++) {
+                            if (en.get(row, 0) == 1) {
+                              if (inspaceEn.isEmpty()) {
+                                inspaceEn = Matrix.extractRows(inspace, row, row + 1, null);
+                              } else {
+                                inspaceEn = Matrix.concatRows(inspaceEn, Matrix.extractRows(inspace, row, row + 1, null), null);
+                              }
+                            }
+                          }
+                          for (int row = 0; row < en.getNumRows(); row++) {
+                            if (en.get(row, 0) == 1) {
+                              if (spaceBufEn.isEmpty()) {
+                                spaceBufEn = Matrix.extractRows(spaceBuf, row, row + 1, null);
+                              } else {
+                                spaceBufEn = Matrix.concatRows(spaceBufEn, Matrix.extractRows(spaceBuf, row, row + 1, null), null);
+                              }
+
+                            }
+                          }
+                          for (int row = 0; row < en.getNumRows(); row++) {
+                            if (en.get(row, 0) == 1) {
+                              if (spaceSrvEn.isEmpty()) {
+                                spaceSrvEn = Matrix.extractRows(spaceSrv, row, row + 1, null);
+                              } else {
+                                spaceSrvEn = Matrix.concatRows(spaceSrvEn, Matrix.extractRows(spaceSrv, row, row + 1, null), null);
+                              }
+                            }
+                          }
+                          for (int row = 0; row < en.getNumRows(); row++) {
+                            if (en.get(row, 0) == 1) {
+                              if (spaceVarEn.isEmpty()) {
+                                spaceVarEn = Matrix.extractRows(spaceVar, row, row + 1, null);
+                              } else {
+                                spaceVarEn = Matrix.concatRows(spaceVarEn, Matrix.extractRows(spaceVar, row, row + 1, null), null);
+                              }
+                            }
+                          }
 
 
+                          Matrix left_bottom = Matrix.concatColumns(spaceBufEn, spaceSrvEn, null);
+                          Matrix bottom = Matrix.concatColumns(left_bottom, spaceVarEn, null);
+                          outspace = Matrix.concatRows(outspace, bottom, null);
+                          if (Double.isInfinite(ni.get(0))) {
+                            double cdscalingIst = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                            Matrix outrate_bottom = new Matrix(inspace.getNumRows(), 1);
+                            outrate_bottom.fill(cdscalingIst * lldscaling.get(ist, lldlimit - 1) *
+                                    pentry.get(kentry) * mu.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k)
+                                    * phi.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k));
+                            Matrix ones = new Matrix(inspaceEn.getNumRows(), 1);
+                            ones.ones();
+                            outrate_bottom = outrate_bottom.mult(ones);
+                            outrate = Matrix.concatRows(outrate, outrate_bottom, null);
+                          } else {
+                            double cdscalingIst = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                            Matrix outrate_bottom = new Matrix(inspace.getNumRows(), 1);
+                            // TODO: check usage of ni
+                            outrate_bottom.fill(cdscalingIst * lldscaling.get(ist, (int) Maths.min(ni.get(0), lldlimit))
+                                    * pentry.get(kentry) * mu.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k)
+                                    * phi.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k));
+                            Matrix ones = new Matrix(inspaceEn.getNumRows(), 1);
+                            ones.ones();
+                            outrate_bottom = outrate_bottom.mult(ones);
+                            outrate = Matrix.concatRows(outrate, outrate_bottom, null);
+                          }
+                          Matrix outprob_bottom = new Matrix(spaceBufEn.getNumRows(), 1);
+                          outprob_bottom.ones();
+                          outprob = Matrix.concatRows(outprob, outprob_bottom, null);
 
-      }
+                        }
+                      }
+                      break;
+
+                    case INF:
+                      // record a departure
+                      for (int row = 0; row < spaceSrv.getNumRows(); row++) {
+                        if (en.get(row, 0) == 1) {
+                          spaceSrv.set(row, (int) (Ks.get(jobClass) + k), spaceSrv.get(row, (int) (Ks.get(jobClass) + k)) - 1);
+                        }
+                      }
+
+                      // TODO: check these 2 loops
+                      // get kir(en, class, k)
+                      Matrix kirEnClassK = new Matrix(0, 0);
+                      for (int l_ind = 0; l_ind < kir.size(); l_ind++) {
+                        if (en.get(l_ind, 0) == 1) {
+                          if (kirEnClassK.isEmpty()) {
+                              kirEnClassK = new Matrix(1,1);
+                              kirEnClassK.set(0,0, kir.get(l_ind).get(jobClass, k));
+                          } else {
+                            Matrix new_elem = new Matrix(1,1);
+                            new_elem.set(0,0, kir.get(l_ind).get(jobClass, k));
+                            kirEnClassK = Matrix.concatRows(kirEnClassK, new_elem, null);
+                          }
+                        }
+                      }
+                      for (int l_ind = 0; l_ind < kirEnClassK.getNumRows(); l_ind++) {
+                        if (rate.isEmpty()) {
+                          rate = new Matrix(1, 1);
+                          rate.set(0, 0, mu.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k) *
+                                  phi.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k) *
+                                  kirEnClassK.get(l_ind, 0));
+                        } else {
+                          Matrix new_elem = new Matrix(1, 1);
+                          new_elem.set(0, 0, mu.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k) *
+                                  phi.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k) *
+                                  kirEnClassK.get(l_ind, 0));
+                          rate = Matrix.concatRows(rate, new_elem, null);
+                        }
+                      }
+                      // if state unchanged, add with rate 0
+                      Matrix spaceBufEn = new Matrix(0, 0);
+                      Matrix spaceSrvEn = new Matrix(0, 0);
+                      for (int row = 0; row < en.getNumRows(); row++) {
+                        if (en.get(row, 0) == 1) {
+                          if (spaceBufEn.isEmpty()) {
+                            spaceBufEn = Matrix.extractRows(spaceBuf, row, row + 1, null);
+                          } else {
+                            spaceBufEn = Matrix.concatRows(spaceBufEn, Matrix.extractRows(spaceBuf, row, row + 1, null), null);
+                          }
+                          if (spaceSrvEn.isEmpty()) {
+                            spaceSrvEn = Matrix.extractRows(spaceSrv, row, row + 1, null);
+                          } else {
+                            spaceSrvEn = Matrix.concatRows(spaceSrvEn, Matrix.extractRows(spaceSrv, row, row + 1, null), null);
+                          }
+                        }
+                      }
+                      Matrix space_var_last = Matrix.extractRows(spaceVar, spaceVar.getNumRows() - 1, spaceVar.getNumRows(), null);
+                      Matrix left_bottom = Matrix.concatColumns(spaceBufEn, spaceSrvEn, null);
+                      Matrix bottom = Matrix.concatColumns(left_bottom, space_var_last, null);
+                      outspace = Matrix.concatRows(outspace, bottom, null);
+                      Matrix rateEn = new Matrix(0, 0);
+                      for (int row = 0; row < en.getNumRows(); row++) {
+                        if (en.get(row, 0) == 1) {
+                          if (rateEn.isEmpty()) {
+                            rateEn = Matrix.extractRows(rate, row, row + 1, null);
+                          } else {
+                            rateEn = Matrix.concatRows(rateEn, Matrix.extractRows(rate, row, row + 1, null), null);
+                          }
+                        }
+                      }
+                      if (Double.isInfinite(ni.get(0))) {
+                        // hit limited load-dependence
+                        double cdscalingIst = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                        double lld = lldscaling.get(ist, lldscaling.getNumCols() - 1);
+                        Matrix outrate_bottom = Matrix.scale_mult(rateEn, cdscalingIst * lld);
+                        outrate = Matrix.concatRows(outrate, outrate_bottom, null);
+                      } else {
+                        double cdscalingIst = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                        double lld = lldscaling.get(ist, (int) Maths.min(ni.get(0), lldscaling.getNumCols() - 1));
+                        Matrix outrate_bottom = Matrix.scale_mult(rateEn, cdscalingIst * lld);
+                        outrate = Matrix.concatRows(outrate, outrate_bottom, null);
+                      }
+                      Matrix outprob_bottom = new Matrix(rateEn.getNumRows(), 1);
+                      outprob_bottom.ones();
+                      outprob = Matrix.concatRows(outprob, outprob_bottom, null);
+                       break;
+
+                    case PS:
+                      // record departure
+                      for (int row = 0; row < spaceSrv.getNumRows(); row++) {
+                        if (en.get(row, 0) == 1) {
+                          spaceSrv.set(row, (int) (Ks.get(jobClass) + k), spaceSrv.get(row, (int) (Ks.get(jobClass) + k)) - 1);
+                        }
+                      }
+
+                      Matrix kirEnClassKPs = new Matrix(0, 0);
+                      for (int l_ind = 0; l_ind < kir.size(); l_ind++) {
+                        if (en.get(l_ind, 0) == 1) {
+                          if (kirEnClassKPs.isEmpty()) {
+                            kirEnClassKPs = new Matrix(1,1);
+                            kirEnClassKPs.set(0,0, kir.get(l_ind).get(jobClass, k));
+                          } else {
+                            Matrix new_elem = new Matrix(1,1);
+                            new_elem.set(0,0, kir.get(l_ind).get(jobClass, k));
+                            kirEnClassKPs = Matrix.concatRows(kirEnClassKPs, new_elem, null);
+                          }
+                        }
+                      }
+
+                      // assume active event
+                      for (int l_ind = 0; l_ind < kirEnClassKPs.getNumRows(); l_ind++) {
+                        if (rate.isEmpty()) {
+                          rate = new Matrix(1, 1);
+                          rate.set(0, 0, mu.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k) *
+                                  phi.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k) *(
+                                  kirEnClassKPs.get(l_ind, 0) / ni.get(l_ind)) * Maths.min(ni.get(l_ind), S.get(ist)));
+                        } else {
+                          Matrix new_elem = new Matrix(1, 1);
+                          new_elem.set(0, 0, mu.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k) *
+                                  phi.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k) *(
+                                  kirEnClassKPs.get(l_ind, 0) / ni.get(l_ind)) * Maths.min(ni.get(l_ind), S.get(ist)));
+                          rate = Matrix.concatRows(rate, new_elem, null);
+                        }
+                      }
+
+                      Matrix spaceBufEnPs = new Matrix(0, 0);
+                      Matrix spaceSrvEnPs = new Matrix(0, 0);
+                      Matrix spaceVarEn = new Matrix(0, 0);
+                      for (int row = 0; row < en.getNumRows(); row++) {
+                        if (en.get(row, 0) == 1) {
+                          if (spaceBufEnPs.isEmpty()) {
+                            spaceBufEnPs = Matrix.extractRows(spaceBuf, row, row + 1, null);
+                          } else {
+                            spaceBufEnPs = Matrix.concatRows(spaceBufEnPs, Matrix.extractRows(spaceBuf, row, row + 1, null), null);
+                          }
+                          if (spaceSrvEnPs.isEmpty()) {
+                            spaceSrvEnPs = Matrix.extractRows(spaceSrv, row, row + 1, null);
+                          } else {
+                            spaceSrvEnPs = Matrix.concatRows(spaceSrvEnPs, Matrix.extractRows(spaceSrv, row, row + 1, null), null);
+                          }
+                          if (spaceVarEn.isEmpty()) {
+                            spaceVarEn = Matrix.extractRows(spaceVar, row, row + 1, null);
+                          } else {
+                            spaceVarEn = Matrix.concatRows(spaceVarEn, Matrix.extractRows(spaceVar, row, row + 1, null), null);
+                          }
+                        }
+                      }
+
+                      Matrix left_bottom_ps = Matrix.concatColumns(spaceBufEnPs, spaceSrvEnPs, null);
+                      Matrix bottom_ps = Matrix.concatColumns(left_bottom_ps, spaceVarEn, null);
+                      outspace = Matrix.concatRows(outspace, bottom_ps, null);
+                      Matrix rateEnPs = new Matrix(0, 0);
+                      for (int row = 0; row < en.getNumRows(); row++) {
+                        if (en.get(row, 0) == 1) {
+                          if (rateEnPs.isEmpty()) {
+                            rateEnPs = Matrix.extractRows(rate, row, row + 1, null);
+                          } else {
+                            rateEnPs = Matrix.concatRows(rateEnPs, Matrix.extractRows(rate, row, row + 1, null), null);
+                          }
+                        }
+                      }
+
+                      if (Double.isInfinite(ni.get(0))) {
+                        // hit limited load-dependence
+                        double cdscalingIst = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                        double lld = lldscaling.get(ist, lldscaling.getNumCols() - 1);
+                        Matrix outrate_bottom = Matrix.scale_mult(rateEnPs, cdscalingIst * lld);
+                        outrate = Matrix.concatRows(outrate, outrate_bottom, null);
+                      } else {
+                        double cdscalingIst = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                        double lld = lldscaling.get(ist, (int) Maths.min(ni.get(0), lldscaling.getNumCols() - 1));
+                        Matrix outrate_bottom = Matrix.scale_mult(rateEnPs, cdscalingIst * lld);
+                        outrate = Matrix.concatRows(outrate, outrate_bottom, null);
+                      }
+                      Matrix outprob_bottom_ps = new Matrix(rateEnPs.getNumRows(), 1);
+                      outprob_bottom_ps.ones();
+                      outprob = Matrix.concatRows(outprob, outprob_bottom_ps, null);
+                      break;
+
+                    case DPS:
+                      throw new RuntimeException("Scheduling strategy (DPS) not implemented");
+
+
+                    case GPS:
+                      throw new RuntimeException("Scheduling strategy (GPS) not implemented");
+
+                    case FCFS:
+                      throw new RuntimeException("Scheduling strategy (FCFS) not implemented");
+                      // break;
+
+                    case HOL:
+                      throw new RuntimeException("Scheduling strategy (HOL) not implemented");
+
+                    case LCFS:
+                      throw new RuntimeException("Scheduling strategy (LCFSP) not implemented");
+
+                    case LCFSPR:
+                      throw new RuntimeException("Scheduling strategy (LCFSPR) not implemented");
+
+                    case SIRO:
+                      throw new RuntimeException("Scheduling strategy (SIRO) not implemented");
+
+                    case SEPT:
+                    case LEPT:
+                      throw new RuntimeException("Scheduling strategy (SEPT/LEPT) not implemented");
+                    default:
+                      throw new RuntimeException(String.format("Scheduling strategy %s is not supported",
+                              sn.sched.get(sn.stations.get(ind)).toString()));
+
+
+                  }
+
+
+                }
+              }
+              if (isSimulation) {
+                if (outspace.getNumRows() > 1) {
+                  Matrix tot_rate = outprob.sumCols();
+                  Matrix cum_sum = outrate.cumsumViaCol();
+                  Matrix cum_rate = cum_sum.left_matrix_divide(tot_rate);
+                  int firing_ctr = 0;
+                  double rand = Math.random();
+                  // we need the indicies where rand is bigger than cum_prob
+                  for (int row = 0; row < cum_rate.getNumRows(); row++) {
+                    if (rand > cum_rate.get(row, 0)) {
+                      firing_ctr = row;
+                    }
+                  }
+                  firing_ctr++;
+                  outspace = Matrix.extractRows(outspace, firing_ctr, firing_ctr + 1, null);
+                  outrate = new Matrix(1, 1);
+                  outrate.set(0, 0, outrate.elementSum());
+                  outprob = Matrix.extractRows(outprob, firing_ctr, firing_ctr + 1, null);
+
+
+                }
+
+
+              }
+
+
+            }
+          }
+
+
+            case PHASE:
+              throw new RuntimeException("Unimplemented");
+
+
+          }
+
 
 
     } else if (sn.isstateful.get(ind) == 1) {
