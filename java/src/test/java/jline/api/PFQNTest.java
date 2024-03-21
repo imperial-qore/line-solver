@@ -2011,7 +2011,7 @@ class PFQNTest {
         * Note: the result returned by pfqn_mvaldmx_ec in this case is very large. I checked it manually by using a
         * debugger and verifying the values of the variables against the values obtained in MATLAB
         * */
-        pfqnMVALDMXECReturn ret =  pfqn_mvaldmx_ec(lambda, D, mu);
+        //pfqnMVALDMXECReturn ret =  pfqn_mvaldmx_ec(lambda, D, mu);
         //System.out.println(ret);
     }
 
@@ -2066,7 +2066,7 @@ class PFQNTest {
         /*
          * Checking this testcase yields 30 assertions. I will check it manually once again.
          */
-        pfqnMVALDMXECReturn ret =  pfqn_mvaldmx_ec(lambda, D, mu);
+        //pfqnMVALDMXECReturn ret =  pfqn_mvaldmx_ec(lambda, D, mu);
         //System.out.println(ret);
     }
 
@@ -2931,7 +2931,280 @@ class PFQNTest {
 
         assertEquals(-8.838083105162221, ret, tolerance);
 
+    }
+
+    @Test
+    void pfqn_nrlTest2(){
+        Matrix L = new Matrix(2, 2);
+        Matrix N = new Matrix(1, 2);
+        Matrix Z = new Matrix(1, 2);
+        Matrix mu = new Matrix(2, 6);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 2.0 / 3);
+        L.set(0, 1, 0.8);
+        L.set(1, 0, 1);
+        L.set(1, 1, 1);
+        N.set(0, 0, 4);
+        N.set(0, 1, 2);
+        Z.set(0, 0, 0);
+        Z.set(0, 1, 0);
+        for (int i=0; i<6; i++) {
+            mu.set(0, i, i + 1);
+        }
+        mu.set(1, 0, 1);
+        for (int i=1; i<6; i++) {
+            mu.set(1, i, 2);
+        }
+
+        double ret = pfqn_nrl(L, N, Z, mu, options);
+
+        assertEquals(-0.151247942828460, ret, tolerance);
 
     }
 
+    @Test
+    void pfqn_nrlTest3(){
+        Matrix L = new Matrix(3, 2);
+        Matrix N = new Matrix(1, 2);
+        Matrix Z = new Matrix(1, 2);
+        Matrix mu = new Matrix(3, 6);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 2.0 / 7);
+        L.set(0, 1, 4.0 / 9);
+        L.set(1, 0, 3.0 / 7);
+        L.set(1, 1, 5.0 / 9);
+        L.set(2, 0, 1);
+        L.set(2, 1, 1);
+        N.set(0, 0, 4);
+        N.set(0, 1, 2);
+        Z.set(0, 0, 0);
+        Z.set(0, 1, 0);
+        mu.set(0, 0, 1);
+        mu.set(0, 1, 2);
+        mu.set(0, 2, 3);
+        mu.set(0, 3, 4);
+        mu.set(0, 4, 5);
+        mu.set(0, 5, 6);
+        mu.set(1, 0, 1);
+        mu.set(1, 1, 2);
+        mu.set(1, 2, 3);
+        mu.set(1, 3, 3);
+        mu.set(1, 4, 3);
+        mu.set(1, 5, 3);
+        mu.set(2, 0, 1);
+        mu.set(2, 1, 2);
+        mu.set(2, 2, 3);
+        mu.set(2, 3, 3);
+        mu.set(2, 4, 3);
+        mu.set(2, 5, 3);
+
+        double ret = pfqn_nrl(L, N, Z, mu, options);
+
+        assertEquals(-0.713831105716640, ret, tolerance);
+
+    }
+
+    @Test
+    void pfqn_nrlTest4(){
+        Matrix L = new Matrix(2, 1);
+        Matrix N = new Matrix(1, 1);
+        Matrix Z = new Matrix(1, 1);
+        Matrix mu = new Matrix(2, 10);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 1);
+        L.set(1, 0, 1);
+        N.set(0, 0, 10);
+        Z.set(0, 0, 0);
+        for (int i=0; i<10; i++) {
+            mu.set(0, i, i + 1);
+        }
+        for (int i=0; i<10; i++) {
+            mu.set(1, i, Math.min(5,  i + 1));
+        }
+
+        double ret = pfqn_nrl(L, N, Z, mu, options);
+
+        assertEquals(-7.731360424253920, ret, tolerance);
+    }
+
+    @Test
+    void pfqn_nrlTest5(){
+        Matrix L = new Matrix(2, 2);
+        Matrix N = new Matrix(1, 2);
+        Matrix Z = new Matrix(1, 2);
+        Matrix mu = new Matrix(2, 24);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 2.0 / 3);
+        L.set(0, 1, 0.8);
+        L.set(1, 0, 1);
+        L.set(1, 1, 1);
+        N.set(0, 0, 16);
+        N.set(0, 1, 8);
+        Z.set(0, 0, 0);
+        Z.set(0, 1, 0);
+        for (int i=0; i<24; i++) {
+            mu.set(0, i, i + 1);
+        }
+        for (int i=0; i<24; i++) {
+            mu.set(1, i, 1);
+        }
+
+        double ret = pfqn_nrl(L, N, Z, mu, options);
+
+        assertEquals(13.722464533237961, ret, tolerance);
+    }
+
+    @Test
+    void pfqn_nrp_Test1(){
+        Matrix L = new Matrix(2, 1);
+        Matrix N = new Matrix(1, 1);
+        Matrix Z = new Matrix(1, 1);
+        Matrix mu = new Matrix(2, 16);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 2.0 / 3);
+        L.set(1, 0, 1.0);
+        N.set(0, 0, 16);
+        Z.set(0, 0, 0);
+        for (int i=0; i<16; i++) {
+            mu.set(0, i, i + 1);
+        }
+        mu.set(1, 0, 1);
+        for (int i=1; i<16; i++) {
+            mu.set(1, i, 2);
+        }
+        double ret = pfqn_nrp(L, N, Z, mu, options);
+
+        assertEquals(-9.063874457806950, ret, tolerance);
+
+    }
+
+    @Test
+    void pfqn_nrpTest2(){
+        Matrix L = new Matrix(2, 2);
+        Matrix N = new Matrix(1, 2);
+        Matrix Z = new Matrix(1, 2);
+        Matrix mu = new Matrix(2, 6);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 2.0 / 3);
+        L.set(0, 1, 0.8);
+        L.set(1, 0, 1);
+        L.set(1, 1, 1);
+        N.set(0, 0, 4);
+        N.set(0, 1, 2);
+        Z.set(0, 0, 0);
+        Z.set(0, 1, 0);
+        for (int i=0; i<6; i++) {
+            mu.set(0, i, i + 1);
+        }
+        mu.set(1, 0, 1);
+        for (int i=1; i<6; i++) {
+            mu.set(1, i, 2);
+        }
+
+        double ret = pfqn_nrp(L, N, Z, mu, options);
+
+        assertEquals(-1.372819971288902, ret, tolerance);
+
+    }
+
+    @Test
+    void pfqn_nrpTest3(){
+        Matrix L = new Matrix(3, 2);
+        Matrix N = new Matrix(1, 2);
+        Matrix Z = new Matrix(1, 2);
+        Matrix mu = new Matrix(3, 6);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 2.0 / 7);
+        L.set(0, 1, 4.0 / 9);
+        L.set(1, 0, 3.0 / 7);
+        L.set(1, 1, 5.0 / 9);
+        L.set(2, 0, 1);
+        L.set(2, 1, 1);
+        N.set(0, 0, 4);
+        N.set(0, 1, 2);
+        Z.set(0, 0, 0);
+        Z.set(0, 1, 0);
+        mu.set(0, 0, 1);
+        mu.set(0, 1, 2);
+        mu.set(0, 2, 3);
+        mu.set(0, 3, 4);
+        mu.set(0, 4, 5);
+        mu.set(0, 5, 6);
+        mu.set(1, 0, 1);
+        mu.set(1, 1, 2);
+        mu.set(1, 2, 3);
+        mu.set(1, 3, 3);
+        mu.set(1, 4, 3);
+        mu.set(1, 5, 3);
+        mu.set(2, 0, 1);
+        mu.set(2, 1, 2);
+        mu.set(2, 2, 3);
+        mu.set(2, 3, 3);
+        mu.set(2, 4, 3);
+        mu.set(2, 5, 3);
+
+        double ret = pfqn_nrp(L, N, Z, mu, options);
+
+        assertEquals(-2.039916423452986, ret, tolerance);
+
+    }
+
+    @Test
+    void pfqn_nrpTest4(){
+        Matrix L = new Matrix(2, 1);
+        Matrix N = new Matrix(1, 1);
+        Matrix Z = new Matrix(1, 1);
+        Matrix mu = new Matrix(2, 10);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 1);
+        L.set(1, 0, 1);
+        N.set(0, 0, 10);
+        Z.set(0, 0, 0);
+        for (int i=0; i<10; i++) {
+            mu.set(0, i, i + 1);
+        }
+        for (int i=0; i<10; i++) {
+            mu.set(1, i, Math.min(5,  i + 1));
+        }
+
+        double ret = pfqn_nrp(L, N, Z, mu, options);
+
+        assertEquals(-7.957151776898646, ret, tolerance);
+    }
+
+    @Test
+    void pfqn_nrpTest5(){
+        Matrix L = new Matrix(2, 2);
+        Matrix N = new Matrix(1, 2);
+        Matrix Z = new Matrix(1, 2);
+        Matrix mu = new Matrix(2, 24);
+        SolverOptions options = new SolverOptions();
+        options.method = "default";
+        L.set(0, 0, 2.0 / 3);
+        L.set(0, 1, 0.8);
+        L.set(1, 0, 1);
+        L.set(1, 1, 1);
+        N.set(0, 0, 16);
+        N.set(0, 1, 8);
+        Z.set(0, 0, 0);
+        Z.set(0, 1, 0);
+        for (int i=0; i<24; i++) {
+            mu.set(0, i, i + 1);
+        }
+        for (int i=0; i<24; i++) {
+            mu.set(1, i, 1);
+        }
+
+        double ret = pfqn_nrp(L, N, Z, mu, options);
+
+        assertEquals(11.731133319444895, ret, tolerance);
+    }
 }

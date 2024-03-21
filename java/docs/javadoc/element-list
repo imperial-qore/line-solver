@@ -22,6 +22,7 @@ jline.solvers.fluid.odes
 jline.solvers.fluid.smoothing
 jline.solvers.jmt
 jline.solvers.ln
+jline.solvers.lqns
 jline.solvers.mam
 jline.solvers.mva
 jline.solvers.mva.analyzers

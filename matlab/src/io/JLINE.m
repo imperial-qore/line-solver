@@ -403,7 +403,7 @@ classdef JLINE
 
         function set_csMatrix(line_node, java_node)
             nClasses = length(line_node.server.classes);
-            csMatrix = jline.util.Matrix(nClasses, nClasses);
+            csMatrix = jline.lang.ClassSwitchMatrix(nClasses, nClasses);
             for i = 1:nClasses
                 for j = 1:nClasses
                     csMatrix.set(i-1, j-1, line_node.server.csFun(i,j,0,0));
