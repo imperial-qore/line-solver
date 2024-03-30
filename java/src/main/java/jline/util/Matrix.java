@@ -1107,10 +1107,22 @@ public class Matrix {
 		CommonOps_DSCC.changeSign(this.data, this.data);
 	}
 
+	// DSCC implementation takes in order: srcY0, srcY1, srcX0, srcX1
 	public static void extract(Matrix src, int srcX0, int srcX1, int srcY0, int srcY1,
 														 Matrix dst, int dstY0, int dstX0) {
 		CommonOps_DSCC.extract(src.data, srcX0, srcX1, srcY0, srcY1, dst.data, dstY0, dstX0);
 	}
+
+	// useful when output dimension not known
+	public static Matrix extract(Matrix src, int srcX0, int srcX1, int srcY0, int srcY1) {
+		if (srcX0 >= srcX1 || srcY0 >= srcY1) {
+			return new Matrix(0,0);
+		}
+		Matrix out = new Matrix(srcX1 - srcX0, srcY1 - srcY0);
+		extract(src, srcX0, srcX1, srcY0, srcY1, out, 0,0);
+		return out;
+	}
+
 
 	public static Matrix extractRows(Matrix A, int row0, int row1, Matrix out ) {
 		if (out == null) {
@@ -1135,6 +1147,15 @@ public class Matrix {
 	}
 
 	public static Matrix concatColumns(Matrix left, Matrix right, Matrix out ) {
+
+		if (right.getNumRows() == 0 && right.getNumCols() == 0) {
+			return left;
+		}
+
+		if (left.getNumRows() == 0 && left.getNumCols() == 0) {
+			return right;
+		}
+
 		if (out == null) {
 			return new Matrix(CommonOps_DSCC.concatColumns(left.data, right.data, null));
 		} else {
@@ -1144,6 +1165,15 @@ public class Matrix {
 	}
 
 	public static Matrix concatRows(Matrix top, Matrix bottom, Matrix out) {
+
+		if (top.getNumCols() == 0 && top.getNumRows() == 0) {
+			return bottom;
+		}
+
+		if (bottom.getNumCols() == 0 && bottom.getNumRows() == 0) {
+			return top;
+		}
+
 		if (out == null) {
 			return new Matrix(CommonOps_DSCC.concatRows(top.data, bottom.data, null));
 		} else {

@@ -1,6 +1,12 @@
 package jline.util;
 
+import org.apache.commons.math3.FieldElement;
 import org.apache.commons.math3.complex.Complex;
+import org.apache.commons.math3.complex.ComplexField;
+import org.apache.commons.math3.linear.FieldLUDecomposition;
+import org.apache.commons.math3.linear.FieldMatrix;
+import org.apache.commons.math3.linear.MatrixUtils;
+import org.apache.commons.math3.linear.SparseFieldMatrix;
 import org.ejml.data.DMatrixSparseCSC;
 import org.ejml.sparse.csc.CommonOps_DSCC;
 
@@ -30,9 +36,34 @@ public class ComplexMatrix {
     this.im.zero();
   }
 
+  public ComplexMatrix clone() {
+    return new ComplexMatrix(this.real.clone(), this.im.clone());
+  }
+
+  public Complex det() {
+    FieldMatrix<Complex> a = MatrixUtils.createFieldMatrix(ComplexField.getInstance(), this.getNumRows(), this.getNumCols());
+    for (int i = 0; i < this.getNumRows(); i++) {
+      for (int j = 0; j < this.getNumCols(); j++) {
+        a.setEntry(i, j, this.get(i, j));
+      }
+    }
+    FieldLUDecomposition LU = new FieldLUDecomposition(a);
+    Complex det = (Complex) LU.getDeterminant();
+    return det;
+  }
+
+  public void scale(double a) {
+    this.real.scale(a);
+    this.im.scale(a);
+  }
+
   public void set(int i, int j, Complex val) {
     this.real.set(i, j, val.getReal());
     this.im.set(i, j, val.getImaginary());
+  }
+
+  public void set(int i, int j, double val) {
+    this.real.set(i, j, val);
   }
 
   public void set(int idx, Complex val) {
@@ -76,7 +107,22 @@ public class ComplexMatrix {
       CommonOps_DSCC.extractRows(A.im.data, row0, row1, out.im.data);
       return out;
     }
+  }
 
+  public void zero() {
+    this.real.zero();
+    this.im.zero();
+  }
+
+  public static ComplexMatrix concatRows(ComplexMatrix top, ComplexMatrix bottom, ComplexMatrix out) {
+    if (out == null) {
+      return new ComplexMatrix(Matrix.concatRows(top.real, bottom.real, null), Matrix.concatRows(top.im, bottom.im, null));
+    }
+    else {
+      Matrix.concatRows(top.real, bottom.real, out.real);
+      Matrix.concatRows(top.im, bottom.im, out.im);
+      return out;
+    }
   }
 
 

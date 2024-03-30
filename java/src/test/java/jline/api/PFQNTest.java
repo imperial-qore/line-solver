@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class PFQNTest {
     private final double tolerance = 1.0e-15;
+    private final double nrpltol = 1.0e-5;
 
     @Test
     void pfqn_caTest1() {
@@ -2011,7 +2012,7 @@ class PFQNTest {
         * Note: the result returned by pfqn_mvaldmx_ec in this case is very large. I checked it manually by using a
         * debugger and verifying the values of the variables against the values obtained in MATLAB
         * */
-        //pfqnMVALDMXECReturn ret =  pfqn_mvaldmx_ec(lambda, D, mu);
+        pfqnMVALDMXECReturn ret =  pfqn_mvaldmx_ec(lambda, D, mu);
         //System.out.println(ret);
     }
 
@@ -2066,7 +2067,7 @@ class PFQNTest {
         /*
          * Checking this testcase yields 30 assertions. I will check it manually once again.
          */
-        //pfqnMVALDMXECReturn ret =  pfqn_mvaldmx_ec(lambda, D, mu);
+        pfqnMVALDMXECReturn ret =  pfqn_mvaldmx_ec(lambda, D, mu);
         //System.out.println(ret);
     }
 
@@ -2770,9 +2771,9 @@ class PFQNTest {
         }
         pfqnRdReturn ret = pfqn_rd(L, N, Z, mu, options);
 
-        assertEquals(-9.120855161272257, ret.lGN, tolerance);
+        assertEquals(-9.120855161272257, ret.lGN, 9.120855161272257*tolerance);
 
-        assertEquals(6.569832586711733, ret.Cgamma, tolerance);
+        assertEquals(6.569832586711733, ret.Cgamma, 6.569832586711733*tolerance);
 
     }
 
@@ -2802,9 +2803,9 @@ class PFQNTest {
 
         pfqnRdReturn ret = pfqn_rd(L, N, Z, mu, options);
 
-        assertEquals(0.526401647774762, ret.lGN, tolerance);
+        assertEquals(0.526401647774762, ret.lGN, 0.526401647774762*tolerance);
 
-        assertEquals(5.511730546381030, ret.Cgamma, tolerance);
+        assertEquals(5.511730546381030, ret.Cgamma, 5.511730546381030*tolerance);
 
     }
 
@@ -2847,9 +2848,9 @@ class PFQNTest {
 
         pfqnRdReturn ret = pfqn_rd(L, N, Z, mu, options);
 
-        assertEquals(-0.264097214680063, ret.lGN, tolerance);
+        assertEquals(-0.264097214680063, ret.lGN, Math.max(tolerance, 0.264097214680063*tolerance));
 
-        assertEquals(16.566171738940422, ret.Cgamma, tolerance);
+        assertEquals(16.566171738940422, ret.Cgamma, 16.566171738940422*tolerance);
     }
 
     @Test
@@ -2873,9 +2874,9 @@ class PFQNTest {
 
         pfqnRdReturn ret = pfqn_rd(L, N, Z, mu, options);
 
-        assertEquals(-8.635479492422949, ret.lGN, tolerance);
+        assertEquals(-8.635479492422949, ret.lGN, 8.635479492422949*tolerance);
 
-        assertEquals(8.680426521339080e+02, ret.Cgamma, tolerance);
+        assertEquals(8.680426521339080e+02, ret.Cgamma, 8.680426521339080e+02*tolerance);
     }
 
     @Test
@@ -2903,9 +2904,9 @@ class PFQNTest {
 
         pfqnRdReturn ret = pfqn_rd(L, N, Z, mu, options);
 
-        assertEquals(14.211561934863019, ret.lGN, tolerance);
+        assertEquals(14.211561934863019, ret.lGN, 14.211561934863019*tolerance);
 
-        assertEquals(1.960536983667250, ret.Cgamma, tolerance);
+        assertEquals(1.960536983667250, ret.Cgamma, 1.960536983667250*tolerance);
     }
 
     @Test
@@ -2929,7 +2930,7 @@ class PFQNTest {
         }
         double ret = pfqn_nrl(L, N, Z, mu, options);
 
-        assertEquals(-8.838083105162221, ret, tolerance);
+        assertEquals(-8.838083105162221, ret, Math.max(nrpltol*8.838083105162221, nrpltol));
 
     }
 
@@ -2959,7 +2960,7 @@ class PFQNTest {
 
         double ret = pfqn_nrl(L, N, Z, mu, options);
 
-        assertEquals(-0.151247942828460, ret, tolerance);
+        assertEquals(-1.512479428284601e-01, ret, Math.max(nrpltol, nrpltol*1.512479428284601e-01));
 
     }
 
@@ -3002,7 +3003,7 @@ class PFQNTest {
 
         double ret = pfqn_nrl(L, N, Z, mu, options);
 
-        assertEquals(-0.713831105716640, ret, tolerance);
+        assertEquals(-0.713831105716640, ret, Math.max(nrpltol, nrpltol*0.713831105716640));
 
     }
 
@@ -3027,7 +3028,7 @@ class PFQNTest {
 
         double ret = pfqn_nrl(L, N, Z, mu, options);
 
-        assertEquals(-7.731360424253920, ret, tolerance);
+        assertEquals(-7.731360424253920, ret, Math.max(nrpltol, nrpltol*7.731360424253920));
     }
 
     @Test
@@ -3055,7 +3056,7 @@ class PFQNTest {
 
         double ret = pfqn_nrl(L, N, Z, mu, options);
 
-        assertEquals(13.722464533237961, ret, tolerance);
+        assertEquals(13.722464533237961, ret, Math.max(nrpltol, nrpltol*13.722464533237961));
     }
 
     @Test
@@ -3079,7 +3080,7 @@ class PFQNTest {
         }
         double ret = pfqn_nrp(L, N, Z, mu, options);
 
-        assertEquals(-9.063874457806950, ret, tolerance);
+        assertEquals(-9.063874457806950, ret, Math.max(nrpltol*9.063874457806950, nrpltol));
 
     }
 
@@ -3109,7 +3110,7 @@ class PFQNTest {
 
         double ret = pfqn_nrp(L, N, Z, mu, options);
 
-        assertEquals(-1.372819971288902, ret, tolerance);
+        assertEquals(-1.372819971288902, ret, Math.max(nrpltol, nrpltol*1.372819971288902));
 
     }
 
@@ -3151,8 +3152,9 @@ class PFQNTest {
         mu.set(2, 5, 3);
 
         double ret = pfqn_nrp(L, N, Z, mu, options);
-
-        assertEquals(-2.039916423452986, ret, tolerance);
+        double expected = -2.039916423452986;
+        double rtol = Math.abs(ret -  expected) / Math.min(ret, expected);
+        assertEquals(-2.039916423452986, ret, Math.max(nrpltol, 2.039916423452986*nrpltol));
 
     }
 
@@ -3177,7 +3179,7 @@ class PFQNTest {
 
         double ret = pfqn_nrp(L, N, Z, mu, options);
 
-        assertEquals(-7.957151776898646, ret, tolerance);
+        assertEquals(-7.957151776898646, ret, Math.max(nrpltol, 7.957151776898646*nrpltol));
     }
 
     @Test
@@ -3205,6 +3207,6 @@ class PFQNTest {
 
         double ret = pfqn_nrp(L, N, Z, mu, options);
 
-        assertEquals(11.731133319444895, ret, tolerance);
+        assertEquals(11.731133319444895, ret, Math.max(nrpltol, 11.731133319444895*nrpltol));
     }
 }

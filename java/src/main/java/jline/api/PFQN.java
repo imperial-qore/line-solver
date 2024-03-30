@@ -21,7 +21,7 @@ import java.net.URISyntaxException;
 import java.util.*;
 
 import static java.lang.Math.abs;
-import static jline.util.Maths.max;
+import static jline.util.Maths.*;
 import static jline.util.Matrix.oner;
 import static jline.util.PopulationLattice.hashpop;
 import static jline.util.PopulationLattice.pprod;
@@ -4476,7 +4476,8 @@ public class PFQN {
 		Matrix L_final = L.element_divide(Lmax_mat.repmat(M, 1));
 		Matrix x0 = new Matrix(1, R);
 		x0.zero();
-		double lG = laplaceapprox_h(x0, L_final, N, alpha, "nrp").logI;
+		SerializableFunction<Matrix, ComplexMatrix> infradius_hnorm = new infradius_hnorm(L_final, N, alpha);
+		double lG = laplaceapprox_h_complex(x0, infradius_hnorm).logI.getReal();
 		Matrix Lmax_log_mat = Lmax_mat.clone();
 		for (int i = 0; i < Lmax_mat.getNumElements(); i++) {
 			Lmax_log_mat.set(i, Math.log(Lmax_mat.get(i)));
@@ -4511,7 +4512,8 @@ public class PFQN {
 		Matrix L_final = L.element_divide(Lmax_mat.repmat(M, 1));
 		Matrix x0 = new Matrix(1, R);
 		x0.zero();
-		double lG = laplaceapprox_h(x0, L_final, N, alpha, "nrl").logI;
+		SerializableFunction<Matrix, ComplexMatrix> infradius_h = new infradius_h(L_final, N, alpha);
+		double lG = laplaceapprox_h_complex(x0, infradius_h).logI.getReal();
 		Matrix Lmax_log_mat = Lmax_mat.clone();
 		for (int i = 0; i < Lmax_mat.getNumElements(); i++) {
 			Lmax_log_mat.set(i, Math.log(Lmax_mat.get(i)));

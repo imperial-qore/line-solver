@@ -82,7 +82,7 @@ public class FromMarginalAndStartedTest {
         Matrix correctMatrix = new Matrix(correct.length, correct[0].length);
         correctMatrix.fromArray2D(correct);
         Matrix res = State.fromMarginalAndStarted(sn, ind, matrixn, matrixs);
-        System.out.println(res);
+//        System.out.println(res);
 
         assertTrue(res.isEqualTo(correctMatrix));
     }
