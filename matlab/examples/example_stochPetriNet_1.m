@@ -68,7 +68,8 @@ model.link(R);
 % T1
 T{1}.addMode('Mode1');
 T{1}.init();
-T{1}.setDistribution(1,Exp(4));
+%T{1}.setDistribution(1,Exp(4));
+T{1}.setDistribution(1,Lognormal(1/4,1/10));
 T{1}.setEnablingConditions(1,jobclass{1},P{1},1);
 T{1}.setFiringOutcome(1,jobclass{1},P{2},1);
 

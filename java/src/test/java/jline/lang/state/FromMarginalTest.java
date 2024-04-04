@@ -9,9 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class FromMarginalTest {
 
-
-
-
     @Test
     public void returnsCorrectStatesClosedModel1() {
         int[][] m = new int[][]{{3}};

@@ -17,15 +17,15 @@ if ~any(strcmp('Optimization Toolbox', {v.Name}))
     warning('ERROR: the Optimization Toolbox is not installed, this is required for LINE.')
 end
 if ~any(strcmp('Global Optimization Toolbox', {v.Name}))
-    warning('The Global Optimization Toolbox is not installed, this is required for LINE.')
+    warning('ERROR: The Global Optimization Toolbox is not installed, this is required for LINE.')
     hasWarnings = true;
 end
 if ~any(strcmp('Parallel Computing Toolbox', {v.Name}))
-    warning('The Parallel Computing Toolbox is not installed, this is required for LINE.')
+    warning('ERROR: The Parallel Computing Toolbox is not installed, this is required for LINE.')
     hasWarnings = true;
 end
 if ~any(strcmp('Symbolic Math Toolbox', {v.Name}))
-    warning('The Symbolic Math Toolbox is not installed, this may be required by some LINE methods.')
+    warning('ERROR: The Symbolic Math Toolbox is not installed, this may be required by some LINE methods.')
     hasWarnings = true;
 end
 disp('Checking LQNS...')

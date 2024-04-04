@@ -308,23 +308,26 @@ for m=1:numOfModes
             case ProcessType.ID_WEIBULL
                 line_error(mfilename,sprintf('Unsupported firing distribution for mode %d',m));
             case ProcessType.ID_LOGNORMAL
-                line_error(mfilename,sprintf('Unsupported firing distribution for mode %d',m));
-                % shape = sqrt(1+1/sn.scv(i,r))+1;
-                % scale = 1/sn.rates(i,r) *  (shape - 1) / shape;
-                % subParNodeAlpha = simDoc.createElement('subParameter');
-                % subParNodeAlpha.setAttribute('classPath', 'java.lang.Double');
-                % subParNodeAlpha.setAttribute('name', 'alpha'); % shape
-                % subParValue = simDoc.createElement('value');
-                % subParValue.appendChild(simDoc.createTextNode(sprintf('%.12f',shape)));
-                % subParNodeAlpha.appendChild(subParValue);
-                % distrParNode.appendChild(subParNodeAlpha);
-                % subParNodeAlpha = simDoc.createElement('subParameter');
-                % subParNodeAlpha.setAttribute('classPath', 'java.lang.Double');
-                % subParNodeAlpha.setAttribute('name', 'k'); % scale
-                % subParValue = simDoc.createElement('value');
-                % subParValue.appendChild(simDoc.createTextNode(sprintf('%.12f',scale)));
-                % subParNodeAlpha.appendChild(subParValue);
-                % distrParNode.appendChild(subParNodeAlpha);
+                %line_error(mfilename,sprintf('Unsupported firing distribution for mode %d',m));
+                param_mean = sn.nodeparam{ind}.firingproc{1}(1);
+                param_scv = sn.nodeparam{ind}.firingproc{1}(2);
+                c = sqrt(param_scv);
+                shape = log(param_mean  / sqrt(c*c + 1)); % mu
+                scale = sqrt(log(c*c + 1)); % sigma                           
+                subParNodeAlpha = simDoc.createElement('subParameter');
+                subParNodeAlpha.setAttribute('classPath', 'java.lang.Double');
+                subParNodeAlpha.setAttribute('name', 'mu'); % shape
+                subParValue = simDoc.createElement('value');
+                subParValue.appendChild(simDoc.createTextNode(sprintf('%.12f',shape)));
+                subParNodeAlpha.appendChild(subParValue);
+                distrParNode.appendChild(subParNodeAlpha);
+                subParNodeAlpha = simDoc.createElement('subParameter');
+                subParNodeAlpha.setAttribute('classPath', 'java.lang.Double');
+                subParNodeAlpha.setAttribute('name', 'sigma'); % scale
+                subParValue = simDoc.createElement('value');
+                subParValue.appendChild(simDoc.createTextNode(sprintf('%.12f',scale)));
+                subParNodeAlpha.appendChild(subParValue);
+                distrParNode.appendChild(subParNodeAlpha);
             case ProcessType.ID_UNIFORM
                 line_error(mfilename,sprintf('Unsupported firing distribution for mode %d',m));
                 % maxVal = ((sqrt(12*sn.scv(i,r)/sn.rates(i,r)^2))+2/sn.rates(i,r))/2;
