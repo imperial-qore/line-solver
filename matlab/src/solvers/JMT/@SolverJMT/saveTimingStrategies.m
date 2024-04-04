@@ -288,21 +288,22 @@ for m=1:numOfModes
                 subParNodeAlpha.appendChild(subParValue);
                 distrParNode.appendChild(subParNodeAlpha);
             case ProcessType.ID_GAMMA
-                line_error(mfilename,sprintf('Unsupported firing distribution for mode %d',m));
-                % subParNodeAlpha = simDoc.createElement('subParameter');
-                % subParNodeAlpha.setAttribute('classPath', 'java.lang.Double');
-                % subParNodeAlpha.setAttribute('name', 'alpha');
-                % subParValue = simDoc.createElement('value');
-                % subParValue.appendChild(simDoc.createTextNode(sprintf('%.12f',1/sn.scv(i,r))));
-                % subParNodeAlpha.appendChild(subParValue);
-                % distrParNode.appendChild(subParNodeAlpha);
-                % subParNodeAlpha = simDoc.createElement('subParameter');
-                % subParNodeAlpha.setAttribute('classPath', 'java.lang.Double');
-                % subParNodeAlpha.setAttribute('name', 'beta');
-                % subParValue = simDoc.createElement('value');
-                % subParValue.appendChild(simDoc.createTextNode(sprintf('%.12f',sn.scv(i,r)/sn.rates(i,r))));
-                % subParNodeAlpha.appendChild(subParValue);
-                % distrParNode.appendChild(subParNodeAlpha);
+                param_mean = sn.nodeparam{ind}.firingproc{1}(1);
+                param_scv = sn.nodeparam{ind}.firingproc{1}(2);                
+                subParNodeAlpha = simDoc.createElement('subParameter');
+                subParNodeAlpha.setAttribute('classPath', 'java.lang.Double');
+                subParNodeAlpha.setAttribute('name', 'alpha');
+                subParValue = simDoc.createElement('value');
+                subParValue.appendChild(simDoc.createTextNode(sprintf('%.12f',1/param_scv)));
+                subParNodeAlpha.appendChild(subParValue);
+                distrParNode.appendChild(subParNodeAlpha);
+                subParNodeAlpha = simDoc.createElement('subParameter');
+                subParNodeAlpha.setAttribute('classPath', 'java.lang.Double');
+                subParNodeAlpha.setAttribute('name', 'beta');
+                subParValue = simDoc.createElement('value');
+                subParValue.appendChild(simDoc.createTextNode(sprintf('%.12f',param_mean*param_scv)));
+                subParNodeAlpha.appendChild(subParValue);
+                distrParNode.appendChild(subParNodeAlpha);
             case ProcessType.ID_PARETO
                 line_error(mfilename,sprintf('Unsupported firing distribution for mode %d',m));
             case ProcessType.ID_WEIBULL
