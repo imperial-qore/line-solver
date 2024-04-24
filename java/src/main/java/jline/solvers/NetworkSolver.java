@@ -906,7 +906,8 @@ public abstract class NetworkSolver extends Solver {
     }
 
     // Store average metrics at steady-state
-    protected final void setAvgResults() {
+    protected final void setAvgResults(Matrix Q, Matrix U, Matrix R, Matrix T, Matrix A,
+                                       Matrix W, Matrix C, Matrix X, long runtime) {
         // TODO: implementation - note parameters should likely not be void
         throw new RuntimeException("setAvgResults() has not yet been implemented in JLINE.");
     }

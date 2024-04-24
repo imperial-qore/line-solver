@@ -512,6 +512,16 @@ public class Matrix {
 		return res;
 	}
 
+	public void replace(double delete, double replacement) {
+		for (int i = 0; i < this.getNumRows(); i++) {
+			for (int j = 0; j < this.getNumCols(); j++) {
+				if (this.get(i, j) == delete) {
+					this.set(i, j, replacement);
+				}
+			}
+		}
+	}
+
 	public Matrix findNonNegative() {
 		List<Integer> array = new ArrayList<Integer>();
 		for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {

@@ -266,7 +266,7 @@ if ~isempty(W)
         for k=1:K
             if isempty(W) || W{i,k}.disabled
                 WNclass(i,k) = NaN;
-            elseif isempty(self.result.Avg.W)
+            else%if isempty(self.result.Avg.W)
                 if ~isempty(RNclass) && RNclass(i,k)>0
                     c = find(sn.chains(:,k));
                     if RNclass(i,k) < GlobalConstants.FineTol
@@ -280,9 +280,10 @@ if ~isempty(W)
                             WNclass(i,k) = RNclass(i,k)*V(i,k)/sum(V(sn.refstat(k),sn.inchain{c}));
                         end
                     end
-                end
-            else
-                WNclass(i,k) = self.result.Avg.W(i,k);
+                end                
+            %else 
+            % this block seems to create a different answer in getAvgTable vs getAvg due to lack of refclass scaling
+            %    WNclass(i,k) = self.result.Avg.W(i,k);
             end
         end
     end

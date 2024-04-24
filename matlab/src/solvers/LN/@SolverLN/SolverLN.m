@@ -160,6 +160,7 @@ classdef SolverLN < LayeredNetworkSolver & EnsembleSolver
             % [RESULT, RUNTIME] = ANALYZE(IT, E)
             T0 = tic;
             result = struct();
+            jresult = struct();
             %it
             %if it>1%2*length(self.model.ensemble)
             [result.QN, result.UN, result.RN, result.TN, result.AN, result.WN] = self.solvers{e}.getAvg();

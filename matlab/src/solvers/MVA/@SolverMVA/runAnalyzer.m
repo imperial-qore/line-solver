@@ -37,8 +37,8 @@ switch options.lang
             AN = zeros(M,R);
             WN = zeros(M,R);
             for c=1:C
-                inchain = sn.inchain{c};
-                refstat = find(sn.refstat(:,inchain{1}));
+                inchain = sn.inchain{c};  
+                refstat = sn.refstat(inchain(1));
                 XN(c) = sum(TN(refstat,inchain));
             end
             for i=1:M

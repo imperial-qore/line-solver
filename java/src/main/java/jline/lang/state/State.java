@@ -1,7 +1,6 @@
 package jline.lang.state;
 
 import java.io.Serializable;
-import java.rmi.ServerError;
 import java.util.*;
 
 import jline.examples.ClosedModel;
@@ -10,12 +9,10 @@ import jline.lang.Network;
 import jline.lang.constant.*;
 import jline.lang.nodes.StatefulNode;
 import jline.lang.nodes.Station;
-import jline.solvers.ssa.SSAResult;
 import jline.util.Maths;
 import jline.util.Matrix;
 import jline.lang.NetworkStruct;
 import jline.util.SerializableFunction;
-import org.ejml.sparse.csc.CommonOps_DSCC;
 
 import static jline.lang.constant.SchedStrategy.*;
 

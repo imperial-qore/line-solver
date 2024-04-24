@@ -1,24 +1,23 @@
 package jline.solvers.ssa;
 
 import jline.lang.*;
-import jline.lang.constant.EventType;
-import jline.lang.constant.GlobalConstants;
-import jline.lang.constant.NodeType;
-import jline.lang.constant.SolverType;
+import jline.lang.constant.*;
 import jline.lang.nodes.StatefulNode;
 import jline.lang.nodes.Station;
 import jline.lang.state.EventResult;
 import jline.lang.state.State;
 import jline.examples.ClosedModel;
+import jline.lib.KPCToolbox;
 import jline.solvers.NetworkSolver;
+import jline.solvers.SolverHandles;
 import jline.solvers.SolverOptions;
+import jline.solvers.SolverResult;
 import jline.util.Maths;
 import jline.util.Matrix;
 import jline.util.UniqueRowResult;
 
 import javax.xml.parsers.ParserConfigurationException;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +25,8 @@ import java.util.Map;
 import static java.util.stream.Collectors.toMap;
 
 public class SolverSSA extends NetworkSolver {
+
+    public SolverSSAResult result;
 
 
     public SolverSSA(Network model) {
@@ -40,26 +41,31 @@ public class SolverSSA extends NetworkSolver {
     public static void main(String[] args) {
 
         Network sn = ClosedModel.ex4_line();
+        SolverSSA solver = new SolverSSA(sn);
+        solver.getAvgTable();
 
-        // these are being doing here because ordinarily done in runAnalyzer but not implemented yet
-        Map<StatefulNode, Matrix> state = sn.getStruct(true).state;
-        sn.getStruct(true).space = new HashMap<>();
-        // copy entries in state into space
-        for (int i = 0; i < state.size(); i++) {
-            sn.getStruct(true).space.put(sn.getStruct(true).stations.get(i), state.get(sn.getStruct(true).stateful.get(i)));
-        }
 
-        SolverSSA solverSSA = new SolverSSA(sn);
-        solverSSA.options.samples++;
-        // Record the start time
-        long startTime = System.nanoTime();
-        SSAResult result = solverSSA.solver_ssa();
-        long endTime = System.nanoTime();
-        long elapsedTimeSec = (endTime - startTime) / 1_000_000_000; // Convert nanoseconds to sec
-        System.out.println("Elapsed Time: " + elapsedTimeSec+ " seconds");
-        System.out.println("pi");
-        System.out.println(result.pi);
-        System.out.println(result.pi.getNumElements());
+
+//
+//        // these are being doing here because ordinarily done in runAnalyzer but not implemented yet
+//        Map<StatefulNode, Matrix> state = sn.getStruct(true).state;
+//        sn.getStruct(true).space = new HashMap<>();
+//        // copy entries in state into space
+//        for (int i = 0; i < state.size(); i++) {
+//            sn.getStruct(true).space.put(sn.getStruct(true).stations.get(i), state.get(sn.getStruct(true).stateful.get(i)));
+//        }
+//
+//        SolverSSA solverSSA = new SolverSSA(sn);
+//        solverSSA.options.samples++;
+//        // Record the start time
+//        long startTime = System.nanoTime();
+//        SSAValues result = solverSSA.solver_ssa();
+//        long endTime = System.nanoTime();
+//        long elapsedTimeSec = (endTime - startTime) / 1_000_000_000; // Convert nanoseconds to sec
+//        System.out.println("Elapsed Time: " + elapsedTimeSec+ " seconds");
+//        System.out.println("pi");
+//        System.out.println(result.pi);
+//        System.out.println(result.pi.getNumElements());
 //        System.out.println("arvRates");
 //        System.out.println(result.arvRates);
 //        System.out.println("depRates");
@@ -74,7 +80,7 @@ public class SolverSSA extends NetworkSolver {
     }
 
 
-    public SSAResult solver_ssa() {
+    public SSAValues solver_ssa() {
         NetworkStruct sn = this.sn;
         SolverOptions options = this.options;
 
@@ -619,9 +625,8 @@ public class SolverSSA extends NetworkSolver {
             }
         }
         pi = Matrix.scale_mult(pi, 1/pi.elementSum());
-        return new SSAResult(pi, SSq, arvRates, depRates, tranSysState, tranSync, sn);
+        return new SSAValues(pi, SSq, arvRates, depRates, tranSysState, tranSync, sn);
     }
-
 
 
 
@@ -629,6 +634,241 @@ public class SolverSSA extends NetworkSolver {
 
     @Override
     protected void runAnalyzer() throws IllegalAccessException, ParserConfigurationException, IOException {
+        long T0 = java.lang.System.currentTimeMillis();
+        if (this.options == null) {
+            this.options = new SolverOptions(SolverType.SSA);
+        }
+        if (this.enableChecks && !this.supports(this.model)) {
+            throw new RuntimeException("This model is not supported by the SSA solver.");
+        }
+        this.resetRandomGeneratorSeed(options.seed);
+
+        NetworkStruct sn = getStruct();
+
+        SolverSSAResult result = solver_ssa_analyzer();
+        Matrix QN = result.QN;
+        Matrix UN = result.UN;
+        Matrix RN = result.RN;
+        Matrix TN = result.TN;
+        Matrix CN = result.CN;
+        Matrix XN = result.XN;
+        Map<Integer, Matrix> tranSysState = result.tranSysState;
+        Matrix tranSync = result.tranSync;
+        sn = result.sn;
+
+
+        for (int isf=0; isf < sn.nstateful; isf++) {
+            int ind = (int) sn.statefulToNode.get(isf);
+            if (sn.nodetypes.get((int) sn.statefulToNode.get(isf)) == NodeType.Cache) {
+                // TODO: Cache nodetype case
+            }
+        }
+        long runtime = java.lang.System.currentTimeMillis() - T0;
+        int M = sn.nstations;
+        int R = sn.nclasses;
+        Map<Station, Map<JobClass, SolverHandles.Metric>> T = getAvgTputHandles();
+        Matrix AN = new Matrix(0,0);
+        if (!T.isEmpty() && !TN.isEmpty()) {
+            AN = new Matrix(M, R);
+            AN.zero();
+            for (int i = 0; i < M; i++) {
+                for (int j = 0; j < M; j++) {
+                    for (int k = 0; k < R; k++) {
+                        for (int r = 0; r < R; r++) {
+                            AN.set(i,k, AN.get(i,k) + TN.get(j,r) * sn.rt.get((j-1) * R + r, (i-1) * R + k));
+                        }
+                    }
+                }
+            }
+        }
+        this.setAvgResults(QN, UN, RN, TN, AN, new Matrix(0,0), CN, XN, runtime);
+        this.result.space = sn.space;
+
+
 
     }
+
+    private void setAvgResults(Matrix Q, Matrix U, Matrix R, Matrix T, Matrix A, Matrix W,
+                               Matrix C, Matrix X, long runtime, String method, Integer iter) {
+        if (method == null) {
+            method = this.options.method;
+        }
+
+        this.result.QN = Q;
+        this.result.RN = R;
+        this.result.XN = X;
+        this.result.UN = U;
+        this.result.TN = T;
+        this.result.CN = C;
+        this.result.AN = A;
+        this.result.WN = W;
+        this.result.runtime = runtime;
+
+    }
+
+
+
+    private SolverSSAResult solver_ssa_analyzer() {
+        long Tstart = java.lang.System.currentTimeMillis();
+
+        sn.space.clear();
+        // TODO: check conversion of Stateful node to station
+        for (StatefulNode statefulNode : sn.state.keySet()) {
+            int node = statefulNode.getNodeIdx();
+            sn.space.put(sn.stations.get(node), sn.state.get(statefulNode));
+        }
+
+        SolverSSAResult res = new SolverSSAResult();
+        switch (options.method) {
+            case "default":
+            case "serial":
+            case "ssa":
+                res = solver_ssa_analyzer_serial(false);
+                break;
+        }
+        // measure time
+        res.runtime = java.lang.System.currentTimeMillis() - Tstart;
+        return res;
+    }
+
+    private SolverSSAResult solver_ssa_analyzer_serial(boolean hash) {
+        int M = sn.nstations;
+        int K = sn.nclasses;
+
+        Matrix S = sn.nservers;
+        Matrix NK = sn.njobs.transpose();
+        Map<Station, SchedStrategy> schedid = sn.sched;
+        long Tstart = java.lang.System.currentTimeMillis();
+
+        Map<Station, Map<JobClass, Map<Integer, Matrix>>> PH = sn.proc;
+        Map<Integer, Matrix> tranSysState = new HashMap<>();
+        Matrix tranSync = new Matrix(0,0);
+
+        Matrix XN = new Matrix(1,K);
+        XN.fill(Double.NaN);
+        Matrix UN = new Matrix(M, K);
+        UN.fill(Double.NaN);
+        Matrix QN = new Matrix(M, K);
+        QN.fill(Double.NaN);
+        Matrix RN = new Matrix(M, K);
+        RN.fill(Double.NaN);
+        Matrix TN = new Matrix(M, K);
+        TN.fill(Double.NaN);
+        Matrix CN = new Matrix(1, K);
+        CN.fill(Double.NaN);
+
+        this.options.samples++;
+        SSAValues result = solver_ssa();
+        Matrix probSysState = result.pi;
+        Matrix StateSpaceAggr = result.SSq;
+        Map<Integer, Matrix> arvRates = result.arvRates;
+        Map<Integer, Matrix> depRates = result.depRates;
+        tranSysState = result.tranSysState;
+        tranSync = result.tranSync;
+
+
+        for (int k = 0; k < K; k++) {
+            double refsf = sn.stationToStateful.get((int) sn.refstat.get(k));
+            Matrix departure = depRates.get(k);
+            Matrix dep_wset_refsf = new Matrix(StateSpaceAggr.getNumRows(), 1);
+            for (int i = 0; i < StateSpaceAggr.getNumRows(); i++) {
+                dep_wset_refsf.set(i, 0, departure.get(i, (int) refsf));
+            }
+            // toDouble call since 1xn mult nx1
+            XN.set(k, probSysState.mult(dep_wset_refsf).toDouble());
+        }
+
+        for (int i = 0; i < M; i++) {
+            int isf = (int) sn.stationToStateful.get(i);
+            for (int k = 0; k < K; k++) {
+                Matrix departure = depRates.get(k);
+                Matrix dep_wset_isf = new Matrix(StateSpaceAggr.getNumRows(), 1);
+                for (int j = 0; j < StateSpaceAggr.getNumRows(); j++) {
+                    dep_wset_isf.set(j, 0, departure.get(j, isf));
+                }
+                TN.set(i, k, probSysState.mult(dep_wset_isf).toDouble());
+
+                Matrix ssaggr_wset_isf = Matrix.extract(StateSpaceAggr, 0, StateSpaceAggr.getNumRows(), (i-1) * K + k, (i-1)*K+k+1);
+                QN.set(i, k, probSysState.mult(ssaggr_wset_isf).toDouble());
+            }
+            switch (schedid.get(sn.stations.get(i))) {
+                case INF:
+                    for (int k = 0; k < K; k++) {
+                        UN.set(i, k, QN.get(i, k));
+                    }
+                    break;
+
+                default:
+                    if (sn.lldscaling.isEmpty() && sn.cdscaling.isEmpty()) {
+                        for (int k = 0; k < K; k++) {
+                            if (!PH.get(sn.stations.get(i)).get(sn.jobclasses.get(k)).isEmpty()) {
+                                Matrix arrival = depRates.get(k);
+                                Matrix arv_wset_isf = new Matrix(StateSpaceAggr.getNumRows(), 1);
+                                for (int c = 0; c < StateSpaceAggr.getNumRows(); c++) {
+                                    arv_wset_isf.set(c, 0, arrival.get(c, isf));
+                                }
+                                double map_mean = KPCToolbox.map_mean(PH.get(sn.stations.get(i)).get(sn.jobclasses.get(k)).get(0),
+                                        PH.get(sn.stations.get(i)).get(sn.jobclasses.get(k)).get(1)) / S.get(i);
+                                UN.set(i, k, probSysState.mult(arv_wset_isf).toDouble() * map_mean);
+
+                            }
+                        }
+                    } else {
+                        // lld/cd cases
+                        int ind = (int) sn.stationToNode.get(i);
+                        for (int col = 0; col < K; col++) {
+                            UN.set(i, col, Double.NaN);
+                        }
+                    }
+
+                    break;
+            }
+        }
+
+        for (int k = 0; k < K; k++) {
+            for (int i = 0; i < M; i++) {
+                if (TN.get(i, k) > 0) {
+                    RN.set(i, k, QN.get(i, k) / TN.get(i, k));
+                } else {
+                    RN.set(i, k, 0);
+
+                }
+            }
+            CN.set(k, NK.get(k) / XN.get(k));
+        }
+
+        // update routing probabilities in nodes with state-dependent routing
+        // TODO: Cache nodetype case
+
+        // updates cache actual hit and miss data
+        // TODO: Cache nodetype case
+
+        // matrices QN, CN, RN, UN, XN, TN, where they are Double.isNan set to 0
+        QN.replace(Double.NaN, 0);
+        CN.replace(Double.NaN, 0);
+        RN.replace(Double.NaN, 0);
+        UN.replace(Double.NaN, 0);
+        XN.replace(Double.NaN, 0);
+        TN.replace(Double.NaN, 0);
+
+
+
+
+        return new SolverSSAResult(QN, UN, RN, TN, CN, XN, tranSysState, tranSync, sn);
+    }
+
+
+
+
+    private boolean supports (Network model) {
+        FeatureSet usedLangFeatures = model.getUsedLangFeatures();
+        // TODO: complete - needs SolverFeatureSet class implementation
+        return true;
+    }
+
+    private NetworkStruct getStruct() {
+        return this.model.getStruct(true);
+    }
+
+
 }
