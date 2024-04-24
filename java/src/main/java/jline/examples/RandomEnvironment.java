@@ -15,7 +15,7 @@ import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.solvers.env.SolverEnv;
 import jline.solvers.fluid.SolverFluid;
-import jline.solvers.fluid.smoothing.PStarSearcher;
+//import jline.solvers.fluid.smoothing.PStarSearcher;
 import jline.util.Maths;
 import jline.util.Matrix;
 import org.apache.commons.math3.optim.PointValuePair;
@@ -368,12 +368,12 @@ public class RandomEnvironment {
       solvers[e].options = fluidOptions;
       // Activating p-Norm Smoothing by providing each solver with an initial set of pStar values.
       // Going forwards, the pStar values are refreshed within SolverEnv's 'analyze' method
-      PStarSearcher searcher = new PStarSearcher();
-      Matrix targetQueueLengths = searcher.generateTargetQueueLengths(solvers[e].model);
-      PointValuePair pStarValues = searcher.findPStarValues(solvers[e].model, targetQueueLengths);
-      for (int i = 0; i < solvers[e].model.getNumberOfNodes(); i++) {
-        solvers[e].options.config.pstar.add(i, pStarValues.getPoint()[i]);
-      }
+//      PStarSearcher searcher = new PStarSearcher();
+//      Matrix targetQueueLengths = searcher.generateTargetQueueLengths(solvers[e].model);
+//      PointValuePair pStarValues = searcher.findPStarValues(solvers[e].model, targetQueueLengths);
+//      for (int i = 0; i < solvers[e].model.getNumberOfNodes(); i++) {
+//        solvers[e].options.config.pstar.add(i, pStarValues.getPoint()[i]);
+//      }
     }
 
     return new SolverEnv(envModel, solvers, options);

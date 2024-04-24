@@ -648,7 +648,7 @@ public class LayeredNetwork extends Ensemble {
 
         for (int t = 0; t < lqn.ntasks; t++) {
             int tidx = lqn.tshift + t + 1;
-            for (int aidx : lqn.actsof.get(tidx)) {
+            for (int aidx : lqn.actsof.getOrDefault(tidx, new ArrayList<>())) {
                 List<Integer> postaidxs = new ArrayList<>();
                 for (int col = 0; col < lqn.graph.getNumCols(); col++) {
                     if (lqn.graph.get(aidx, col) != 0) {

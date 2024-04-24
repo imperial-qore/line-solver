@@ -1,6 +1,7 @@
 package jline.util;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 import jline.lang.constant.GlobalConstants;
 import org.ejml.data.*;
@@ -621,6 +622,72 @@ public class Matrix {
 			res.set(i, 0, unique_array.get(i));
 		return res;
 	}
+
+	public static void main(String[] args) {
+		Matrix m1 = new Matrix(3,3);
+		m1.fromArray2D(new int[][]{{1,2,3}, {1,2,3}, {4,5,6}});
+		m1.expandMatrix(5,5,2);
+		System.out.println(m1);
+	}
+
+	public static UniqueRowResult uniqueRows(Matrix m) {
+
+		double[][] arr = m.toArray2D();
+		Map<Matrix, List<Integer>> rowToIndex = new HashMap<>();
+		for (int i = 0; i < m.getNumRows(); i++) {
+			Matrix row = new Matrix(1, m.getNumCols());
+			row.fromArray2D(new double[][]{arr[i]});
+			if (!rowToIndex.containsKey(row)) {
+				rowToIndex.put(row, new LinkedList<>());
+			}
+			rowToIndex.get(row).add(i);
+		}
+
+		List<Pair<Matrix, List<Integer>>> pairs = rowToIndex.entrySet().stream()
+                .map(e -> new Pair<>(e.getKey(), e.getValue())).sorted((i1, i2) -> {
+                    Matrix row1 = i1.getLeft();
+                    Matrix row2 = i2.getLeft();
+                    for (int i = 0; i < Math.min(row1.getNumCols(), row2.getNumCols()); i++) {
+                        int cmp = Double.compare(row1.get(i), row2.get(i));
+                        if (cmp != 0) {
+                            return cmp;
+                        }
+                    }
+                    return Integer.compare(row1.getNumCols(), row2.getNumCols());
+                }).collect(Collectors.toList());
+		
+        Matrix vi = new Matrix(pairs.size(), 1);
+		for (int i = 0; i < pairs.size(); i++) {
+			vi.set(i, 0, pairs.get(i).getRight().get(0));
+		}
+
+		Matrix vj = new Matrix(m.getNumRows(), 1);
+		for (int i = 0; i < pairs.size(); i++) {
+			for (int j : pairs.get(i).getRight()) {
+				vj.set(j, i);
+			}
+		}
+
+		Map<Integer, List<Integer>> vj_map = new HashMap<>();
+		for (int i = 0; i < vj.getNumElements(); i++) {
+			if (!vj_map.containsKey((int) vj.get(i))) {
+				vj_map.put((int) vj.get(i), new ArrayList<>());
+			}
+			vj_map.get((int) vj.get(i)).add(i);
+		}
+
+		// create a matrix sorted_matrix containing the rows of indices in vi
+		Matrix sorted_matrix = new Matrix(pairs.size(), m.getNumCols());
+		for (int i = 0; i < pairs.size(); i++) {
+			for (int j = 0; j < pairs.get(i).getLeft().getNumCols(); j++) {
+				sorted_matrix.set(i, j, pairs.get(i).getLeft().get(j));
+			}
+		}
+
+
+		return new UniqueRowResult(sorted_matrix, vi, vj_map);
+	}
+
 
 	public int count(double val) {
 		if (val == 0) {
@@ -2015,6 +2082,30 @@ public class Matrix {
 		}
 		return sum;
 	}
+
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj) {
+			return true;
+		}
+		if (!(obj instanceof Matrix)) {
+			return false;
+		}
+		Matrix other = (Matrix) obj;
+		return this.isEqualTo(other);
+	}
+
+	@Override
+	public int hashCode() {
+		int result = 1;
+		for (int i = 0; i < getNumRows(); i++) {
+			for (int j = 0; j < getNumCols(); j++) {
+				result = result + Double.hashCode(get(i,j));
+			}
+		}
+		return result;
+	}
+
 
 
 }

@@ -40,7 +40,7 @@ public abstract class EnsembleSolver extends Solver {
   // True if model is supported by the solver
   protected abstract boolean supports(Ensemble model);
 
-  protected abstract void getEnsembleAvg();
+  protected abstract AvgTable getEnsembleAvg();
 
   // Operations before starting to iterate
   protected abstract void init();
@@ -67,7 +67,6 @@ public abstract class EnsembleSolver extends Solver {
   public int getNumberOfModels() {
     return ensemble.length;
   }
-
   protected void iterate() {
 
     long outerStartTime = System.nanoTime();

@@ -9,15 +9,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-public class NetworkAvgTable {
-
-    SolverOptions options;
-    ArrayList<List<Double>> T;
+public class NetworkAvgTable extends AvgTable {
     List<String> classNames;
     List<String> stationNames;
 
     public NetworkAvgTable(List<Double> Qval, List<Double> Uval, List<Double> Rval, List<Double> Residval, List<Double> ArvR, List<Double> Tval) {
-        this.T = new ArrayList<>(Arrays.asList(Qval, Uval, Rval, Residval, ArvR, Tval));
+        super(new ArrayList<>(Arrays.asList(Qval, Uval, Rval, Residval, ArvR, Tval)));
     }
 
     public java.util.List<String> getClassNames() {

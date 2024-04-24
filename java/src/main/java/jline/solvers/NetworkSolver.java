@@ -334,9 +334,10 @@ public abstract class NetworkSolver extends Solver {
 
         WNclass = RNclass.clone();
         WNclass.zero();
-        if (this.result.WN == null || this.result.WN.isEmpty()) {
+        //if (this.result.WN == null || this.result.WN.isEmpty()) {
                 for (int i = 0; i < M; i++) {
                     for (int k = 0; k < K; k++) {
+
                         if (!RNclass.isEmpty() && RNclass.get(i, k) > 0) {
                             int c = -1;
                             for (int chain = 0; chain < sn.chains.getNumRows(); chain++) {
@@ -368,13 +369,14 @@ public abstract class NetworkSolver extends Solver {
                     }
                 }
                 this.result.WN = new Matrix(WNclass);
-            } else {
-            for (int i = 0; i < M; i++) {
-                for (int k = 0; k < K; k++) {
-                    WNclass.set(i, k, this.result.WN.get(i, k));
-                }
-            }
-        }
+//          }
+//        else { // this block seems to create a different answer in getAvgTable vs getAvg due to lack of refclass scaling
+//            for (int i = 0; i < M; i++) {
+//                for (int k = 0; k < K; k++) {
+//                    WNclass.set(i, k, this.result.WN.get(i, k));
+//                }
+//            }
+//        }
         for (int i = 0; i < M; i++) {
             for (int j = 0; j < K; j++) {
                 if (Double.isNaN(WNclass.get(i, j))

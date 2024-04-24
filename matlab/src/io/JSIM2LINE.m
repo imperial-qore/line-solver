@@ -84,18 +84,18 @@ for i=1:length(node_name)
                         otherwise
                             xsection_par{i} = {xsection{i}.parameter};
                             xsection_i_par{i} = xsection_i{i}.parameter;
-                            
+
                             xsection_i_value{i} = {xsection_i_par{i}.value};
                             xsection_i_par_attr{i} = {xsection_i_par{i}.ATTRIBUTE};
-                            
+
                             xsection_i_subpar{i} = {xsection_i_par{i}.subParameter};
                             %if xsection_i_value{i}{1}==-1
                             %    node{i} = Router(model, node_name{i});
                             %else
-                            
+
                             xsvc{i} = {xsection_i{i}(2).parameter.subParameter};
                             xrouting{i} = {xsection_i{i}(3).parameter.subParameter.ATTRIBUTE};
-                            
+
                             %    xget_strategy{i} = {xsection_i_par{i}.ATTRIBUTE};
                             %     switch xget_strategy{i}{3}.name
                             %         case 'LCFSstrategy'
@@ -103,7 +103,7 @@ for i=1:length(node_name)
                             %         case 'FCFSstrategy'
                             %             strategy{i} = SchedStrategy.FCFS;
                             %     end
-                            
+
                             xput_strategy{i} = xsection_i_par{i};
                             switch xput_strategy{i}(3).ATTRIBUTE.name
                                 case 'retrialDistributions'
@@ -131,7 +131,7 @@ for i=1:length(node_name)
                                 case 'LEPTStrategy'
                                     strategy{i} = SchedStrategy.LEPT;
                             end
-                            
+
                             xsection_i_type{i} = {xsection{i}.ATTRIBUTE};
                             switch xsection_i_type{i}{2}.className
                                 case 'Delay'
@@ -208,7 +208,7 @@ for i=1:length(node_name)
     xsection_i{i} = xsection_i{i}{1}; %   input, service, and output sections of node i
     xsection_javaClass{i} = {xsection_i{i}.ATTRIBUTE};
     switch xsection_javaClass{i}{1}.className % input section
-        
+
         case 'Storage'
             node{i}.init();
             if xsection_i{1,i}(1).parameter(1).value == -1
@@ -237,7 +237,7 @@ for i=1:length(node_name)
                 end
             end
             node{i}.setState(0);
-            
+
         case 'Enabling'
             % Enabling Section
             nmodes = length(xsection_i{1, i}(1).parameter(1).subParameter);
@@ -408,6 +408,39 @@ for i=1:length(node_name)
                     case 'Replayer'
                         par={xarv_sec{i}{r}.subParameter}; par=par{2};
                         node{i}.setArrival(jobclass{r}, Replayer(par.value));
+                    case 'Burst (MMPP2)'
+                        par={xarv_sec{i}{r}.subParameter}; par=par{2};
+                        node{i}.setArrival(jobclass{r}, MMPP2(par(1).value,par(2).value,par(3).value,par(4).value));                        
+                    case 'Burst (MAP)'
+                        par={xarv_sec{i}{r}.subParameter}; par=par{2};
+                        pars = {par(1).subParameter.subParameter};
+                        D0 = [];
+                        for c=1:length(pars)
+                            D0 = [D0; pars{c}.value];
+                        end
+                        pars = {par(2).subParameter.subParameter};
+                        D1 = [];
+                        for c=1:length(pars)
+                            D1 = [D1; pars{c}.value];
+                        end
+                        ax = MAP(D0,D1);
+                        node{i}.setArrival(jobclass{r}, ax);
+                    case 'Phase-Type'
+                        par={xarv_sec{i}{r}.subParameter}; par=par{2};
+                        alpha = [par(1).subParameter.subParameter.value];
+                        pars = {par(2).subParameter.subParameter};
+                        T = [];
+                        for c=1:length(pars)
+                            T = [T; pars{c}.value];
+                        end
+                        if any(any(tril(T,-1))>0) % not APH
+                            line_warning(mfilename,'The input model uses a general PH distribution, which is not yet supported in LINE. Fitting the first three moments into an APH distribution.\n');
+                            PH = {T,-T*ones(size(T,1),1)*alpha};
+                            ax = APH.fitCentral(map_mean(PH), map_var(PH), map_skew(PH));
+                        else % APH
+                            ax = APH(alpha, T);
+                        end
+                        node{i}.setArrival(jobclass{r}, ax);
                     otherwise
                         line_error(mfilename,'The model includes an arrival distribution not supported by the model-to-model transformation from JMT.')
                         xarv_statdistrib{i}{r}{1}.name
@@ -473,6 +506,23 @@ for i=1:length(node_name)
                 case 'Gamma'
                     par={xsvc_sec{i}{r}.subParameter}; par=par{2};
                     node{i}.setService(jobclass{r}, Gamma(par(1).value, par(2).value));
+                case 'Burst (MMPP2)'
+                    par={xsvc_sec{i}{r}.subParameter}; par=par{2};
+                    node{i}.setService(jobclass{r}, MMPP2(par(1).value,par(2).value,par(3).value,par(4).value));
+                case 'Burst (MAP)'
+                    par={xsvc_sec{i}{r}.subParameter}; par=par{2};
+                    pars = {par(1).subParameter.subParameter};
+                    D0 = [];
+                    for c=1:length(pars)
+                        D0 = [D0; pars{c}.value];
+                    end
+                    pars = {par(2).subParameter.subParameter};
+                    D1 = [];
+                    for c=1:length(pars)
+                        D1 = [D1; pars{c}.value];
+                    end
+                    ax = MAP(D0,D1);
+                    node{i}.setService(jobclass{r}, ax);
                 case 'Phase-Type'
                     par={xsvc_sec{i}{r}.subParameter}; par=par{2};
                     alpha = [par(1).subParameter.subParameter.value];
@@ -493,6 +543,8 @@ for i=1:length(node_name)
                     par={xsvc_sec{i}{r}.subParameter}; par=par{2};
                     node{i}.setService(jobclass{r}, Uniform(par(1).value, par(2).value));
                 otherwise
+                    xsvc_statdistrib{i}{r}{1}.name
+                    line_error(mfilename,'The model includes a service distribution not supported by the model-to-model transformation from JMT.')
                     xsvc_statdistrib{i}{r}{1}.name
                     node{i}.setService(jobclass{r}, Exp(1), para_ir); %TODO
             end
@@ -595,7 +647,7 @@ end
 
 if length(model.getIndexSourceStation)>1
     txt = sprintf('LINE supports JMT models with at most a single source node. You can refactor your JMT model in several ways:\n - If you are mapping in JMT each class to a different source, this is not required. You can instead assign the same reference station to each class and configure class routing in the routing panel of the source node.\n - In more general cases, you may follow these three steps:\n    (1) give a different name to each class of arrival, assigning these classes to a single source as reference station.\n    (2) put a class-switch node after the source to switch the new classes into the original classes they were in the model with multiple sources.\n    (3) configure the routing section of this class-switch node to set the same routing for the classes as they were in the original model.\n');
-    error(txt);    
+    error(txt);
 end
 
 

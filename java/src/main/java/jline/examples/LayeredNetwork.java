@@ -4,8 +4,10 @@ import jline.lang.*;
 import jline.lang.constant.*;
 import jline.lang.distributions.*;
 import jline.lang.layered.*;
+import jline.solvers.LayeredNetworkAvgTable;
 import jline.solvers.SolverOptions;
 import jline.solvers.ln.SolverLN;
+import jline.solvers.lqns.SolverLQNS;
 import jline.solvers.mva.SolverMVA;
 
 /**
@@ -13,6 +15,58 @@ import jline.solvers.mva.SolverMVA;
  */
 public class LayeredNetwork {
 
+    public static jline.lang.layered.LayeredNetwork testSimple() throws Exception {
+        jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_simple");
+
+        Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
+
+        Task T1 = new Task(model, "T1", 50, SchedStrategy.REF);
+        T1.setThinkTime(new Exp(0.01));
+        T1.on(P1);
+
+        Entry E1 = new Entry(model, "E1");
+        E1.on(T1);
+
+        Activity A1 = new Activity(model, "A1", new Exp(1));
+        A1.on(T1);
+        A1.boundTo(E1);
+//        T1.addPrecedence(ActivityPrecedence.Sequence("A1","A2"));
+        return model;
+    }
+
+    public static jline.lang.layered.LayeredNetwork test0() throws Exception {
+        jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_LQN_1");
+
+        Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
+        Processor P2 = new Processor(model, "P2", 1, SchedStrategy.PS);
+
+        Task T1 = new Task(model, "T1", 50, SchedStrategy.REF);
+        Task T2 = new Task(model, "T2", 50, SchedStrategy.FCFS);
+        T1.setThinkTime(new Exp(1));
+        T1.on(P1);
+        T2.setThinkTime(new Exp(1));
+        T2.on(P2);
+
+        Entry E1 = new Entry(model, "E1");
+        E1.on(T1);
+
+        Entry E2 = new Entry(model, "E2");
+        E2.on(T2);
+
+
+        Activity A1 = new Activity(model, "A1", new Exp(1));
+        A1.on(T1);
+        A1.boundTo(E1);
+
+        Activity A2 = new Activity(model, "A2", new Exp(1));
+        A2.on(T2);
+        A2.boundTo(E2);
+
+        A1.synchCall(E2,1);
+        A2.repliesTo(E2);
+//        T1.addPrecedence(ActivityPrecedence.Sequence("A1","A2"));
+        return model;
+    }
     public static jline.lang.layered.LayeredNetwork test1() throws Exception {
         jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_LQN_1");
 
@@ -82,13 +136,14 @@ public class LayeredNetwork {
     public static jline.lang.layered.LayeredNetwork test4() throws Exception {
         jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_LQN_4");
         Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
+        Processor P2 = new Processor(model, "P2", 1, SchedStrategy.PS);
 
         Task T1 = new Task(model, "T1", 10, SchedStrategy.REF);
         T1.on(P1);
-        T1.setThinkTime(new Exp(1.0 / 100));
+        T1.setThinkTime(new Exp(100));
 
-        Task T2 = new Task(model, "T2", 10, SchedStrategy.FCFS);
-        T2.on(P1);
+        Task T2 = new Task(model, "T2", 1, SchedStrategy.FCFS);
+        T2.on(P2);
         T2.setThinkTime(new Immediate());
 
         Entry E1 = new Entry(model, "E1");
@@ -97,7 +152,7 @@ public class LayeredNetwork {
         Entry E2 = new Entry(model, "E2");
         E2.on(T2);
 
-        Activity A1 = new Activity(model, "A1", new Exp(1 / 70.0));
+        Activity A1 = new Activity(model, "A1", new Exp( 1.6));
         A1.on(T1);
         A1.boundTo(E1);
 
@@ -105,7 +160,7 @@ public class LayeredNetwork {
         A2.on(T1);
         A2.synchCall(E2);
 
-        Activity A3 = new Activity(model, "A3", new Exp(1.0 / 5));
+        Activity A3 = new Activity(model, "A3", new Exp(5));
         A3.on(T2);
         A3.boundTo(E2);
 
@@ -367,27 +422,28 @@ public class LayeredNetwork {
     }
 
     public static void main(String[] args) throws Exception{
-        jline.lang.layered.LayeredNetwork model = test1();
-        SolverOptions solverOptions= new SolverOptions();
+        jline.lang.layered.LayeredNetwork model = test0();
+        SolverOptions solverOptions= new SolverOptions(SolverType.LN);
         SolverLN solver = new SolverLN(model, solverOptions);
 
-        // Use this block to test single layer.
-        // Layer 1
-        System.out.println("The MVA solver result for Layer 1");
-        Network network1 = solver.getEnsemble().get(0);
-        SolverMVA layersolver1 = new SolverMVA(network1);
-        layersolver1.getAvgTable();
-        System.out.println("----------------------------------------------------------------------------------------");
-
-        //layer 2
-        System.out.println("The MVA solver result for Layer 2");
-        Network network2 = solver.getEnsemble().get(1);
-        SolverMVA layersolver2 = new SolverMVA(network2);
-        layersolver2.getAvgTable();
-        System.out.println("----------------------------------------------------------------------------------------");
+//        // Use this block to test single layer.
+//        // Layer 1
+//        System.out.println("The MVA solver result for Layer 1");
+//        Network network1 = solver.getEnsemble().get(0);
+//        SolverMVA layersolver1 = new SolverMVA(network1);
+//        layersolver1.getAvgTable();
+//        System.out.println("----------------------------------------------------------------------------------------");
+//
+//        //layer 2
+//        System.out.println("The MVA solver result for Layer 2");
+//        Network network2 = solver.getEnsemble().get(1);
+//        SolverMVA layersolver2 = new SolverMVA(network2);
+//        layersolver2.getAvgTable();
+//        System.out.println("----------------------------------------------------------------------------------------");
 
         // Use this Line to test the solverLN result
         System.out.println("The LN solver result ");
-        solver.getEnsembleAvg();
+        LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
+        System.out.println(1);
     }
 }

@@ -3,7 +3,7 @@ package jline.lang.sections;
 import java.io.Serializable;
 import java.util.*;
 
-import jline.solvers.ssa.events.SynchedEvent;
+//import jline.solvers.ssa.events.SynchedEvent;
 import jline.lang.distributions.CumulativeDistribution;
 import jline.lang.*;
 import jline.lang.constant.RoutingStrategy;
@@ -17,7 +17,7 @@ import jline.util.Pair;
 public class OutputSection extends Section implements Serializable {
     protected SchedStrategyType schedPolicy;
     protected List<OutputStrategy> outputStrategies;
-    protected Map<OutputStrategy, SynchedEvent> outputEvents;
+//    protected Map<OutputStrategy, SynchedEvent> outputEvents;
     protected boolean isClassSwitch;
 
     protected void probabilityUpdate() {
@@ -61,7 +61,7 @@ public class OutputSection extends Section implements Serializable {
         super(className);
         this.isClassSwitch = false;
         outputStrategies = new ArrayList<OutputStrategy>();
-        outputEvents = new HashMap<OutputStrategy, SynchedEvent>();
+//        outputEvents = new HashMap<OutputStrategy, SynchedEvent>();
     }
 
     public void setOutputStrategy(JobClass jobClass, RoutingStrategy routingStrategy) {
@@ -91,7 +91,7 @@ public class OutputSection extends Section implements Serializable {
 
         OutputStrategy outputStrategy = new OutputStrategy(jobClass, routingStrategy, destination, probability);
         outputStrategies.add(outputStrategy);
-        outputEvents.put(outputStrategy, new SynchedEvent(this, destination, jobClass, this.isClassSwitch));
+//        outputEvents.put(outputStrategy, new SynchedEvent(this, destination, jobClass, this.isClassSwitch));
         this.probabilityUpdate();
     }
 
@@ -119,55 +119,55 @@ public class OutputSection extends Section implements Serializable {
         return this.outputStrategies;
     }
 
-    public SynchedEvent getOutputEvent(JobClass jobClass, Random random) {
-        CumulativeDistribution<OutputStrategy> outputStrategyCumulativeDistribution = new CumulativeDistribution<OutputStrategy>(random);
-
-        if (this.outputStrategies.size() == 0) {
-            throw new RuntimeException("No output strategies found!");
-        }
-
-        for (OutputStrategy outputStrategy : this.outputStrategies) {
-            if (outputStrategy.getDestination() == null) {
-                continue;
-            } else if (outputStrategy.getJobClass() != jobClass) {
-                continue;
-            }
-
-            outputStrategyCumulativeDistribution.addElement(outputStrategy, outputStrategy.getProbability());
-        }
-
-        return this.outputEvents.get(outputStrategyCumulativeDistribution.sample(random));
-    }
-
-    @SuppressWarnings("unchecked")
-    public ArrayList<Pair<SynchedEvent,Double>>  getOutputEvents(JobClass jobClass, Random random) {
-        CumulativeDistribution<OutputStrategy> outputStrategyCumulativeDistribution = new CumulativeDistribution<OutputStrategy>(random);
-
-        if (this.outputStrategies.size() == 0) {
-            throw new RuntimeException("No output strategies found!");
-        }
-
-        for (OutputStrategy outputStrategy : this.outputStrategies) {
-            if (outputStrategy.getDestination() == null) {
-                continue;
-            } else if (outputStrategy.getJobClass() != jobClass) {
-                continue;
-            }
-
-            outputStrategyCumulativeDistribution.addElement(outputStrategy, outputStrategy.getProbability());
-        }
-        ArrayList<Pair<Double,OutputStrategy>> outputStrategies = outputStrategyCumulativeDistribution.getPossibleEventProbability();
-        ArrayList<Pair<SynchedEvent,Double>> outputEvents = new ArrayList<>();
-        for(Pair<Double,OutputStrategy> pair : outputStrategies){
-            outputEvents.add(new Pair(this.outputEvents.get(pair.getRight()),pair.getLeft()));
-        }
-        return outputEvents;
-    }
+//    public SynchedEvent getOutputEvent(JobClass jobClass, Random random) {
+//        CumulativeDistribution<OutputStrategy> outputStrategyCumulativeDistribution = new CumulativeDistribution<OutputStrategy>(random);
+//
+//        if (this.outputStrategies.size() == 0) {
+//            throw new RuntimeException("No output strategies found!");
+//        }
+//
+//        for (OutputStrategy outputStrategy : this.outputStrategies) {
+//            if (outputStrategy.getDestination() == null) {
+//                continue;
+//            } else if (outputStrategy.getJobClass() != jobClass) {
+//                continue;
+//            }
+//
+//            outputStrategyCumulativeDistribution.addElement(outputStrategy, outputStrategy.getProbability());
+//        }
+//
+//        return this.outputEvents.get(outputStrategyCumulativeDistribution.sample(random));
+//    }
 
     @SuppressWarnings("unchecked")
-    public SynchedEvent getOutputEvent(JobClass jobClass) {
-        return this.getOutputEvent(jobClass, new Random());
-    }
+//    public ArrayList<Pair<SynchedEvent,Double>>  getOutputEvents(JobClass jobClass, Random random) {
+//        CumulativeDistribution<OutputStrategy> outputStrategyCumulativeDistribution = new CumulativeDistribution<OutputStrategy>(random);
+//
+//        if (this.outputStrategies.size() == 0) {
+//            throw new RuntimeException("No output strategies found!");
+//        }
+//
+//        for (OutputStrategy outputStrategy : this.outputStrategies) {
+//            if (outputStrategy.getDestination() == null) {
+//                continue;
+//            } else if (outputStrategy.getJobClass() != jobClass) {
+//                continue;
+//            }
+//
+//            outputStrategyCumulativeDistribution.addElement(outputStrategy, outputStrategy.getProbability());
+//        }
+//        ArrayList<Pair<Double,OutputStrategy>> outputStrategies = outputStrategyCumulativeDistribution.getPossibleEventProbability();
+//        ArrayList<Pair<SynchedEvent,Double>> outputEvents = new ArrayList<>();
+//        for(Pair<Double,OutputStrategy> pair : outputStrategies){
+//            outputEvents.add(new Pair(this.outputEvents.get(pair.getRight()),pair.getLeft()));
+//        }
+//        return outputEvents;
+//    }
+
+//    @SuppressWarnings("unchecked")
+//    public SynchedEvent getOutputEvent(JobClass jobClass) {
+//        return this.getOutputEvent(jobClass, new Random());
+//    }
 
     public List<OutputStrategy> getOutputStrategyByClass(JobClass jobClass) {
     	List<OutputStrategy> res = new ArrayList<OutputStrategy>();

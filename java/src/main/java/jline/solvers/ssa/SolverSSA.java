@@ -1,231 +1,634 @@
 package jline.solvers.ssa;
 
 import jline.lang.*;
+import jline.lang.constant.EventType;
+import jline.lang.constant.GlobalConstants;
+import jline.lang.constant.NodeType;
 import jline.lang.constant.SolverType;
-import jline.lang.nodes.Node;
 import jline.lang.nodes.StatefulNode;
+import jline.lang.nodes.Station;
+import jline.lang.state.EventResult;
+import jline.lang.state.State;
+import jline.examples.ClosedModel;
 import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
-import jline.solvers.SolverResult;
-import jline.solvers.ssa.events.DepartureEvent;
-import jline.solvers.ssa.events.Event;
-import jline.solvers.ssa.metrics.Metrics;
-import jline.solvers.ssa.state.SSAStateMatrix;
-import jline.solvers.ssa.strategies.TauLeapingStateStrategy;
-import jline.solvers.ssa.strategies.TauLeapingType;
+import jline.util.Maths;
 import jline.util.Matrix;
-//import jline.util.JLineAPI;
+import jline.util.UniqueRowResult;
 
-import java.util.*;
+import javax.xml.parsers.ParserConfigurationException;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import static java.util.stream.Collectors.toMap;
 
 public class SolverSSA extends NetworkSolver {
 
-    public double timeout;
-
-    // transient filtering
-    public boolean useMSER5;
-    public boolean useR5;
-    public int R5value;
-
-    // metrics configurations
-    public boolean recordMetricTimeline;
-    public boolean disableResTime;
-    public boolean disableTransientState;
-    public EventStack eventStack;
 
     public SolverSSA(Network model) {
+        // If no options provided, use default options
         this(model, new SolverOptions(SolverType.SSA));
     }
 
     public SolverSSA(Network model, SolverOptions options) {
         super(model, "SolverSSA", options);
-
-        this.model = model;
-        this.sn = model.getStruct(true);
-
-        this.disableResTime = false;
-        this.timeout = Double.POSITIVE_INFINITY;
-        this.useMSER5 = false;
-        this.useR5 = false;
-        this.R5value = 19;
-        this.recordMetricTimeline = true;
-        this.disableTransientState = false;
     }
 
-    private void initEventStack() {
-        // loop through each node and add active events to the eventStack
-        ListIterator<Node> nodeIter = this.model.getNodes().listIterator();
-        int nodeIdx = -1;
-        while (nodeIter.hasNext()) {
-            Node node = nodeIter.next();
-            if (!(node instanceof StatefulNode)) {
-                continue;
+    public static void main(String[] args) {
+
+        Network sn = ClosedModel.ex4_line();
+
+        // these are being doing here because ordinarily done in runAnalyzer but not implemented yet
+        Map<StatefulNode, Matrix> state = sn.getStruct(true).state;
+        sn.getStruct(true).space = new HashMap<>();
+        // copy entries in state into space
+        for (int i = 0; i < state.size(); i++) {
+            sn.getStruct(true).space.put(sn.getStruct(true).stations.get(i), state.get(sn.getStruct(true).stateful.get(i)));
+        }
+
+        SolverSSA solverSSA = new SolverSSA(sn);
+        solverSSA.options.samples++;
+        // Record the start time
+        long startTime = System.nanoTime();
+        SSAResult result = solverSSA.solver_ssa();
+        long endTime = System.nanoTime();
+        long elapsedTimeSec = (endTime - startTime) / 1_000_000_000; // Convert nanoseconds to sec
+        System.out.println("Elapsed Time: " + elapsedTimeSec+ " seconds");
+        System.out.println("pi");
+        System.out.println(result.pi);
+        System.out.println(result.pi.getNumElements());
+//        System.out.println("arvRates");
+//        System.out.println(result.arvRates);
+//        System.out.println("depRates");
+//        System.out.println(result.depRates);
+//        System.out.println("SSq");
+//        System.out.println(result.SSq);
+//        System.out.println("tranSync");
+//        System.out.println(result.tranSync);
+//        System.out.println("tranSysState");
+//        System.out.println(result.tranSysState);
+
+    }
+
+
+    public SSAResult solver_ssa() {
+        NetworkStruct sn = this.sn;
+        SolverOptions options = this.options;
+
+        // TODO: if cases for seed and labindex
+        options.seed = 23000;
+//        int labindex = 1;
+
+
+        this.resetRandomGeneratorSeed(options.seed);
+
+        // generate local state spaces
+
+        int nstateful = sn.nstateful;
+        int R = sn.nclasses;
+        Matrix N = sn.njobs.transpose();
+        Map<Integer, Sync> sync = sn.sync;
+        Matrix csmask = sn.csmask;
+
+        double cutoff_value = options.cutoff;
+
+        Matrix cutoff = new Matrix(sn.nstations, sn.nclasses);
+        cutoff.fill(cutoff_value);
+
+        Matrix Np = N.transpose();
+        Matrix capacityc = new Matrix(sn.nnodes, sn.nclasses);
+        capacityc.zero();
+
+        for (int ind = 0; ind < sn.nnodes; ind++) {
+            if (sn.isstation.get(ind) == 1) {
+                int ist = (int) sn.nodeToStation.get(ind);
+                for (int r = 0; r < sn.nclasses; r++) {
+                    int c = 0;
+                    for (int i = 0; i < sn.chains.getNumRows(); i++) {
+                        if (sn.chains.get(i, r) == 1) {
+                            c = i;
+                        }
+                    }
+
+                    Matrix proc_m = sn.proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(r)).get(0);
+                    boolean disabled = false;
+                    for (int row = 0; row < proc_m.getNumRows(); row++) {
+                        for (int col = 0; col < proc_m.getNumCols(); col++) {
+                            if (Double.isNaN(proc_m.get(row, col))) {
+                                disabled = true;
+                            }
+                        }
+                    }
+
+                    if (!sn.visits.get(c).isEmpty() && sn.visits.get(c).get(ist, r) == 0) {
+                        capacityc.set(ind, r, 0);
+                    } else if (!sn.proc.isEmpty() && !sn.proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(r)).isEmpty() && disabled) {
+                        capacityc.set(ind, r, 0);
+                    } else {
+                        if (N.get(r) == Double.POSITIVE_INFINITY) {
+                            capacityc.set(ind,r, Maths.min(cutoff.get(ist,r), sn.classcap.get(ist,r)));
+                        } else {
+                            // sum values in sn,njobs at indices where the c-th row of sn.chains is true
+                            int njobs_sum = 0;
+                            for (int i = 0 ; i < sn.njobs.getNumCols(); i++) {
+                                if (sn.chains.get(c, i) == 1) {
+                                    njobs_sum += (int) sn.njobs.get(i);
+                                }
+                            }
+                            capacityc.set(ind,r, njobs_sum);
+                        }
+                    }
+                }
+                int capacity_sum = (int) capacityc.sumRows().get(ind);
+                if (sn.nservers.get(ist) == Double.POSITIVE_INFINITY) {
+                    sn.nservers.set(ist, capacity_sum);
+                }
+                for (int col = 0; col < sn.cap.getNumCols(); col++) {
+                    sn.cap.set(ist, col, capacity_sum);
+                }
+                for (int col = 0; col < sn.classcap.getNumCols(); col++) {
+                    sn.classcap.set(ist, col, capacityc.get(ind, col));
+                }
+
             }
+        }
 
-            nodeIdx++;
-            Iterator<JobClass> jobClassIter = this.model.getClasses().listIterator();
+        if (State.isinf(Np)) {
+            // set all elements of Np where theyre Ifinity to 0
+            for (int col = 0; col < Np.getNumCols(); col++) {
+                if (Np.get(0, col) == Double.POSITIVE_INFINITY) {
+                    Np.set(0, col, 0);
+                }
+            }
+        }
 
-            while (jobClassIter.hasNext()) {
-                JobClass jobClass = jobClassIter.next();
-                int jobClassIdx = jobClass.getJobClassIdx();
-//                if (network.getClassLinks(node, jobClass) == 0) {
-//                    this.simStruct.classcap[nodeIdx][jobClassIdx] = 0;
-//                } else {
-//                    double jobCap = jobClass.getNumberOfJobs();
-//                    jobCap = Math.min(jobCap, node.getClassCap(jobClass));
-//                    if ((jobCap == Double.POSITIVE_INFINITY) || (node.getDropStrategy() == DropStrategy.WaitingQueue)) {
-//                        this.simStruct.classcap[nodeIdx][jobClassIdx] = Integer.MAX_VALUE;
-//                    } else {
-//                        this.simStruct.classcap[nodeIdx][jobClassIdx] = (int) jobCap;
-//                    }
-//                }
-                Event dEvent = DepartureEvent.fromNodeAndClass(node, jobClass);
-                this.eventStack.addEvent(dEvent);
-                if (dEvent instanceof DepartureEvent) {
-                    if (((DepartureEvent) dEvent).getPhaseEvent() != null) {
-                        this.eventStack.addEvent(((DepartureEvent) dEvent).getPhaseEvent());
+        Matrix init_state_hashed = new Matrix(1, nstateful);
+        init_state_hashed.zero(); // pick first state in space{i}
+
+        Map<Integer, Matrix> arvRatesSamples = new HashMap<>();
+        Map<Integer, Matrix> depRatesSamples = new HashMap<>();
+        for (int r = 0; r < R; r++) {
+            Matrix m = new Matrix(options.samples, nstateful);
+            m.zero();
+            arvRatesSamples.put(r, m);
+            depRatesSamples.put(r, m.clone());
+        }
+        int A = sync.size();
+        int samples_collected = 1;
+        Matrix state = init_state_hashed.clone();
+        Map<Integer, Matrix> stateCell = new HashMap<>();
+        Map<Integer, Matrix> nir = new HashMap<>();
+
+        for (int ind = 0; ind < sn.nnodes; ind++) {
+            if (sn.isstateful.get(ind) == 1) {
+                int isf = (int) sn.nodeToStateful.get(ind);
+                Matrix state_space =  Matrix.extractRows(sn.space.get(sn.stations.get(isf)), (int) state.get(isf),
+                        (int) state.get(isf) + 1, null);
+                stateCell.put(isf, state_space);
+
+                if (sn.isstation.get(ind) == 1) {
+                    int ist = (int) sn.nodeToStation.get(ind);
+                    // transpose to get nir as column i
+                    nir.put(ist, State.toMarginal(sn, ind, state_space, null, null,
+                            null, null, null).nir.transpose());
+                }
+            }
+        }
+
+
+        state = new Matrix(0,0);
+        Matrix statelen = new Matrix(stateCell.size(), 1);
+        for (int ind = 0; ind < stateCell.size(); ind++) {
+            if (stateCell.containsKey(ind)) {
+                Matrix row = stateCell.get(ind);
+                if (state.isEmpty()) {
+                    state = row;
+                } else {
+                    state = Matrix.concatColumns(state, row, null);
+                }
+                statelen.set(ind, row.getNumElements());
+            } else {
+                statelen.set(ind, 0);
+            }
+        }
+
+        Matrix tranSync = new Matrix(samples_collected, 1);
+        tranSync.zero();
+        Matrix z = new Matrix(1,1);
+        z.zero();
+        Matrix tranState = Matrix.concatColumns(z, state, null).transpose();
+        samples_collected = 1;
+
+        Matrix SSq = new Matrix(0, 0);
+        for (int ind = 0; ind < nir.size(); ind++) {
+            // TODO: does this need a containsKey check?
+            Matrix col = nir.get(ind);
+            if (SSq.isEmpty()) {
+                SSq = col;
+            } else {
+                SSq = Matrix.concatRows(SSq, col, null);
+            }
+        }
+        int local = sn.nnodes;
+
+        Map<Integer, Integer> node_a = new HashMap<>();
+        Map<Integer, Integer> node_p = new HashMap<>();
+        Map<Integer, Integer> class_a = new HashMap<>();
+        Map<Integer, Integer> class_p = new HashMap<>();
+        Map<Integer, EventType> event_a = new HashMap<>();
+        Map<Integer, EventType> event_p = new HashMap<>();
+        Map<Integer, Double> outprob_a = new HashMap<>();
+        Map<Integer, Double> outprob_p = new HashMap<>();
+        for (int act = 0; act < A; act++) {
+            NetworkEvent active = sync.get(act).active.get(0);
+            NetworkEvent passive = sync.get(act).passive.get(0);
+            node_a.put(act, active.getNodeIdx());
+            node_p.put(act, passive.getNodeIdx());
+            class_a.put(act, active.getJobclassIdx());
+            class_p.put(act, passive.getJobclassIdx());
+            event_a.put(act, active.getEvent());
+            event_p.put(act, passive.getEvent());
+        }
+
+        Map<Integer, Map<Integer, Matrix>> newStateCell = new HashMap<>();
+        boolean isSimulation = true; // allow state vector to grow, e.g., for FCFS buffers
+        double cur_time = 0;
+        // TODO: choose appropriate starting value
+        Map<Integer, Double> enabled_rates = new HashMap<>();
+        Map<Integer, Integer> enabled_sync = new HashMap<>();
+        Map<Integer, Matrix> stateCell_1 = new HashMap<>();
+        while (samples_collected < 10000 && cur_time <= options.timespan[1]) {
+            if (samples_collected % 100 == 0) {
+                System.out.println("SSA simulation: " + samples_collected + " samples collected");
+            }
+            int ctr = 1;
+            Map<Integer, Integer> node_a_sf = new HashMap<>();
+            Map<Integer, Integer> node_p_sf = new HashMap<>();
+            Map<Integer, Double> prob_sync_p = new HashMap<>();
+            enabled_rates.clear();
+            enabled_sync.clear();
+
+            for (int act = 0; act < A; act++) {
+                Map<Integer, Matrix> rate_a = new HashMap<>();
+                newStateCell.put(act, stateCell.entrySet().stream().collect(toMap(Map.Entry::getKey, e -> e.getValue().clone())));
+                {
+                    int isf = (int) sn.nodeToStateful.get(node_a.get(act));
+                    EventResult eventResult = State.afterEvent(sn, node_a.get(act),
+                            stateCell.get(isf), event_a.get(act), class_a.get(act), isSimulation);
+                    if (!eventResult.outspace.isEmpty()) {
+                        newStateCell.get(act).put((int) sn.nodeToStateful.get(node_a.get(act)), eventResult.outspace);
+                    } else {
+                        newStateCell.get(act).remove((int) sn.nodeToStateful.get(node_a.get(act)));
+                    }
+                    if (!eventResult.outrate.isEmpty()) {
+                        rate_a.put(act, eventResult.outrate);
+                    } else {
+                        rate_a.remove(act);
+                    }
+                    if (!eventResult.outprob.isEmpty()) {
+                        outprob_a.put(act, eventResult.outprob.toDouble());
+                    } else {
+                        outprob_a.remove(act);
+                    }
+                }
+
+                if (!newStateCell.get(act).containsKey((int) sn.nodeToStateful.get(node_a.get(act))) || !rate_a.containsKey(act)) {
+                    continue;
+                }
+
+                for (int ia = 0; ia < newStateCell.get(act).
+                        get((int) sn.nodeToStateful.get(node_a.get(act))).getNumRows(); ia++) {
+                    if (Double.isNaN(rate_a.get(act).get(ia)) || rate_a.get(act).get(ia) == 0) {
+                        // handling degenerate rate values
+                        rate_a.get(act).set(ia, GlobalConstants.Zero);
+                    }
+
+                    Matrix hash_check = newStateCell.get(act).get((int) sn.nodeToStateful.get(node_a.get(act)));
+                    boolean hash_found = false;
+                    for (int col = 0; col < hash_check.getNumCols(); col++) {
+                        if (hash_check.get(ia, col) != -1) {
+                            hash_found = true;
+                            break;
+                        }
+                    }
+
+                    if (!hash_found) {
+                        continue;
+                    }
+
+                    boolean update_cond = true;
+                    if (rate_a.get(act).get(ia) > 0) {
+                        if (node_p.get(act) != local) {
+                            if (node_p.get(act).equals(node_a.get(act))) {
+                                // self-loop
+                                EventResult eventResult = State.afterEvent(sn, node_p.get(act),
+                                        newStateCell.get(act).get((int) sn.nodeToStateful.get(node_a.get(act))),
+                                        event_p.get(act), class_p.get(act), isSimulation);
+                                if (!eventResult.outspace.isEmpty()) {
+                                    newStateCell.get(act).put((int) sn.nodeToStateful.get(node_p.get(act)), eventResult.outspace);
+                                } else {
+                                    newStateCell.get(act).remove((int) sn.nodeToStateful.get(node_p.get(act)));
+                                }
+                                if (!eventResult.outprob.isEmpty()) {
+                                    outprob_p.put(act, eventResult.outprob.toDouble());
+                                } else {
+                                    outprob_p.remove(act);
+                                }
+
+                            } else {
+                                // departure
+                                EventResult eventResult = State.afterEvent(sn, node_p.get(act),
+                                        newStateCell.get(act).get((int) sn.nodeToStateful.get(node_p.get(act))),
+                                        event_p.get(act), class_p.get(act), isSimulation);
+
+                                if (!eventResult.outspace.isEmpty()) {
+                                    newStateCell.get(act).put((int) sn.nodeToStateful.get(node_p.get(act)), eventResult.outspace);
+                                } else {
+                                    newStateCell.get(act).remove((int) sn.nodeToStateful.get(node_p.get(act)));
+                                }
+                                if (!eventResult.outprob.isEmpty()) {
+                                    outprob_p.put(act, eventResult.outprob.toDouble());
+                                } else {
+                                    outprob_p.remove(act);
+                                }
+                            }
+
+                            if (newStateCell.get(act).containsKey((int) sn.nodeToStateful.get(node_p.get(act)))) {
+                                if (sn.isstatedep.get(node_p.get(act)) == 1) {
+                                    // TODO: line 159 MATLAB
+                                    throw new RuntimeException("UNIMPLEMENTED CASE");
+                                } else {
+                                    prob_sync_p.put(act, sync.get(act).passive.get(0).getProb());
+                                }
+                            } else {
+                                prob_sync_p.put(act, 0.0);
+                            }
+                        }
+                        if (newStateCell.get(act).containsKey((int) sn.nodeToStateful.get(node_a.get(act)))) {
+                            if (node_p.get(act) == local) {
+                                prob_sync_p.put(act, 1.0);
+                            }
+                            if (!Double.isNaN(rate_a.get(act).toDouble())) {
+                                if (!newStateCell.get(act).isEmpty()) {
+                                    if (event_a.get(act) == EventType.DEP) {
+                                        node_a_sf.put(act, (int) sn.nodeToStateful.get(node_a.get(act)));
+                                        node_p_sf.put(act, (int) sn.nodeToStateful.get(node_p.get(act)));
+
+                                        Matrix original_departure = depRatesSamples.get(class_a.get(act));
+                                        Matrix original_arrival = arvRatesSamples.get(class_p.get(act));
+
+                                        double added_value = outprob_a.get(act) * outprob_p.get(act) * rate_a.get(act).get(ia)
+                                                * prob_sync_p.get(act);
+
+                                        int a_sf_act = node_a_sf.get(act);
+                                        int p_sf_act = node_p_sf.get(act);
+
+                                        double dep_value = original_departure.get(samples_collected - 1, a_sf_act)
+                                                + added_value;
+                                        double arv_val = original_arrival.get(samples_collected - 1, p_sf_act)
+                                                + added_value;
+
+                                        original_departure.set(samples_collected - 1, a_sf_act, dep_value);
+                                        original_arrival.set(samples_collected - 1, p_sf_act, arv_val);
+
+                                    }
+                                    if (node_p.get(act) < local && csmask.get(class_a.get(act), class_p.get(act)) != 1
+                                            && sn.nodetypes.get(node_p.get(act)) != NodeType.Source &&
+                                            (rate_a.get(act).get(ia) * prob_sync_p.get(act) > 0)) {
+                                        // TODO: appropriate exception here
+                                        throw new RuntimeException("UNIMPLEMENTED");
+                                    }
+
+                                    enabled_rates.put(ctr-1, rate_a.get(act).get(ia) * prob_sync_p.get(act));
+                                    // TODO: put act+1?
+                                    enabled_sync.put(ctr-1, act);
+                                    ctr++;
+                                }
+                            }
+                        }
                     }
                 }
             }
 
-//            double nodeCap = node.getCap();
-//            if (nodeCap == Double.POSITIVE_INFINITY) {
-//                this.simStruct.cap[nodeIdx] = Integer.MAX_VALUE;
-//            } else {
-//                this.simStruct.cap[nodeIdx] = (int) nodeCap;
-//            }
+            Matrix enabled_rates_m = new Matrix(1, enabled_rates.size());
+            for (int i = 0; i < enabled_rates.size(); i++) {
+                enabled_rates_m.set(0, i, enabled_rates.get(i));
+            }
+            double tot_rate = enabled_rates_m.elementSum();
+            Matrix cum_sum = enabled_rates_m.cumsumViaRow();
+            Matrix cum_rate = Matrix.scale_mult(cum_sum, 1 / tot_rate);
+            // TODO: change to Math.random()
+
+            double rand = 0.5;// Math.random();
+            int firing_ctr = -1;
+            for (int i = 0; i < cum_rate.getNumElements(); i++) {
+                if (rand > cum_rate.get(i)) {
+                    firing_ctr = i;
+                } else {
+                    break;
+                }
+            }
+            firing_ctr++;
+            if (enabled_sync.isEmpty()) {
+                throw new RuntimeException("SSA simulation entered a deadlock before collecting all samples, " +
+                        "no synchronization is enabled.");
+            }
+
+            // this part is needed to ensure that when the state vector grows the padding of zero is done on the left
+
+            for (int ind = 0; ind < sn.nnodes; ind++) {
+                if (sn.isstation.get(ind) == 1) {
+                    int isf = (int) sn.nodeToStateful.get(ind);
+                    boolean deltalen = (stateCell.get(isf).getNumElements() > statelen.get(isf));
+                    if (deltalen) {
+                        statelen.set(isf, stateCell.get(isf).getNumElements());
+                        // padding
+                        int shift = 0;
+                        if (ind > 0) {
+                            for (int col = 0; col < isf; col++) {
+                                shift += (int) statelen.get(col);
+                            }
+                        }
+                        Matrix pad = new Matrix(1, tranState.getNumCols());
+
+                        Matrix top = Matrix.extractRows(tranState, 0, shift + 1, null);
+                        Matrix bottom = Matrix.extractRows(tranState, shift + 1, tranState.getNumRows(), null);
+                        Matrix tmp = Matrix.concatRows(top, pad, null);
+                        tranState = Matrix.concatRows(tmp, bottom, null);
+                    }
+                }
+            }
+
+            state = new Matrix(0, 0);
+            for (int ind = 0; ind < sn.nnodes; ind++) {
+                if (stateCell.containsKey(ind)) {
+                    Matrix row = stateCell.get(ind);
+                    if (state.isEmpty()) {
+                        state = row;
+                    } else {
+                        state = Matrix.concatColumns(state, row, null);
+                    }
+                }
+            }
+//             TODO: change to Math.random()
+            double dt = -(Math.log(0.4) / tot_rate);
+            cur_time += dt;
+
+            Matrix dt_m = new Matrix(1, 1);
+            dt_m.set(0,0,dt);
+            Matrix newTranState = Matrix.concatColumns(dt_m, state, null);
+            // add new column to tranState if needed
+            if (samples_collected - 1 >= tranState.getNumCols()) {
+                Matrix tranState_new_col = new Matrix(tranState.getNumRows(), 1);
+                tranState_new_col.zero();
+                tranState = Matrix.concatColumns(tranState, tranState_new_col, null);
+            }
+            for (int row = 0; row < state.getNumElements() + 1; row++) {
+                tranState.set(row, samples_collected - 1, newTranState.get(row));
+            }
+
+            // add new row to tranSync if needed
+            if (samples_collected - 1 >= tranSync.getNumRows()) {
+                Matrix tranSync_new_row = new Matrix(1, tranSync.getNumCols());
+                tranSync_new_row.zero();
+                tranSync = Matrix.concatRows(tranSync, tranSync_new_row, null);
+            }
+            // TODO: is this +1 needed? added to make value in tranSync align with LINE always
+            tranSync.set(samples_collected - 1, 0, enabled_sync.get(firing_ctr) + 1);
+
+            for (int ind = 0; ind < sn.nnodes; ind++) {
+                if (sn.isstation.get(ind) == 1) {
+                    int isf = (int) sn.nodeToStateful.get(ind);
+                    int ist = (int) sn.nodeToStation.get(ind);
+                    nir.put(ist, State.toMarginal(sn, ind, stateCell.get(isf), null, null, null, null, null).nir.transpose());
+                }
+            }
+
+            // make one big column from all the nir matrices
+            Matrix nir_col = new Matrix(0, 0);
+            for (int ind = 0; ind < sn.nnodes; ind++) {
+                if (nir.containsKey(ind)) {
+                    Matrix col = nir.get(ind);
+                    if (nir_col.isEmpty()) {
+                        nir_col = col;
+                    } else {
+                        nir_col = Matrix.concatRows(nir_col, col, null);
+                    }
+                }
+            }
+            // assign nir_col to samples_collected column of SSq
+            // add new column to SSq
+            if (samples_collected - 1 >= SSq.getNumCols()) {
+                Matrix SSq_new_col = new Matrix(SSq.getNumRows(), 1);
+                SSq_new_col.zero();
+                SSq = Matrix.concatColumns(SSq, SSq_new_col, null);
+            }
+            for (int row = 0; row < nir_col.getNumRows(); row++) {
+                int col = samples_collected - 1;
+                SSq.set(row, col, nir_col.get(row));
+            }
+            samples_collected++;
+
+            stateCell_1 =
+                    stateCell.entrySet().stream().collect(toMap(Map.Entry::getKey, e -> e.getValue().clone()));
+            stateCell = newStateCell.get(enabled_sync.get(firing_ctr));
+
+            // TODO: verbosity-based prints, lines 246-262 MATLAB
         }
-    }
 
-    public void runAnalyzer() throws IllegalAccessException {
-        if (this.sn == null) {
-            this.sn = this.model.getStruct(true);
+        tranState = tranState.transpose();
+
+        UniqueRowResult uniqueRows = Matrix.uniqueRows(Matrix.extract(tranState, 0, tranState.getNumRows(),
+                1, tranState.getNumCols()));
+        Matrix u = uniqueRows.sortedMatrix;
+        Matrix ui = uniqueRows.vi;
+        Map<Integer, List<Integer>> uj = uniqueRows.vj;
+        System.out.println("6");
+
+        Matrix statesz = new Matrix(1, stateCell_1.size());
+        for (int i = 0; i < statesz.getNumElements(); i++) {
+            statesz.set(i, stateCell_1.get(i).getNumElements());
         }
+        Map<Integer, Matrix> tranSysState = new HashMap<>();
+        System.out.println("7");
 
-        this.random = new Random(this.options.seed);
-        int samplesCollected = 1;
-        int maxSamples = options.samples;
-        double curTime = options.timespan[0];
-        double maxTime = options.timespan[1];
 
-        // Add ClosedClass instances to the reference station
-        SSAStateMatrix networkState = new SSAStateMatrix(this.sn, this.random);
-        for (JobClass jobClass : this.model.getClasses()) {
-            if (jobClass instanceof ClosedClass) {
-                int classIdx = this.model.getJobClassIndex(jobClass);
-                ClosedClass cClass = (ClosedClass) jobClass;
-                int stationIdx = this.model.getStatefulNodeIndex(cClass.getRefstat());
-                networkState.setState(stationIdx, classIdx, (int) cClass.getPopulation());
-                for (int i = 0; i < cClass.getPopulation(); i++) {
-                    networkState.addToBuffer(stationIdx, classIdx);
+
+        tranSysState.put(0, Matrix.extractColumn(tranState, 0, null).cumsumViaCol());
+        System.out.println("7a");
+        for (int j = 0; j < statesz.getNumElements(); j++) {
+            int start_index = 0;
+            for (int i = 0; i <= j - 1; i++) {
+                start_index += (int) statesz.get(i);
+
+            }
+            start_index++;
+            int end_index = (int) (start_index + statesz.get(j));
+            Matrix tmp = Matrix.extract(tranState, 0, tranState.getNumRows(), start_index, end_index);
+            tranSysState.put(j+1, tmp);
+        }
+        System.out.println("7b");
+
+        Map<Integer, Matrix> arvRates = new HashMap<>();
+        Map<Integer, Matrix> depRates = new HashMap<>();
+        for (int i = 0; i < R; i++) {
+            Matrix rate = new Matrix(u.getNumRows(), sn.nstateful);
+            arvRates.put(i, rate);
+            depRates.put(i, rate.clone());
+        }
+        System.out.println("8a");
+        Matrix pi = new Matrix(1, u.getNumRows());
+        for (int s = 0; s < u.getNumRows(); s++) {
+            // sum elements in tranState_first where uj == s
+            double sum = 0;
+            for (Integer i : uj.get(s)) {
+                sum += tranState.get(i, 0);
+            }
+
+            pi.set(s, sum);
+        }
+        System.out.println("8");
+
+        // extract columns of SSq using ui as indices
+        Matrix SSq_new = new Matrix(0,0);
+        for (int col_ind = 0; col_ind < ui.getNumElements(); col_ind++) {
+            int col = (int) ui.get(col_ind);
+            Matrix row = Matrix.extractColumn(SSq, col, null);
+            if (SSq_new.isEmpty()) {
+                SSq_new = row;
+            } else {
+                SSq_new = Matrix.concatColumns(SSq_new, row, null);
+            }
+        }
+        SSq = SSq_new.clone().transpose();
+        for (int ind = 0; ind < sn.nnodes; ind++) {
+            if (sn.isstateful.get(ind) == 1) {
+                int isf = (int) sn.nodeToStateful.get(ind);
+                for (int s = 0; s < u.getNumRows(); s++) {
+                    for (int r = 0; r < R; r++) {
+                        arvRates.get(r).set(s, isf, arvRatesSamples.get(r).get((int) ui.get(s), isf));
+                        arvRates.put(r, arvRates.get(r));
+                        depRates.get(r).set(s, isf, depRatesSamples.get(r).get((int) ui.get(s), isf));
+                        depRates.put(r, depRates.get(r));
+
+                    }
                 }
             }
         }
-
-        if (this.options.config.tau_leaping == null) {
-            this.eventStack = new EventStack();
-        } else {
-            this.eventStack = new TauLeapEventStack();
-
-        }
-
-        initEventStack();
-
-        Timeline ssarunner = new Timeline(this.sn, this.options.seed);
-
-        if (this.disableResTime) {
-            ssarunner.disableResidenceTime();
-        }
-
-        if (this.disableTransientState) {
-            ssarunner.disableTransientState();
-        }
-
-        if (this.useMSER5) {
-            ssarunner.useMSER5();
-        } else if (this.useR5) {
-            ssarunner.useR5(this.R5value);
-        }
-
-        if (!this.recordMetricTimeline) {
-            ssarunner.setMetricRecord(false);
-        }
-
-        if (this.options.config.tau_leaping != null) {
-            TauLeapingType tauLeapingType = new TauLeapingType(this.options.config.tau_leaping.var_type,
-                    this.options.config.tau_leaping.order_strategy,
-                    this.options.config.tau_leaping.state_strategy,
-                    this.options.config.tau_leaping.tau);
-
-            ((TauLeapEventStack) this.eventStack).configureTauLeap(tauLeapingType);
-            if ((tauLeapingType.getStateStrategy() == TauLeapingStateStrategy.TimeWarp) ||
-                    (tauLeapingType.getStateStrategy() == TauLeapingStateStrategy.TauTimeWarp)) {
-                ssarunner.cacheRecordings();
-            }
-        }
-
-        double sysTime = 0;
-        double startTime = System.currentTimeMillis();
-
-        boolean isSteadyState;
-
-        // collect samples and update states
-        while ((samplesCollected < maxSamples) && (curTime < maxTime) && (sysTime < this.timeout)) {
-            isSteadyState = curTime < this.options.timespan[1];
-
-            if (this.options.config.tau_leaping != null) {
-                curTime = ((TauLeapEventStack) this.eventStack).tauLeapUpdate(networkState, ssarunner, curTime, random);
-            } else {
-                curTime = this.eventStack.updateState(networkState, ssarunner, curTime, random);
-            }
-
-            if (isSteadyState && (curTime > this.options.timespan[1])) {
-                ssarunner.resetHistory();
-            }
-            samplesCollected++;
-            sysTime = (System.currentTimeMillis() - startTime) / 1000.0;
-
-        }
-
-        ssarunner.finalizeMetrics(curTime);
-
-        this.result = new SolverResult();
-
-        int M = this.sn.nstateful;
-        int K = this.sn.nclasses;
-
-        this.result.UN = new Matrix(M, K);
-        this.result.QN = new Matrix(M, K);
-        this.result.RN = new Matrix(M, K);
-        this.result.TN = new Matrix(M, K);
-        this.result.AN = new Matrix(M, K);
-        this.result.WN = new Matrix(M, K);
-        this.result.XN = new Matrix(1, K);
-        this.result.CN = new Matrix(1, K);
-
-        for (int i = 0; i < M; i++) {
-            for (int r = 0; r < K; r++) {
-                Metrics metrics = ssarunner.getMetrics(i, r);
-                this.result.QN.set(i, r, metrics.getMetricValueByName("Queue Length"));
-                this.result.UN.set(i, r, metrics.getMetricValueByName("Utilization"));
-                this.result.TN.set(i, r, metrics.getMetricValueByName("Throughput"));
-                this.result.RN.set(i, r, metrics.getMetricValueByName("Response Time"));
-            }
-        }
+        pi = Matrix.scale_mult(pi, 1/pi.elementSum());
+        return new SSAResult(pi, SSq, arvRates, depRates, tranSysState, tranSync, sn);
     }
 
-    public void enableMSER5() {
-        this.useMSER5 = true;
-        this.useR5 = false;
-    }
 
-    public void enableR5(int k) {
-        this.useR5 = true;
-        this.useMSER5 = false;
-        this.R5value = k;
-    }
 
-    public static SolverOptions defaultOptions() {
-        return new SolverOptions(SolverType.SSA);
+
+
+
+    @Override
+    protected void runAnalyzer() throws IllegalAccessException, ParserConfigurationException, IOException {
+
     }
 }

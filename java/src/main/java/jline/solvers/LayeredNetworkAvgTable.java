@@ -8,15 +8,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-public class LayeredNetworkAvgTable {
-
-    SolverOptions options;
-    ArrayList<List<Double>> T;
+public class LayeredNetworkAvgTable extends AvgTable {
     List<String> nodeNames;
     List<String> nodeTypes;
 
     public LayeredNetworkAvgTable(List<Double> Qval, List<Double> Uval, List<Double> Rval, List<Double> Residval, List<Double> Tval) {
-        this.T = new ArrayList<>(Arrays.asList(Qval, Uval, Rval, Residval, Tval));
+        super(new ArrayList<>(Arrays.asList(Qval, Uval, Rval, Residval, Tval)));
     }
 
     public java.util.List<String> getNodeNames() {

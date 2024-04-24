@@ -45,7 +45,7 @@ for r=1:numOfClasses
             distrParNode = simDoc.createElement('subParameter');
             distrParNode.setAttribute('classPath', 'jmt.engine.random.PhaseTypePar');
             distrParNode.setAttribute('name', 'distrPar');
-            
+
             subParNodeAlpha = simDoc.createElement('subParameter');
             subParNodeAlpha.setAttribute('array', 'true');
             subParNodeAlpha.setAttribute('classPath', 'java.lang.Object');
@@ -65,7 +65,7 @@ for r=1:numOfClasses
                 subParNodeAlphaElem.appendChild(subParValue);
                 subParNodeAlphaVec.appendChild(subParNodeAlphaElem);
             end
-            
+
             subParNodeT = simDoc.createElement('subParameter');
             subParNodeT.setAttribute('array', 'true');
             subParNodeT.setAttribute('classPath', 'java.lang.Object');
@@ -97,8 +97,53 @@ for r=1:numOfClasses
             distrParNode.appendChild(subParNodeT);
             serviceTimeStrategyNode.appendChild(distributionNode);
             serviceTimeStrategyNode.appendChild(distrParNode);
+        elseif sn.procid(i,r) == ProcessType.ID_MMPP2
+            distributionNode = simDoc.createElement('subParameter');
+            distributionNode.setAttribute('classPath', 'jmt.engine.random.MMPP2Distr');
+            distributionNode.setAttribute('name', 'Burst (MMPP2)');
+            distrParNode = simDoc.createElement('subParameter');
+            distrParNode.setAttribute('classPath', 'jmt.engine.random.MMPP2Par');
+            distrParNode.setAttribute('name', 'distrPar');
 
-        elseif sn.procid(i,r) == ProcessType.ID_MAP || sn.procid(i,r) == ProcessType.ID_MMPP2
+            MAP = sn.proc{i}{r};
+            D0 = MAP{1};
+            D1 = MAP{2};
+
+            subParNode_lambda0 = simDoc.createElement('subParameter');
+            subParNode_lambda0.setAttribute('classPath', 'java.lang.Double');
+            subParNode_lambda0.setAttribute('name', 'lambda0');            
+            subParValue_lambda0 = simDoc.createElement('value');
+            subParValue_lambda0.appendChild(simDoc.createTextNode(sprintf('%.12f',D1(1,1))));
+            subParNode_lambda0.appendChild(subParValue_lambda0);
+            distrParNode.appendChild(subParNode_lambda0);
+
+            subParNode_lambda1 = simDoc.createElement('subParameter');
+            subParNode_lambda1.setAttribute('classPath', 'java.lang.Double');
+            subParNode_lambda1.setAttribute('name', 'lambda1');            
+            subParValue_lambda1 = simDoc.createElement('value');
+            subParValue_lambda1.appendChild(simDoc.createTextNode(sprintf('%.12f',D1(2,2))));
+            subParNode_lambda1.appendChild(subParValue_lambda1);
+            distrParNode.appendChild(subParNode_lambda1);            
+
+            subParNode_sigma0 = simDoc.createElement('subParameter');
+            subParNode_sigma0.setAttribute('classPath', 'java.lang.Double');
+            subParNode_sigma0.setAttribute('name', 'sigma0');            
+            subParValue_sigma0 = simDoc.createElement('value');
+            subParValue_sigma0.appendChild(simDoc.createTextNode(sprintf('%.12f',D0(1,2))));
+            subParNode_sigma0.appendChild(subParValue_sigma0);
+            distrParNode.appendChild(subParNode_sigma0);
+
+            subParNode_sigma1 = simDoc.createElement('subParameter');
+            subParNode_sigma1.setAttribute('classPath', 'java.lang.Double');
+            subParNode_sigma1.setAttribute('name', 'sigma1');
+            subParValue_sigma1 = simDoc.createElement('value');
+            subParValue_sigma1.appendChild(simDoc.createTextNode(sprintf('%.12f',D0(2,1))));
+            subParNode_sigma1.appendChild(subParValue_sigma1);
+            distrParNode.appendChild(subParNode_sigma1);
+
+            serviceTimeStrategyNode.appendChild(distributionNode);
+            serviceTimeStrategyNode.appendChild(distrParNode);
+        elseif sn.procid(i,r) == ProcessType.ID_MAP
             distributionNode = simDoc.createElement('subParameter');
             distributionNode.setAttribute('classPath', 'jmt.engine.random.MAPDistr');
             distributionNode.setAttribute('name', 'Burst (MAP)');

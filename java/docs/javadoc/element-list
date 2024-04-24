@@ -29,8 +29,4 @@ jline.solvers.mva.analyzers
 jline.solvers.mva.handlers
 jline.solvers.nc
 jline.solvers.ssa
-jline.solvers.ssa.events
-jline.solvers.ssa.metrics
-jline.solvers.ssa.state
-jline.solvers.ssa.strategies
 jline.util

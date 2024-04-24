@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2024, Imperial College London
+// Copyright (c) 2012-2022, Imperial College London
 // All rights reserved.
 
 package jline.solvers.env;
@@ -7,7 +7,7 @@ package jline.solvers.env;
 import jline.solvers.*;
 import jline.lang.*;
 import jline.lang.constant.SolverType;
-import jline.solvers.fluid.smoothing.PStarSearcher;
+//import jline.solvers.fluid.smoothing.PStarSearcher;
 import jline.util.Matrix;
 import jline.util.Utils;
 import org.apache.commons.math3.optim.PointValuePair;
@@ -125,20 +125,29 @@ public class SolverEnv extends EnsembleSolver {
   protected SolverResult analyze(int it, int e) {
     // TODO: [Qt,Ut,Tt] = self.ensemble{e}.getTranHandles;
     this.solvers[e].resetResults();
-    // If pStar values exist, implement p-norm smoothing
-    if (this.solvers[e].options.config.pstar.size() != 0) {
-      PStarSearcher searcher = new PStarSearcher();
-      Matrix targetQueueLengths = searcher.generateTargetQueueLengths(this.solvers[e].model);
-      PointValuePair pStarValues =
-          searcher.findPStarValues(this.solvers[e].model, targetQueueLengths);
-      solvers[e].options.config.pstar.clear();
-      for (int i = 0; i < this.solvers[e].model.getNumberOfNodes(); i++) {
-        solvers[e].options.config.pstar.add(i, pStarValues.getPoint()[i]);
-      }
-    }
     this.solvers[e].getTranAvg();
     return this.solvers[e].result;
   }
+
+    // Solves model in stage e
+//  @Override
+//  protected SolverResult analyze(int it, int e) {
+//    // TODO: [Qt,Ut,Tt] = self.ensemble{e}.getTranHandles;
+//    this.solvers[e].resetResults();
+//    // If pStar values exist, implement p-norm smoothing
+//    if (this.solvers[e].options.config.pstar.size() != 0) {
+//      PStarSearcher searcher = new PStarSearcher();
+////      Matrix targetQueueLengths = searcher.generateTargetQueueLengths(this.solvers[e].model);
+////      PointValuePair pStarValues =
+////          searcher.findPStarValues(this.solvers[e].model, targetQueueLengths);
+////      solvers[e].options.config.pstar.clear();
+////      for (int i = 0; i < this.solvers[e].model.getNumberOfNodes(); i++) {
+////        solvers[e].options.config.pstar.add(i, pStarValues.getPoint()[i]);
+////      }
+////    }
+////    this.solvers[e].getTranAvg();
+//    return this.solvers[e].result;
+//  }
 
   @Override
   protected void post(int it) {
@@ -358,10 +367,11 @@ public class SolverEnv extends EnsembleSolver {
   }
 
   @Override
-  public void getEnsembleAvg() {
+  public LayeredNetworkAvgTable getEnsembleAvg() {
     if (this.result.QN == null || this.result.QN.isEmpty() || this.options.force) {
       iterate();
     }
+      return null;
   }
 
   public final NetworkAvgTable getAvgTable() {
