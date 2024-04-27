@@ -552,19 +552,15 @@ public class SolverSSA extends NetworkSolver {
         Matrix u = uniqueRows.sortedMatrix;
         Matrix ui = uniqueRows.vi;
         Map<Integer, List<Integer>> uj = uniqueRows.vj;
-        System.out.println("6");
 
         Matrix statesz = new Matrix(1, stateCell_1.size());
         for (int i = 0; i < statesz.getNumElements(); i++) {
             statesz.set(i, stateCell_1.get(i).getNumElements());
         }
         Map<Integer, Matrix> tranSysState = new HashMap<>();
-        System.out.println("7");
-
-
 
         tranSysState.put(0, Matrix.extractColumn(tranState, 0, null).cumsumViaCol());
-        System.out.println("7a");
+
         for (int j = 0; j < statesz.getNumElements(); j++) {
             int start_index = 0;
             for (int i = 0; i <= j - 1; i++) {
@@ -576,7 +572,7 @@ public class SolverSSA extends NetworkSolver {
             Matrix tmp = Matrix.extract(tranState, 0, tranState.getNumRows(), start_index, end_index);
             tranSysState.put(j+1, tmp);
         }
-        System.out.println("7b");
+
 
         Map<Integer, Matrix> arvRates = new HashMap<>();
         Map<Integer, Matrix> depRates = new HashMap<>();
@@ -585,7 +581,7 @@ public class SolverSSA extends NetworkSolver {
             arvRates.put(i, rate);
             depRates.put(i, rate.clone());
         }
-        System.out.println("8a");
+
         Matrix pi = new Matrix(1, u.getNumRows());
         for (int s = 0; s < u.getNumRows(); s++) {
             // sum elements in tranState_first where uj == s
@@ -596,7 +592,6 @@ public class SolverSSA extends NetworkSolver {
 
             pi.set(s, sum);
         }
-        System.out.println("8");
 
         // extract columns of SSq using ui as indices
         Matrix SSq_new = new Matrix(0,0);
@@ -683,9 +678,6 @@ public class SolverSSA extends NetworkSolver {
         }
         this.setAvgResults(QN, UN, RN, TN, AN, new Matrix(0,0), CN, XN, runtime);
         this.result.space = sn.space;
-
-
-
     }
 
     private void setAvgResults(Matrix Q, Matrix U, Matrix R, Matrix T, Matrix A, Matrix W,
@@ -850,9 +842,6 @@ public class SolverSSA extends NetworkSolver {
         UN.replace(Double.NaN, 0);
         XN.replace(Double.NaN, 0);
         TN.replace(Double.NaN, 0);
-
-
-
 
         return new SolverSSAResult(QN, UN, RN, TN, CN, XN, tranSysState, tranSync, sn);
     }
