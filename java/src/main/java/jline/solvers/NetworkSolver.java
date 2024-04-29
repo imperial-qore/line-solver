@@ -240,6 +240,16 @@ public abstract class NetworkSolver extends Solver {
                     }
                 }
             }
+
+            // Set to zero entries that are associated to immediate transitions
+            for (int i = 0; i < M; i++) {
+                for (int j = 0; j < K; j++) {
+                    if (!RNclass.isEmpty() && (RNclass.get(i, j) < 10 * GlobalConstants.FineTol)) {
+                        QNclass.set(i, j, 0);
+                    }
+                }
+            }
+
         }
 
         if (!this.result.UN.isEmpty()) {
@@ -260,6 +270,14 @@ public abstract class NetworkSolver extends Solver {
                     }
                 }
             }
+            // Set to zero entries that are associated to immediate transitions
+            for (int i = 0; i < M; i++) {
+                for (int j = 0; j < K; j++) {
+                    if (!RNclass.isEmpty() && (RNclass.get(i, j) < 10 * GlobalConstants.FineTol)) {
+                        UNclass.set(i, j, 0);
+                    }
+                }
+            }
         }
         if (!this.result.RN.isEmpty()) {
             RNclass = new Matrix(M, K);
@@ -276,6 +294,14 @@ public abstract class NetworkSolver extends Solver {
                         }
                     } else {
                         RNclass.set(i, k, 0); // Indicates that a metric is disabled
+                    }
+                }
+            }
+            // Set to zero entries that are associated to immediate transitions
+            for (int i = 0; i < M; i++) {
+                for (int j = 0; j < K; j++) {
+                    if (!RNclass.isEmpty() && (RNclass.get(i, j) < 10 * GlobalConstants.FineTol)) {
+                        RNclass.set(i, j, 0);
                     }
                 }
             }
@@ -299,6 +325,13 @@ public abstract class NetworkSolver extends Solver {
                     }
                 }
             }
+            for (int i = 0; i < M; i++) {
+                for (int j = 0; j < K; j++) {
+                    if (!TNclass.isEmpty() && (TNclass.get(i, j) < GlobalConstants.FineTol)) {
+                        TNclass.set(i, j, 0);
+                    }
+                }
+            }
         }
 
         if (!this.result.AN.isEmpty()) {
@@ -307,7 +340,7 @@ public abstract class NetworkSolver extends Solver {
                 for (int i = 0; i < M; i++) {
                     if (!this.handles.A.get(this.model.getStations().get(i)).get(this.model.getClassByIndex(k)).isDisabled
                             && !this.result.AN.isEmpty()) {
-                        ANclass.set(i, k, this.result.TN.get(i, k));
+                        ANclass.set(i, k, this.result.AN.get(i, k));
                         if (ANclass.get(i, k) < GlobalConstants.FineTol) { // Round to zero numerical perturbations
                             ANclass.set(i, k, 0);
                         }
@@ -319,15 +352,11 @@ public abstract class NetworkSolver extends Solver {
                     }
                 }
             }
-        }
-
-        // Set to zero entries that are associated to immediate transitions
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < K; j++) {
-                if (RNclass.get(i, j) < 10 * GlobalConstants.FineTol) {
-                    QNclass.set(i, j, 0);
-                    UNclass.set(i, j, 0);
-                    RNclass.set(i, j, 0);
+            for (int i = 0; i < M; i++) {
+                for (int j = 0; j < K; j++) {
+                    if (!RNclass.isEmpty() && (RNclass.get(i, j) < 10*GlobalConstants.FineTol)) {
+                        ANclass.set(i, j, 0);
+                    }
                 }
             }
         }
@@ -904,12 +933,10 @@ public abstract class NetworkSolver extends Solver {
 
         // TODO: store in Metrics (Lines 52-102)
     }
-
     // Store average metrics at steady-state
-    protected final void setAvgResults(Matrix Q, Matrix U, Matrix R, Matrix T, Matrix A,
-                                       Matrix W, Matrix C, Matrix X, long runtime) {
+    protected final void setAvgResults(SolverResult result) {
         // TODO: implementation - note parameters should likely not be void
-        throw new RuntimeException("setAvgResults() has not yet been implemented in JLINE.");
+        this.result = result;
     }
 
     // Store distribution metrics at steady-state

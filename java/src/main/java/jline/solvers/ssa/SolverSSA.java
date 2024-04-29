@@ -1,5 +1,7 @@
 package jline.solvers.ssa;
 
+import jline.examples.MixedModel;
+import jline.examples.OpenModel;
 import jline.lang.*;
 import jline.lang.constant.*;
 import jline.lang.nodes.StatefulNode;
@@ -8,10 +10,7 @@ import jline.lang.state.EventResult;
 import jline.lang.state.State;
 import jline.examples.ClosedModel;
 import jline.lib.KPCToolbox;
-import jline.solvers.NetworkSolver;
-import jline.solvers.SolverHandles;
-import jline.solvers.SolverOptions;
-import jline.solvers.SolverResult;
+import jline.solvers.*;
 import jline.util.Maths;
 import jline.util.Matrix;
 import jline.util.UniqueRowResult;
@@ -26,7 +25,6 @@ import static java.util.stream.Collectors.toMap;
 
 public class SolverSSA extends NetworkSolver {
 
-    public SolverSSAResult result;
 
 
     public SolverSSA(Network model) {
@@ -38,12 +36,17 @@ public class SolverSSA extends NetworkSolver {
         super(model, "SolverSSA", options);
     }
 
+
     public static void main(String[] args) {
-
-        Network sn = ClosedModel.ex4_line();
+        Network sn = MixedModel.ex2();
         SolverSSA solver = new SolverSSA(sn);
-        solver.getAvgTable();
-
+        long startTime = System.nanoTime();
+        NetworkAvgTable avgTable = solver.getAvgTable();
+        long endTime = System.nanoTime();
+        long elapsedTimeSec = (endTime - startTime) / 1_000_000_000; // Convert nanoseconds to sec
+        System.out.println("Duration: ");
+        System.out.println(elapsedTimeSec);
+        avgTable.print();
 
 
 //
@@ -266,9 +269,9 @@ public class SolverSSA extends NetworkSolver {
         Map<Integer, Double> enabled_rates = new HashMap<>();
         Map<Integer, Integer> enabled_sync = new HashMap<>();
         Map<Integer, Matrix> stateCell_1 = new HashMap<>();
-        while (samples_collected < 10000 && cur_time <= options.timespan[1]) {
+        while (samples_collected < options.samples && cur_time <= options.timespan[1]) {
             if (samples_collected % 100 == 0) {
-                System.out.println("SSA simulation: " + samples_collected + " samples collected");
+//                System.out.println("SSA simulation: " + samples_collected + " samples collected");
             }
             int ctr = 1;
             Map<Integer, Integer> node_a_sf = new HashMap<>();
@@ -340,9 +343,11 @@ public class SolverSSA extends NetworkSolver {
                                 }
                                 if (!eventResult.outprob.isEmpty()) {
                                     outprob_p.put(act, eventResult.outprob.toDouble());
-                                } else {
-                                    outprob_p.remove(act);
                                 }
+//                                This seems to cause issues with mixed models
+//                                else {
+//                                    outprob_p.remove(act);
+//                                }
 
                             } else {
                                 // departure
@@ -357,9 +362,10 @@ public class SolverSSA extends NetworkSolver {
                                 }
                                 if (!eventResult.outprob.isEmpty()) {
                                     outprob_p.put(act, eventResult.outprob.toDouble());
-                                } else {
-                                    outprob_p.remove(act);
                                 }
+//                                else {
+//                                    outprob_p.remove(act);
+//                                }
                             }
 
                             if (newStateCell.get(act).containsKey((int) sn.nodeToStateful.get(node_p.get(act)))) {
@@ -428,7 +434,7 @@ public class SolverSSA extends NetworkSolver {
             Matrix cum_rate = Matrix.scale_mult(cum_sum, 1 / tot_rate);
             // TODO: change to Math.random()
 
-            double rand = 0.5;// Math.random();
+            double rand = Maths.random();
             int firing_ctr = -1;
             for (int i = 0; i < cum_rate.getNumElements(); i++) {
                 if (rand > cum_rate.get(i)) {
@@ -480,7 +486,7 @@ public class SolverSSA extends NetworkSolver {
                 }
             }
 //             TODO: change to Math.random()
-            double dt = -(Math.log(0.4) / tot_rate);
+            double dt = -(Math.log(Maths.random()) / tot_rate);
             cur_time += dt;
 
             Matrix dt_m = new Matrix(1, 1);
@@ -559,8 +565,9 @@ public class SolverSSA extends NetworkSolver {
         }
         Map<Integer, Matrix> tranSysState = new HashMap<>();
 
-        tranSysState.put(0, Matrix.extractColumn(tranState, 0, null).cumsumViaCol());
 
+
+        tranSysState.put(0, Matrix.extractColumn(tranState, 0, null).cumsumViaCol());
         for (int j = 0; j < statesz.getNumElements(); j++) {
             int start_index = 0;
             for (int i = 0; i <= j - 1; i++) {
@@ -573,7 +580,6 @@ public class SolverSSA extends NetworkSolver {
             tranSysState.put(j+1, tmp);
         }
 
-
         Map<Integer, Matrix> arvRates = new HashMap<>();
         Map<Integer, Matrix> depRates = new HashMap<>();
         for (int i = 0; i < R; i++) {
@@ -581,7 +587,6 @@ public class SolverSSA extends NetworkSolver {
             arvRates.put(i, rate);
             depRates.put(i, rate.clone());
         }
-
         Matrix pi = new Matrix(1, u.getNumRows());
         for (int s = 0; s < u.getNumRows(); s++) {
             // sum elements in tranState_first where uj == s
@@ -670,34 +675,31 @@ public class SolverSSA extends NetworkSolver {
                 for (int j = 0; j < M; j++) {
                     for (int k = 0; k < R; k++) {
                         for (int r = 0; r < R; r++) {
-                            AN.set(i,k, AN.get(i,k) + TN.get(j,r) * sn.rt.get((j-1) * R + r, (i-1) * R + k));
+                            AN.set(i,k, AN.get(i,k) + TN.get(j,r) * sn.rt.get((j) * R + r, (i) * R + k));
                         }
                     }
                 }
             }
         }
-        this.setAvgResults(QN, UN, RN, TN, AN, new Matrix(0,0), CN, XN, runtime);
-        this.result.space = sn.space;
-    }
 
-    private void setAvgResults(Matrix Q, Matrix U, Matrix R, Matrix T, Matrix A, Matrix W,
-                               Matrix C, Matrix X, long runtime, String method, Integer iter) {
-        if (method == null) {
-            method = this.options.method;
-        }
+        SolverSSAResult res = new SolverSSAResult();
+        res.QN = QN;
+        res.UN = UN;
+        res.RN = RN;
+        res.TN = TN;
+        res.AN = AN;
+        res.WN = new Matrix(0,0);
+        res.CN = CN;
+        res.XN = XN;
+        res.runtime = runtime;
 
-        this.result.QN = Q;
-        this.result.RN = R;
-        this.result.XN = X;
-        this.result.UN = U;
-        this.result.TN = T;
-        this.result.CN = C;
-        this.result.AN = A;
-        this.result.WN = W;
-        this.result.runtime = runtime;
+        this.setAvgResults(res);
+        // TODO: safe to downcast here, but indicative of bad oop design.
+        //  "Result" is a SolverResult field in Solver superclass and space is specific to SSA
+        SolverSSAResult ssaRes = (SolverSSAResult) this.result;
+        ssaRes.space = sn.space;
 
     }
-
 
 
     private SolverSSAResult solver_ssa_analyzer() {
@@ -706,7 +708,7 @@ public class SolverSSA extends NetworkSolver {
         sn.space.clear();
         // TODO: check conversion of Stateful node to station
         for (StatefulNode statefulNode : sn.state.keySet()) {
-            int node = statefulNode.getNodeIdx();
+            int node = statefulNode.getStationIdx();
             sn.space.put(sn.stations.get(node), sn.state.get(statefulNode));
         }
 
@@ -780,7 +782,7 @@ public class SolverSSA extends NetworkSolver {
                 }
                 TN.set(i, k, probSysState.mult(dep_wset_isf).toDouble());
 
-                Matrix ssaggr_wset_isf = Matrix.extract(StateSpaceAggr, 0, StateSpaceAggr.getNumRows(), (i-1) * K + k, (i-1)*K+k+1);
+                Matrix ssaggr_wset_isf = Matrix.extract(StateSpaceAggr, 0, StateSpaceAggr.getNumRows(), (i) * K + k, (i)*K+k+1);
                 QN.set(i, k, probSysState.mult(ssaggr_wset_isf).toDouble());
             }
             switch (schedid.get(sn.stations.get(i))) {
@@ -791,10 +793,10 @@ public class SolverSSA extends NetworkSolver {
                     break;
 
                 default:
-                    if (sn.lldscaling.isEmpty() && sn.cdscaling.isEmpty()) {
+                    if ((sn.lldscaling == null || sn.lldscaling.isEmpty()) && (sn.cdscaling == null || sn.cdscaling.isEmpty())) {
                         for (int k = 0; k < K; k++) {
                             if (!PH.get(sn.stations.get(i)).get(sn.jobclasses.get(k)).isEmpty()) {
-                                Matrix arrival = depRates.get(k);
+                                Matrix arrival = arvRates.get(k);
                                 Matrix arv_wset_isf = new Matrix(StateSpaceAggr.getNumRows(), 1);
                                 for (int c = 0; c < StateSpaceAggr.getNumRows(); c++) {
                                     arv_wset_isf.set(c, 0, arrival.get(c, isf));
@@ -842,6 +844,9 @@ public class SolverSSA extends NetworkSolver {
         UN.replace(Double.NaN, 0);
         XN.replace(Double.NaN, 0);
         TN.replace(Double.NaN, 0);
+
+
+
 
         return new SolverSSAResult(QN, UN, RN, TN, CN, XN, tranSysState, tranSync, sn);
     }

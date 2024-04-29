@@ -53,6 +53,40 @@ public class OpenModel {
         return model;
     }
 
+    // node 3 arrival time matches matlab, ex3_line kept as used in other tests
+    public static Network ex1_line_v(){
+        Network model = new Network("myModel");
+
+        // Block 1: nodes
+        Delay node1 = new Delay(model, "Delay");
+        Queue node2 = new Queue(model, "Queue1", SchedStrategy.FCFS);
+        Source node3 = new Source(model, "Source");
+        Sink node4 = new Sink(model, "Sink");
+
+        // Block 2: classes
+        OpenClass jobclass1 = new OpenClass(model, "Class1", 0);
+
+        node1.setService(jobclass1, new HyperExp(0.5, 3.0, 10.0));
+        node2.setService(jobclass1, new Exp(1));
+        //node2.setService(jobclass1, new Replayer("/home/gcasale/Dropbox/code/line-solver.git/python/gettingstarted/example_trace.txt"));
+        node3.setArrival(jobclass1, new Exp(0.1));
+
+        // Block 3: topology
+
+        RoutingMatrix routingMatrix = new RoutingMatrix(model,
+                Collections.singletonList(jobclass1),
+                Arrays.asList(node1, node2, node3, node4));
+
+        routingMatrix.set(jobclass1, jobclass1, node1, node2, 1);
+        routingMatrix.set(jobclass1, jobclass1, node2, node4, 1);
+        routingMatrix.set(jobclass1, jobclass1, node3, node1, 1);
+
+        model.link(routingMatrix);
+
+        return model;
+    }
+
+
     public static Network ex1() {
         Network model = new Network("myModel");
 

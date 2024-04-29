@@ -247,10 +247,67 @@ public class MixedModel {
         routingMatrix.set(jobclass2, jobclass2, node4, node1, 1.000000); // (Queue4,OpenClass) -> (Queue1,OpenClass)
         routingMatrix.set(jobclass2, jobclass2, node5, node1, 1.000000); // (Source,OpenClass) -> (Queue1,OpenClass)
 
+
         model.link(routingMatrix);
 
         return model;
     }
+
+
+    public static Network ex5() {
+        Network model = new Network("myModel");
+
+        // Block 1: nodes
+        Queue node1 = new Queue(model, "Queue1", SchedStrategy.PS);
+        Queue node2 = new Queue(model, "Queue2", SchedStrategy.PS);
+        Queue node3 = new Queue(model, "Queue3", SchedStrategy.PS);
+        Queue node4 = new Queue(model, "Queue4", SchedStrategy.PS);
+        Source node5 = new Source(model, "Source");
+        Sink node6 = new Sink(model, "Sink");
+
+        // Block 2: classes
+        ClosedClass jobclass1 = new ClosedClass(model, "ClosedClass", 100, node1, 0);
+        OpenClass jobclass2 = new OpenClass(model, "OpenClass", 0);
+
+        node1.setService(jobclass1, Exp.fitMean(1.000000)); // (Queue1,ClosedClass)
+        node1.setService(jobclass2, Exp.fitMean(1.000000)); // (Queue1,OpenClass)
+        node2.setService(jobclass1, Exp.fitMean(0.500000)); // (Queue2,ClosedClass)
+        node2.setService(jobclass2, Exp.fitMean(0.707107)); // (Queue2,OpenClass)
+        node3.setService(jobclass1, Exp.fitMean(0.333333)); // (Queue3,ClosedClass)
+        node3.setService(jobclass2, Exp.fitMean(0.577350)); // (Queue3,OpenClass)
+        node4.setService(jobclass1, Exp.fitMean(0.250000)); // (Queue4,ClosedClass)
+        node4.setService(jobclass2, Exp.fitMean(0.500000)); // (Queue4,OpenClass)
+
+
+        node5.setArrival(jobclass1, Disabled.getInstance()); // (Source,ClosedClass)
+        node5.setArrival(jobclass2, new Exp(0.3)); // (Source,OpenClass)
+
+        // Block 3: topology
+        RoutingMatrix routingMatrix = new RoutingMatrix(model,
+                Arrays.asList(jobclass1, jobclass2),
+                Arrays.asList(node1, node2, node3, node4, node5, node6));
+
+        routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Queue1,ClosedClass) -> (Queue2,ClosedClass)
+        routingMatrix.set(jobclass1, jobclass1, node2, node3, 1.000000); // (Queue2,ClosedClass) -> (Queue3,ClosedClass)
+        routingMatrix.set(jobclass1, jobclass1, node3, node4, 1.000000); // (Queue3,ClosedClass) -> (Queue4,ClosedClass)
+        routingMatrix.set(jobclass1, jobclass1, node4, node1, 1.000000); // (Queue4,ClosedClass) -> (Queue1,ClosedClass)
+
+
+        routingMatrix.set(jobclass2, jobclass2, node1, node2, 1.000000); // (Queue1,OpenClass) -> (Queue2,OpenClass)
+        routingMatrix.set(jobclass2, jobclass2, node2, node3, 1.000000); // (Queue2,OpenClass) -> (Queue3,OpenClass)
+        routingMatrix.set(jobclass2, jobclass2, node3, node6, 1.000000); // (Queue3,OpenClass) -> (Sink,OpenClass)
+
+//        routingMatrix.set(jobclass2, jobclass2, node4, node1, 1.000000); // (Queue4,OpenClass) -> (Queue1,OpenClass)
+        routingMatrix.set(jobclass2, jobclass2, node5, node1, 1.000000); // (Source,OpenClass) -> (Queue1,OpenClass)
+
+
+        model.link(routingMatrix);
+
+        return model;
+
+    }
+
+
 
     public static void main(String[] args) throws Exception {
         Network model = ex2();

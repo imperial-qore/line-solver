@@ -486,6 +486,37 @@ public class ClosedModel {
         return model;
     }
 
+    public static Network ex7_line_fcfs() {
+        Network model = new Network("myModel");
+
+        // Block 1: nodes
+        Delay node1 = new Delay(model, "Delay");
+        Queue node2 = new Queue(model, "Queue1", SchedStrategy.FCFS);
+
+        // Block 2: classes
+        ClosedClass jobclass1 = new ClosedClass(model, "Class1", 2, node1, 0);
+        ClosedClass jobclass2 = new ClosedClass(model, "Class2", 2, node1, 0);
+
+        node1.setService(jobclass1, new Erlang(3, 2)); // (Delay,Class1)
+        node1.setService(jobclass2, new HyperExp(0.5, 3.0, 10.0)); // (Delay,Class2)
+        node2.setService(jobclass1, Exp.fitMean(1.000000)); // (Queue1,Class1)
+        node2.setService(jobclass2, Exp.fitMean(1.000000)); // (Queue1,Class2)
+
+        // Block 3: topology
+        RoutingMatrix routingMatrix = new RoutingMatrix(model,
+                Arrays.asList(jobclass1, jobclass2),
+                Arrays.asList(node1, node2));
+
+        routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Delay,Class1) -> (Queue1,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node2, node1, 1.000000); // (Queue1,Class1) -> (Delay,Class1)
+        routingMatrix.set(jobclass2, jobclass2, node1, node2, 1.000000); // (Delay,Class2) -> (Queue1,Class2)
+        routingMatrix.set(jobclass2, jobclass2, node2, node1, 1.000000); // (Queue1,Class2) -> (Delay,Class2)
+
+        model.link(routingMatrix);
+
+        return model;
+    }
+
     public static Network ex7_fcfs() {
         Network model = new Network("myModel");
 
@@ -531,6 +562,37 @@ public class ClosedModel {
         node1.setService(jobclass2, APH.fitMeanAndSCV(0.216667,1.579882)); // (Delay,Class2)
         node2.setService(jobclass1, Exp.fitMean(1.000000)); // (Queue1,Class1)
         node2.setService(jobclass2, Exp.fitMean(1.000000)); // (Queue1,Class2)
+
+        // Block 3: topology
+        RoutingMatrix routingMatrix = new RoutingMatrix(model,
+                Arrays.asList(jobclass1, jobclass2),
+                Arrays.asList(node1, node2));
+
+        routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Delay,Class1) -> (Queue1,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node2, node1, 1.000000); // (Queue1,Class1) -> (Delay,Class1)
+        routingMatrix.set(jobclass2, jobclass2, node1, node2, 1.000000); // (Delay,Class2) -> (Queue1,Class2)
+        routingMatrix.set(jobclass2, jobclass2, node2, node1, 1.000000); // (Queue1,Class2) -> (Delay,Class2)
+
+        model.link(routingMatrix);
+
+        return model;
+    }
+
+    public static Network ex7_line_ps() {
+        Network model = new Network("myModel");
+
+        // Block 1: nodes
+        Delay node1 = new Delay(model, "Delay");
+        Queue node2 = new Queue(model, "Queue1", SchedStrategy.PS);
+
+        // Block 2: classes
+        ClosedClass jobclass1 = new ClosedClass(model, "Class1", 2, node1, 0);
+        ClosedClass jobclass2 = new ClosedClass(model, "Class2", 2, node1, 0);
+
+        node1.setService(jobclass1, new Erlang(3, 2)); // (Delay,Class1)
+        node1.setService(jobclass2, new HyperExp(0.5, 3.0, 10.0)); // (Delay,Class2)
+        node2.setService(jobclass1, new Exp(1)); // (Queue1,Class1)
+        node2.setService(jobclass2, new Exp(1)); // (Queue1,Class2)
 
         // Block 3: topology
         RoutingMatrix routingMatrix = new RoutingMatrix(model,
@@ -600,6 +662,39 @@ public class ClosedModel {
         routingMatrix.set(jobclass1, jobclass1, node1, node3, 0.200000); // (Delay,Class1) -> (Queue2,Class1)
         routingMatrix.set(jobclass1, jobclass1, node2, node1, 1.000000); // (Queue1,Class1) -> (Delay,Class1)
         routingMatrix.set(jobclass1, jobclass1, node3, node1, 1.000000); // (Queue2,Class1) -> (Delay,Class1)
+        model.link(routingMatrix);
+
+        return model;
+    }
+
+    public static Network ex8_line() {
+        Network model = new Network("myModel");
+
+        // Block 1: nodes
+        Delay node1 = new Delay(model, "Delay");
+        Queue node2 = new Queue(model, "Queue1", SchedStrategy.FCFS);
+        node2.setNumberOfServers(3);
+        // Block 2: classes
+        ClosedClass jobclass1 = new ClosedClass(model, "Class1", 4, node1, 0);
+        ClosedClass jobclass2 = new ClosedClass(model, "Class2", 2, node1, 0);
+
+        node1.setService(jobclass1, new Exp(1)); // (Delay,Class1)
+        node1.setService(jobclass2, new Exp(1));
+
+        node2.setService(jobclass1, new Exp(1)); // (Queue1,Class1)
+        node2.setService(jobclass2, new Exp(10));
+
+
+        // Block 3: topology
+        RoutingMatrix routingMatrix = new RoutingMatrix(model,
+                Arrays.asList(jobclass1, jobclass2),
+                Arrays.asList(node1, node2));
+
+
+        routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Delay,Class1) -> (Queue1,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node2, node1, 1.000000); // (Queue1,Class1) -> (Delay,Class1)
+        routingMatrix.set(jobclass2, jobclass2, node1, node2, 1.000000); // (Delay,Class2) -> (Queue1,Class2)
+        routingMatrix.set(jobclass2, jobclass2, node2, node1, 1.000000); // (Queue1,Class2) -> (Delay,Class2)
         model.link(routingMatrix);
 
         return model;

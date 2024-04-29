@@ -3,6 +3,7 @@ package jline.util;
 import java.util.*;
 
 import jline.api.PFQN;
+import jline.solvers.ssa.MersenneTwister;
 import org.apache.commons.math3.complex.Complex;
 import org.apache.commons.math3.distribution.NormalDistribution;
 import org.apache.commons.math3.special.Gamma;
@@ -11,6 +12,12 @@ import org.apache.commons.math3.special.Gamma;
  * Mathematical functions and utilities.
  */
 public class Maths {
+
+  // these to be used only in testing to replicate matlab random numbers
+  // keep false in standard operation as Mersenne Twister slower than Math.random()
+
+  private static boolean matlab_random = false;
+  private static MersenneTwister mt = new MersenneTwister(1);
 
   /**
    * Softmin function.
@@ -74,6 +81,23 @@ public class Maths {
     double y = (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t;
 
     return sign * (1 - y * Math.exp(-x * x));
+  }
+
+  public static void setRandomNumbersMatlab(boolean matlab_style) {
+    matlab_random = matlab_style;
+  }
+
+  public static void setMatlabRandomSeed(int seed) {
+    mt = new MersenneTwister(seed);
+  }
+
+  // returns a random double in interal (0,0)
+  public static double random() {
+    if (matlab_random) {
+      return mt.nextDouble(false, false);
+    } else {
+      return Math.random();
+    }
   }
 
   public static double factln(double n) {

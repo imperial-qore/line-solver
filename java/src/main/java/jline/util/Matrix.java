@@ -665,7 +665,6 @@ public class Matrix {
                     }
                     return Integer.compare(row1.getNumCols(), row2.getNumCols());
                 }).collect(Collectors.toList());
-		
         Matrix vi = new Matrix(pairs.size(), 1);
 		for (int i = 0; i < pairs.size(); i++) {
 			vi.set(i, 0, pairs.get(i).getRight().get(0));
@@ -694,7 +693,69 @@ public class Matrix {
 			}
 		}
 
-
+//		Map<Matrix, Integer> firstIndexMap = new HashMap<>();
+//		for (int i = 0; i < m.getNumRows(); i++) {
+//			firstIndexMap.putIfAbsent(Matrix.extractRows(m, i, i+1, null), i);
+//		}
+//
+//		// indices of unique rows in original matrix
+//		Collection<Integer> unique_index_values = firstIndexMap.values();
+//
+//		Set<Matrix> uniqueList = new LinkedHashSet<>(firstIndexMap.keySet());
+//
+//		// Sort the set in ascending order
+//		List<Matrix> sortedList = new ArrayList<>(uniqueList);
+//		List<Integer> index_list = new ArrayList<>(unique_index_values);
+//
+//		Collections.sort(index_list, (i1, i2) -> {
+//			Matrix row1 = Matrix.extractRows(m, i1, i1+1, null);
+//			Matrix row2 = Matrix.extractRows(m, i2, i2+1, null);
+//			for (int i = 0; i < Math.min(row1.getNumCols(), row2.getNumCols()); i++) {
+//                int cmp = Double.compare(row1.get(i), row2.get(i));
+//                if (cmp != 0) {
+//                    return cmp;
+//                }
+//            }
+//            return Integer.compare(row1.getNumCols(), row2.getNumCols());
+//        });
+//
+//		Map<Integer, Integer> index_map = new HashMap<>();
+//		for (int i = 0; i < index_list.size(); i++) {
+//			index_map.put(index_list.get(i), i);
+//		}
+//
+//		for (Integer ind : index_list) {
+//			sortedList.set(ind, sortedList.get(ind));
+//		}
+//
+//		List<Integer> vi = new ArrayList<>();
+//		List<Integer> vj = new ArrayList<>();
+//
+//		for (Matrix n : sortedList) {
+//			vi.add(firstIndexMap.get(n));
+//		}
+//		vi = index_list;
+//
+//
+//		for (int i = 0; i < m.getNumRows(); i++) {
+//			vj.add(index_map.get(i));
+//		}
+//
+//		Matrix sorted_rows = new Matrix(sortedList.size(), sortedList.get(0).getNumCols());
+//		for (int i = 0; i < sortedList.size(); i++) {
+//			for (int j = 0; j < sortedList.get(i).getNumElements(); j++) {
+//				sorted_rows.set(i, j, sortedList.get(i).get(j));
+//			}
+//		}
+//
+//		Matrix vi_matrix = new Matrix(vi.size(), 1);
+//		Matrix vj_matrix = new Matrix(vj.size(), 1);
+//		for (int i = 0; i < vi.size(); i++) {
+//			vi_matrix.set(i, 0, vi.get(i));
+//		}
+//		for (int i = 0; i < vj.size(); i++) {
+//			vj_matrix.set(i, 0, vj.get(i));
+//		}
 		return new UniqueRowResult(sorted_matrix, vi, vj_map);
 	}
 

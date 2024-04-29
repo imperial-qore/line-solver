@@ -4,11 +4,15 @@ import java.io.Serializable;
 import java.util.*;
 
 import jline.examples.ClosedModel;
+import jline.examples.MixedModel;
+import jline.examples.OpenModel;
 import jline.lang.JobClass;
 import jline.lang.Network;
 import jline.lang.constant.*;
 import jline.lang.nodes.StatefulNode;
 import jline.lang.nodes.Station;
+import jline.solvers.NetworkAvgTable;
+import jline.solvers.ssa.SolverSSA;
 import jline.util.Maths;
 import jline.util.Matrix;
 import jline.lang.NetworkStruct;
@@ -421,8 +425,7 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
       switch (sn.sched.get(sn.stations.get(ist))) {
         case EXT:
             // TODO: complete
-          break;
-
+          throw new RuntimeException("UNIMPLEMENTED EXT case in fromMarginalAndRunning");
         case INF:
         case PS:
         case DPS:
@@ -1884,16 +1887,25 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 //    EventResult result = afterEvent(sn, 1, inspace, EventType.PHASE, 0, true);
 
 
-    NetworkStruct sn = ClosedModel.ex4_line().getStruct(false);
-    Matrix inspace = new Matrix(1, 7);
-    inspace.fromArray2D(new int[][]{{0,2,0,0,0,0,0}});
+//    NetworkStruct sn = ClosedModel.ex4_line().getStruct(false);
+//    Matrix inspace = new Matrix(1, 7);
+//    inspace.fromArray2D(new int[][]{{0,2,0,0,0,0,0}});
+//
+//    // time this call
+//    long startTime = System.nanoTime();
+//    EventResult result = afterEvent(sn, 1, inspace, EventType.ARV, 0, true);
+//    long endTime = System.nanoTime();
+//    long elapsedTimeSec = (endTime - startTime) / 1_000_000; // Convert nanoseconds to milli
 
-    // time this call
-    long startTime = System.nanoTime();
-    EventResult result = afterEvent(sn, 1, inspace, EventType.ARV, 0, true);
-    long endTime = System.nanoTime();
-    long elapsedTimeSec = (endTime - startTime) / 1_000_000; // Convert nanoseconds to milli
+//    NetworkStruct sn = ClosedModel.ex2_line().getStruct(false);
+//    Matrix inspace = new Matrix(1, 4);
+//    inspace.fromArray2D(new int[][]{{0,0,2,0}});
+//    EventResult result = afterEvent(sn, 0, inspace, EventType.ARV, 0, true);
 
+//    NetworkStruct sn = OpenModel.ex1_line().getStruct(false);
+//    Matrix inspace = new Matrix(1, 2);
+//    inspace.fromArray2D(new double[][]{{Double.POSITIVE_INFINITY, 1.0}});
+//    EventResult result = afterEvent(sn, 2, inspace, EventType.ARV, 0, true);
 //
 //    System.out.println("Outspace: ");
 //    System.out.println(result.outspace);
@@ -1901,8 +1913,17 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 //    System.out.println(result.outrate);
 //    System.out.println("Outprob");
 //    System.out.println(result.outprob);
-    System.out.println(result.outspace);
+//    System.out.println(elapsedTimeSec);
+
+    Network sn = MixedModel.ex1_line();
+    SolverSSA solver = new SolverSSA(sn);
+    long startTime = System.nanoTime();
+    NetworkAvgTable avgTable = solver.getAvgTable();
+    long endTime = System.nanoTime();
+    long elapsedTimeSec = (endTime - startTime) / 1_000_000_000; // Convert nanoseconds to sec
+    System.out.println("Duration: ");
     System.out.println(elapsedTimeSec);
+    avgTable.print();
 
 
   }
@@ -1923,23 +1944,13 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
     outprob.fill(1);
 
 
-//    double isf = sn.nodeToStateful.get(ind);
-
-      boolean ismkvmod = false;
       Matrix ismkvmodclass = new Matrix(0,0);
       if (sn.isstation.get(ind) == 1) {
-          for (int i = 0; i < sn.proctype.get(sn.stations.get(ind)).size(); i++) {
-              if (sn.proctype.get(sn.stations.get(ind)).get(sn.jobclasses.get(i)) == ProcessType.MAP
-                      || sn.proctype.get(sn.stations.get(ind)).get(sn.jobclasses.get(i))
-                      == ProcessType.MMPP2) {
-                  ismkvmod = true;
-              }
-          }
           ismkvmodclass = new Matrix(R,1);
           ismkvmodclass.zero();
           for (int r = 0; r < R; r++) {
-              if (sn.proctype.get(sn.stations.get(ind)).get(sn.jobclasses.get(r)) == ProcessType.MAP
-                      || sn.proctype.get(sn.stations.get(ind)).get(sn.jobclasses.get(r))
+              if (sn.proctype.get(sn.stations.get((int) sn.nodeToStation.get(ind))).get(sn.jobclasses.get(r)) == ProcessType.MAP
+                      || sn.proctype.get(sn.stations.get((int) sn.nodeToStation.get(ind))).get(sn.jobclasses.get(r))
                       == ProcessType.MMPP2) {
                   ismkvmodclass.set(r, 0, 1);
               }
@@ -2031,6 +2042,7 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
           Matrix pentry = pie.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass));
           outprob = new Matrix(0,0);
           Matrix outprobK = new Matrix(0, 0);
+          k_loop:
           for (int kentry = 0; kentry < K.get(jobClass); kentry++) {
             Matrix spaceVarK = spaceVar.clone();
             Matrix spaceSrvK = spaceSrv.clone();
@@ -2043,6 +2055,7 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
                   outrate.zero();
                   outprob = new Matrix(outspace.getNumRows(), outspace.getNumRows());
                   outprob.ones();
+                  break k_loop; // must leave switch and for loop to go straight to sim code
                 }
                 break;
               case PS:
@@ -2371,6 +2384,7 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
             Matrix newRates = new Matrix(outspace_k_en_o.getNumRows(), 1);
             newRates.fill(-1);
             outrate = Matrix.concatRows(outrate, newRates, null);
+
             outprob = Matrix.concatRows(outprob, outprob_k_en_o, null);
           }
           if (isSimulation) {
@@ -2380,14 +2394,15 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
               Matrix cum_prob = Matrix.scale_mult(cum_sum, 1.0 / sum_by_col.get(0, 0));
 
 
-              int firing_ctr = 0;
-              double rand = Math.random();
+              int firing_ctr = -1;
+              double rand = Maths.random();
               // we need the indicies where rand is bigger than cum_prob
               for (int row = 0; row < cum_prob.getNumRows(); row++) {
                 if (rand > cum_prob.get(row, 0)) {
                   firing_ctr = row;
                 }
               }
+              firing_ctr++;
               outspace = Matrix.extractRows(outspace, firing_ctr, firing_ctr + 1, null);
               outrate = new Matrix(1, 1);
               outrate.set(0, 0, -1);
@@ -2452,8 +2467,8 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
                       if (Double.isInfinite(sn.njobs.get(jobClass))) {
                         pentry = pie.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass));
                         for (int kentry = 0; kentry < K.get(jobClass); kentry++) {
-                          Matrix.extract(inspace, (int) (inspace.getNumCols() - K.elementSum() - V + 1), (int) (inspace.getNumCols() - V), 0,
-                                  inspace.getNumRows(), spaceSrv, 0, 0); // server state
+                          Matrix.extract(inspace, 0, inspace.getNumRows(), (int) (inspace.getNumCols() - K.elementSum() - V),
+                                  (int) (inspace.getNumCols() - V), spaceSrv, 0, 0); // server state
 
                           // record a departure
                           for (int row = 0; row < spaceSrv.getNumRows(); row++) {
@@ -2858,23 +2873,13 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
                           } else {
                             // set outrate = [outrate; cdscaling{ist}(nir).*lldscaling(ist,min(ni,lldlimit)).*rate_kd(en_wobuf,:)];
                             double cdscalingIst = cdscaling.get(sn.stations.get(ist)).apply(nir);
-
-//                            Matrix lldscaling_ist = new Matrix(0, 0);
-//                            for (int col = 0; col < lldscaling.getNumCols(); col++) {
-//                              if (lldscaling.get(ist, col) == 1) {
-//                                if (lldscaling_ist.isEmpty()) {
-//                                  lldscaling_ist = Matrix.extractColumn(lldscaling, col, null);
-//                                } else {
-//                                  lldscaling_ist = Matrix.concatColumns(lldscaling_ist, Matrix.extractColumn(lldscaling, col, null), null);
-//                                }
-//                              }
-//                            }
-                            double lldscaling_ist = lldscaling.get(ist, (int) Maths.min(ni.get(0), lldlimit));
+                            double lldscaling_ist = lldscaling.get(ist, (int) Maths.min(ni.get(0), lldlimit) - 1);
 
                             //perform element wise multiplication between cdscalingIst, lldscaling_ist and rate_kd(en_wobuf,:)
 
                             Matrix outrate_bottom_fcfs = Matrix.scale_mult(rate_kd_no_jobs, cdscalingIst * lldscaling_ist);
                             outrate = Matrix.concatRows(outrate, outrate_bottom_fcfs, null);
+
                           }
                         }
                           // now process states with jobs in buffer
@@ -3112,14 +3117,15 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
                   Matrix tot_rate = outrate.sumCols();
                   Matrix cum_sum = outrate.cumsumViaCol();
                   Matrix cum_rate = Matrix.scale_mult(cum_sum, (double) 1 / tot_rate.get(0,0));
-                  int firing_ctr = 0;
-                  double rand = Math.random();
+                  int firing_ctr = -1;
+                  double rand = Maths.random();
                   // we need the indicies where rand is bigger than cum_prob
                   for (int row = 0; row < cum_rate.getNumRows(); row++) {
                     if (rand > cum_rate.get(row)) {
                       firing_ctr = row;
                     }
                   }
+                  firing_ctr++;
                   outspace = Matrix.extractRows(outspace, firing_ctr, firing_ctr + 1, null);
                   double outrate_val = outrate.elementSum();
                   outrate = new Matrix(1,1);
@@ -3267,14 +3273,15 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
                   Matrix tot_rate = outrate.sumCols();
                   Matrix cum_sum = outrate.cumsumViaCol();
                   Matrix cum_rate = Matrix.scale_mult(cum_sum, (double) 1 / tot_rate.get(0,0));
-                  int firing_ctr = 0;
-                  double rand = Math.random();
+                  int firing_ctr = -1;
+                  double rand = Maths.random();
                   // we need the indicies where rand is bigger than cum_prob
                   for (int row = 0; row < cum_rate.getNumRows(); row++) {
                     if (rand > cum_rate.get(row)) {
                       firing_ctr = row;
                     }
                   }
+                  firing_ctr++;
                   outspace = Matrix.extractRows(outspace, firing_ctr, firing_ctr + 1, null);
                   double outrate_val = outrate.elementSum();
                   outrate.set(0, 0, outrate_val);
