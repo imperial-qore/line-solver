@@ -171,8 +171,8 @@ public abstract class NetworkSolver extends Solver {
         if (this.handles == null || this.handles.Q == null || this.handles.U == null || this.handles.R == null ||
                 this.handles.T == null || this.handles.A == null) {
             resetResults();
-            this.handles = model.getAvgHandles();
         }
+        this.handles = model.getAvgHandles();
 
         if (Double.isFinite(options.timespan[1])) {
             throw new RuntimeException(
@@ -286,7 +286,7 @@ public abstract class NetworkSolver extends Solver {
                     if (!this.handles.R.get(this.model.getStations().get(i)).get(this.model.getClassByIndex(k)).isDisabled
                             && !this.result.RN.isEmpty()) {
                         RNclass.set(i, k, this.result.RN.get(i, k));
-                        if (RNclass.get(i, k) < GlobalConstants.FineTol) { // Round to zero numerical perturbations
+                        if (RNclass.get(i, k) < 10 * GlobalConstants.FineTol) { // Round to zero numerical perturbations
                             RNclass.set(i, k, 0);
                         }
                         if (Double.isNaN(RNclass.get(i, k))) { // Indicates that a metric is disabled
@@ -341,7 +341,10 @@ public abstract class NetworkSolver extends Solver {
                     if (!this.handles.A.get(this.model.getStations().get(i)).get(this.model.getClassByIndex(k)).isDisabled
                             && !this.result.AN.isEmpty()) {
                         ANclass.set(i, k, this.result.AN.get(i, k));
-                        if (ANclass.get(i, k) < GlobalConstants.FineTol) { // Round to zero numerical perturbations
+                        if (ANclass.get(i, k) < GlobalConstants.FineTol) { // % Set to zero metrics for classes that are unreachable
+                            ANclass.set(i, k, 0);
+                        }
+                        if (RNclass.get(i, k) < 10 * GlobalConstants.FineTol) { // Round to zero numerical perturbations
                             ANclass.set(i, k, 0);
                         }
                         if (Double.isNaN(ANclass.get(i, k))) { // Indicates that a metric is disabled
@@ -361,6 +364,17 @@ public abstract class NetworkSolver extends Solver {
             }
         }
 
+//        // Set to zero entries that are associated to immediate transitions
+//        for (int i = 0; i < M; i++) {
+//            for (int j = 0; j < K; j++) {
+//                if (RNclass.get(i, j) < 10 * GlobalConstants.FineTol) {
+//                    QNclass.set(i, j, 0);
+//                    UNclass.set(i, j, 0);
+//                    RNclass.set(i, j, 0);
+//                }
+//            }
+//        }
+
         WNclass = RNclass.clone();
         WNclass.zero();
         //if (this.result.WN == null || this.result.WN.isEmpty()) {
@@ -379,7 +393,7 @@ public abstract class NetworkSolver extends Solver {
                                 WNclass.set(i, k, RNclass.get(i, k));
                             } else {
                                 int refClass = (int) sn.refclass.get(0, c);
-                                if (refClass > 0) {
+                                if (refClass >= 0) {
                                     // If there is a reference class, use this:
                                     WNclass.set(
                                             i,
@@ -438,7 +452,7 @@ public abstract class NetworkSolver extends Solver {
                         "The model has unstable queues, performance metrics may grow unbounded.");
             }
         }
-
+        double runtime = this.result.runtime;
         this.result = new SolverResult();
         this.result.QN = QNclass;
         this.result.UN = UNclass;
@@ -446,6 +460,7 @@ public abstract class NetworkSolver extends Solver {
         this.result.AN = ANclass;
         this.result.TN = TNclass;
         this.result.WN = WNclass;
+        this.result.runtime = runtime;
     }
 
     // Compute average utilizations at steady-state for all nodes
@@ -933,6 +948,7 @@ public abstract class NetworkSolver extends Solver {
 
         // TODO: store in Metrics (Lines 52-102)
     }
+
     // Store average metrics at steady-state
     protected final void setAvgResults(SolverResult result) {
         // TODO: implementation - note parameters should likely not be void

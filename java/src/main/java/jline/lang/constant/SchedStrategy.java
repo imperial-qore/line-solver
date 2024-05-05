@@ -29,8 +29,6 @@ public enum SchedStrategy {
                 return FCFS;
             case "lcfs":
                 return LCFS;
-            case "lcfspr":
-                 return LCFSPR;
             case "siro":
                 return SIRO;
             case "sjf":
@@ -55,6 +53,8 @@ public enum SchedStrategy {
                 return EXT;
             case "ref":
                 return REF;
+            case "lcfspr":
+                 return LCFSPR;
             default:
                 throw new RuntimeException("Unable to return a SchedStrategy, check string and try again.");
         }

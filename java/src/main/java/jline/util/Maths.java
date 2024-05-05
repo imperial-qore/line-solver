@@ -3,9 +3,9 @@ package jline.util;
 import java.util.*;
 
 import jline.api.PFQN;
-import jline.solvers.ssa.MersenneTwister;
 import org.apache.commons.math3.complex.Complex;
 import org.apache.commons.math3.distribution.NormalDistribution;
+import org.apache.commons.math3.random.MersenneTwister;
 import org.apache.commons.math3.special.Gamma;
 
 /**
@@ -94,7 +94,7 @@ public class Maths {
   // returns a random double in interal (0,0)
   public static double random() {
     if (matlab_random) {
-      return mt.nextDouble(false, false);
+      return mt.nextDouble();
     } else {
       return Math.random();
     }

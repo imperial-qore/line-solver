@@ -45,21 +45,27 @@ public class SolverResult {
     clone.WN = this.WN.clone();
     clone.TN = this.TN.clone();
     clone.AN = this.AN.clone();
-    clone.CN = this.CN.clone();
-    clone.XN = this.XN.clone();
+    clone.CN = this.CN == null ? null : this.CN.clone();
+    clone.XN = this.XN == null ? null : this.XN.clone();
 
-    clone.QNt = new Matrix[this.QNt.length][this.QNt[0].length];
-    clone.UNt = new Matrix[this.UNt.length][this.UNt[0].length];
-    clone.TNt = new Matrix[this.TNt.length][this.TNt[0].length];
-    for (int i = 0; i < this.QNt.length; i++) {
-      for (int j = 0; j < this.QNt[0].length; j++) {
-        clone.QNt[i][j] = this.QNt[i][j].clone();
-        clone.UNt[i][j] = this.UNt[i][j].clone();
-        clone.TNt[i][j] = this.TNt[i][j].clone();
+    if (this.QNt == null && this.UNt == null && this.TNt == null) {
+      clone.QNt = null;
+      clone.UNt = null;
+      clone.TNt = null;
+    } else {
+      clone.QNt = new Matrix[this.QNt.length][this.QNt[0].length];
+      clone.UNt = new Matrix[this.UNt.length][this.UNt[0].length];
+      clone.TNt = new Matrix[this.TNt.length][this.TNt[0].length];
+      for (int i = 0; i < this.QNt.length; i++) {
+        for (int j = 0; j < this.QNt[0].length; j++) {
+          clone.QNt[i][j] = this.QNt[i][j].clone();
+          clone.UNt[i][j] = this.UNt[i][j].clone();
+          clone.TNt[i][j] = this.TNt[i][j].clone();
+        }
       }
     }
 
-    clone.t = this.t.clone();
+    clone.t = this.t == null ? null : this.t.clone();
     clone.runtime = this.runtime;
 
     return clone;

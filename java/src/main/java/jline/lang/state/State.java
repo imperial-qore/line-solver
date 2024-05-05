@@ -728,14 +728,6 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
     return newSpace;
   }
 
-
-
-
-
-
-
-
-
   public static Matrix fromMarginalAndStarted(
           NetworkStruct sn, int ind, Matrix n, Matrix s) {
     return fromMarginalAndStarted(sn, ind, n, s, true);
@@ -748,7 +740,6 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 
   public static Matrix fromMarginalAndStarted(
           NetworkStruct sn, int ind, Matrix n, Matrix s, Boolean optionsForce) {
-
     // generate one initial state such that the marginal queue-lengths are as in vector n
     // n(r): number of jobs at the station in class r
     // s(r): jobs of class r that are running

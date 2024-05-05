@@ -53,7 +53,7 @@ public class SolverSSAMixedExamplesTest {
         options.cutoff = 3;
         SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
-        avgTable.print();
+        //avgTable.print();
         // Needed as we only consider non-zero rows
         for (int i = 0; i < avgTable.getQLen().size(); i++) {
             if (avgTable.getQLen().get(i) <= GlobalConstants.Zero && avgTable.getUtil().get(i) <= GlobalConstants.Zero &&
@@ -94,7 +94,7 @@ public class SolverSSAMixedExamplesTest {
         options.cutoff = 3;
         SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
-        avgTable.print();
+        //avgTable.print();
         // Needed as we only consider non-zero rows
         for (int i = 0; i < avgTable.getQLen().size(); i++) {
             if (avgTable.getQLen().get(i) <= GlobalConstants.Zero && avgTable.getUtil().get(i) <= GlobalConstants.Zero &&
@@ -134,7 +134,7 @@ public class SolverSSAMixedExamplesTest {
 
         SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
-        avgTable.print();
+        //avgTable.print();
         // Needed as we only consider non-zero rows
         for (int i = 0; i < avgTable.getQLen().size(); i++) {
             if (avgTable.getQLen().get(i) <= GlobalConstants.Zero && avgTable.getUtil().get(i) <= GlobalConstants.Zero &&
@@ -175,7 +175,7 @@ public class SolverSSAMixedExamplesTest {
 
         SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
-        avgTable.print();
+        //avgTable.print();
         // Needed as we only consider non-zero rows
         for (int i = 0; i < avgTable.getQLen().size(); i++) {
             if (avgTable.getQLen().get(i) <= GlobalConstants.Zero && avgTable.getUtil().get(i) <= GlobalConstants.Zero &&

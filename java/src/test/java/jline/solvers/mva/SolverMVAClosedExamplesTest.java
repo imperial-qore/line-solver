@@ -199,7 +199,7 @@ public class SolverMVAClosedExamplesTest {
 		NetworkAvgTable avgTable = solver.getAvgTable();
 
 		List<Double> QLen = avgTable.get(0);
-		avgTable.print(options);
+		//avgTable.print(options);
 
 		assertEquals(1.1367305068825366, QLen.get(0), 1e-13);
 		assertEquals(0.2512178137319010, QLen.get(1), 1e-13);

@@ -46,7 +46,7 @@ public class SolverSSAOpenExamplesTest {
         SolverOptions options = new SolverOptions();
         options.keep = true;
         options.cutoff = 10;
-        options.iter_max = 200;
+
 
         SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
@@ -90,6 +90,7 @@ public class SolverSSAOpenExamplesTest {
         options.cutoff = 7;
         SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
+
 
         // Needed as we only consider non-zero rows
         for (int i = 0; i < avgTable.getQLen().size(); i++) {

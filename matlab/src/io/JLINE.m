@@ -1355,7 +1355,7 @@ classdef JLINE
         function [ssa] = SolverSSA(network_object)
             solverOptions = jline.solvers.SolverOptions(jline.lang.constant.SolverType.SSA);
             ssa = jline.solvers.ssa.SolverSSA(network_object,solverOptions);
-            ssa.disableResTime = true;
+            %ssa.disableResTime = true;
         end
 
         function [mam] = SolverMAM(network_object)

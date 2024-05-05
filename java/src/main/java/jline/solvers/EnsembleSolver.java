@@ -75,6 +75,7 @@ public abstract class EnsembleSolver extends Solver {
     List<Double> solveRuntimes = new ArrayList<>();
     List<Double> synchRuntimes = new ArrayList<>();
     double totalRuntime = 0.0;
+    Map<Integer, Map<Integer, SolverResult>> iterateResults = new HashMap<>();
 
     init();
 
@@ -87,16 +88,25 @@ public abstract class EnsembleSolver extends Solver {
       } else {
         for (int e = 0; e < E; e++) {
           SolverResult results_it_e = analyze(it,e);
-          if (results.containsKey(it)) {
-            results.get(it).put(e, results_it_e);
+          if (iterateResults.containsKey(it)) {
+            iterateResults.get(it).put(e, results_it_e);
           } else {
             HashMap<Integer, SolverResult> modelIdxToResultMap = new HashMap<>();
             modelIdxToResultMap.put(e, results_it_e);
-            results.put(it, modelIdxToResultMap);
+            iterateResults.put(it, modelIdxToResultMap);
           }
         }
       }
-
+      this.results = new HashMap<>();
+      // Deepcopy iterateResults onto this.results.
+      // This code is to emulate matlab behaviour
+      for (int i = 1; i <= it; i++) {
+        Map<Integer, SolverResult> tempMap = new HashMap<>();
+        for (int e = 0; e < E; e++) {
+          tempMap.put(e, iterateResults.get(i).get(e).deepCopy());
+        }
+        this.results.put(i, tempMap);
+      }
       if (options.verbose != VerboseLevel.SILENT) {
         solveRuntimes.add(((System.nanoTime() - solveStartTime) / 1000000000.0));
         totalRuntime = (System.nanoTime() - outerStartTime) / 1000000000.0;

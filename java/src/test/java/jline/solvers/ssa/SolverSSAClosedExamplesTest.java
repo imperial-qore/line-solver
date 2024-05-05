@@ -4,6 +4,7 @@ import jline.examples.ClosedModel;
 import jline.lang.Network;
 import jline.lang.constant.GlobalConstants;
 import jline.solvers.NetworkAvgTable;
+import jline.solvers.SolverOptions;
 import jline.util.Maths;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,6 +46,9 @@ public class SolverSSAClosedExamplesTest {
         Network sn = ClosedModel.ex1();
         SolverSSA solver = new SolverSSA(sn);
         NetworkAvgTable avgTable = solver.getAvgTable();
+
+        //System.out.println("IN TEST");
+        //System.out.println(solver.result.runtime);
 
         assertTrue(closeEnough(QLen, avgTable.getQLen(), allowedDeviation));
         assertTrue(closeEnough(Util, avgTable.getUtil(), allowedDeviation));
@@ -249,16 +253,19 @@ public class SolverSSAClosedExamplesTest {
 
     @Test
     public void ClosedExample9ReturnsCorrectAvgTable() {
-        List<Double> QLen = Arrays.asList(0.1638, 0.17096, 0.48814, 0.48185, 9.3481, 9.3472);
-        List<Double> Util = Arrays.asList(0.1638, 0.17098, 0.24569, 0.25647, 0.49805, 0.47611);
-        List<Double> RespT = Arrays.asList(1.0, 1.0, 2.9403, 3.0361, 56.233, 55.981);
-        List<Double> ResidT = Arrays.asList(1.0, 1.0, 2.9403, 3.0361, 56.233, 55.981);
-        List<Double> ArvR = Arrays.asList(0.16624, 0.16697, 0.1638, 0.17098, 0.16602, 0.1587);
-        List<Double> Tval = Arrays.asList(0.1638, 0.17098, 0.16602, 0.1587, 0.16624, 0.16697);
+        List<Double> QLen = Arrays.asList(0.17004, 0.16877, 0.48488, 0.49773, 9.3451, 9.3335);
+        List<Double> Util = Arrays.asList(0.17004, 0.16877, 0.25505, 0.25316, 0.47219, 0.47765);
+        List<Double> RespT = Arrays.asList(1.0, 1.0, 3.0806, 3.1261, 55.897, 56.259);
+        List<Double> ResidT = Arrays.asList(1.0, 1.0, 3.0806, 3.1261, 55.897, 56.259);
+        List<Double> ArvR = Arrays.asList(0.16718, 0.1659, 0.17004, 0.16877, 0.1574, 0.15922);
+        List<Double> Tval = Arrays.asList(0.17004, 0.16877, 0.1574, 0.15922, 0.16718, 0.1659);
 
         Network sn = ClosedModel.ex9_line();
-        SolverSSA solver = new SolverSSA(sn);
+        SolverOptions solverOptions = new SolverOptions();
+        solverOptions.samples = 5000;
+        SolverSSA solver = new SolverSSA(sn, solverOptions);
         NetworkAvgTable avgTable = solver.getAvgTable();
+        //avgTable.print();
 
         // Needed as we only consider non-zero rows
         for (int i = 0; i < avgTable.getQLen().size(); i++) {

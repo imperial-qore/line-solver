@@ -22,3 +22,4 @@ deploy.sh
 dist/
 line_solver.egg-info
 setup.cfg
+test.ipynb

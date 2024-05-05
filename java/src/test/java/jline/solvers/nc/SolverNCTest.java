@@ -69,8 +69,8 @@ public class SolverNCTest {
     assertEquals(0.003142060751148, G2, tolerance);
     assertEquals(-5.762876404151583, lG2, tolerance);
 
-    System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
-    System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
+    //System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
+    //System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
   }
 
   @Test
@@ -133,8 +133,8 @@ public class SolverNCTest {
     assertEquals(2.718281801146385, G2, tolerance);
     assertEquals(0.999999989952234, lG2, tolerance);
 
-    System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
-    System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
+    //System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
+    //System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
   }
 
   @Test
@@ -202,8 +202,8 @@ public class SolverNCTest {
     assertEquals(6.406198113596468e-36, G2, 6.406198113596468e-36*tolerance);
     assertEquals(-81.035797370820802, lG2, 81.035797370820802*tolerance);
 
-    System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
-    System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
+    //System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
+    //System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
   }
 
   @Test
@@ -271,7 +271,7 @@ public class SolverNCTest {
     assertEquals(1.984349911810360e+30, G2, 1.984349911810360e+30*tolerance);
     assertEquals(69.762844149973148, lG2, 69.762844149973148*tolerance);
 
-    System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
-    System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
+    //System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
+    //System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
   }
 }

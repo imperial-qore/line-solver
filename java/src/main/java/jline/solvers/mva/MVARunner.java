@@ -60,7 +60,7 @@ public class MVARunner {
 		Matrix QN_1 = new Matrix(1, this.sn.nclasses);
 		Matrix UN = new Matrix(1, this.sn.nclasses);
 		boolean forceOneMoreIteration = false;
-		SolverMVAResult ret = new SolverMVAResult();
+		SolverMVAResult  ret = new SolverMVAResult();
 		Network nonfjmodel = null;
 		Matrix fjclassmap, fjforkmap;
 		fjclassmap = fjforkmap = null;
@@ -338,7 +338,7 @@ public class MVARunner {
 										fjclassmap, fjforkmap, nonfjmodel);
 								Matrix lambdai = Matrix.ones(ri.getNumRows(), ri.getNumCols()).elementDiv(ri);
 								double d0 = 0;
-								int parallel_branches = ri.length();
+								int parallel_branches = ri.getNonZeroLength();
 								for(int pow = 0; pow < parallel_branches; pow++){
 									Matrix nk = Maths.nchoosek(lambdai, pow + 1);
 									nk = nk.sumRows();
@@ -582,11 +582,11 @@ public class MVARunner {
 
 		this.res = new SolverMVAResult();
 		this.res.method = this.options.method;
-		this.res.QN = ret.QN;
-		this.res.RN = ret.RN;
+		this.res.QN = ret.QN; //
+		this.res.RN = ret.RN; //
 		this.res.XN = ret.XN;
-		this.res.UN = ret.UN;
-		this.res.TN = ret.TN;
+		this.res.UN = ret.UN; //
+		this.res.TN = ret.TN; //
 		this.res.CN = ret.CN;
 		this.res.AN = AN;
 		this.res.WN = new Matrix(0,0);

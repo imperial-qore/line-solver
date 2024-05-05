@@ -9,17 +9,22 @@ import jline.lang.nodes.Station;
 import jline.lang.state.EventResult;
 import jline.lang.state.State;
 import jline.examples.ClosedModel;
+import jline.lang.state.ThreadLocalRandom;
 import jline.lib.KPCToolbox;
 import jline.solvers.*;
 import jline.util.Maths;
 import jline.util.Matrix;
 import jline.util.UniqueRowResult;
+import org.apache.commons.math3.random.MersenneTwister;
 
 import javax.xml.parsers.ParserConfigurationException;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static java.util.stream.Collectors.toMap;
 
@@ -37,9 +42,15 @@ public class SolverSSA extends NetworkSolver {
     }
 
 
-    public static void main(String[] args) {
-        Network sn = MixedModel.ex2();
-        SolverSSA solver = new SolverSSA(sn);
+    public static void main(String[] args) throws InterruptedException {
+
+        Network sn = ClosedModel.ex7_line_fcfs();
+        SolverOptions options = new SolverOptions();
+//        options.method = "para";
+        options.seed = 1;
+        Maths.setRandomNumbersMatlab(true);
+        Maths.setMatlabRandomSeed(options.seed);
+        SolverSSA solver = new SolverSSA(sn, options);
         long startTime = System.nanoTime();
         NetworkAvgTable avgTable = solver.getAvgTable();
         long endTime = System.nanoTime();
@@ -87,12 +98,10 @@ public class SolverSSA extends NetworkSolver {
         NetworkStruct sn = this.sn;
         SolverOptions options = this.options;
 
-        // TODO: if cases for seed and labindex
-        options.seed = 23000;
-//        int labindex = 1;
 
 
-        this.resetRandomGeneratorSeed(options.seed);
+
+//        this.resetRandomGeneratorSeed(options.seed);
 
         // generate local state spaces
 
@@ -233,7 +242,6 @@ public class SolverSSA extends NetworkSolver {
 
         Matrix SSq = new Matrix(0, 0);
         for (int ind = 0; ind < nir.size(); ind++) {
-            // TODO: does this need a containsKey check?
             Matrix col = nir.get(ind);
             if (SSq.isEmpty()) {
                 SSq = col;
@@ -265,7 +273,6 @@ public class SolverSSA extends NetworkSolver {
         Map<Integer, Map<Integer, Matrix>> newStateCell = new HashMap<>();
         boolean isSimulation = true; // allow state vector to grow, e.g., for FCFS buffers
         double cur_time = 0;
-        // TODO: choose appropriate starting value
         Map<Integer, Double> enabled_rates = new HashMap<>();
         Map<Integer, Integer> enabled_sync = new HashMap<>();
         Map<Integer, Matrix> stateCell_1 = new HashMap<>();
@@ -415,7 +422,6 @@ public class SolverSSA extends NetworkSolver {
                                     }
 
                                     enabled_rates.put(ctr-1, rate_a.get(act).get(ia) * prob_sync_p.get(act));
-                                    // TODO: put act+1?
                                     enabled_sync.put(ctr-1, act);
                                     ctr++;
                                 }
@@ -641,7 +647,7 @@ public class SolverSSA extends NetworkSolver {
         if (this.enableChecks && !this.supports(this.model)) {
             throw new RuntimeException("This model is not supported by the SSA solver.");
         }
-        this.resetRandomGeneratorSeed(options.seed);
+//        this.resetRandomGeneratorSeed(options.seed);
 
         NetworkStruct sn = getStruct();
 
@@ -692,12 +698,12 @@ public class SolverSSA extends NetworkSolver {
         res.CN = CN;
         res.XN = XN;
         res.runtime = runtime;
-
         this.setAvgResults(res);
         // TODO: safe to downcast here, but indicative of bad oop design.
         //  "Result" is a SolverResult field in Solver superclass and space is specific to SSA
         SolverSSAResult ssaRes = (SolverSSAResult) this.result;
         ssaRes.space = sn.space;
+
 
     }
 
@@ -719,11 +725,218 @@ public class SolverSSA extends NetworkSolver {
             case "ssa":
                 res = solver_ssa_analyzer_serial(false);
                 break;
+            case "para":
+            case "parallel":
+                res = solver_ssa_analyzer_parallel();
+                break;
+
         }
         // measure time
         res.runtime = java.lang.System.currentTimeMillis() - Tstart;
         return res;
     }
+
+    private SolverSSAResult solver_ssa_analyzer_parallel() {
+//        final AtomicReference<NetworkStruct>[] snc = new AtomicReference[]{new AtomicReference<>(this.sn)};
+        int M = sn.nstations;
+        int K = sn.nclasses;
+        Map<Station, Map<JobClass, Map<Integer, Matrix>>> PH = sn.proc;
+        Matrix S = sn.nservers;
+        Matrix NK = sn.njobs.transpose();
+
+
+        // TODO: should this value be variable?
+        int numThreads = 8;
+
+        Map<Integer, Matrix> QNs = new ConcurrentHashMap<>();
+        Map<Integer, Matrix> UNs = new ConcurrentHashMap<>();
+        Map<Integer, Matrix> RNs = new ConcurrentHashMap<>();
+        Map<Integer, Matrix> TNs = new ConcurrentHashMap<>();
+        Map<Integer, Matrix> CNs = new ConcurrentHashMap<>();
+        Map<Integer, Matrix> XNs = new ConcurrentHashMap<>();
+
+
+        this.options.samples = (int) Math.ceil(this.options.samples / (double) numThreads);
+
+
+        Thread[] threads = new Thread[numThreads];
+        for (int t = 0; t < numThreads; t++) {
+            final int threadIndex = t;
+            threads[t] = new Thread(() -> {
+                Maths.setRandomNumbersMatlab(true);
+                Maths.setMatlabRandomSeed(this.options.seed);
+
+                Matrix probSysState = new Matrix(0,0);
+                Matrix SSq = new Matrix(0,0);
+                Map<Integer, Matrix> arvRates = new HashMap<>();
+                Map<Integer, Matrix> depRates = new HashMap<>();
+
+                switch (this.options.method) {
+                    case "para":
+                    case "parallel":
+                        SSAValues result = solver_ssa();
+                        probSysState = result.pi;
+                        SSq = result.SSq;
+                        arvRates = result.arvRates;
+                        depRates = result.depRates;
+//                        snc[0] = new AtomicReference<>(result.sn);
+                        break;
+                }
+                Matrix XN = new Matrix(1, K);
+                XN.fill(Double.NaN);
+                Matrix UN = new Matrix(M, K);
+                UN.fill(Double.NaN);
+                Matrix QN = new Matrix(M, K);
+                QN.fill(Double.NaN);
+                Matrix RN = new Matrix(M, K);
+                RN.fill(Double.NaN);
+                Matrix TN = new Matrix(M, K);
+                TN.fill(Double.NaN);
+                Matrix CN = new Matrix(1, K);
+                CN.fill(Double.NaN);
+
+
+
+                for (int k = 0; k < K; k++) {
+                    double refsf = sn.stationToStateful.get((int) sn.refstat.get(k));
+                    Matrix departure = depRates.get(k);
+                    Matrix dep_wset_refsf = Matrix.extractColumn(departure, (int) refsf, null);
+                    XN.set(k, probSysState.mult(dep_wset_refsf).toDouble());
+                    for (int i = 0; i < M; i++) {
+                        int isf = (int) sn.stationToStateful.get(i);
+
+                        Matrix dep_isf = Matrix.extractColumn(departure, isf, null);
+                        TN.set(i, k, probSysState.mult(dep_isf).toDouble());
+
+                        Matrix ssq_extracted = Matrix.extractColumn(SSq, i*K + k , null);
+                        QN.set(i, k, probSysState.mult(ssq_extracted).toDouble());
+
+                        switch (sn.sched.get(sn.stations.get(i))) {
+                            case INF:
+                                UN.set(i, k, QN.get(i, k));
+                                break;
+                            default:
+                                if (!PH.get(sn.stations.get(i)).get(sn.jobclasses.get(k)).isEmpty()) {
+                                    // probSysState*arvRates(:,i,k)*map_mean(PH{i}{k})/S(i);
+                                    Matrix arrival = arvRates.get(k);
+                                    Matrix arv_ik = Matrix.extractColumn(arrival, i, null);
+                                    double map_mean = KPCToolbox.map_mean(PH.get(sn.stations.get(i)).get(sn.jobclasses.get(k)).get(0),
+                                            PH.get(sn.stations.get(i)).get(sn.jobclasses.get(k)).get(1)) / S.get(i);
+                                    UN.set(i, k, probSysState.mult(arv_ik).toDouble() * map_mean);
+                                }
+                        }
+                    }
+                }
+
+                for (int k = 0; k < K; k++) {
+                    for (int i = 0; i < M; i++) {
+                        if (TN.get(i, k) > 0) {
+                            RN.set(i, k, QN.get(i, k) / TN.get(i, k));
+                        } else {
+                            RN.set(i, k, 0);
+
+                        }
+                    }
+                    CN.set(k, NK.get(k) / XN.get(k));
+                }
+                QN.replace(Double.NaN, 0);
+                CN.replace(Double.NaN, 0);
+                RN.replace(Double.NaN, 0);
+                UN.replace(Double.NaN, 0);
+                XN.replace(Double.NaN, 0);
+                TN.replace(Double.NaN, 0);
+
+                QNs.put(threadIndex, QN);
+                CNs.put(threadIndex, CN);
+                RNs.put(threadIndex, RN);
+                UNs.put(threadIndex, UN);
+                XNs.put(threadIndex, XN);
+                TNs.put(threadIndex, TN);
+
+            });
+            threads[t].start();
+        }
+        // wait for all threads to finish
+        for (int t = 0; t < numThreads; t++) {
+            try {
+                threads[t].join();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+
+        Matrix XN = new Matrix(1, K);
+        for (int i = 0; i < XN.getNumRows(); i++){
+            for (int j = 0; j < XN.getNumCols(); j++) {
+                for (Matrix xn: XNs.values()) {
+                    XN.set(i, j, XN.get(i, j) + xn.get(i, j));
+                }
+            }
+        }
+        XN = Matrix.scale_mult(XN,  1 /(double) numThreads);
+        Matrix UN = new Matrix(M, K);
+        for (int i = 0; i < UN.getNumRows(); i++){
+            for (int j = 0; j < UN.getNumCols(); j++) {
+                for (Matrix un: UNs.values()) {
+                    UN.set(i, j, UN.get(i, j) + un.get(i, j));
+                }
+            }
+        }
+        UN = Matrix.scale_mult(UN,  1 /(double) numThreads);
+
+        Matrix QN = new Matrix(M, K);
+        for (int i = 0; i < QN.getNumRows(); i++){
+            for (int j = 0; j < QN.getNumCols(); j++) {
+                for (Matrix qn: QNs.values()) {
+                    QN.set(i, j, QN.get(i, j) + qn.get(i, j));
+                }
+            }
+        }
+        QN = Matrix.scale_mult(QN,  1 /(double) numThreads);
+
+
+        Matrix RN = new Matrix(M, K);
+        for (int i = 0; i < RN.getNumRows(); i++){
+            for (int j = 0; j < RN.getNumCols(); j++) {
+                for (Matrix rn: RNs.values()) {
+                    RN.set(i, j, RN.get(i, j) + rn.get(i, j));
+                }
+            }
+        }
+        RN = Matrix.scale_mult(RN,  1 /(double) numThreads);
+
+
+
+        Matrix TN = new Matrix(M, K);
+        for (int i = 0; i < TN.getNumRows(); i++){
+            for (int j = 0; j < TN.getNumCols(); j++) {
+                for (Matrix tn: TNs.values()) {
+                    TN.set(i, j, TN.get(i, j) + tn.get(i, j));
+                }
+            }
+        }
+        TN = Matrix.scale_mult(TN,  1 /(double) numThreads);
+
+
+        Matrix CN = new Matrix(1, K);
+        for (int i = 0; i < CN.getNumRows(); i++){
+            for (int j = 0; j < CN.getNumCols(); j++) {
+                for (Matrix cn: CNs.values()) {
+                    CN.set(i, j, CN.get(i, j) + cn.get(i, j));
+                }
+            }
+        }
+        CN = Matrix.scale_mult(CN,  1 /(double) numThreads);
+
+
+        Map<Integer, Matrix> tranSysState = new HashMap<>();
+        Matrix tranSync = new Matrix(0, 0);
+        return new SolverSSAResult(QN, UN, RN, TN, CN, XN, tranSysState, tranSync, sn);
+
+    }
+
+
+
 
     private SolverSSAResult solver_ssa_analyzer_serial(boolean hash) {
         int M = sn.nstations;

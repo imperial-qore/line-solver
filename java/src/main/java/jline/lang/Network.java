@@ -2756,7 +2756,8 @@ public class Network extends Model implements Serializable {
                 hasServiceTunnel.set(i, 0, 1);
             else {
                 for (int r = 0; r < K; r++) {
-                    if (!this.stations.get(i).getServer().containsJobClass(this.jobClasses.get(r)))
+//                    if (!this.stations.get(i).getServer().containsJobClass(this.jobClasses.get(r)))
+                    if (this.stations.get(i).getServer().getServiceDistribution(this.jobClasses.get(r)).isDisabled())
                         isServiceDefined.remove(i, r);
                 }
             }
