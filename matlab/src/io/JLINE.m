@@ -14,12 +14,12 @@ classdef JLINE
             sn = line_layered_network.getStruct;
 
             %% initialization
-            model = jline.lang.LayeredNetwork(line_layered_network.getName);
+            model = jline.lang.layered.LayeredNetwork(line_layered_network.getName);
 
             %% host processors
             P = cell(1,sn.nhosts);
             for h=1:sn.nhosts
-                P{h} = jline.lang.Processor(model, sn.names{h}, sn.mult(h), jline.lang.constant.SchedStrategy.fromLINEString(sn.sched{h}));
+                P{h} = jline.lang.layered.Processor(model, sn.names{h}, sn.mult(h), jline.lang.constant.SchedStrategy.fromLINEString(sn.sched{h}));
                 if sn.repl(h)~=1
                     P{h}.setReplication(sn.repl(h));
                 end
@@ -29,7 +29,7 @@ classdef JLINE
             T = cell(1,sn.ntasks);
             for t=1:sn.ntasks
                 tidx = sn.tshift+t;
-                T{t} = jline.lang.Task(model, sn.names{tidx}, sn.mult(tidx), jline.lang.constant.SchedStrategy.fromLINEString(sn.sched{tidx}));
+                T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn.mult(tidx), jline.lang.constant.SchedStrategy.fromLINEString(sn.sched{tidx}));
                 T{t}.on(P{sn.parent(tidx)})
                 if sn.repl(tidx)~=1
                     T{t}.setReplication(sn.repl(tidx));
@@ -42,7 +42,7 @@ classdef JLINE
             E = cell(1,sn.nentries);
             for e=1:sn.nentries
                 eidx = sn.eshift+e;
-                E{e} = jline.lang.Entry(model, sn.names{eidx});
+                E{e} = jline.lang.layered.Entry(model, sn.names{eidx});
                 E{e}.on(T{sn.parent(eidx)-sn.tshift});
             end
 
@@ -52,7 +52,7 @@ classdef JLINE
                 aidx = sn.ashift+a;
                 tidx = sn.parent(aidx);
                 onTask = tidx-sn.tshift;
-                A{a} = jline.lang.Activity(model, sn.names{aidx}, JLINE.from_line_distribution(sn.hostdem{aidx}));
+                A{a} = jline.lang.layered.Activity(model, sn.names{aidx}, JLINE.from_line_distribution(sn.hostdem{aidx}));
                 A{a}.on(T{onTask});
 
                 boundTo = find(sn.graph((sn.eshift+1):(sn.eshift+sn.nentries),aidx));
@@ -116,7 +116,7 @@ classdef JLINE
                     if bidx > sn.ashift % ignore precedence between entries and activities
                         % Serial pattern (SEQ)
                         if full(sn.actpretype(aidx)) == ActivityPrecedenceType.ID_PRE_SEQ && full(sn.actposttype(bidx)) == ActivityPrecedenceType.ID_POST_SEQ
-                            T{tidx-sn.tshift}.addPrecedence(jline.lang.ActivityPrecedence.Sequence(sn.names{aidx}, sn.names{bidx}));
+                            T{tidx-sn.tshift}.addPrecedence(jline.lang.layered.ActivityPrecedence.Sequence(sn.names{aidx}, sn.names{bidx}));
                         end
                     end
                 end
@@ -146,7 +146,7 @@ classdef JLINE
                                 end
                                 if aidx ~= bidx % loop end reached
                                     counts = 1/sn.graph(aidx,bidx);
-                                    T{tidx-sn.tshift}.addPrecedence(jline.lang.ActivityPrecedence.Loop(sn.names{precMarker+sn.ashift}, precActs, jline.util.Matrix(counts)));
+                                    T{tidx-sn.tshift}.addPrecedence(jline.lang.layered.ActivityPrecedence.Loop(sn.names{precMarker+sn.ashift}, precActs, jline.util.Matrix(counts)));
                                     precMarker = 0;
                                 end
                             end
@@ -186,7 +186,7 @@ classdef JLINE
                     for i=1:length(probs)
                         probsMatrix.set(0,i-1,probs(i));
                     end
-                    T{tidx-sn.tshift}.addPrecedence(jline.lang.ActivityPrecedence.OrFork(sn.names{precMarker+sn.ashift}, precActs, probsMatrix));
+                    T{tidx-sn.tshift}.addPrecedence(jline.lang.layered.ActivityPrecedence.OrFork(sn.names{precMarker+sn.ashift}, precActs, probsMatrix));
                     precMarker = 0;
                 end
             end
@@ -216,7 +216,7 @@ classdef JLINE
                     end
                 end
                 if precMarker > 0
-                    T{tidx-sn.tshift}.addPrecedence(jline.lang.ActivityPrecedence.AndFork(sn.names{precMarker+sn.ashift}, postActs));
+                    T{tidx-sn.tshift}.addPrecedence(jline.lang.layered.ActivityPrecedence.AndFork(sn.names{precMarker+sn.ashift}, postActs));
                     precMarker = 0;
                 end
             end
@@ -243,7 +243,7 @@ classdef JLINE
                     end
                 end
                 if precMarker > 0
-                    T{tidx-sn.tshift}.addPrecedence(jline.lang.ActivityPrecedence.OrJoin(precActs, sn.names{precMarker+sn.ashift}));
+                    T{tidx-sn.tshift}.addPrecedence(jline.lang.layered.ActivityPrecedence.OrJoin(precActs, sn.names{precMarker+sn.ashift}));
                     precMarker = 0;
                 end
             end
@@ -269,7 +269,7 @@ classdef JLINE
                     end
                 end
                 if precMarker > 0
-                    T{tidx-sn.tshift}.addPrecedence(jline.lang.ActivityPrecedence.AndJoin(precActs, sn.names{precMarker+sn.ashift}, length(precActs)));
+                    T{tidx-sn.tshift}.addPrecedence(jline.lang.layered.ActivityPrecedence.AndJoin(precActs, sn.names{precMarker+sn.ashift}, length(precActs)));
                     precMarker = 0;
                 end
             end
@@ -1306,7 +1306,7 @@ classdef JLINE
             end
         end
 
-        function [QN,UN,RN,WN,TN] = arrayListToResults(alist)
+        function [QN,UN,RN,WN,AN,TN] = arrayListToResults(alist)
             n = alist.get(0).size;
             QN = zeros(n,1);
             for i=1:n
@@ -1320,14 +1320,18 @@ classdef JLINE
             for i=1:n
                 RN(i) = alist.get(2).get(i-1);
             end
-            WN = zeros(n,1);
-            for i=1:n
-                WN(i) = alist.get(3).get(i-1);
-            end
             TN = zeros(n,1);
             for i=1:n
-                TN(i) = alist.get(4).get(i-1);
+                TN(i) = alist.get(3).get(i-1);
             end
+            WN = zeros(n,1);
+            for i=1:n
+                WN(i) = alist.get(4).get(i-1);
+            end
+            AN = zeros(n,1);
+            %for i=1:n
+            %    AN(i) = alist.get(5).get(i-1);
+            %end
         end
 
         function featSupported = getFeatureSet()

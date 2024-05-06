@@ -3,30 +3,30 @@ classdef LayeredNetworkSolver < Solver
     %
     % Copyright (c) 2012-2024, Imperial College London
     % All rights reserved.
-    
+
     properties
     end
-    
+
     methods (Hidden)
         function self = LayeredNetworkSolver(model, name, options)
             % SELF = LAYEREDNETWORKSOLVER(MODEL, NAME, OPTIONS)
             self@Solver(model,name);
-            if nargin>=3 %exist('options','var'), 
-                self.setOptions(options); 
+            if nargin>=3 %exist('options','var'),
+                self.setOptions(options);
             end
             if ~isa(model,'LayeredNetwork')
                 line_error(mfilename,'Model is not a LayeredNetwork.');
             end
         end
-                
+
         function sn = getStruct(self)
             % QN = GETSTRUCT()
-            
+
             % Get data structure summarizing the model
             sn = self.model.getStruct();
-        end        
+        end
     end
-    
+
     methods %(Abstract) % implemented with errors for Octave compatibility
         function bool = supports(self, model) % true if model is supported by the solver
             % BOOL = SUPPORTS(MODEL) % TRUE IF MODEL IS SUPPORTED BY THE SOLVER
@@ -37,14 +37,31 @@ classdef LayeredNetworkSolver < Solver
             line_error(mfilename,'An abstract method was called. The function needs to be overridden by a subclass.');
         end
     end
-    
+
     methods
         function [AvgTable,QT,UT,RT,TT,WT] = getAvgTable(self, useLQNSnaming)
             % [AVGTABLE,QT,UT,RT,TT,WT] = GETAVGTABLE(USELQNSNAMING)
             if nargin<2 %~exist('wantLQNSnaming','var')
                 useLQNSnaming = false;
             end
-            [QN,UN,RN,TN,AN,WN] = getAvg(self);
+            if ~isempty(self.obj)
+                avgTable = self.obj.getEnsembleAvg();
+                [QN,UN,RN,TN,AN,WN] = JLINE.arrayListToResults(avgTable);
+                QN(1)=[];
+                UN(1)=[];
+                RN(1)=[];
+                TN(1)=[];
+                AN(1)=[];
+                WN(1)=[];
+                %QN = JLINE.jlinematrix_to_matrix(AT.getQLen());
+                %UN = JLINE.jlinematrix_to_matrix(AT.getUtil());
+                %RN = JLINE.jlinematrix_to_matrix(AT.getRespT());
+                %TN = JLINE.jlinematrix_to_matrix(AT.getTput());
+                %AN = JLINE.jlinematrix_to_matrix(AT.getArvR());
+                %WN = JLINE.jlinematrix_to_matrix(AT.getResidT());
+            else
+                [QN,UN,RN,TN,AN,WN] = getAvg(self);
+            end
             lqn = self.model.getStruct;
             Node = label(lqn.names);
             O = length(Node);
@@ -62,7 +79,7 @@ classdef LayeredNetworkSolver < Solver
                     case LayeredNetworkElement.CALL
                         NodeType(o,1) = label({'Call'});
                 end
-            end            
+            end
             if useLQNSnaming
                 Utilization = QN;
                 QT = Table(Node,Utilization);
@@ -92,7 +109,7 @@ classdef LayeredNetworkSolver < Solver
             end
         end
     end
-    
+
     methods (Static)
         % ensemble solver options
         function options = defaultOptions()

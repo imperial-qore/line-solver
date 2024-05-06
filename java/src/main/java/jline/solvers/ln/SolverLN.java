@@ -192,32 +192,20 @@ public class SolverLN extends EnsembleSolver {
                 // assume ready state
                 if (it >= iter_min) {
                     for (int e = 0; e < E; e++) {
-                        results.get(results.size()).get(e).QN.add(mov_avg_weight - 1,
-                                results.get(results.size()).get(e).QN);
-                        results.get(results.size()).get(e).UN.add(mov_avg_weight - 1,
-                                results.get(results.size()).get(e).UN);
-                        results.get(results.size()).get(e).RN.add(mov_avg_weight - 1,
-                                results.get(results.size()).get(e).RN);
-                        results.get(results.size()).get(e).TN.add(mov_avg_weight - 1,
-                                results.get(results.size()).get(e).TN);
-                        results.get(results.size()).get(e).AN.add(mov_avg_weight - 1,
-                                results.get(results.size()).get(e).AN);
-                        results.get(results.size()).get(e).WN.add(mov_avg_weight - 1,
-                                results.get(results.size()).get(e).WN);
+                        results.get(results.size()).get(e).QN.add(mov_avg_weight - 1, results.get(results.size()).get(e).QN);
+                        results.get(results.size()).get(e).UN.add(mov_avg_weight - 1, results.get(results.size()).get(e).UN);
+                        results.get(results.size()).get(e).RN.add(mov_avg_weight - 1, results.get(results.size()).get(e).RN);
+                        results.get(results.size()).get(e).TN.add(mov_avg_weight - 1, results.get(results.size()).get(e).TN);
+                        results.get(results.size()).get(e).AN.add(mov_avg_weight - 1, results.get(results.size()).get(e).AN);
+                        results.get(results.size()).get(e).WN.add(mov_avg_weight - 1, results.get(results.size()).get(e).WN);
 
                         for (int k = 1; k < wnd_size; k++) {
-                            results.get(results.size()).get(e).QN.add(mov_avg_weight,
-                                    results.get(results.size() - k).get(e).QN);
-                            results.get(results.size()).get(e).UN.add(mov_avg_weight,
-                                    results.get(results.size() - k).get(e).UN);
-                            results.get(results.size()).get(e).RN.add(mov_avg_weight,
-                                    results.get(results.size() - k).get(e).RN);
-                            results.get(results.size()).get(e).TN.add(mov_avg_weight,
-                                    results.get(results.size() - k).get(e).TN);
-                            results.get(results.size()).get(e).AN.add(mov_avg_weight,
-                                    results.get(results.size() - k).get(e).AN);
-                            results.get(results.size()).get(e).WN.add(mov_avg_weight,
-                                    results.get(results.size() - k).get(e).WN);
+                            results.get(results.size()).get(e).QN.add(mov_avg_weight, results.get(results.size() - k).get(e).QN);
+                            results.get(results.size()).get(e).UN.add(mov_avg_weight, results.get(results.size() - k).get(e).UN);
+                            results.get(results.size()).get(e).RN.add(mov_avg_weight, results.get(results.size() - k).get(e).RN);
+                            results.get(results.size()).get(e).TN.add(mov_avg_weight, results.get(results.size() - k).get(e).TN);
+                            results.get(results.size()).get(e).AN.add(mov_avg_weight, results.get(results.size() - k).get(e).AN);
+                            results.get(results.size()).get(e).WN.add(mov_avg_weight, results.get(results.size() - k).get(e).WN);
 
                         }
                     }
@@ -304,8 +292,7 @@ public class SolverLN extends EnsembleSolver {
         // Check convergence. Do not allow to converge in less than 2 iterations.
         if (it == 0 && (this.options.verbose != VerboseLevel.SILENT)) {
             System.out.println("SolverLN initialization completed. Starting iteration on ensemble models.");
-        } else if ((it > 2) && (this.maxitererr.get(it) < this.options.iter_tol) && (this.maxitererr.get(it - 1)
-                < this.options.iter_tol) && (this.maxitererr.get(it - 1) < this.options.iter_tol)) {
+        } else if ((it > 2) && (this.maxitererr.get(it) < this.options.iter_tol) && (this.maxitererr.get(it - 1) < this.options.iter_tol) && (this.maxitererr.get(it - 1) < this.options.iter_tol)) {
             // if potential convergence has just been detected, do a hard reset of every layer to check that this is
             // really the fixed point
             if (!this.hasconverged) {
@@ -437,7 +424,7 @@ public class SolverLN extends EnsembleSolver {
         if (this.options.verbose != VerboseLevel.SILENT) {
             System.out.println("");
         }
-        for(int e=0;e < this.ensemble.length;e++){
+        for (int e = 0; e < this.ensemble.length; e++) {
             solvers[e].getAvgTable();
         }
         //this.model.ensemble = this.ensemble; // not included as this comes through Diamond inheritance
@@ -446,7 +433,7 @@ public class SolverLN extends EnsembleSolver {
     @Override
     public boolean supports(Ensemble ensemble) {
         boolean bool = true;
-        for(int e=0;e < this.ensemble.length;e++){
+        for (int e = 0; e < this.ensemble.length; e++) {
             //bool = bool && ((NetworkSolver)solvers[e]).supports((LayeredNetwork) ensemble.getModel(e));
         }
         return bool;
@@ -537,15 +524,11 @@ public class SolverLN extends EnsembleSolver {
                     if (type == LayeredNetworkElement.ACTIVITY) {
                         int aidx = this.ensemble[e].getClasses().get(c).getAttribute()[1];
                         int tidx = (int) this.lqn.parent.get(aidx);
-                        if (Double.isNaN(PN.get(aidx)))
-                            PN.set(0, aidx, 0);
-                        if (Double.isNaN(PN.get(tidx)))
-                            PN.set(0, tidx, 0);
+                        if (Double.isNaN(PN.get(aidx))) PN.set(0, aidx, 0);
+                        if (Double.isNaN(PN.get(tidx))) PN.set(0, tidx, 0);
                         PN.set(0, aidx, PN.get(aidx) + this.results.get(this.results.size()).get(e).UN.get(serverIdx - 1, c));
-                        PN.set(0, tidx, PN.get(tidx) + this.results.get(this.results.size()).get(e)
-                                .UN.get(serverIdx - 1, c));
-                        PN.set(0, hidx, PN.get(hidx) + this.results.get(this.results.size()).get(e)
-                                .UN.get(serverIdx - 1, c));
+                        PN.set(0, tidx, PN.get(tidx) + this.results.get(this.results.size()).get(e).UN.get(serverIdx - 1, c));
+                        PN.set(0, hidx, PN.get(hidx) + this.results.get(this.results.size()).get(e).UN.get(serverIdx - 1, c));
                     }
                 }
             }
@@ -583,8 +566,7 @@ public class SolverLN extends EnsembleSolver {
                     case LayeredNetworkElement.CALL:
                         int cidx = this.ensemble[e].getClasses().get(c).getAttribute()[1];
                         int aidx = (int) this.lqn.callpair.get(cidx, 1);
-                        SN.set(aidx, SN.get(aidx) + this.results.get(this.results.size()).get(e).RN.get(serverIdx - 1, c)
-                                * this.lqn.callproc.get(cidx).getMean());
+                        SN.set(aidx, SN.get(aidx) + this.results.get(this.results.size()).get(e).RN.get(serverIdx - 1, c) * this.lqn.callproc.get(cidx).getMean());
                         if (Double.isNaN(QN.get(aidx))) {
                             QN.set(aidx, 0);
                         }
@@ -647,8 +629,7 @@ public class SolverLN extends EnsembleSolver {
         for (int e = 1; e <= this.lqn.nentries; e++) {
             int eidx = this.lqn.eshift + e;
             int tidx = (int) this.lqn.parent.get(eidx);
-            if (Double.isNaN(UN.get(tidx)))
-                UN.set(tidx, 0);
+            if (Double.isNaN(UN.get(tidx))) UN.set(tidx, 0);
             UN.set(eidx, TN.get(eidx) * SN.get(eidx));
 
             for (int i = 0; i < this.lqn.actsof.get(tidx).size(); i++) {
@@ -689,47 +670,39 @@ public class SolverLN extends EnsembleSolver {
                     break;
             }
         }
-        /* Formatting Boilerplate */
-        maxnamelength += 4;
-        String Node = "Node";
-        String NodeType = "NodeType";
-        String nodeType = "NodeType";
-        String Qlen = "QLen";
-        String Util = "Util";
-        String RespT = "RespT";
-        String ResidT = "ResidT";
-        String Tput = "Tput";
-        String Processor = "Processor";
-        String Task = "Task";
-        String Entry = "Entry";
-        String Activity = "Activity";
-        String format = "%-" + maxnamelength + "s%-16s%-16s%-16s%-16s%-16s%-16s\n";
-        System.out.println("-------------------------------------------------------------------------------------------------------");
-        System.out.format(format, Node, NodeType, Qlen, Util, RespT, ResidT, Tput);
-        System.out.println("-------------------------------------------------------------------------------------------------------");
-        for (int h = 1; h <= lqn.nhosts; h++) {
-            System.out.format(format, lqn.names.get(h), Processor, String.format("%.4f", QN.get(h)), String.format("%.4f", UN.get(h)),
-                    String.format("%.4f", RN.get(h)), String.format("%.4f", WN.get(h)),
-                    String.format("%.4f", TN.get(h)));
+        if (this.options.verbose != VerboseLevel.SILENT) {
+            /* Formatting Boilerplate */
+            maxnamelength += 4;
+            String Node = "Node";
+            String NodeType = "NodeType";
+            String nodeType = "NodeType";
+            String Qlen = "QLen";
+            String Util = "Util";
+            String RespT = "RespT";
+            String ResidT = "ResidT";
+            String Tput = "Tput";
+            String Processor = "Processor";
+            String Task = "Task";
+            String Entry = "Entry";
+            String Activity = "Activity";
+            String format = "%-" + maxnamelength + "s%-16s%-16s%-16s%-16s%-16s%-16s\n";
+            System.out.println("-------------------------------------------------------------------------------------------------------");
+            System.out.format(format, Node, NodeType, Qlen, Util, RespT, ResidT, Tput);
+            System.out.println("-------------------------------------------------------------------------------------------------------");
+            for (int h = 1; h <= lqn.nhosts; h++) {
+                System.out.format(format, lqn.names.get(h), Processor, String.format("%.4f", QN.get(h)), String.format("%.4f", UN.get(h)), String.format("%.4f", RN.get(h)), String.format("%.4f", WN.get(h)), String.format("%.4f", TN.get(h)));
+            }
+            for (int t = 1; t <= lqn.ntasks; t++) {
+                System.out.format(format, lqn.names.get(t + lqn.tshift), Task, String.format("%.4f", QN.get(t + lqn.tshift)), String.format("%.4f", UN.get(t + lqn.tshift)), String.format("%.4f", RN.get(t + lqn.tshift)), String.format("%.4f", WN.get(t + lqn.tshift)), String.format("%.4f", TN.get(t + lqn.tshift)));
+            }
+            for (int e = 1; e <= lqn.nentries; e++) {
+                System.out.format(format, lqn.names.get(e + lqn.eshift), Entry, String.format("%.4f", QN.get(e + lqn.eshift)), String.format("%.4f", UN.get(e + lqn.eshift)), String.format("%.4f", RN.get(e + lqn.eshift)), String.format("%.4f", WN.get(e + lqn.eshift)), String.format("%.4f", TN.get(e + lqn.eshift)));
+            }
+            for (int a = 1; a <= lqn.nacts; a++) {
+                System.out.format(format, lqn.names.get(a + lqn.ashift), Activity, String.format("%.4f", QN.get(a + lqn.ashift)), String.format("%.4f", UN.get(a + lqn.ashift)), String.format("%.4f", RN.get(a + lqn.ashift)), String.format("%.4f", WN.get(a + lqn.ashift)), String.format("%.4f", TN.get(a + lqn.ashift)));
+            }
         }
-        for (int t = 1; t <= lqn.ntasks; t++) {
-            System.out.format(format, lqn.names.get(t + lqn.tshift), Task, String.format("%.4f", QN.get(t + lqn.tshift)), String.format("%.4f", UN.get(t + lqn.tshift)),
-                    String.format("%.4f", RN.get(t + lqn.tshift)), String.format("%.4f", WN.get(t + lqn.tshift)),
-                    String.format("%.4f", TN.get(t + lqn.tshift)));
-        }
-        for (int e = 1; e <= lqn.nentries; e++) {
-            System.out.format(format, lqn.names.get(e + lqn.eshift), Entry, String.format("%.4f", QN.get(e + lqn.eshift)), String.format("%.4f", UN.get(e + lqn.eshift)),
-                    String.format("%.4f", RN.get(e + lqn.eshift)), String.format("%.4f", WN.get(e + lqn.eshift)),
-                    String.format("%.4f", TN.get(e + lqn.eshift)));
-        }
-        for (int a = 1; a <= lqn.nacts; a++) {
-            System.out.format(format, lqn.names.get(a + lqn.ashift), Activity, String.format("%.4f", QN.get(a + lqn.ashift)), String.format("%.4f", UN.get(a + lqn.ashift)),
-                    String.format("%.4f", RN.get(a + lqn.ashift)), String.format("%.4f", WN.get(a + lqn.ashift)),
-                    String.format("%.4f", TN.get(a + lqn.ashift)));
-        }
-        LayeredNetworkAvgTable AvgTable = new LayeredNetworkAvgTable(
-                QN.toList1D(), UN.toList1D(), RN.toList1D(), WN.toList1D(), TN.toList1D()
-        );
+        LayeredNetworkAvgTable AvgTable = new LayeredNetworkAvgTable(QN.toList1D(), UN.toList1D(), RN.toList1D(), WN.toList1D(), TN.toList1D());
         AvgTable.setNodeNames(nodeNames);
         AvgTable.setNodeTypes(nodeTypes);
         AvgTable.setOptions(this.options);
@@ -1143,7 +1116,7 @@ public class SolverLN extends EnsembleSolver {
                 }
                 if (!nextaidxs.isEmpty()) {
                     for (int nextaidx : nextaidxs) {
-                        if (lqn.parent.get(0, aidx) != lqn.parent.get(0, nextaidx )) {
+                        if (lqn.parent.get(0, aidx) != lqn.parent.get(0, nextaidx)) {
                             int cidx = 0;
                             for (int i = 1; i <= lqn.ncalls; i++) {
                                 if (lqn.callpair.get(i, 1) == aidx && lqn.callpair.get(i, 2) == nextaidx) {
@@ -1569,8 +1542,7 @@ public class SolverLN extends EnsembleSolver {
                     for (int i : callers) {
                         multcallers += this.njobsorig.get(i, hidx);
                     }
-                    Matrix rowhidx = new Matrix(1, this.ptaskcallers_step.get(step).getNumCols() + 1,
-                            this.ptaskcallers_step.get(step).getNumCols());
+                    Matrix rowhidx = new Matrix(1, this.ptaskcallers_step.get(step).getNumCols() + 1, this.ptaskcallers_step.get(step).getNumCols());
                     Matrix.extractRows(this.ptaskcallers_step.get(step), hidx, hidx + 1, rowhidx);
                     Matrix step_callers = rowhidx.find();
                     int multremote = 0;
@@ -1579,8 +1551,7 @@ public class SolverLN extends EnsembleSolver {
                         if (lqn.schedid.get(remidx) == SchedStrategy.toID(SchedStrategy.INF)) {
                             multremote += this.ptaskcallers_step.get(step).get(hidx, remidx) * this.util.get(remidx);
                         } else {
-                            multremote += this.ptaskcallers_step.get(step).get(hidx, remidx) * this.util.get(remidx) *
-                                    lqn.mult.get(remidx);
+                            multremote += this.ptaskcallers_step.get(step).get(hidx, remidx) * this.util.get(remidx) * lqn.mult.get(remidx);
                         }
                     }
                     if ((multcallers > multremote && multremote > 0) && !Double.isInfinite(multremote)) {
@@ -1636,8 +1607,7 @@ public class SolverLN extends EnsembleSolver {
                     for (int i : callers) {
                         multcallers += this.njobsorig.get(i, tidx);
                     }
-                    Matrix rowhidx = new Matrix(1, this.ptaskcallers_step.get(step).getNumCols(),
-                            this.ptaskcallers_step.get(step).getNumCols());
+                    Matrix rowhidx = new Matrix(1, this.ptaskcallers_step.get(step).getNumCols(), this.ptaskcallers_step.get(step).getNumCols());
                     Matrix.extractRows(this.ptaskcallers_step.get(step), tidx, tidx, rowhidx);
                     Matrix step_callers = rowhidx.find();
                     int multremote = 0;
@@ -1646,8 +1616,7 @@ public class SolverLN extends EnsembleSolver {
                         if (lqn.schedid.get(remidx) == SchedStrategy.toID(SchedStrategy.INF)) {
                             multremote += this.ptaskcallers_step.get(step).get(tidx, remidx) * this.util.get(remidx);
                         } else {
-                            multremote += this.ptaskcallers_step.get(step).get(tidx, remidx) * this.util.get(remidx) *
-                                    lqn.mult.get(remidx);
+                            multremote += this.ptaskcallers_step.get(step).get(tidx, remidx) * this.util.get(remidx) * lqn.mult.get(remidx);
                         }
                     }
                     if ((multcallers > multremote && multremote > 0) && !Double.isInfinite(multremote)) {
@@ -1692,8 +1661,7 @@ public class SolverLN extends EnsembleSolver {
             for (int i = 1; i < lqn.ntasks + 1; i++)
                 torder.set(i, i);
 
-            this.thinkt = new Matrix(1, this.lqn.ntasks + this.lqn.tshift,
-                    this.lqn.ntasks + this.lqn.ntasks - 1);
+            this.thinkt = new Matrix(1, this.lqn.ntasks + this.lqn.tshift, this.lqn.ntasks + this.lqn.ntasks - 1);
             this.thinktproc = new HashMap<Integer, Distribution>();
 
             // solve all task models
@@ -1724,7 +1692,7 @@ public class SolverLN extends EnsembleSolver {
                         // key think time update formula for LQNs, this accounts that in LINE self.utilization is scaled in [0,1] for all queueing stations irrespectively of the number of servers
                         this.thinkt.set(tidx - 1, njobs * Math.abs(1 - this.util.get(tidx - 1)) / this.tput.get(tidx - 1) - tidx_thinktime);
                     }
-                    Exp exponential = new Exp(1/(this.thinkt.get(tidx - 1) + tidx_thinktime));
+                    Exp exponential = new Exp(1 / (this.thinkt.get(tidx - 1) + tidx_thinktime));
                     this.thinktproc.put(tidx, exponential);
                 } else { // set to zero if this is a ref task
                     this.thinkt.set(tidx - 1, GlobalConstants.Zero);
@@ -1735,7 +1703,7 @@ public class SolverLN extends EnsembleSolver {
     }
 
     public void updateMetrics(int it) {
-        switch(options.method) {
+        switch (options.method) {
             case "default":
                 this.updateMetricsDefault(it);
             case "moment3":
@@ -1765,18 +1733,12 @@ public class SolverLN extends EnsembleSolver {
                 this.servt.set(aidx - 1, 0);
                 this.tput.set(aidx - 1, 0);
                 for (int w = 1; w < wnd_size; w++) {
-                    this.servt.set(aidx - 1,
-                            this.servt.get(aidx - 1) + this.results.get(rLen - w).get(this.idxhash.get(idx).intValue() - 1).WN.get(nodeidx - 1, classidx - 1) / wnd_size
-                    );
-                    this.tput.set(aidx - 1,
-                            this.servt.get(aidx - 1) + this.results.get(rLen - w).get(this.idxhash.get(idx).intValue() - 1).TN.get(nodeidx - 1, classidx - 1) / wnd_size
-                    );
+                    this.servt.set(aidx - 1, this.servt.get(aidx - 1) + this.results.get(rLen - w).get(this.idxhash.get(idx).intValue() - 1).WN.get(nodeidx - 1, classidx - 1) / wnd_size);
+                    this.tput.set(aidx - 1, this.servt.get(aidx - 1) + this.results.get(rLen - w).get(this.idxhash.get(idx).intValue() - 1).TN.get(nodeidx - 1, classidx - 1) / wnd_size);
                 }
             } else {
-                this.servt.set(aidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).WN.
-                        get(nodeidx - 1, classidx - 1));
-                this.tput.set(aidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).TN.
-                        get(nodeidx - 1, classidx - 1));
+                this.servt.set(aidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).WN.get(nodeidx - 1, classidx - 1));
+                this.tput.set(aidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).TN.get(nodeidx - 1, classidx - 1));
             }
             Exp mean = new Exp(1 / this.servt.get(aidx - 1));
             Exp rate = new Exp(1 / this.servt.get(aidx - 1));
@@ -1839,14 +1801,12 @@ public class SolverLN extends EnsembleSolver {
             double entry_tput = 0;
 
             for (int i = 0; i < tidxclass.size(); i++) {
-                task_tput += this.results.get(results.size()).get(this.idxhash.get(hidx).intValue() - 1).TN.
-                        get(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getClientIdx() - 1, tidxclass.get(i) - 1);
+                task_tput += this.results.get(results.size()).get(this.idxhash.get(hidx).intValue() - 1).TN.get(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getClientIdx() - 1, tidxclass.get(i) - 1);
             }
 
 
             for (int i = 0; i < eidxclass.size(); i++) {
-                entry_tput += this.results.get(results.size()).get(this.idxhash.get(hidx).intValue() - 1).TN.
-                        get(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getClientIdx() - 1, eidxclass.get(i) - 1);
+                entry_tput += this.results.get(results.size()).get(this.idxhash.get(hidx).intValue() - 1).TN.get(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getClientIdx() - 1, eidxclass.get(i) - 1);
             }
 
             this.servt.set(eidx - 1, entry_servt.get(eidx - 1) * task_tput / entry_tput);
@@ -1877,8 +1837,7 @@ public class SolverLN extends EnsembleSolver {
             }
         }
 
-        this.ptaskcallers = new Matrix(this.ptaskcallers.getNumRows(), this.ptaskcallers.getNumCols(),
-                this.ptaskcallers.getNumRows() * this.ptaskcallers.getNumCols() - 1);
+        this.ptaskcallers = new Matrix(this.ptaskcallers.getNumRows(), this.ptaskcallers.getNumCols(), this.ptaskcallers.getNumRows() * this.ptaskcallers.getNumCols() - 1);
 
         for (int i = 0; i < this.ptaskcallers.getNumRows(); i++) {
             for (int j = 0; j < this.ptaskcallers.getNumCols(); j++) {
@@ -1924,8 +1883,7 @@ public class SolverLN extends EnsembleSolver {
                     double sum = 0;
                     for (double j : caller_idxclass) {
                         Matrix Tn = results.get(results.size()).get(idxhash.get(tidx).intValue() - 1).TN;
-                        sum += Tn.get(this.ensemble[idxhash.get(tidx).intValue() - 1].getAttribute().getClientIdx() - 1
-                                , (int) j - 1);
+                        sum += Tn.get(this.ensemble[idxhash.get(tidx).intValue() - 1].getAttribute().getClientIdx() - 1, (int) j - 1);
                     }
                     caller_tput.set(caller_idx - lqn.tshift - 1, sum);
                 }
@@ -1955,9 +1913,7 @@ public class SolverLN extends EnsembleSolver {
                 }
                 double sum = 0;
                 for (int i : caller_idxclass) {
-                    sum += this.results.get(this.results.size()).get(this.idxhash.get(hidx).intValue() - 1).TN.
-                            get(this.ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getClientIdx() - 1,
-                                    i - 1);
+                    sum += this.results.get(this.results.size()).get(this.idxhash.get(hidx).intValue() - 1).TN.get(this.ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getClientIdx() - 1, i - 1);
                 }
                 caller_tput.set(caller_idx - lqn.tshift, caller_tput.get(caller_idx - lqn.tshift) + sum);
             }
@@ -1970,8 +1926,7 @@ public class SolverLN extends EnsembleSolver {
 
         // impute call probability using a DTMC random walk on the taskcaller graph
         // for matrix multiplication, let P to be the same size of that in Matlab
-        Matrix P = new Matrix(this.ptaskcallers.getNumRows() - 1, this.ptaskcallers.getNumCols() - 1,
-                (this.ptaskcallers.getNumRows() - 1) * (this.ptaskcallers.getNumCols() - 1));
+        Matrix P = new Matrix(this.ptaskcallers.getNumRows() - 1, this.ptaskcallers.getNumCols() - 1, (this.ptaskcallers.getNumRows() - 1) * (this.ptaskcallers.getNumCols() - 1));
         for (int i = 1; i < this.ptaskcallers.getNumRows(); i++) {
             for (int j = 1; j < this.ptaskcallers.getNumCols(); j++) {
                 P.set(i - 1, j - 1, this.ptaskcallers.get(i, j));
@@ -2018,8 +1973,7 @@ public class SolverLN extends EnsembleSolver {
                         sum += x.get((int) ref_nonzero.get(k) - 1);
                     }
 
-                    if (sum > 1.0 - GlobalConstants.CoarseTol)
-                        break;
+                    if (sum > 1.0 - GlobalConstants.CoarseTol) break;
                     for (int index = 1; index < x.getNumRows(); index++) {
                         this.ptaskcallers_step.get(step).set(index, tidx, x.get(index));
                     }
@@ -2217,7 +2171,7 @@ public class SolverLN extends EnsembleSolver {
 
     public List<Network> getEnsemble() {
         List<Network> myEnsemble = new ArrayList<>();
-        for (int e=0; e<ensemble.length; e++){
+        for (int e = 0; e < ensemble.length; e++) {
             myEnsemble.add(ensemble[e]);
         }
         return myEnsemble;

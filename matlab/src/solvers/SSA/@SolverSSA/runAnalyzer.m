@@ -27,7 +27,7 @@ switch options.lang
         for i=1:M
             for r=1:R
                 if ~(sn.procid(i,r) == ProcessType.ID_EXP || sn.procid(i,r) == ProcessType.ID_ERLANG || sn.procid(i,r) == ProcessType.ID_MAP || sn.procid(i,r) == ProcessType.ID_COXIAN || sn.procid(i,r) == ProcessType.ID_DISABLED || sn.procid(i,r) == ProcessType.ID_IMMEDIATE)
-                    jlineSSASupported = false;
+%                    jlineSSASupported = false;
                 end
             end
         end
