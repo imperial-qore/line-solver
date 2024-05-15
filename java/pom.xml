@@ -8,12 +8,12 @@
     <repository>
       <id>internal.repo</id>
       <name>Temporary Staging Repository</name>
-      <url>file://${project.build.directory}/mvn-artifact</url>
+      <url>file://${project.build.directory}/../../maven/mvn-artifact</url>
     </repository>
     <site>
         <id>site</id>
         <name>Project Site</name>
-	<url>file://${project.build.directory}/../../maven/</url>  <!-- Adjust URL as needed -->
+	<url>file://${project.build.directory}/../../maven/site/</url>  
     </site>
   </distributionManagement>
   <build>
@@ -127,7 +127,7 @@
         <configuration>
           <message>Maven artifacts for ${project.version}</message>
           <noJekyll>true</noJekyll>
-	  <outputDirectory>${project.build.directory}</outputDirectory>
+	  <outputDirectory>${project.build.directory}/../../maven/</outputDirectory>
           <branch>refs/heads/main</branch>
           <includes>
             <include>**/*</include>
@@ -151,7 +151,7 @@
         <version>2.8.2</version>
         <configuration>
           <altDeploymentRepository>
-            internal.repo::default::file://${project.build.directory}/mvn-artifact
+		  internal.repo::default::file://${project.build.directory}/../../maven/mvn-artifact
         </altDeploymentRepository>
         </configuration>
       </plugin>
