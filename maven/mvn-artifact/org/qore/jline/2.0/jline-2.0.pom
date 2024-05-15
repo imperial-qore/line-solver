@@ -100,32 +100,6 @@
         <version>3.0.0</version>
       </plugin>
       <plugin>
-        <groupId>com.github.github</groupId>
-        <artifactId>site-maven-plugin</artifactId>
-        <version>0.12</version>
-        <executions>
-          <execution>
-            <phase>deploy</phase>
-            <goals>
-              <goal>site</goal>
-            </goals>
-          </execution>
-        </executions>
-        <configuration>
-          <message>Maven artifacts for ${project.version}</message>
-          <noJekyll>true</noJekyll>
-          <outputDirectory>${project.build.directory}/../../maven/</outputDirectory>
-          <branch>refs/heads/main</branch>
-          <includes>
-            <include>**/*</include>
-          </includes>
-          <merge>true</merge>
-          <repositoryName>line-solver</repositoryName>
-          <repositoryOwner>imperial-qore</repositoryOwner>
-          <server>github</server>
-        </configuration>
-      </plugin>
-      <plugin>
         <artifactId>maven-deploy-plugin</artifactId>
         <version>2.8.2</version>
         <configuration>
