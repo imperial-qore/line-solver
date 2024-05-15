@@ -98,6 +98,42 @@
             </compilerArgs>
           </configuration>
       </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-site-plugin</artifactId>
+        <version>3.7.1</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-project-info-reports-plugin</artifactId>
+        <version>3.0.0</version>
+      </plugin>
+      <plugin>
+        <groupId>com.github.github</groupId>
+        <artifactId>site-maven-plugin</artifactId>
+        <version>0.12</version>
+        <configuration>
+          <message>Maven artifacts for ${project.version}</message>
+          <noJekyll>true</noJekyll>
+	  <outputDirectory>${project.build.directory}/maven</outputDirectory>
+          <branch>refs/heads/main</branch>
+          <includes>
+            <include>**/*</include>
+          </includes>
+          <merge>true</merge>
+          <repositoryName>line-solver</repositoryName>
+          <repositoryOwner>imperial-qore</repositoryOwner>
+          <server>github</server>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>site</goal>
+            </goals>
+            <phase>deploy</phase>
+          </execution>
+        </executions>
+      </plugin>    
     </plugins>
   </build>
   <dependencies>
