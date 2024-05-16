@@ -332,6 +332,13 @@ public abstract class NetworkSolver extends Solver {
                     }
                 }
             }
+            for (int i = 0; i < M; i++) {
+                for (int j = 0; j < K; j++) {
+                    if (!RNclass.isEmpty() && (RNclass.get(i, j) < 10*GlobalConstants.FineTol)) {
+                        TNclass.set(i, j, 0);
+                    }
+                }
+            }
         }
 
         if (!this.result.AN.isEmpty()) {
