@@ -213,8 +213,6 @@ if ~isempty(T)
 
     % round to zero numerical perturbations
     TNclass(TNclass < GlobalConstants.FineTol)=0;
-    % set to zero entries associated to immediate transitions
-    TNclass(RNclass < 10*GlobalConstants.FineTol)=0;
     % set to zero metrics for classes that are unreachable
     for k=1:K
         c = find(sn.chains(:,k));
