@@ -3209,4 +3209,35 @@ class PFQNTest {
 
         assertEquals(11.731133319444895, ret, Math.max(nrpltol, 11.731133319444895*nrpltol));
     }
+
+    @Test
+    void pfqn_xiaTest1() {
+        SolverOptions options = new SolverOptions();
+        int M = 2;
+        Matrix L = new Matrix(M, 1);
+        L.set(0, 0, 0.957166948242946);
+        L.set(1, 0, 0.485375648722841);
+        int N = 20;
+        Matrix s = new Matrix(M, 1);
+        s.set(0, 0, 9);
+        s.set(1, 0, 2);
+        double ret = pfqn_xia(L, N, s, options);
+        assertEquals(-2.368021841557764e+01, ret);
+    }
+
+    @Test
+    void pfqn_xiaTest2() {
+        SolverOptions options = new SolverOptions();
+        int M = 2;
+        Matrix L = new Matrix(M, 1);
+        L.set(0, 0, 4.217612826262750e-01);
+        L.set(1, 0, 9.157355251890671e-01);
+        int N = 20;
+        Matrix s = new Matrix(M, 1);
+        s.set(0, 0, 8);
+        s.set(1, 0, 10);
+        double ret = pfqn_xia(L, N, s, options);
+        assertEquals(-3.526261643805476e+01, ret);
+    }
+
 }

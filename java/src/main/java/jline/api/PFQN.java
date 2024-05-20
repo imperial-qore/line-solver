@@ -2,7 +2,6 @@ package jline.api;
 
 import jline.lang.constant.GlobalConstants;
 import jline.lang.constant.SchedStrategy;
-import jline.lang.constant.SolverType;
 import jline.lang.nodes.Station;
 import jline.util.ComplexMatrix;
 import jline.util.Maths;
@@ -13,7 +12,7 @@ import jline.util.Matrix;
 import org.apache.commons.math3.complex.Complex;
 import org.apache.commons.math3.analysis.interpolation.SplineInterpolator;
 import org.apache.commons.math3.distribution.MultivariateNormalDistribution;
-import org.apache.commons.math3.distribution.NormalDistribution;
+import org.apache.commons.math3.util.CombinatoricsUtils;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -4368,94 +4367,6 @@ public class PFQN {
 			return new pfqnRdReturn(lGN, Cgamma);
 		}
 
-	private static Complex h_nrl(Matrix x, Matrix L, Matrix tsubtb, double Nt, Matrix alpha) {
-		int M = L.getNumRows();
-		ComplexMatrix c = new ComplexMatrix(tsubtb.getNumRows(), tsubtb.getNumCols());
-		for (int i = 0; i < c.getNumElements(); i++) {
-			c.set(i, new Complex(0, 2 * Math.PI * tsubtb.get(i)).exp());
-		}
-		ComplexMatrix L_complex = new ComplexMatrix(L.elementMult(c.real.repmat(M, 1), null), L.elementMult(c.im.repmat(M, 1), null));
-		Matrix exp_x = x.clone();
-		for (int i = 0; i < x.getNumElements(); i++) {
-			exp_x.set(i, Math.exp(x.get(i)) / Math.pow(1 + Math.exp(x.get(i)), 2));
-		}
-		return pfqn_gld_complex(L_complex.sumRows(), new Matrix(Nt), alpha, null).G.multiply(exp_x.prodVector());
-	}
-
-	private static Complex h_nrp(Matrix x, Matrix L, Matrix tsubtb, double Nt, Matrix alpha) {
-		int M = L.getNumRows();
-		ComplexMatrix c = new ComplexMatrix(tsubtb.getNumRows(), tsubtb.getNumCols());
-		for (int i = 0; i < c.getNumElements(); i++) {
-			c.set(i, new Complex(0, 2 * Math.PI * tsubtb.get(i)).exp());
-		}
-		ComplexMatrix L_complex = new ComplexMatrix(L.elementMult(c.real.repmat(M, 1), null), L.elementMult(c.im.repmat(M, 1), null));
-		NormalDistribution Z = new NormalDistribution();
-		Matrix normpdf_x = x.clone();
-		for (int i = 0; i < x.getNumElements(); i++) {
-			normpdf_x.set(i, Z.density(x.get(i)));
-		}
-		return pfqn_gld_complex(L_complex.sumRows(), new Matrix(Nt), alpha, null).G.multiply(normpdf_x.prodVector());
-	}
-
-	public static Matrix infradius_hnorm(Matrix x, Matrix L, Matrix N, Matrix alpha) {
-		int M = L.getNumRows();
-		double MU = 0;
-		double SIGMA = 1;
-		double Nt = N.elementSum();
-		Matrix beta = new Matrix(N.getNumRows(), N.getNumCols());
-		N.divide(Nt, beta, true);
-		NormalDistribution Z = new NormalDistribution(MU, SIGMA);
-		Matrix t = x.clone();
-		for (int i = 0; i < t.getNumRows(); i++) {
-			for (int j = 0; j < t.getNumCols(); j++) {
-				t.set(i, j, Z.cumulativeProbability(x.get(i, j)));
-			}
-		}
-		double tb = 0;
-		for (int i = 0; i < t.getNumRows(); i++) {
-			for (int j= 0; j < t.getNumCols(); j++) {
-				tb += beta.get(i, j) * t.get(i, j);
-			}
-		}
-		Matrix tsubtb = t.clone();
-		for (int i = 0; i < t.getNumElements(); i++) {
-			tsubtb.set(i, tsubtb.get(i) - tb);
-		}
-		ComplexMatrix y = new ComplexMatrix(new Matrix(x.getNumRows(), 1), new Matrix(x.getNumRows(), 1));
-		for (int i = 0; i < x.getNumRows(); i++) {
-			y.set(i, h_nrp(Matrix.extractRows(x, i, x.getNumRows(), null), L, tsubtb, Nt, alpha));
-		}
-		return y.real;
-	}
-
-	public static ComplexMatrix infradius_h(Matrix x, Matrix L, Matrix N, Matrix alpha) {
-
-		int M = L.getNumRows();
-		double Nt = N.elementSum();
-		Matrix beta = new Matrix(N.getNumRows(), N.getNumCols());
-		N.divide(Nt, beta, true);
-		Matrix t = new Matrix(x.getNumRows(), x.getNumCols());
-		Matrix tb_mat = new Matrix(x.getNumRows(), 1);
-		for (int i = 0; i < x.getNumRows(); i++) {
-			double tb_row = 0.0;
-			for (int j = 0; j < x.getNumCols(); j++) {
-				t.set(i, j, Math.exp(x.get(i, j)) / (1 + Math.exp(x.get(i, j))));
-				tb_row += beta.get(i, j) * Math.exp(x.get(i, j)) / (1 + Math.exp(x.get(i, j)));
-			}
-			tb_mat.set(i, tb_row);
-		}
-		double tb = tb_mat.elementSum();
-		Matrix tsubtb = t.clone();
-		for (int i = 0; i < t.getNumElements(); i++) {
-			tsubtb.set(i, tsubtb.get(i) - tb);
-		}
-		ComplexMatrix y = new ComplexMatrix(new Matrix(x.getNumRows(), 1), new Matrix(x.getNumRows(), 1));
-		for (int i = 0; i < x.getNumRows(); i++) {
-			y.set(i, h_nrl(Matrix.extractRows(x, i, x.getNumRows(), null), L, tsubtb, Nt, alpha));
-		}
-		return y;
-	}
-
 	public static double pfqn_nrp(Matrix L, Matrix N, Matrix Z, Matrix alpha, SolverOptions options) {
 		double Nt = N.elementSum();
 		if (Z.elementSum() > 0) {
@@ -4521,84 +4432,80 @@ public class PFQN {
 		return lG + N.mult(Lmax_log_mat.transpose()).get(0);
 	}
 
-
-	public static laplaceApproxReturn laplaceapprox_h(Matrix x0, Matrix L, Matrix N, Matrix alpha, String mode) {
-		int d = x0.getNumCols();
-		double tol = 1e-5;
-		double detnH = -1;
-		Matrix H = new Matrix(0);
-		while (detnH < 0 && tol <= 1e-3) {
-			H = num_hess_h(x0, tol, L, N, alpha, mode);
-			Matrix nH = H.clone();
-			nH.scale(-1);
-			detnH = nH.det();
-			tol *= 10;
+	private static double pfqn_xia_F(double u, double k) {
+		double ret = 0;
+		for (int j=0; j < k; j++) {
+			ret += Math.pow(u, j) / CombinatoricsUtils.factorial(j);
 		}
-		if (detnH < 0) {
-			System.out.println("Warning: laplaceapprox_h: det(-H)<0.");
-		}
-		Matrix infrad;
-		if (mode == "nrl") {
-			infrad = infradius_h(x0, L, N, alpha).real;
-		}
-		else if (mode == "nrp") {
-			infrad = infradius_hnorm(x0, L, N, alpha);
-		}
-		else {
-			throw new RuntimeException("Invalid mode for laplaceapprox_h. Only nrl and nrp are supported.");
-		}
-		assert(infrad.getNumElements() == 1);
-		double I = infrad.get(0) * Math.sqrt(Math.pow(2 * Math.PI, d) / detnH);
-		double logI = Math.log(infrad.get(0)) + ((double) d / 2) * Math.log(2 * Math.PI) - Math.log(detnH);
-		return new laplaceApproxReturn(H, I, logI);
+		ret += Math.pow(u, k) / CombinatoricsUtils.factorial((int) k) / (1 - u / k);
+		return ret;
 	}
 
-	public static Matrix num_hess_h(Matrix x0, double h, Matrix L, Matrix N, Matrix alpha, String mode) {
-		Matrix H = new Matrix(0, x0.getNumElements());
-		H.zero();
-		for (int i = 0; i < x0.getNumElements(); i++) {
-			Matrix x1 = x0.clone();
-			x1.set(i, x1.get(i) - h);
-			ComplexMatrix df1 = num_grad_h(x1, h, L, N, alpha, mode);
-
-			Matrix x2 = x0.clone();
-			x2.set(i, x2.get(i) + h);
-			ComplexMatrix df2 = num_grad_h(x2, h, L, N, alpha, mode);
-			Matrix d2f = new Matrix(1, x0.getNumElements());
-			for (int j=0; j<d2f.getNumElements(); j++) {
-				d2f.set(j, df2.get(j).subtract(df1.get(j)).getReal() / (2 * h));
+	public static double pfqn_xia(Matrix L, int N, Matrix s, SolverOptions options) {
+		Matrix rho = new Matrix(L.getNumRows(), L.getNumCols());
+		for (int i=0; i<s.getNumRows(); i++) {
+			for (int j=0; j<s.getNumCols(); j++) {
+				rho.set(i, j, L.get(i, j) / s.get(i, j));
 			}
-			H = Matrix.concatRows(H, d2f, null);
 		}
-		return H;
+		double scalefactor = 1 / rho.elementMax();
+		L.scale(scalefactor);
+		int M = L.getNumRows();
+		rho.scale(scalefactor);
+		List<Integer> bnkset = new ArrayList<>();
+		List<Integer> nbnkset = new ArrayList<>();
+		for (int i=0; i<rho.getNumElements(); i++) {
+			if (rho.get(i) == rho.elementMax()) {
+				bnkset.add(i);
+			}
+		}
+		for (int i=0; i<M; i++) {
+			if (!bnkset.contains(i)) {
+				nbnkset.add(i);
+			}
+		}
+		int B = bnkset.size();
+		double logGasy = -factln(B-1) - N * Math.log(scalefactor);
+		for (int b : bnkset) {
+			logGasy = logGasy + s.get(b) * Math.log(L.get(b)) - factln(s.get(b));
+		}
+		for (int k : nbnkset) {
+			double f = pfqn_xia_F(L.get(k), s.get(k));
+			if (Double.isFinite(f)) {
+				logGasy += Math.log(f);
+			}
+		}
+		return logGasy;
 	}
 
-	public static ComplexMatrix num_grad_h(Matrix x0, double h,  Matrix L, Matrix N, Matrix alpha, String mode) {
-		ComplexMatrix df = new ComplexMatrix(x0.clone(), x0.clone());
-		df.real.zero();
-		df.im.zero();
-		for (int i = 0; i < x0.getNumCols(); i++) {
-			Matrix x1 = x0.clone();
-			Matrix x2 = x0.clone();
-			x1.set(i, x0.get(i) - h);
-			x2.set(i, x0.get(i) + h);
-			Complex y1;
-			Complex y2;
-			if (mode == "nrl") {
-				 y1 = infradius_h(x1, L, N, alpha).get(0).log();
-				 y2 = infradius_h(x2, L, N, alpha).get(0).log();
-			}
-			else if (mode == "nrp") {
-				y1 = new Complex(Math.log(infradius_hnorm(x1, L, N, alpha).get(0)));
-				y2 = new Complex(Math.log(infradius_hnorm(x2, L, N, alpha).get(0)));
-			}
-			else {
-				throw new RuntimeException("Invalid mode in num_grad_h. Only nrp and nrl are supported.");
-			}
-			df.set(i, y2.subtract(y1).divide(2 * h));
+	public static Matrix pfqn_nca(Matrix L, int N, Matrix alpha) {
+		int M = L.getNumRows();
+		int R = L.getNumCols();
+		if (R > 1 && M > 1) {
+			throw new RuntimeException("pfqn_nca supports only single class queuing networks; L must be a column vector.");
 		}
-		return df;
+		Matrix X = Matrix.ones(M, N);
+		Matrix pi = new Matrix(M, 1 + N);
+		pi.zero();
+		for (int j=0; j<N; j++) {
+			X.set(0, j, alpha.get(0, j) / L.get(0));
+		}
+		for (int i=1; i<M; i++) {
+			pi.set(i, 0, 1.0);
+			for (int k=0; k<N; k++) {
+				for (int j=0; j<k; j++) {
+					pi.set(i, 1+j, pi.get(i-1, j) * L.get(i) / alpha.get(i, j));
+				}
+				pi.set(i, 1, pi.get(i, 1) / X.get(i-1, k));
+				X.set(i, k, 1 / pi.sumSubMatrix(i, i, 1, k+1));
+				for (int j=-1; j<k; j++) {
+					pi.set(i, j+1, X.get(i,k) * pi.get(i, j+1));
+				}
+			}
+		}
+		return X;
 	}
+
 
     public static class pfqnMVAReturn {
         public Matrix XN;
@@ -4918,18 +4825,5 @@ public class PFQN {
 				this.method = null;
 			}
 		}
-
-	public static class laplaceApproxReturn {
-		public Matrix H;
-		public double I;
-		public double logI;
-
-		public laplaceApproxReturn(Matrix H, double I, double logI) {
-			this.H = H;
-			this.I = I;
-			this.logI = logI;
-		}
-	}
-
 
 }
