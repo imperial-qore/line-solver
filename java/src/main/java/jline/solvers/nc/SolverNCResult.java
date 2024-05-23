@@ -17,6 +17,13 @@ public class SolverNCResult extends SolverResult {
   public int it;
   public String method;
 
+  /*
+   * The following fields are only used by the SolverNCCacheQNAnalyzer
+   */
+  public Matrix hitProb;
+  public Matrix missProb;
+
+
   class Prob {
     public Double logNormConstAggr;
     public Matrix marginal;

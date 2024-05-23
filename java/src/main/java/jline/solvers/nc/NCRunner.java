@@ -148,8 +148,8 @@ public class NCRunner {
         for (int ind = 0; ind < sn.nnodes; ind++) {
           if (sn.nodetypes.get(ind) == NodeType.Cache) {
             Cache cacheNode = (Cache) solver.model.getNodes().get(ind);
-            //cacheNode.setResultHitProb(Matrix.extractRows(ret.hitProb, ind, ind + 1, null));
-            //cacheNode.setResultMissProb(Matrix.extractRows(ret.missProb, ind, ind + 1, null));
+            cacheNode.setResultHitProb(Matrix.extractRows(ret.hitProb, ind, ind + 1, null));
+            cacheNode.setResultMissProb(Matrix.extractRows(ret.missProb, ind, ind + 1, null));
           }
         }
         solver.model.refreshChains(true);

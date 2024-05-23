@@ -2,6 +2,8 @@ package jline.solvers.nc;
 
 import jline.api.PFQN;
 import jline.api.SN;
+import jline.lang.FeatureSet;
+import jline.solvers.mva.SolverMVA;
 import jline.util.Maths;
 import jline.lang.Network;
 import jline.lang.NetworkStruct;
@@ -65,8 +67,8 @@ public class SolverNC extends NetworkSolver {
     if (this.options == null)
       this.options = new SolverOptions(SolverType.NC);
 
-    //NCRunner runner = new NCRunner(this);
-    //this.result = runner.run();
+    NCRunner runner = new NCRunner(this);
+    this.result = runner.run();
   }
 
 
@@ -700,7 +702,44 @@ public class SolverNC extends NetworkSolver {
     return new SolverNCReturn(Q, U, R, T, C, X, lG, STeff, it, method);
   }
 
-  public static class SolverNCMargReturn {
+  public static SolverNCReturn solver_ncld(NetworkStruct sn, SolverOptions options) {
+    // TODO: Implement
+    return null;
+  }
+
+  /**
+   * Returns the feature set supported by the NC solver
+   * @return - the feature set supported by the NC solver
+   */
+  public static FeatureSet getFeatureSet(){
+    FeatureSet s = new FeatureSet();
+    // TODO: update with the features supported by JLINE. These are the features supported by LINE.
+    String[] features = {"Sink", "Source",
+        "ClassSwitch", "DelayStation", "Queue",
+        "APH", "Coxian", "Erlang", "Det", "Exp", "HyperExp",
+        "StatelessClassSwitcher", "InfiniteServer",
+        "SharedServer", "Buffer", "Dispatcher",
+        "Server", "JobSink", "RandomSource", "ServiceTunnel",
+        "SchedStrategy_INF", "SchedStrategy_PS", "SchedStrategy_SIRO",
+        "RoutingStrategy_PROB", "RoutingStrategy_RAND",
+        "SchedStrategy_FCFS", "ClosedClass", "ClosedClass",
+        "Cache", "CacheClassSwitcher", "OpenClass"};
+    s.setTrue(features);
+    return s;
+  }
+
+  /**
+   * Checks whether the given model is supported by the NC solver
+   * @param model - the network model
+   * @return - true if the model is supported, false otherwise
+   */
+  public static boolean supports(Network model){
+    FeatureSet featUsed = model.getUsedLangFeatures();
+    FeatureSet featSupported = SolverNC.getFeatureSet();
+    return FeatureSet.supports(featSupported, featUsed);
+  }
+
+public static class SolverNCMargReturn {
     public Matrix lPr;
     public double G;
     public double runtime;
@@ -750,4 +789,5 @@ public class SolverNC extends NetworkSolver {
       this.method = method;
     }
   }
+
 }

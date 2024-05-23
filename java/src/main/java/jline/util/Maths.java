@@ -3,6 +3,7 @@ package jline.util;
 import java.util.*;
 
 import jline.api.PFQN;
+import jline.lang.state.ThreadLocalRandom;
 import org.apache.commons.math3.complex.Complex;
 import org.apache.commons.math3.distribution.NormalDistribution;
 import org.apache.commons.math3.random.MersenneTwister;
@@ -15,11 +16,10 @@ public class Maths {
 
   // these to be used only in testing to replicate matlab random numbers
   // keep false in standard operation as Mersenne Twister slower than Math.random()
+    private static Boolean matlabRandom = false;
 
-  private static boolean matlab_random = false;
-  private static MersenneTwister mt = new MersenneTwister(1);
 
-  /**
+    /**
    * Softmin function.
    *
    * @param x     first term to compare
@@ -84,17 +84,17 @@ public class Maths {
   }
 
   public static void setRandomNumbersMatlab(boolean matlab_style) {
-    matlab_random = matlab_style;
+      matlabRandom = matlab_style;
   }
 
-  public static void setMatlabRandomSeed(int seed) {
-    mt = new MersenneTwister(seed);
+  public static void setMatlabRandomSeed(final int seed) {
+      ThreadLocalRandom.setSeed(seed);
   }
 
   // returns a random double in interal (0,0)
   public static double random() {
-    if (matlab_random) {
-      return mt.nextDouble();
+    if (matlabRandom) {
+      return ThreadLocalRandom.random();
     } else {
       return Math.random();
     }

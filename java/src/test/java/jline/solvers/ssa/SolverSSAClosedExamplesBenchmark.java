@@ -2,9 +2,12 @@ package jline.solvers.ssa;
 
 import jline.examples.ClosedModel;
 import jline.lang.Network;
+import jline.lang.state.ThreadLocalRandom;
 import jline.solvers.NetworkAvgTable;
 import jline.solvers.Solver;
 import jline.solvers.SolverOptions;
+import jline.util.Maths;
+import org.apache.commons.math3.random.MersenneTwister;
 
 public class SolverSSAClosedExamplesBenchmark {
 

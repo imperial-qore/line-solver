@@ -24,13 +24,16 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static java.util.stream.Collectors.toMap;
 
 public class SolverSSA extends NetworkSolver {
 
-
+    private ExecutorService threadPool;
 
     public SolverSSA(Network model) {
         // If no options provided, use default options
@@ -44,12 +47,12 @@ public class SolverSSA extends NetworkSolver {
 
     public static void main(String[] args) throws InterruptedException {
 
-        Network sn = ClosedModel.ex7_line_fcfs();
+//        Maths.setRandomNumbersMatlab(true);
+//        Maths.setMatlabRandomSeed(1);
+        Network sn = ClosedModel.ex1();
         SolverOptions options = new SolverOptions();
 //        options.method = "para";
-        options.seed = 1;
-        Maths.setRandomNumbersMatlab(true);
-        Maths.setMatlabRandomSeed(options.seed);
+//        options.seed = 1;
         SolverSSA solver = new SolverSSA(sn, options);
         long startTime = System.nanoTime();
         NetworkAvgTable avgTable = solver.getAvgTable();
@@ -370,9 +373,6 @@ public class SolverSSA extends NetworkSolver {
                                 if (!eventResult.outprob.isEmpty()) {
                                     outprob_p.put(act, eventResult.outprob.toDouble());
                                 }
-//                                else {
-//                                    outprob_p.remove(act);
-//                                }
                             }
 
                             if (newStateCell.get(act).containsKey((int) sn.nodeToStateful.get(node_p.get(act)))) {
@@ -640,6 +640,8 @@ public class SolverSSA extends NetworkSolver {
 
     @Override
     protected void runAnalyzer() throws IllegalAccessException, ParserConfigurationException, IOException {
+        threadPool = Executors.newFixedThreadPool(8);
+
         long T0 = java.lang.System.currentTimeMillis();
         if (this.options == null) {
             this.options = new SolverOptions(SolverType.SSA);
@@ -756,13 +758,14 @@ public class SolverSSA extends NetworkSolver {
         Map<Integer, Matrix> XNs = new ConcurrentHashMap<>();
 
 
-        this.options.samples = (int) Math.ceil(this.options.samples / (double) numThreads);
+        this.options.samples = (int) Math.ceil(this.options.samples / (double) 4);
 
 
-        Thread[] threads = new Thread[numThreads];
+//        Thread[] threads = new Thread[numThreads];
         for (int t = 0; t < numThreads; t++) {
             final int threadIndex = t;
-            threads[t] = new Thread(() -> {
+//            threads[t] = new Thread(() -> {
+            threadPool.submit(() -> {
                 Maths.setRandomNumbersMatlab(true);
                 Maths.setMatlabRandomSeed(this.options.seed);
 
@@ -854,16 +857,22 @@ public class SolverSSA extends NetworkSolver {
                 TNs.put(threadIndex, TN);
 
             });
-            threads[t].start();
+//            threads[t].start();
+        }
+        threadPool.shutdown();
+        try {
+            threadPool.awaitTermination(600, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
         // wait for all threads to finish
-        for (int t = 0; t < numThreads; t++) {
-            try {
-                threads[t].join();
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-        }
+//        for (int t = 0; t < numThreads; t++) {
+//            try {
+//                threads[t].join();
+//            } catch (InterruptedException e) {
+//                e.printStackTrace();
+//            }
+//        }
 
         Matrix XN = new Matrix(1, K);
         for (int i = 0; i < XN.getNumRows(); i++){
