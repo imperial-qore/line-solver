@@ -534,8 +534,8 @@ public class Maths {
   }
 
   /**
-   * Given an integer x input, find the next integer y > x such that
-   * y is a power of 2.
+   * Given an integer x input, find the next integer y greater than x
+   * such that y is a power of 2.
    *
    * @param x Input to find next power
    * @return Closest integer greater than input that is a power of two.

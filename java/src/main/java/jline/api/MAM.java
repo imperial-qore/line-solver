@@ -85,7 +85,7 @@ public class MAM {
 	 * Convert the M3A MMAP representation into the shorter BUTools representation.
 	 * In M3A a MMAP is represented as MAP followed by D1 markings: D0,D1,D1a,D1b,..
 	 * In BUTools a MMAP is represented as D0 followed by D1 markings: D0,D1a,D1b,..
-	 * @param MMAP - representation of the MMAP into M3A format
+	 * @param mmap - representation of the MMAP into M3A format
 	 * @return MMAP representation in BUTools format
 	 */
 	public static Map<Integer,Matrix> mmap_shorten(Map<Integer,Matrix> mmap){

@@ -23,7 +23,7 @@ public class FJ {
     /**
      * Heidelberger-Trivedi fork-join queueing network transformation.
      * Transforms the queueing network containing a FJ subsystem into a queueing network without one.
-     * Fork nodes -> Router nodes. Join nodes -> Delay nodes.
+     * Fork nodes changed to Router nodes. Join nodes changed to Delay nodes.
      * One artificial class is created for each parallel branch and for each class.
      * Another delay is added to model the sojourn time of the original classes.
      * --

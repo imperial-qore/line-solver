@@ -1,4 +1,4 @@
 /**
- * Classes that analyze networks using Stochastic Simulation Algorithm (SSA)
+ * Classes that analyze networks using Tau-Leaping Stochastic Simulation Algorithm (TauSSA)
  */
-package jline.solvers.ssa;
+package jline.solvers.taussa;

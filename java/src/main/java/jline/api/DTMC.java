@@ -92,7 +92,7 @@ public class DTMC {
 	/**
 	 * Compute the infinitesimal generator of the time-reversed DTMC
 	 *
-	 * @param Q Infinitesimal generator of the DTMC
+	 * @param P Infinitesimal generator of the DTMC
 	 * @return Infinitesimal generator of the time-reversed DTMC
 	 */
 	public static Matrix dtmc_timereverse(Matrix P) {
