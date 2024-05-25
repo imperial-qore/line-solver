@@ -1052,6 +1052,82 @@ public class PFQN {
 		return new pfqnNcReturn(G, lG, method);
 	}
 
+	public static pfqnFncReturn pfqn_fnc(Matrix alpha) {
+		int M = alpha.getNumRows();
+		Matrix c = new Matrix(1, M);
+		c.zero();
+		Matrix mu = pfqn_fnc(alpha, c).mu;
+		if (!mu.isFinite()) {
+			c = Matrix.ones(1, M);
+			c.scale(-0.5);
+			mu = pfqn_fnc(alpha, c).mu;
+		}
+		double dt = 0;
+		while (!mu.isFinite()) {
+			dt += 0.05;
+			double c_scalar = -0.5 + dt;
+			c = new Matrix(c_scalar);
+			mu = pfqn_fnc(alpha, c).mu;
+			if (c_scalar >= 2) {
+				break;
+			}
+		}
+		return new pfqnFncReturn(mu, c);
+	}
+
+	public static pfqnFncReturn pfqn_fnc(Matrix alpha, Matrix c) {
+		int M = alpha.getNumRows();
+		int N = alpha.getNumCols();
+		Matrix mu = new Matrix(M ,N);
+		mu.zero();
+		for (int i=0; i<M; i++) {
+			mu.set(i, 1, alpha.get(i, 1) / (1 + c.get(i)));
+			Matrix alphanum = new Matrix(N, N);
+			alphanum.zero();
+			Matrix alphaden = alphanum.clone();
+			for (int n = 1; n < N; n++) {
+				alphanum.set(n, 1, alpha.get(1, n));
+				alphaden.set(n, 1, alpha.get(i, n - 1));
+				for (int k = 1; k < n - 1; k++) {
+					alphanum.set(n, k, alphanum.get(n, k - 1) * alpha.get(i, n - k + 1));
+					alphaden.set(n, k, alphaden.get(n, k - 1) * alpha.get(i, n - k));
+				}
+			}
+			for (int n = 1; n < N; n++) {
+				double rho = 0;
+				double muden = 1;
+				for (int k = 1; k < n - 1; k++) {
+					muden *= mu.get(i, k);
+					rho += (alphanum.get(n, k) * alphaden.get(n, k)) / muden;
+				}
+				mu.set(i, n, (alphanum.get(n, n - 1) * alpha.get(i, 1) / muden) / (1 - rho));
+			}
+		}
+		for (int i=0; i<M; i++) {
+			for (int j=0; j<N; j++) {
+				if (Double.isNaN(mu.get(i, j))) {
+					mu.set(i, j, Double.POSITIVE_INFINITY);
+				}
+			}
+		}
+		for (int i=0; i<M; i++) {
+			if (Matrix.extractRows(mu, i, i+1, null).isFinite()) {
+				continue;
+			}
+			boolean replaceWithInf = false;
+			for (int j=0; j<N; j++) {
+				if (replaceWithInf) {
+					mu.set(i, j, Double.POSITIVE_INFINITY);
+				}
+				else if (Double.isInfinite(mu.get(i, j))) {
+					replaceWithInf = true;
+				}
+			}
+		}
+		return new pfqnFncReturn(mu, c);
+	}
+
+
 	public static pfqnNcReturn pfqn_panacea(Matrix L, Matrix N, Matrix Z) {
 		return pfqn_panacea(L, N, Z, new SolverOptions());
 	}
@@ -4824,6 +4900,16 @@ public class PFQN {
 				this.lG = lG;
 				this.method = null;
 			}
+		}
+
+		public static class pfqnFncReturn {
+		public Matrix mu;
+		public Matrix c;
+
+		public pfqnFncReturn(Matrix mu, Matrix c) {
+			this.mu = mu;
+			this.c = c;
+		}
 		}
 
 }

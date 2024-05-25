@@ -4,7 +4,7 @@ import jline.lang.JobClass;
 import jline.lang.OutputStrategy;
 import jline.lang.constant.RoutingStrategy;
 import jline.lang.nodes.Node;
-//import jline.solvers.ssa.events.ForkEvent;
+import jline.solvers.taussa.events.ForkEvent;
 
 import java.util.List;
 
@@ -41,7 +41,7 @@ public class Forker extends OutputSection {
 
         OutputStrategy outputStrategy = new OutputStrategy(jobClass, routingStrategy, destination, probability);
         outputStrategies.add(outputStrategy);
-//        outputEvents.put(outputStrategy, new ForkEvent(this, destination, jobClass));
+        outputEvents.put(outputStrategy, new ForkEvent(this, destination, jobClass));
         this.probabilityUpdate();
     }
 }

@@ -263,7 +263,6 @@ public class SolverSSAClosedExamplesTest {
         solverOptions.samples = 5000;
         SolverSSA solver = new SolverSSA(sn, solverOptions);
         NetworkAvgTable avgTable = solver.getAvgTable();
-        avgTable.print();
 
         // Needed as we only consider non-zero rows
         for (int i = 0; i < avgTable.getQLen().size(); i++) {

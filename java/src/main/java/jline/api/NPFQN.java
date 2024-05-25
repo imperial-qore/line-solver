@@ -1,5 +1,7 @@
 package jline.api;
 
+import jline.lang.NetworkStruct;
+import jline.lang.constant.GlobalConstants;
 import jline.util.Matrix;
 
 import java.util.HashMap;
@@ -113,6 +115,92 @@ public class NPFQN {
             SMMAP.put(j, mmap_normalize(SMMAP.get(j)));
         }
         return SMMAP;
+    }
+
+    public static npfqnNonexpApproxReturn npfqn_nonexp_approx(String method, NetworkStruct sn, Matrix ST, Matrix V, Matrix SCV, Matrix T, Matrix U, Matrix gamma, Matrix nservers) {
+        int M = sn.nstations;
+        Matrix rho = new Matrix(M, 1);
+        rho.zero();
+        Matrix scva = rho.clone();
+        Matrix scvs = rho.clone();
+        Matrix eta = rho.clone();
+        switch (method) {
+            case "default": case "none": case "hmva":
+                return new npfqnNonexpApproxReturn(ST, gamma, nservers, rho, scva, scvs, eta);
+            case "interp":
+                for (int i=0; i<M; i++) {
+                    Matrix nnzClasses = new Matrix(1, ST.getNumCols());
+                    nnzClasses.zero();
+                    for (int j=0; j<ST.getNumCols(); j++) {
+                        if (Double.isFinite(ST.get(i, j)) && Double.isFinite(SCV.get(i, j))) {
+                            nnzClasses.set(i, j, 1);
+                        }
+                    }
+                    for (int j=0; j<nnzClasses.getNumElements(); j++) {
+                        if (nnzClasses.get(j) > 0) {
+                            rho.set(i, rho.get(i) + U.get(i, j));
+                        }
+                    }
+                    if (nnzClasses.elementSum() != 0) {
+                        switch (sn.sched.get(sn.stations.get(i))) {
+                            case FCFS:
+                                Matrix STinnz = new Matrix(1, (int) nnzClasses.elementSum());
+                                Matrix SCVinnz = STinnz.clone();
+                                Matrix Tinnz = STinnz.clone();
+                                int tempj = 0;
+                                for (int j=0; j<nnzClasses.getNumElements(); j++) {
+                                    if (nnzClasses.get(j) > 0) {
+                                        STinnz.set(tempj, ST.get(i, j));
+                                        SCVinnz.set(tempj, ST.get(i, j));
+                                        T.set(tempj, ST.get(i, j));
+                                        tempj++;
+                                    }
+                                }
+                                if (STinnz.elementMax() - STinnz.elementMin() > 0 || SCVinnz.elementMax() > 1 + GlobalConstants.FineTol || SCVinnz.elementMin() < 1 - GlobalConstants.FineTol) {
+                                    scva.set(i, 1);
+                                    scvs.set(i, SCVinnz.mult(Tinnz.transpose()).toDouble() / Tinnz.elementSum());
+                                    gamma.set(i, (Math.pow(rho.get(i), nservers.get(i)) + rho.get(i)) / 2);
+                                    if (scvs.get(i) > 1-1e-6 && scvs.get(i) < 1+1e-6 && nservers.get(i) == 1) {
+                                        eta.set(i, rho.get(i));
+                                    } else {
+                                        eta.set(i, Math.exp(-2 * (1 - rho.get(i)) / (scvs.get(i) + scva.get(i) * rho.get(i))));
+                                    }
+                                    int order = 8;
+                                    double ai = Math.pow(rho.get(i), order);
+                                    double bi = Math.pow(rho.get(i), order);
+                                    for (int k=0; k<nnzClasses.getNumElements(); k++) {
+                                        if (nnzClasses.get(k) > 0 && sn.rates.get(i, k) > 0) {
+                                            ST.set(i, k, Math.max(0, 1-ai) * ST.get(i, k) + ai * (bi * eta.get(i) + Math.max(0, 1 - bi) * gamma.get(i)) * (nservers.get(i) / Tinnz.elementSum()));
+                                        }
+                                    }
+                                    nservers.set(i, 1);
+                                }
+                                // Continue from line 20
+                        }
+                    }
+                }
+        }
+        return new npfqnNonexpApproxReturn(ST, gamma, nservers, rho, scva, scvs, eta);
+    }
+
+    public static class npfqnNonexpApproxReturn {
+        public Matrix ST;
+        public Matrix gamma;
+        public Matrix nservers;
+        public Matrix rho;
+        public Matrix scva;
+        public Matrix scvs;
+        public Matrix eta;
+
+        public npfqnNonexpApproxReturn(Matrix ST, Matrix gamma, Matrix nservers, Matrix rho, Matrix scva, Matrix scvs, Matrix eta) {
+            this.ST = ST;
+            this.gamma = gamma;
+            this.nservers = nservers;
+            this.rho = rho;
+            this.scva = scva;
+            this.scvs = scvs;
+            this.eta = eta;
+        }
     }
 
 }

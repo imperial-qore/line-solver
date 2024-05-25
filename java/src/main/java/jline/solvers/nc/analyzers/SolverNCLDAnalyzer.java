@@ -45,8 +45,8 @@ public class SolverNCLDAnalyzer implements NCAnalyzer {
       if (options.method.equals("exact")) {
         throw new RuntimeException("NC load-dependent solver cannot provide exact solutions for fractional populations.");
       }
-      SolverNC.SolverNCReturn retfloor = SolverNC.solver_ncld(snfloor, options);
-      SolverNC.SolverNCReturn retceil = SolverNC.solver_ncld(snceil, options);
+      SolverNC.SolverNCLDReturn retfloor = SolverNC.solver_ncld(snfloor, options);
+      SolverNC.SolverNCLDReturn retceil = SolverNC.solver_ncld(snceil, options);
       res.Q = retfloor.Q.add(1, eta.elementMult(retceil.Q.sub(1, retfloor.Q), null));
       res.U = retfloor.U.add(1, eta.elementMult(retceil.U.sub(1, retfloor.U), null));
       res.R = retfloor.R.add(1, eta.elementMult(retceil.R.sub(1, retfloor.R), null));
@@ -57,7 +57,7 @@ public class SolverNCLDAnalyzer implements NCAnalyzer {
       res.lG = retfloor.lG + eta.elementMult(new Matrix(retfloor.lG - retceil.lG), null).get(0, 0);
       res.it = retfloor.it + retceil.it;
     } else {
-      SolverNC.SolverNCReturn ret = SolverNC.solver_ncld(sn, options);
+      SolverNC.SolverNCLDReturn ret = SolverNC.solver_ncld(sn, options);
       res.Q = ret.Q;
       res.U = ret.U;
       res.R = ret.R;

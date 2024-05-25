@@ -788,6 +788,28 @@ public class Matrix implements Serializable {
 		this.data.nz_length -= offset;
 	}
 
+	public void setNonFiniteValuesToZero() {
+		for (int i = 0; i < this.getNumRows(); i++) {
+			for (int j = 0; j < this.getNumCols(); j++) {
+				if (!Double.isFinite(this.get(i, j))) {
+					this.set(i, j, 0);
+				}
+			}
+		}
+	}
+
+	public boolean isFinite() {
+		for (int i = 0; i < this.getNumRows(); i++) {
+			for (int j = 0; j < this.getNumCols(); j++) {
+				if (!Double.isFinite(this.get(i, j))) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+
 
 	public void removeNaN() {
 		if (!hasNaN())

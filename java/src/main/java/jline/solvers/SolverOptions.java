@@ -5,7 +5,8 @@ package jline.solvers;
 
 import jline.lang.constant.GlobalConstants;
 import jline.lang.constant.VerboseLevel;
-//import jline.solvers.ssa.strategies.TauLeapingConfig;
+import jline.solvers.taussa.strategies.TauLeapingConfig;
+import jline.solvers.taussa.strategies.TauLeapingType;
 import jline.util.Matrix;
 import jline.lang.constant.SolverType;
 import org.apache.commons.math3.ode.FirstOrderIntegrator;
@@ -27,7 +28,7 @@ public class SolverOptions {
     public String np_priority; // TODO: enum?
     public List<Double> pstar; // For p-norm smoothing in SolverFluid
     public String fork_join;
-//    public TauLeapingConfig tau_leaping;
+    public TauLeapingConfig tau_leaping;
     public String merge;
     public String compress;
     public int space_max;
@@ -71,7 +72,7 @@ public class SolverOptions {
     this.cache = true;
     this.cutoff = POSITIVE_INFINITY;
     this.config = new Config();
-//    this.config.tau_leaping = null;
+    this.config.tau_leaping = null;
     this.config.pstar = new ArrayList<>();
     this.config.fork_join = "default";
     this.force = false;

@@ -1,9 +1,9 @@
 package jline.solvers.nc;
 
+import jline.api.NPFQN;
 import jline.api.PFQN;
 import jline.api.SN;
 import jline.lang.FeatureSet;
-import jline.solvers.mva.SolverMVA;
 import jline.util.Maths;
 import jline.lang.Network;
 import jline.lang.NetworkStruct;
@@ -18,15 +18,12 @@ import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.util.Matrix;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
+import static jline.api.PFQN.*;
+import static jline.api.SN.*;
 import static jline.lib.KPCToolbox.*;
-import static jline.api.PFQN.pfqn_nc;
-import static jline.api.SN.snDeaggregateChainResults;
 
-import static jline.api.SN.snGetDemandsChain;
 import static jline.lang.state.State.toMarginal;
 
 
@@ -685,6 +682,10 @@ public class SolverNC extends NetworkSolver {
       X = ret1.X;
       STeff = ST.clone();
       //TODO: Depend on npfqn_nonexp_approx
+      NPFQN.npfqnNonexpApproxReturn NPFQNret = NPFQN.npfqn_nonexp_approx(options.config.highvar,sn,ST0,V,SCV,T,U,gamma,nservers);
+      ST = NPFQNret.ST;
+      gamma = NPFQNret.gamma;
+      eta = NPFQNret.eta;
       //npfqn_nonexp_approx(options.config.highVar,sn,ST0,V,SCV,T,U,gamma,nservers);
 
       for (int i = 0; i < M; i++) {
@@ -702,9 +703,327 @@ public class SolverNC extends NetworkSolver {
     return new SolverNCReturn(Q, U, R, T, C, X, lG, STeff, it, method);
   }
 
-  public static SolverNCReturn solver_ncld(NetworkStruct sn, SolverOptions options) {
-    // TODO: Implement
-    return null;
+  public static SolverNCLDReturn solver_ncld(NetworkStruct sn, SolverOptions options) {
+    int M = sn.nstations;
+    int K = sn.nclasses;
+    Matrix nservers = sn.nservers;
+    Matrix nserversFinite = nservers.clone();
+    nserversFinite.removeINF();
+    if (nserversFinite.elementMin() > 1) {
+      if (sn.lldscaling.isEmpty() && M == 2 && Double.isFinite(sn.njobs.elementMaxAbs())) {
+        double Nt = sn.njobs.elementSum();
+        for (int i=0; i<M; i++) {
+          for (int j=0; j<Nt; i++) {
+            sn.lldscaling.set(i, j, Math.min(j + 1, sn.nservers.get(i)));
+          }
+        }
+      } else {
+        throw new RuntimeException("The load-dependent solver does not support multi-server stations yet. Specify multi-server stations via limited load-dependence.");
+      }
+    }
+    if (!sn.cdscaling.isEmpty() && options.method.equalsIgnoreCase("exact")) {
+      throw new RuntimeException("Exact class-dependent solver not yet available in NC.");
+    }
+    Matrix NK = sn.njobs.transpose();
+    if (Double.isInfinite(NK.elementMax())) {
+      throw new RuntimeException("The load-dependent solver does not support open classes yet.");
+    }
+    int C = sn.nchains;
+    Matrix SCV = sn.scv;
+    Matrix gamma = new Matrix(M, 1);
+    gamma.zero();
+    Matrix V = new Matrix(sn.visits.size(), 1);
+    int itemp = 0;
+    for (Matrix v : sn.visits.values()) {
+      V.set(itemp, v.elementSum());
+      itemp++;
+    }
+    Matrix ST = Matrix.ones(sn.rates.getNumRows(), sn.rates.getNumCols()).elementDiv(sn.rates);
+    for (int i=0; i<ST.getNumRows(); i++) {
+      for (int j=0; j<ST.getNumCols(); j++) {
+        if (Double.isNaN(ST.get(i, j))) {
+          ST.set(i, j, 0);
+        }
+      }
+    }
+    Matrix ST0 = ST.clone();
+    Matrix lldscaling = sn.lldscaling;
+    Matrix NKfinite = NK.clone();
+    NKfinite.removeInfinity();
+    double Nt = NKfinite.elementSum();
+    if (lldscaling.isEmpty()) {
+      lldscaling = Matrix.ones(M, (int) Math.ceil(Nt));
+    }
+    SN.snGetDemandsChainReturn demandsChainReturn = snGetDemandsChain(sn);
+    Matrix Vchain = demandsChainReturn.Vchain;
+    Matrix alpha = demandsChainReturn.alpha;
+    Matrix eta_1 = new Matrix(1, M);
+    eta_1.zero();
+    Matrix eta = Matrix.ones(1, M);
+    if (sn.sched.containsValue(SchedStrategy.FCFS)) {
+      options.iter_max = 1;
+    }
+    int iter = 0;
+    long Tstart = System.currentTimeMillis();
+    SN.snDeaggregateChainResultsReturn snDeaggragatedChains = null;
+    Matrix lambda = null;
+    Matrix Lchain = null;
+    Matrix STchain = null;
+    Matrix Q = null;
+    Matrix U = null;
+    Matrix R = null;
+    Matrix T = null;
+    Matrix X = null;
+    Double lG = null;
+    String method = null;
+    while (Matrix.ones(eta.getNumRows(), eta.getNumCols()).sub(1, eta).elementDiv(eta_1).elementMaxAbs() > options.iter_tol && iter < options.iter_max) {
+      iter +=1;
+      eta_1 = eta;
+      M = sn.nstations;
+      K = sn.nclasses;
+      C = sn.nchains;
+      Lchain = new Matrix(M, C);
+      Lchain.zero();
+      STchain = new Matrix(M, C);
+      STchain.zero();
+      Matrix SCVchain = new Matrix(M, C);
+      SCVchain.zero();
+      Matrix Nchain = new Matrix(1, C);
+      Nchain.zero();
+      Matrix refstatchain = new Matrix(C, 1);
+      refstatchain.zero();
+      for (int c=0; c<C; c++) {
+        Matrix inchain = sn.inchain.get(c);
+        boolean isOpenChain = false;
+        for (int i=0; i<inchain.getNumElements(); i++) {
+          if (Double.isInfinite(sn.njobs.get((int) inchain.get(i)))) {
+            isOpenChain = true;
+          }
+        }
+        for (int i=0; i<M; i++) {
+          Matrix STinchain = new Matrix(1, inchain.getNumElements());
+          Matrix alphainchain = new Matrix(1, inchain.getNumElements());
+          Matrix SCVinchain = new Matrix(1, inchain.getNumElements());
+          for (int j=0; j<inchain.getNumElements(); j++) {
+            STinchain.set(j, ST.get(i, (int) inchain.get(j)));
+            alphainchain.set(j, alpha.get(i, (int) inchain.get(j)));
+            SCVinchain.set(j, SCVchain.get(i, (int) inchain.get(j)));
+          }
+          Lchain.set(i, c, Vchain.get(i, c) * STinchain.mult(alphainchain.transpose()).toDouble());
+          STchain.set(i, c, STinchain.mult(alphainchain.transpose()).toDouble());
+          if (isOpenChain && i == sn.refstat.get((int) inchain.get(0))) {
+            Matrix STinchainFinite = STinchain.clone();
+            STinchainFinite.removeInfinity();
+            STchain.set(i, c, STinchainFinite.elementSum());
+          }
+          else {
+            STchain.set(i, c, STinchain.mult(alphainchain.transpose()).toDouble());
+          }
+          SCVchain.set(i, c, SCVinchain.mult(alphainchain.transpose()).toDouble());
+        }
+        Matrix NKinchain = new Matrix(inchain.getNumElements());
+        for (int i=0; i<inchain.getNumElements(); i++) {
+          NKinchain.set(i, NK.get((int) inchain.get(i)));
+        }
+        Nchain.set(c, NKinchain.elementSum());
+        refstatchain.set(c, sn.refstat.get((int) inchain.get(0)));
+        if ((sn.refstat.get((int) inchain.get(0)) - refstatchain.get(c)) != 0) {
+          throw new RuntimeException(String.format("Classes in chain %d have different reference station.", c));
+        }
+      }
+      for (int i=0; i<STchain.getNumRows(); i++) {
+        for (int j=0; j< STchain.getNumCols(); j++) {
+          if (!Double.isFinite(STchain.get(i, j))) {
+            STchain.set(i, j, 0);
+          }
+          if (!Double.isFinite(Lchain.get(i, j))) {
+            Lchain.set(i, j, 0);
+          }
+        }
+      }
+      Tstart = System.currentTimeMillis();
+      Matrix Nchainfinite = Nchain.clone();
+      Nchainfinite.removeInfinity();
+      Nt = Nchainfinite.elementSum();
+      Matrix L = new Matrix(M, C);
+      L.zero();
+      Matrix mu = new Matrix(M, (int) Math.ceil(Nt));
+      List<Integer> infServers = new ArrayList<>();
+      Matrix Z = L.clone();
+      for (int i=0; i<M; i++) {
+        if (Double.isInfinite(nservers.get(i))) {
+          infServers.add(i);
+          for (int j=0; j<C; j++) {
+            L.set(i, j, Lchain.get(i, j));
+            Z.set(i, j, Lchain.get(i, j));
+          }
+          for (int j=0; j<Math.ceil(Nt); j++) {
+            mu.set(i, j, j+1);
+          }
+        } else {
+          if (options.method.equalsIgnoreCase("exact") && nservers.get(i) > 1) {
+            System.out.println("Warning: SolverNC does not support exact multiserver yet. Switching to approximate method.");
+          }
+          for (int j=0; j<C; j++) {
+            L.set(i, j, Lchain.get(i, j));
+          }
+          for (int j=0; j<Math.ceil(Nt); j++) {
+            mu.set(i, j, lldscaling.get(i, j));
+          }
+        }
+      }
+      Matrix Qchain = new Matrix(M, C);
+      Qchain.zero();
+      Matrix Nchain0 = Nchain.clone();
+      Nchain0.zero();
+      PFQN.pfqnNcReturn ret = pfqn_ncld(L, Nchain, Nchain0, mu, options);
+      lG = ret.lG;
+      method = ret.method;
+      Matrix Xchain = new Matrix(1, 0);
+      if (Xchain.isEmpty()) {
+        Matrix lGr = new Matrix(1, C);
+        Matrix lGhat_fnci = new Matrix(1, C);
+        Matrix lGhatir = new Matrix(1, C);
+        Matrix lGr_i = new Matrix(1, C);
+        Matrix ldDemand = new Matrix(M, C);
+        for (int r=0; r<C; r++) {
+          Matrix Nchain_r = Matrix.oner(Nchain, Collections.singletonList(r));
+          lGr.set(r, pfqn_ncld(L, Nchain_r, Nchain0, mu, options).lG);
+          Xchain.concatCols(new Matrix(Math.exp(lGr.get(r) - lG)));
+          for (int i=0; i<M; i++) {
+            Qchain.set(i, r, 0);
+          }
+          Matrix CQchain_r = new Matrix(M, 1);
+          CQchain_r.zero();
+          if (M == 2 && Double.isInfinite(sn.nservers.elementMaxAbs())) {
+            int firstDelay = -1;
+            for (int i=0; i<sn.nservers.getNumElements(); i++) {
+              if (Double.isInfinite(sn.nservers.get(i))) {
+                firstDelay = i;
+                break;
+              }
+            }
+            Qchain.set(firstDelay, r, Lchain.get(firstDelay, r) * Xchain.get(r));
+            for (int i=0; i<M; i++) {
+              if (i != firstDelay) {
+                Qchain.set(i, r, Nchain.get(r) - Lchain.get(firstDelay, r) * Xchain.get(r));
+              }
+            }
+          } else {
+            for (int i=0; i<M; i++) {
+              Matrix Lms_i = Matrix.extractRows(L, i, i+1, null);
+              Matrix mu_i = Matrix.extractRows(mu, i, i+1, null);
+              Matrix muhati = pfqn_mushift(mu, i);
+              pfqnFncReturn fncret = pfqn_fnc(Matrix.extractRows(muhati, i, i+1, null));
+              Matrix muhati_f = fncret.mu;
+              double c = fncret.c.toDouble();
+              if (Lchain.get(i, r) > 0) {
+                if (Double.isInfinite(nservers.get(i))) {
+                  Qchain.set(i, r, Lchain.get(i, r) * Xchain.get(r));
+                }
+                else {
+                  if (i == (M - 1) && nserversFinite.elementSum() == 1) {
+                    double Lchainsum = 0;
+                    double Qchainsum = 0;
+                    for (int j=0; j<nservers.getNumElements(); j++) {
+                      if (Double.isInfinite(nservers.get(j))) {
+                        Lchainsum += Lchain.get(j, r);
+                      } else {
+                        Qchainsum += Qchain.get(j, r);
+                      }
+                    }
+                    Qchain.set(i, r, Math.max(0, Nchain.get(r) - Lchainsum * Xchain.get(r) - Qchainsum));
+                  } else {
+                    lGhat_fnci.set(r, pfqn_ncld(Matrix.concatRows(L, Matrix.extractRows(L, i, i+1, null), null), Nchain_r, Nchain0, Matrix.concatRows(muhati, muhati_f, null), options).lG);
+                    lGhatir.set(r, pfqn_ncld(L, Nchain_r, Nchain0, muhati, options).lG);
+                    lGr_i.set(r, pfqn_ncld(Lms_i, Nchain_r, Nchain0, muhati, options).lG);
+                    double dlGa = lGhat_fnci.get(r) - lGhatir.get(r);
+                    double dlG_i = lGr_i.get(r) - lGhatir.get(r);
+                    CQchain_r.set(i, (Math.exp(dlGa) - 1) + c * (Math.exp(dlG_i) - 1));
+                    ldDemand.set(i, r, Math.log(L.get(i, r)) + lGhatir.get(r) - Math.log(mu.get(i, 1)) - lGr.get(r));
+                    Qchain.set(i, r, Math.exp(ldDemand.get(i, r)) * Xchain.get(r) * (1 + CQchain_r.get(i)));
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else {
+        for (int r=0; r<C; r++) {
+          for (int i=1; i<M; i++) {
+            if (Lchain.get(i, r) > 0) {
+              if (Double.isInfinite(nservers.get(i))) {
+                Qchain.set(i, r, Lchain.get(i, r) * Xchain.get(r));
+              }
+            }
+          }
+        }
+      }
+      if (Arrays.stream(Xchain.toArray1D()).allMatch(Double::isNaN)) {
+        System.out.println("Warning: Normalizing constant computations produced a floating-point range exception. Model is likely too large.");
+      }
+      Z = Z.sumCols(0, M);
+      Matrix Rchain = Qchain.element_divide(Xchain.repmat(M, 1)).element_divide(Vchain);
+      for (int i : infServers) {
+        for (int j=0; j<Rchain.getNumCols(); j++) {
+          Rchain.set(i, j, Lchain.get(i, j) / Vchain.get(i, j));
+        }
+      }
+      Matrix Tchain = Xchain.repmat(M, 1).elementMult(Vchain, null);
+      Matrix Uchain = Tchain.elementMult(Lchain, null);
+      Matrix Cchain = Nchain.elementDiv(Xchain).sub(1, Z);
+      snDeaggragatedChains = snDeaggregateChainResults(sn, Lchain, ST, STchain, Vchain, alpha, null, null, Rchain, Tchain, null, Xchain);
+      NPFQN.npfqnNonexpApproxReturn NPFQNret = NPFQN.npfqn_nonexp_approx(options.config.highvar,sn,ST0,V,SCV,snDeaggragatedChains.T,snDeaggragatedChains.U,gamma,nservers);
+      ST = NPFQNret.ST;
+      gamma = NPFQNret.gamma;
+      eta = NPFQNret.eta;
+    }
+    SN.snGetProductFormChainParamsReturn snProductForm = snGetProductFormParams(sn);
+    long runtime = System.currentTimeMillis() - Tstart;
+    Q = snDeaggragatedChains.Q;
+    Q.abs();
+    R = snDeaggragatedChains.R;
+    R.abs();
+    U = snDeaggragatedChains.U;
+    U.abs();
+    List<Integer> openClasses = new ArrayList<>();
+    for (int i=0; i<M; i++) {
+      for (int j=0; j<NK.getNumElements(); j++) {
+          if (Double.isInfinite(NK.get(j))) {
+            openClasses.add(j);
+          }
+        }
+      if (sn.nservers.get(i) > 1 && sn.nservers.get(i) < Double.POSITIVE_INFINITY) {
+        for (int r=0; r<K; r++) {
+          Matrix c = Matrix.extractColumn(sn.chains, r, null).find();
+          if ((!openClasses.contains(r) && snDeaggragatedChains.X.get(r) > 0) || (openClasses.contains(r) && snProductForm.lambda.get(r) > 0)) {
+              U.set(i, r, snDeaggragatedChains.X.get(r) * ST.get(i, r) / sn.nservers.get(i));
+              for (int j = 0; j < c.getNumElements(); j++) {
+                U.set(i, r, U.get(i, r) * sn.visits.get(j).get(i, r) / sn.visits.get(j).get((int) sn.refstat.get(r), r));
+              }
+            }
+          }
+        } else {
+
+        for (int j=0; j<U.getNumCols(); j++) {
+          U.set(i, j, U.get(i, j) / Matrix.extractRows(U, i, i+1, null).elementMax());
+        }
+        if (Matrix.extractRows(U, i, i+1, null).elementSum() > 1) {
+          Matrix Uinotnan = Matrix.extractRows(U, i, i+1, null);
+          Uinotnan.removeNaN();
+          for (int j=0; j<U.getNumCols(); j++) {
+            U.set(i, j, U.get(i, j) / U.elementSum());
+          }
+        }
+      }
+        // Continue from line 213
+    }
+    X = snDeaggragatedChains.X;
+    X.setNonFiniteValuesToZero();
+    U.setNonFiniteValuesToZero();
+    Q.setNonFiniteValuesToZero();
+    R.setNonFiniteValuesToZero();
+    return new SolverNCLDReturn(Q, U, R, snDeaggragatedChains.T, C, X, lG, runtime, iter, method);
   }
 
   /**
@@ -785,6 +1104,33 @@ public static class SolverNCMargReturn {
       this.X = X;
       this.lG = lG;
       this.STeff = STeff;
+      this.it = it;
+      this.method = method;
+    }
+  }
+
+  public static class SolverNCLDReturn {
+    public Matrix Q;
+    public Matrix U;
+    public Matrix R;
+    public Matrix T;
+    public int C;
+    public Matrix X;
+    public double lG;
+    public long runtime;
+    public int it;
+    public String method;
+
+    public SolverNCLDReturn(Matrix Q, Matrix U, Matrix R, Matrix T, int C,
+                          Matrix X, double lG, long runtime, int it, String method) {
+      this.Q = Q;
+      this.U = U;
+      this.R = R;
+      this.T = T;
+      this.C = C;
+      this.X = X;
+      this.lG = lG;
+      this.runtime = runtime;
       this.it = it;
       this.method = method;
     }

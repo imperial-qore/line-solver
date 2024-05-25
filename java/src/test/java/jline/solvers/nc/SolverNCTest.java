@@ -45,6 +45,7 @@ public class SolverNCTest {
 
     SolverOptions options = new SolverOptions(SolverType.NC);
 
+
     SolverNC.SolverNCMargReturn ret1 = solver_nc_marg(sn, options, null);
     Matrix lPr1 = ret1.lPr;
     double G1 = ret1.G;
