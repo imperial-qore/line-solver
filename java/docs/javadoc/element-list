@@ -28,5 +28,11 @@ jline.solvers.mva
 jline.solvers.mva.analyzers
 jline.solvers.mva.handlers
 jline.solvers.nc
+jline.solvers.nc.analyzers
 jline.solvers.ssa
+jline.solvers.taussa
+jline.solvers.taussa.events
+jline.solvers.taussa.metrics
+jline.solvers.taussa.state
+jline.solvers.taussa.strategies
 jline.util
