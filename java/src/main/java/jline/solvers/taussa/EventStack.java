@@ -2,7 +2,7 @@ package jline.solvers.taussa;
 
 import jline.lang.nodes.Node;
 import jline.lang.nodes.Source;
-import jline.solvers.ctmc.EventData;
+import jline.solvers.taussa.events.EventData;
 import jline.solvers.taussa.events.Event;
 import jline.solvers.taussa.events.NodeEvent;
 import jline.solvers.taussa.state.SSAStateMatrix;

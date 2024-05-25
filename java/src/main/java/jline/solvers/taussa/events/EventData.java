@@ -1,7 +1,5 @@
-package jline.solvers.ctmc;
+package jline.solvers.taussa.events;
 
-import jline.solvers.taussa.events.Event;
-import jline.solvers.taussa.events.SynchedEvent;
 import jline.solvers.taussa.state.SSAStateMatrix;
 import jline.util.Pair;
 

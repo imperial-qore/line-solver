@@ -7,7 +7,6 @@ import java.util.Random;
 import java.util.Set;
 
 import jline.lang.nodes.Node;
-import jline.solvers.ctmc.EventData;
 import jline.solvers.taussa.state.SSAStateMatrix;
 
 public class Event implements Serializable {

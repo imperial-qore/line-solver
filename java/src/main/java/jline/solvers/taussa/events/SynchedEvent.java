@@ -3,7 +3,6 @@ package jline.solvers.taussa.events;
 import jline.lang.JobClass;
 import jline.lang.nodes.Node;
 import jline.lang.sections.OutputSection;
-import jline.solvers.ctmc.EventData;
 import jline.solvers.taussa.state.SSAStateMatrix;
 import jline.util.Pair;
 

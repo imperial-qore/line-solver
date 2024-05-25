@@ -1,6 +1,7 @@
 package jline.solvers.ctmc;
 
 //import jline.solvers.ssa.state.SSAStateMatrix;
+import jline.solvers.taussa.events.EventData;
 import jline.util.Matrix;
 
 import java.util.ArrayList;

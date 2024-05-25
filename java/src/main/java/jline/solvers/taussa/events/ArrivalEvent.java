@@ -4,7 +4,6 @@ import jline.lang.JobClass;
 import jline.lang.nodes.Node;
 import jline.lang.nodes.Sink;
 import jline.lang.nodes.StatefulNode;
-import jline.solvers.ctmc.EventData;
 import jline.solvers.taussa.state.SSAStateMatrix;
 import jline.solvers.taussa.state.PhaseList;
 import jline.lang.distributions.CumulativeDistribution;

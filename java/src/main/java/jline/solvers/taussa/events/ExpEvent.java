@@ -8,7 +8,6 @@ import jline.lang.distributions.Exp;
 import jline.lang.nodes.Node;
 import jline.lang.nodes.Source;
 import jline.lang.nodes.StatefulNode;
-import jline.solvers.ctmc.EventData;
 import jline.solvers.taussa.state.SSAStateMatrix;
 
 import java.util.ArrayList;
