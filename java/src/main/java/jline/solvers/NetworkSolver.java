@@ -12,7 +12,6 @@ import jline.lang.NetworkStruct;
 
 import javax.xml.parsers.ParserConfigurationException;
 import java.io.IOException;
-import java.text.NumberFormat;
 import java.util.*;
 
 // Abstract class for solvers applicable to Network models
@@ -378,40 +377,40 @@ public abstract class NetworkSolver extends Solver {
         WNclass = RNclass.clone();
         WNclass.zero();
         //if (this.result.WN == null || this.result.WN.isEmpty()) {
-                for (int i = 0; i < M; i++) {
-                    for (int k = 0; k < K; k++) {
+        for (int i = 0; i < M; i++) {
+            for (int k = 0; k < K; k++) {
 
-                        if (!RNclass.isEmpty() && RNclass.get(i, k) > 0) {
-                            int c = -1;
-                            for (int chain = 0; chain < sn.chains.getNumRows(); chain++) {
-                                if (sn.chains.get(chain, k) > 0) {
-                                    c = chain;
-                                    break;
-                                }
+                if (!RNclass.isEmpty() && RNclass.get(i, k) > 0) {
+                    int c = -1;
+                    for (int chain = 0; chain < sn.chains.getNumRows(); chain++) {
+                        if (sn.chains.get(chain, k) > 0) {
+                            c = chain;
+                            break;
+                        }
+                    }
+                    if (RNclass.get(i, k) < GlobalConstants.FineTol) {
+                        WNclass.set(i, k, RNclass.get(i, k));
+                    } else {
+                        int refClass = (int) sn.refclass.get(0, c);
+                        if (refClass >= 0) {
+                            // If there is a reference class, use this:
+                            WNclass.set(
+                                    i,
+                                    k,
+                                    RNclass.get(i, k) * V.get(i, k) / V.get((int) sn.refstat.get(k, 0), refClass));
+                        } else {
+                            int Vrow = (int) sn.refstat.get(k, 0);
+                            double Vsum = 0;
+                            for (int col = 0; col < sn.inchain.get(c).getNumCols(); col++) {
+                                Vsum += V.get(Vrow, (int) sn.inchain.get(c).get(0, col));
                             }
-                            if (RNclass.get(i, k) < GlobalConstants.FineTol) {
-                                WNclass.set(i, k, RNclass.get(i, k));
-                            } else {
-                                int refClass = (int) sn.refclass.get(0, c);
-                                if (refClass >= 0) {
-                                    // If there is a reference class, use this:
-                                    WNclass.set(
-                                            i,
-                                            k,
-                                            RNclass.get(i, k) * V.get(i, k) / V.get((int) sn.refstat.get(k, 0), refClass));
-                                } else {
-                                    int Vrow = (int) sn.refstat.get(k, 0);
-                                    double Vsum = 0;
-                                    for (int col = 0; col < sn.inchain.get(c).getNumCols(); col++) {
-                                        Vsum += V.get(Vrow, (int) sn.inchain.get(c).get(0, col));
-                                    }
-                                    WNclass.set(i, k, RNclass.get(i, k) * V.get(i, k) / Vsum);
-                                }
-                            }
+                            WNclass.set(i, k, RNclass.get(i, k) * V.get(i, k) / Vsum);
                         }
                     }
                 }
-                this.result.WN = new Matrix(WNclass);
+            }
+        }
+        this.result.WN = new Matrix(WNclass);
 //          }
 //        else { // this block seems to create a different answer in getAvgTable vs getAvg due to lack of refclass scaling
 //            for (int i = 0; i < M; i++) {
@@ -577,36 +576,120 @@ public abstract class NetworkSolver extends Solver {
     }
 
     // Return table of average station metrics
-    protected final void getAvgQLenTable() {
-        // TODO: implementation - note return type and parameters should likely not be void
-        throw new RuntimeException("getAvgQLenTable() has not yet been implemented in JLINE.");
+    public final NetworkAvgQLenTable getAvgQLenTable() {
+        boolean keepDisabled = false;
+        if (!keepDisabled) {
+            NetworkAvgTable avgTable = this.getAvgTable();
+            NetworkAvgQLenTable avgMetricTable = new NetworkAvgQLenTable(avgTable.getQLen());
+            avgMetricTable.setOptions(this.options);
+            avgMetricTable.setClassNames(avgTable.getClassNames());
+            avgMetricTable.setStationNames(avgTable.getStationNames());
+
+            return avgMetricTable;
+        } else {
+            // TODO: implementation if keepDisabled is set to true
+            System.out.println("Warning: unimplemented code reached in NetworkSolver.getAvgTable 2.");
+        }
+        return null;
     }
 
     // Return table of average station metrics
-    protected final void getAvgUtilTable() {
-        // TODO: implementation - note return type and parameters should likely not be void
-        throw new RuntimeException("getAvgUtilTable() has not yet been implemented in JLINE.");
+    public final NetworkAvgUtilTable getAvgUtilTable() {
+        boolean keepDisabled = false;
+        if (!keepDisabled) {
+            NetworkAvgTable avgTable = this.getAvgTable();
+            NetworkAvgUtilTable avgMetricTable = new NetworkAvgUtilTable(avgTable.getUtil());
+            avgMetricTable.setOptions(this.options);
+            avgMetricTable.setClassNames(avgTable.getClassNames());
+            avgMetricTable.setStationNames(avgTable.getStationNames());
+
+            return avgMetricTable;
+        } else {
+            // TODO: implementation if keepDisabled is set to true
+            System.out.println("Warning: unimplemented code reached in NetworkSolver.getAvgTable 2.");
+        }
+        return null;
     }
 
     // Return table of average station metrics
-    protected final void getAvgRespTTable() {
-        // TODO: implementation - note return type and parameters should likely not be void
-        throw new RuntimeException("getAvgRespTTable() has not yet been implemented in JLINE.");
+    public final NetworkAvgRespTTable getAvgRespTTable() {
+        boolean keepDisabled = false;
+        if (!keepDisabled) {
+            NetworkAvgTable avgTable = this.getAvgTable();
+            NetworkAvgRespTTable avgMetricTable = new NetworkAvgRespTTable(avgTable.getRespT());
+            avgMetricTable.setOptions(this.options);
+            avgMetricTable.setClassNames(avgTable.getClassNames());
+            avgMetricTable.setStationNames(avgTable.getStationNames());
+
+            return avgMetricTable;
+        } else {
+            // TODO: implementation if keepDisabled is set to true
+            System.out.println("Warning: unimplemented code reached in NetworkSolver.getAvgTable 2.");
+        }
+        return null;
     }
 
     // Return table of average station metrics
-    protected final void getAvgTputTable() {
-        // TODO: implementation - note return type and parameters should likely not be void
-        throw new RuntimeException("getAvgTputTable() has not yet been implemented in JLINE.");
+    public final NetworkAvgResidTTable getAvgResidTTable() {
+        boolean keepDisabled = false;
+        if (!keepDisabled) {
+            NetworkAvgTable avgTable = this.getAvgTable();
+            NetworkAvgResidTTable avgMetricTable = new NetworkAvgResidTTable(avgTable.getResidT());
+            avgMetricTable.setOptions(this.options);
+            avgMetricTable.setClassNames(avgTable.getClassNames());
+            avgMetricTable.setStationNames(avgTable.getStationNames());
+
+            return avgMetricTable;
+        } else {
+            // TODO: implementation if keepDisabled is set to true
+            System.out.println("Warning: unimplemented code reached in NetworkSolver.getAvgTable 2.");
+        }
+        return null;
+    }
+
+    // Return table of average station metrics
+    public final NetworkAvgTputTable getAvgTputTable() {
+        boolean keepDisabled = false;
+        if (!keepDisabled) {
+            NetworkAvgTable avgTable = this.getAvgTable();
+            NetworkAvgTputTable avgMetricTable = new NetworkAvgTputTable(avgTable.getTput());
+            avgMetricTable.setOptions(this.options);
+            avgMetricTable.setClassNames(avgTable.getClassNames());
+            avgMetricTable.setStationNames(avgTable.getStationNames());
+
+            return avgMetricTable;
+        } else {
+            // TODO: implementation if keepDisabled is set to true
+            System.out.println("Warning: unimplemented code reached in NetworkSolver.getAvgTable 2.");
+        }
+        return null;
+    }
+
+    // Return table of average station metrics
+    public final NetworkAvgArvRTable getAvgArvRTable() {
+        boolean keepDisabled = false;
+        if (!keepDisabled) {
+            NetworkAvgTable avgTable = this.getAvgTable();
+            NetworkAvgArvRTable avgMetricTable = new NetworkAvgArvRTable(avgTable.getArvR());
+            avgMetricTable.setOptions(this.options);
+            avgMetricTable.setClassNames(avgTable.getClassNames());
+            avgMetricTable.setStationNames(avgTable.getStationNames());
+
+            return avgMetricTable;
+        } else {
+            // TODO: implementation if keepDisabled is set to true
+            System.out.println("Warning: unimplemented code reached in NetworkSolver.getAvgTable 2.");
+        }
+        return null;
     }
 
     // Return table of average node metrics
-    protected final void getAvgNodeTable() {
+    protected final NetworkAvgTable getAvgNodeTable() {
         // TODO: implementation - note return type and parameters should likely not be void
         throw new RuntimeException("getAvgNodeTable() has not yet been implemented in JLINE.");
     }
 
-    protected final void getAvgChainTable() {
+    protected final NetworkAvgTable getAvgChainTable() {
         // TODO: implementation - note return type and parameters should likely not be void
         throw new RuntimeException("getAvgChainTable() has not yet been implemented in JLINE.");
     }

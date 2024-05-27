@@ -45,9 +45,7 @@ public class NetworkAvgTable extends AvgTable {
         return this.T.get(0);
     }
 
-    public List<Double> getUtil() {
-        return this.T.get(1);
-    }
+    public List<Double> getUtil() { return this.T.get(1); }
 
     public List<Double> getRespT() {
         return this.T.get(2);

@@ -5,7 +5,7 @@ end
 if ~exist('n','var')
     n = 2;
 end
-model = Network('M/Hyp/1-Linear');
+model = Network('M/M/1-Linear');
 %% Block 1: nodes
 line{1} = Source(model, 'mySource');
 for i=1:n
@@ -15,7 +15,7 @@ line{end+1} = Sink(model, 'mySink');
 %% Block 2: classes
 oclass = OpenClass(model, 'myClass');
 line{1}.setArrival(oclass, Exp(1));
-means = linspace(0.1,Umax,n/2); 
+means = ones(1,n/2)*Umax; 
 if mod(n,2)==0
     means=[means,means(end:-1:1)];
 else

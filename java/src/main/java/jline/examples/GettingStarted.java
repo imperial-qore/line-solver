@@ -628,7 +628,7 @@ public class GettingStarted {
 
 
     public static void main(String[] args) throws IllegalAccessException, ParserConfigurationException {
-        Network model = ex5_line();
+        Network model = ex1_line();
         //SolverCTMC solver = new SolverCTMC(model);
         //SolverJMT solver = new SolverJMT(model);
         SolverMVA solver = new SolverMVA(model);

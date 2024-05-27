@@ -429,4 +429,12 @@ public class RoutingMatrix implements Serializable {
         return routings.get(jobclass1.getIndex()-1).get(jobclass2.getIndex()-1);
     }
 
+    public void print() {
+        for (int r = 0; r < this.jobClasses.size(); r++) {
+            for (int s = 0; s < this.jobClasses.size(); s++) {
+                this.routings.get(r).get(s).print();
+            }
+        }
+    }
+
 }

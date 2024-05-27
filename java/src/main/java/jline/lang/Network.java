@@ -310,7 +310,34 @@ public class Network extends Model implements Serializable {
         return outMatrix;
     }
 
+    public static jline.lang.RoutingMatrix serialRouting(List<JobClass> jobClasses, List<Node> nodes) {
+        if (nodes.isEmpty()) {
+            return new jline.lang.RoutingMatrix();
+        }
+
+        Network network = nodes.get(0).model;
+        jline.lang.RoutingMatrix outMatrix = new jline.lang.RoutingMatrix(network, jobClasses, nodes);
+
+        for (int i = 1; i < nodes.size(); i++) {
+            //System.out.format("Loading connection %s->%s\n", nodes[i-1].getName(), nodes[i].getName());
+            outMatrix.addConnection(nodes.get(i-1), nodes.get(i), 1.0);
+        }
+
+        if (!(nodes.get(nodes.size() - 1) instanceof Sink)) {
+            outMatrix.addConnection(nodes.get(nodes.size() - 1), nodes.get(0), 1.0);
+        }
+
+        return outMatrix;
+    }
+
     public static jline.lang.RoutingMatrix serialRouting(JobClass jobClass, Node... nodes) {
+        List<JobClass> jobClasses = new ArrayList<JobClass>();
+        jobClasses.add(jobClass);
+
+        return Network.serialRouting(jobClasses, nodes);
+    }
+
+    public static jline.lang.RoutingMatrix serialRouting(JobClass jobClass, List<Node> nodes) {
         List<JobClass> jobClasses = new ArrayList<JobClass>();
         jobClasses.add(jobClass);
 
@@ -322,6 +349,14 @@ public class Network extends Model implements Serializable {
             return new jline.lang.RoutingMatrix();
         }
         Network network = nodes[0].model;
+        return Network.serialRouting(network.jobClasses, nodes);
+    }
+
+    public static jline.lang.RoutingMatrix serialRouting(java.util.List<Node> nodes) {
+        if (nodes.size() == 0) {
+            return new jline.lang.RoutingMatrix();
+        }
+        Network network = nodes.get(0).model;
         return Network.serialRouting(network.jobClasses, nodes);
     }
 
