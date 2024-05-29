@@ -30,7 +30,7 @@ public class SolverJMTIOTest {
 
     @Test
     public void test_getting_started_example_1() {
-        Network model = GettingStarted.ex1_line();
+        Network model = GettingStarted.ex1();
 
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;

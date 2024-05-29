@@ -1,11 +1,14 @@
 package jline.solvers;
 
+import jline.lang.JobClass;
 import jline.lang.constant.GlobalConstants;
 import jline.lang.constant.VerboseLevel;
+import jline.lang.nodes.Station;
 
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 public class NetworkAvgQLenTable extends AvgTable {
@@ -77,5 +80,30 @@ public class NetworkAvgQLenTable extends AvgTable {
             System.out.println(
                     "-------------------------------");
         }
+    }
+
+    public NetworkAvgQLenTable tget(Station station, JobClass jobclass) {
+        return this.tget((String)station.getName(), (String)jobclass.getName());
+    }
+
+    public NetworkAvgQLenTable tget(String stationname, String classname) {
+        int rowIdx = this.stationNames.indexOf(stationname);
+        int colIdx = this.classNames.indexOf(classname);
+        if (rowIdx < 0 || colIdx <0) {
+            NetworkAvgQLenTable filteredAvgTable = new NetworkAvgQLenTable(new ArrayList<>());
+            filteredAvgTable.setOptions(this.options);
+            filteredAvgTable.setStationNames(new ArrayList<String>());
+            filteredAvgTable.setClassNames(new ArrayList<String>());
+            return filteredAvgTable;
+        }
+        int indexToKeep = rowIdx * this.classNames.size() + colIdx - 1;
+        List<Double> myMetric = this.getQLen();
+        if (indexToKeep > 0) {myMetric.subList(0, indexToKeep).clear();}
+        if (indexToKeep < myMetric.size()) {myMetric.subList(1, myMetric.size()).clear();}
+        NetworkAvgQLenTable filteredAvgTable = new NetworkAvgQLenTable(myMetric);
+        filteredAvgTable.setOptions(this.options);
+        filteredAvgTable.setStationNames(Collections.singletonList(this.stationNames.get(rowIdx)));
+        filteredAvgTable.setClassNames(Collections.singletonList(this.classNames.get(colIdx)));
+        return filteredAvgTable;
     }
 }

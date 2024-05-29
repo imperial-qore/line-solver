@@ -391,6 +391,16 @@ public class Network extends Model implements Serializable {
         this.connections.set(sourceNodeIdx, destNodeIdx, 1.0);
     }
 
+    public void addLinks(Node[][] links) {
+        for (Node[] linkPair : links) {
+            if (linkPair.length == 2) {
+                addLink(linkPair[0], linkPair[1]);
+            } else {
+                throw new IllegalArgumentException("Each link pair must contain exactly two objects.");
+            }
+        }
+    }
+
     // Get initial state
     public State getState() {
         if (!this.hasInitState()) {
@@ -3015,6 +3025,11 @@ public class Network extends Model implements Serializable {
         for (int ind = 0; ind < this.getNumberOfNodes(); ind++) {
             this.nodes.get(ind).reset();
         }
+    }
+
+    public void reset() {
+        this.resetModel(false);
+        this.hasState = true;
     }
 
     public void reset(boolean resetState) {

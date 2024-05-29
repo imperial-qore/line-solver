@@ -11,8 +11,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 
-import static jline.solvers.nc.SolverNC.solver_nc_joint;
-import static jline.solvers.nc.SolverNC.solver_nc_marg;
+import static jline.solvers.nc.SolverNC.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class SolverNCTest {
@@ -69,8 +68,8 @@ public class SolverNCTest {
     assertEquals(0.003142060751148, G2, tolerance);
     assertEquals(-5.762876404151583, lG2, tolerance);
 
-    //System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
-    //System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
+    System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
+    System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
   }
 
   @Test
@@ -133,8 +132,8 @@ public class SolverNCTest {
     assertEquals(2.718281801146385, G2, tolerance);
     assertEquals(0.999999989952234, lG2, tolerance);
 
-    //System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
-    //System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
+    System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
+    System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
   }
 
   @Test
@@ -202,8 +201,8 @@ public class SolverNCTest {
     assertEquals(6.406198113596468e-36, G2, 6.406198113596468e-36*tolerance);
     assertEquals(-81.035797370820802, lG2, 81.035797370820802*tolerance);
 
-    //System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
-    //System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
+    System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
+    System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
   }
 
   @Test
@@ -271,7 +270,166 @@ public class SolverNCTest {
     assertEquals(1.984349911810360e+30, G2, 1.984349911810360e+30*tolerance);
     assertEquals(69.762844149973148, lG2, 69.762844149973148*tolerance);
 
-    //System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
-    //System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
+    System.out.println("solver_nc_marg runtime in ms: " + 1000*runtime1);
+    System.out.println("solver_nc_joint runtime in ms: " + 1000*runtime2);
   }
+
+  @Test
+  public void SolverNCLDTestModel1() {
+    Network model = new Network("example_closedModel");
+
+    Delay node1 = new Delay(model, "Delay");
+    Queue node2 = new Queue(model, "Queue1", SchedStrategy.FCFS);
+
+    ClosedClass jobclass1 = new ClosedClass(model, "Class1", 16, node1, 0);
+
+    node1.setService(jobclass1, Exp.fitMean(1.000000));
+    node2.setService(jobclass1, Exp.fitMean(1.500000));
+    node2.setNumberOfServers(2);
+
+    RoutingMatrix routingMatrix = new RoutingMatrix(model,
+        Arrays.asList(jobclass1),
+        Arrays.asList(node1, node2));
+
+    routingMatrix.addConnection(jobclass1, jobclass1, node1, node2, 1); // (Delay,Class1) -> (Queue1,Class1)
+    routingMatrix.addConnection(jobclass1, jobclass1, node2, node1, 1.000000); // (Queue1,Class1) -> (Delay,Class1)
+
+    model.link(routingMatrix);
+
+    NetworkStruct sn = model.getStruct(true);
+
+    SolverOptions options = new SolverOptions(SolverType.NC);
+    SolverNC.SolverNCLDReturn ret0 = solver_ncld(sn, options);
+    options.method = "nr.logit";
+    SolverNC.SolverNCLDReturn ret1 = solver_ncld(sn, options);
+    options.method = "nr.probit";
+    SolverNC.SolverNCLDReturn ret2 = solver_ncld(sn, options);
+    options.method = "rd";
+    SolverNC.SolverNCLDReturn ret3 = solver_ncld(sn, options);
+    assertEquals(-2.576432645335951e+00, ret0.lG, tolerance);
+    assertEquals(-2.350641375431591e+00, ret1.lG, 3.303193953352507e+00*tolerance*10000);
+    assertEquals(-2.576432728076320e+00, ret2.lG, tolerance);
+    assertEquals(-2.633413431541626e+00, ret3.lG, tolerance);
+
+
+  }
+
+
+  @Test
+  public void SolverNCLDTestModel2() {
+    int N = 4;
+    int c = 2;
+    Network ldmodel = new Network("ldmodel");
+    Delay node1 = new Delay(ldmodel, "Delay");
+    Queue node2 = new Queue(ldmodel, "Queue1", SchedStrategy.PS);
+    ClosedClass jobclass1 = new ClosedClass(ldmodel, "Class1", N, node1, 0);
+    ClosedClass jobclass2 = new ClosedClass(ldmodel, "Class2", N/2, node1, 0);
+    node1.setService(jobclass1, Exp.fitMean(1.0));
+    node1.setService(jobclass2, Exp.fitMean(2.0));
+    node2.setService(jobclass1, Exp.fitMean(1.5));
+    node2.setService(jobclass2, Exp.fitMean(2.5));
+    Matrix LD = new Matrix(1, N + N/2);
+    for (int i=0; i<N+N/2; i++) {
+      LD.set(i, Math.min(i + 1, c));
+    }
+    node2.setLoadDependence(LD);
+    RoutingMatrix P = ldmodel.initRoutingMatrix();
+    P.set(jobclass1, jobclass1, ldmodel.serialRouting(node1, node2));
+    P.set(jobclass2, jobclass2, ldmodel.serialRouting(node1, node2));
+    ldmodel.link(P);
+    NetworkStruct sn = ldmodel.getStruct(false);
+    SolverOptions options = new SolverOptions(SolverType.NC);
+    SolverNC.SolverNCLDReturn ret0 = solver_ncld(sn, options);
+    options.method = "nr.logit";
+    SolverNC.SolverNCLDReturn ret1 = solver_ncld(sn, options);
+    options.method = "nr.probit";
+    SolverNC.SolverNCLDReturn ret2 = solver_ncld(sn, options);
+    options.method = "rd";
+    SolverNC.SolverNCLDReturn ret3 = solver_ncld(sn, options);
+
+    assertEquals(4.115402209963468e+00, ret0.lG, tolerance);
+    assertEquals(3.303193953352507e+00, ret1.lG, 3.303193953352507e+00*tolerance*10000);
+    assertEquals(2.081621924892065e+00, ret2.lG, tolerance);
+    assertEquals(3.980843543955730e+00, ret3.lG, tolerance);
+  }
+
+  @Test
+  public void SolverNCLDTestModel3() {
+    int N = 4;
+    int c = 3;
+    Network ldmodel = new Network("ldmodel");
+    Delay node1 = new Delay(ldmodel, "Delay");
+    Queue node2 = new Queue(ldmodel, "Queue1", SchedStrategy.PS);
+    Queue node3 = new Queue(ldmodel, "Queue2", SchedStrategy.PS);
+    ClosedClass jobclass1 = new ClosedClass(ldmodel, "Class1", N, node1, 0);
+    ClosedClass jobclass2 = new ClosedClass(ldmodel, "Class2", N/2, node1, 0);
+    node1.setService(jobclass1, Exp.fitMean(1.0));
+    node1.setService(jobclass2, Exp.fitMean(2.0));
+
+    node2.setService(jobclass1, Exp.fitMean(1.5));
+    node2.setService(jobclass2, Exp.fitMean(2.5));
+    Matrix LD = new Matrix(1, N+N/2);
+    for (int i=0; i<N+N/2; i++) {
+      LD.set(i, Math.min(i + 1, c));
+    }
+    node2.setLoadDependence(LD);
+
+    node3.setService(jobclass1, Exp.fitMean(3.5));
+    node3.setService(jobclass2, Exp.fitMean(4.5));
+    node3.setLoadDependence(LD.clone());
+
+    RoutingMatrix P = ldmodel.initRoutingMatrix();
+    P.set(jobclass1, jobclass1, ldmodel.serialRouting(node1, node2, node3));
+    P.set(jobclass2, jobclass2, ldmodel.serialRouting(node1, node2, node3));
+    ldmodel.link(P);
+    NetworkStruct sn = ldmodel.getStruct(true);
+    SolverOptions options = new SolverOptions(SolverType.NC);
+    SolverNC.SolverNCLDReturn ret0 = solver_ncld(sn, options);
+    options.method = "nr.logit";
+    SolverNC.SolverNCLDReturn ret1 = solver_ncld(sn, options);
+    options.method = "nr.probit";
+    SolverNC.SolverNCLDReturn ret2 = solver_ncld(sn, options);
+    options.method = "rd";
+    SolverNC.SolverNCLDReturn ret3 = solver_ncld(sn, options);
+
+    assertEquals(8.016437786118589e+00, ret0.lG, tolerance);
+    assertEquals(7.305375561817382e+00, ret1.lG, tolerance*7.305375561817382e+00*10000);
+    assertEquals(5.979290244081035e+00, ret2.lG, 5.979290244081035e+00*tolerance*100);
+    assertEquals(7.755109452853959e+00, ret3.lG, tolerance);
+  }
+
+  @Test
+  public void SolverNCLDTestModel4() {
+    int N = 10;
+    int c = 5;
+    Network ldmodel = new Network("ldmodel");
+    Delay node1 = new Delay(ldmodel, "Delay");
+    Queue node2 = new Queue(ldmodel, "Queue1", SchedStrategy.PS);
+    ClosedClass jobclass1 = new ClosedClass(ldmodel, "Class1", N, node1, 0);
+    node1.setService(jobclass1, Exp.fitMean(1.0));
+    node2.setService(jobclass1, Exp.fitMean(1.0));
+    Matrix LD = new Matrix(1, N );
+    for (int i=0; i<N; i++) {
+      LD.set(i, Math.min(i + 1, c));
+    }
+    node2.setLoadDependence(LD);
+    RoutingMatrix P = ldmodel.initRoutingMatrix();
+    P.set(jobclass1, jobclass1, ldmodel.serialRouting(node1, node2));
+    ldmodel.link(P);
+    NetworkStruct sn = ldmodel.getStruct(false);
+    SolverOptions options = new SolverOptions(SolverType.NC);
+    SolverNC.SolverNCLDReturn ret0 = solver_ncld(sn, options);
+    options.method = "nr.logit";
+    SolverNC.SolverNCLDReturn ret1 = solver_ncld(sn, options);
+    options.method = "nr.probit";
+    SolverNC.SolverNCLDReturn ret2 = solver_ncld(sn, options);
+    options.method = "rd";
+    SolverNC.SolverNCLDReturn ret3 = solver_ncld(sn, options);
+
+    assertEquals(-7.957151694158279e+00, ret0.lG, tolerance);
+    assertEquals(-7.731360424253920e+00, ret1.lG, tolerance);
+    assertEquals(-7.957151776898646e+00, ret2.lG, tolerance);
+    assertEquals(-8.635479492422949e+00, ret3.lG, tolerance);
+  }
+
 }

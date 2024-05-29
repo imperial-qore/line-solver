@@ -2,10 +2,13 @@ package jline.examples;
 
 import jline.lang.*;
 import jline.lang.constant.SchedStrategy;
+import jline.lang.constant.SolverType;
 import jline.lang.distributions.APH;
 import jline.lang.distributions.Erlang;
 import jline.lang.distributions.Exp;
 import jline.lang.nodes.*;
+import jline.solvers.NetworkAvgTable;
+import jline.solvers.SolverOptions;
 import jline.solvers.jmt.SolverJMT;
 import jline.solvers.mva.SolverMVA;
 
@@ -20,6 +23,10 @@ import java.util.List;
  * Getting started examples
  */
 public class Gallery {
+
+    public static Network gallery_mm1() {
+        return gallery_mm1_linear(1, 0.5);
+    }
 
     public static Network gallery_mm1_tandem() {
         return gallery_mm1_linear(2, 0.9);
@@ -76,6 +83,7 @@ public class Gallery {
     }
 
     public static void main(String[] args) throws IllegalAccessException, ParserConfigurationException {
-        new SolverMVA(gallery_mm1_tandem()).getAvgRespTTable().print();
+        //new SolverJMT(gallery_mm1()).getAvgTable().print();
+        new SolverMVA(gallery_mm1()).getAvgQLenTable().tget("Queue1","myClass").print();
     }
 }

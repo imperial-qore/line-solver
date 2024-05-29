@@ -708,12 +708,19 @@ public class SolverNC extends NetworkSolver {
     int K = sn.nclasses;
     Matrix nservers = sn.nservers;
     Matrix nserversFinite = nservers.clone();
-    nserversFinite.removeINF();
-    if (nserversFinite.elementMin() > 1) {
+    nserversFinite.removeInfinity();
+    double minFiniteServer = Double.MAX_VALUE;
+    for (int i=0; i<nservers.getNumElements(); i++) {
+      if (Double.isFinite(nservers.get(i)) && nservers.get(i) < minFiniteServer) {
+        minFiniteServer = nservers.get(i);
+      }
+    }
+    if (minFiniteServer > 1) {
       if (sn.lldscaling.isEmpty() && M == 2 && Double.isFinite(sn.njobs.elementMaxAbs())) {
         double Nt = sn.njobs.elementSum();
+        sn.lldscaling = sn.lldscaling.concatCols(new Matrix(M, (int) Nt));
         for (int i=0; i<M; i++) {
-          for (int j=0; j<Nt; i++) {
+          for (int j=0; j<Nt; j++) {
             sn.lldscaling.set(i, j, Math.min(j + 1, sn.nservers.get(i)));
           }
         }
@@ -721,7 +728,7 @@ public class SolverNC extends NetworkSolver {
         throw new RuntimeException("The load-dependent solver does not support multi-server stations yet. Specify multi-server stations via limited load-dependence.");
       }
     }
-    if (!sn.cdscaling.isEmpty() && options.method.equalsIgnoreCase("exact")) {
+    if (sn.cdscaling != null && !sn.cdscaling.isEmpty() && options.method.equalsIgnoreCase("exact")) {
       throw new RuntimeException("Exact class-dependent solver not yet available in NC.");
     }
     Matrix NK = sn.njobs.transpose();
@@ -732,11 +739,9 @@ public class SolverNC extends NetworkSolver {
     Matrix SCV = sn.scv;
     Matrix gamma = new Matrix(M, 1);
     gamma.zero();
-    Matrix V = new Matrix(sn.visits.size(), 1);
-    int itemp = 0;
-    for (Matrix v : sn.visits.values()) {
-      V.set(itemp, v.elementSum());
-      itemp++;
+    Matrix V = new Matrix(sn.nstateful, K);
+    for (int i = 0; i < sn.visits.size(); i++) {
+      V = V.add(1, sn.visits.get(i));
     }
     Matrix ST = Matrix.ones(sn.rates.getNumRows(), sn.rates.getNumCols()).elementDiv(sn.rates);
     for (int i=0; i<ST.getNumRows(); i++) {
@@ -760,7 +765,7 @@ public class SolverNC extends NetworkSolver {
     Matrix eta_1 = new Matrix(1, M);
     eta_1.zero();
     Matrix eta = Matrix.ones(1, M);
-    if (sn.sched.containsValue(SchedStrategy.FCFS)) {
+    if (!sn.sched.containsValue(SchedStrategy.FCFS)) {
       options.iter_max = 1;
     }
     int iter = 0;
@@ -776,7 +781,7 @@ public class SolverNC extends NetworkSolver {
     Matrix X = null;
     Double lG = null;
     String method = null;
-    while (Matrix.ones(eta.getNumRows(), eta.getNumCols()).sub(1, eta).elementDiv(eta_1).elementMaxAbs() > options.iter_tol && iter < options.iter_max) {
+    while (Matrix.ones(eta.getNumRows(), eta.getNumCols()).sub(1, eta.elementDiv(eta_1)).elementMaxAbs() > options.iter_tol && iter < options.iter_max) {
       iter +=1;
       eta_1 = eta;
       M = sn.nstations;
@@ -807,7 +812,7 @@ public class SolverNC extends NetworkSolver {
           for (int j=0; j<inchain.getNumElements(); j++) {
             STinchain.set(j, ST.get(i, (int) inchain.get(j)));
             alphainchain.set(j, alpha.get(i, (int) inchain.get(j)));
-            SCVinchain.set(j, SCVchain.get(i, (int) inchain.get(j)));
+            SCVinchain.set(j, SCV.get(i, (int) inchain.get(j)));
           }
           Lchain.set(i, c, Vchain.get(i, c) * STinchain.mult(alphainchain.transpose()).toDouble());
           STchain.set(i, c, STinchain.mult(alphainchain.transpose()).toDouble());
@@ -889,7 +894,7 @@ public class SolverNC extends NetworkSolver {
         for (int r=0; r<C; r++) {
           Matrix Nchain_r = Matrix.oner(Nchain, Collections.singletonList(r));
           lGr.set(r, pfqn_ncld(L, Nchain_r, Nchain0, mu, options).lG);
-          Xchain.concatCols(new Matrix(Math.exp(lGr.get(r) - lG)));
+          Xchain = Xchain.concatCols(new Matrix(Math.exp(lGr.get(r) - lG)));
           for (int i=0; i<M; i++) {
             Qchain.set(i, r, 0);
           }
@@ -962,7 +967,7 @@ public class SolverNC extends NetworkSolver {
       if (Arrays.stream(Xchain.toArray1D()).allMatch(Double::isNaN)) {
         System.out.println("Warning: Normalizing constant computations produced a floating-point range exception. Model is likely too large.");
       }
-      Z = Z.sumCols(0, M);
+      Z = Z.sumCols();
       Matrix Rchain = Qchain.element_divide(Xchain.repmat(M, 1)).element_divide(Vchain);
       for (int i : infServers) {
         for (int j=0; j<Rchain.getNumCols(); j++) {
@@ -973,13 +978,19 @@ public class SolverNC extends NetworkSolver {
       Matrix Uchain = Tchain.elementMult(Lchain, null);
       Matrix Cchain = Nchain.elementDiv(Xchain).sub(1, Z);
       snDeaggragatedChains = snDeaggregateChainResults(sn, Lchain, ST, STchain, Vchain, alpha, null, null, Rchain, Tchain, null, Xchain);
-      NPFQN.npfqnNonexpApproxReturn NPFQNret = NPFQN.npfqn_nonexp_approx(options.config.highvar,sn,ST0,V,SCV,snDeaggragatedChains.T,snDeaggragatedChains.U,gamma,nservers);
+      Q = snDeaggragatedChains.Q;
+      U = snDeaggragatedChains.U;
+      R = snDeaggragatedChains.R;
+      T = snDeaggragatedChains.T;
+      C = (int) snDeaggragatedChains.C.get(0);
+      X = snDeaggragatedChains.X;
+      NPFQN.npfqnNonexpApproxReturn NPFQNret = NPFQN.npfqn_nonexp_approx(options.config.highvar,sn,ST0,V,SCV,T,U,gamma,nservers);
       ST = NPFQNret.ST;
       gamma = NPFQNret.gamma;
-      eta = NPFQNret.eta;
+      eta = NPFQNret.eta.transpose();
     }
     SN.snGetProductFormChainParamsReturn snProductForm = snGetProductFormParams(sn);
-    long runtime = System.currentTimeMillis() - Tstart;
+    double runtime = (System.currentTimeMillis() - Tstart) / 1000.0;
     Q = snDeaggragatedChains.Q;
     Q.abs();
     R = snDeaggragatedChains.R;
@@ -1117,12 +1128,12 @@ public static class SolverNCMargReturn {
     public int C;
     public Matrix X;
     public double lG;
-    public long runtime;
+    public double runtime;
     public int it;
     public String method;
 
     public SolverNCLDReturn(Matrix Q, Matrix U, Matrix R, Matrix T, int C,
-                          Matrix X, double lG, long runtime, int it, String method) {
+                            Matrix X, double lG, double runtime, int it, String method) {
       this.Q = Q;
       this.U = U;
       this.R = R;

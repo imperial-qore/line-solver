@@ -121,9 +121,9 @@ public class NPFQN {
         int M = sn.nstations;
         Matrix rho = new Matrix(M, 1);
         rho.zero();
-        Matrix scva = rho.clone();
-        Matrix scvs = rho.clone();
-        Matrix eta = rho.clone();
+        Matrix scva = Matrix.ones(M, 1);
+        Matrix scvs = scva.clone();
+        Matrix eta = scva.clone();
         switch (method) {
             case "default": case "none": case "hmva":
                 return new npfqnNonexpApproxReturn(ST, gamma, nservers, rho, scva, scvs, eta);
@@ -133,7 +133,7 @@ public class NPFQN {
                     nnzClasses.zero();
                     for (int j=0; j<ST.getNumCols(); j++) {
                         if (Double.isFinite(ST.get(i, j)) && Double.isFinite(SCV.get(i, j))) {
-                            nnzClasses.set(i, j, 1);
+                            nnzClasses.set(0, j, 1);
                         }
                     }
                     for (int j=0; j<nnzClasses.getNumElements(); j++) {

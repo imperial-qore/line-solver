@@ -1045,6 +1045,18 @@ public class PFQN {
 				method = "exact";
 				break;
 			}
+			case "nr.logit": case "nrl": {
+				lG = pfqn_nrl(L, N, Z, mu, options);
+				break;
+			}
+			case "nr.probit": case "nrp": {
+				lG = pfqn_nrp(L, N, Z, mu, options);
+				break;
+			}
+			case "rd": {
+				lG = pfqn_rd(L, N, Z, mu, options).lGN;
+				break;
+			}
 			default:
 				throw new RuntimeException("Unrecognized method: " + options.method);
 		}
@@ -1081,13 +1093,13 @@ public class PFQN {
 		Matrix mu = new Matrix(M ,N);
 		mu.zero();
 		for (int i=0; i<M; i++) {
-			mu.set(i, 1, alpha.get(i, 1) / (1 + c.get(i)));
+			mu.set(i, 0, alpha.get(i, 0) / (1 + c.get(i)));
 			Matrix alphanum = new Matrix(N, N);
 			alphanum.zero();
 			Matrix alphaden = alphanum.clone();
 			for (int n = 1; n < N; n++) {
-				alphanum.set(n, 1, alpha.get(1, n));
-				alphaden.set(n, 1, alpha.get(i, n - 1));
+				alphanum.set(n, 0, alpha.get(0, n));
+				alphaden.set(n, 0, alpha.get(i, n - 1));
 				for (int k = 1; k < n - 1; k++) {
 					alphanum.set(n, k, alphanum.get(n, k - 1) * alpha.get(i, n - k + 1));
 					alphaden.set(n, k, alphaden.get(n, k - 1) * alpha.get(i, n - k));
@@ -1100,7 +1112,7 @@ public class PFQN {
 					muden *= mu.get(i, k);
 					rho += (alphanum.get(n, k) * alphaden.get(n, k)) / muden;
 				}
-				mu.set(i, n, (alphanum.get(n, n - 1) * alpha.get(i, 1) / muden) / (1 - rho));
+				mu.set(i, n, (alphanum.get(n, n - 1) * alpha.get(i, 0) / muden) / (1 - rho));
 			}
 		}
 		for (int i=0; i<M; i++) {
