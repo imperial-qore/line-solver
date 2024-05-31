@@ -106,7 +106,7 @@ for a=1:sn.nacts
         case 'Exp'
             fprintf(fid, '\tActivity A%d = new Activity(model, "%s", new Exp(%g)); A%d.on(T%d);', a, sn.names{aidx},1/sn.hostdem{aidx}.getMean, a, onTask);
         case {'Erlang','HyperExp','Coxian','APH'}
-            fprintf(fid, '\tActivity A%d = new Activity(model, "%s", new %s.fitMeanAndSCV(%g,%g)); A%d.on(T%d);', a, sn.names{aidx},sn.hostdem{aidx}.name,sn.hostdem{aidx}.getMean,sn.hostdem{aidx}.getSCV, a, onTask);
+            fprintf(fid, '\tActivity A%d = new Activity(model, "%s", %s.fitMeanAndSCV(%g,%g)); A%d.on(T%d);', a, sn.names{aidx},sn.hostdem{aidx}.name,sn.hostdem{aidx}.getMean,sn.hostdem{aidx}.getSCV, a, onTask);
         otherwise
             line_error(mfilename,sprintf('LQN2SCRIPT does not support the %d distribution yet.',sn.hostdem{aidx}.name));
     end
