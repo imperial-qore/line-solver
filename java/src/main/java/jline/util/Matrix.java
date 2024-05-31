@@ -788,16 +788,6 @@ public class Matrix implements Serializable {
 		this.data.nz_length -= offset;
 	}
 
-	public void setNonFiniteValuesToZero() {
-		for (int i = 0; i < this.getNumRows(); i++) {
-			for (int j = 0; j < this.getNumCols(); j++) {
-				if (!Double.isFinite(this.get(i, j))) {
-					this.set(i, j, 0);
-				}
-			}
-		}
-	}
-
 	public boolean isFinite() {
 		for (int i = 0; i < this.getNumRows(); i++) {
 			for (int j = 0; j < this.getNumCols(); j++) {
@@ -1732,7 +1722,7 @@ public class Matrix implements Serializable {
 		data.remove(row, col);
 	}
 
-	public void removeINF() {
+	public void removeInfinite() {
 		int offset = 0;
 		for (int i = 0; i < this.data.numCols; i++) {
 			for (int j=0;j<this.data.numRows;j++){
@@ -1790,7 +1780,8 @@ public class Matrix implements Serializable {
 		}
 	}
 
-	public Map<String,Matrix> QR_decomposition(){
+	// QR decomposition
+	public Map<String,Matrix> qr(){
 		if(data.numRows!= data.numCols){
 			throw new RuntimeException("Only square matrix can be decomposed");
 		}
@@ -1821,8 +1812,8 @@ public class Matrix implements Serializable {
 			Matrix A = clone();
 			Matrix U = Matrix.eye(data.numRows);
 			for (int i=0;i<it;i++){
-				Matrix Q = A.QR_decomposition().get("Q");
-				A = A.QR_decomposition().get("R").mult(Q);
+				Matrix Q = A.qr().get("Q");
+				A = A.qr().get("R").mult(Q);
 				U = U.mult(Q);
 			}
 			result.put("T",A);

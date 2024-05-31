@@ -1893,10 +1893,10 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 //    inspace.fromArray2D(new int[][]{{0,0,2,0}});
 //    EventResult result = afterEvent(sn, 0, inspace, EventType.ARV, 0, true);
 
-//    NetworkStruct sn = OpenModel.ex1_line().getStruct(false);
-//    Matrix inspace = new Matrix(1, 2);
-//    inspace.fromArray2D(new double[][]{{Double.POSITIVE_INFINITY, 1.0}});
-//    EventResult result = afterEvent(sn, 2, inspace, EventType.ARV, 0, true);
+    NetworkStruct sn = ClosedModel.ex0p().getStruct(false);
+    Matrix inspace = new Matrix(1,1 );
+    inspace.fromArray2D(new double[][]{{10.0}});
+    EventResult result = afterEvent(sn, 0, inspace, EventType.DEP, 0, true);
 //
 //    System.out.println("Outspace: ");
 //    System.out.println(result.outspace);
@@ -1906,15 +1906,15 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 //    System.out.println(result.outprob);
 //    System.out.println(elapsedTimeSec);
 
-    Network sn = MixedModel.ex1_line();
-    SolverSSA solver = new SolverSSA(sn);
-    long startTime = System.nanoTime();
-    NetworkAvgTable avgTable = solver.getAvgTable();
-    long endTime = System.nanoTime();
-    long elapsedTimeSec = (endTime - startTime) / 1_000_000_000; // Convert nanoseconds to sec
-    System.out.println("Duration: ");
-    System.out.println(elapsedTimeSec);
-    avgTable.print();
+//    Network sn = MixedModel.ex1_line();
+//    SolverSSA solver = new SolverSSA(sn);
+//    long startTime = System.nanoTime();
+//    NetworkAvgTable avgTable = solver.getAvgTable();
+//    long endTime = System.nanoTime();
+//    long elapsedTimeSec = (endTime - startTime) / 1_000_000_000; // Convert nanoseconds to sec
+//    System.out.println("Duration: ");
+//    System.out.println(elapsedTimeSec);
+//    avgTable.print();
 
 
   }
@@ -1989,10 +1989,11 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
     Matrix spaceVar = new Matrix(0,0);
     Matrix spaceSrv = new Matrix(0,0);
     Matrix spaceBuf = new Matrix(0,0);
-
+    boolean new_job = true;
 
     if (sn.isstation.get(ind) == 1) {
       if (K.get(jobClass) == 0) {
+        new_job = false;
         return new EventResult(outspace, outrate, outprob);
       }
       V = Matrix.extractRows(sn.nvars, ind, ind + 1, null).elementSum();
@@ -2116,6 +2117,11 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
                       idle_srv.set(i, 0, 0);
                     }
                   }
+                  if (idle_srv.elementSum() <= 0) {
+                    // job will not enter service immediately
+                    new_job = false;
+                  }
+
                   // job enters service, increments idle server terms in space_srv_k
                   int colSrvK = (int) (spaceSrvK.getNumCols() - K.elementSum() + Ks.get(jobClass) + kentry);
                   for (int row = 0; row < spaceSrvK.getNumRows(); row++) {

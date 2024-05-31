@@ -83,7 +83,9 @@ public class Queue extends Station implements HasSchedStrategy, Serializable {
                 throw new InvalidParameterException("Invalid number of servers for scheduling strategy");
             }
         }*/
-        this.numberOfServers = numberOfServers;
+        if (this.schedStrategy != SchedStrategy.INF) {
+            this.numberOfServers = numberOfServers;
+        }
     }
 
     public void setSchedStrategyPar(JobClass jobClass, double weight) {

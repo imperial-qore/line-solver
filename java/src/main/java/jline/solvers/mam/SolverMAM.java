@@ -205,7 +205,7 @@ public class SolverMAM extends NetworkSolver {
                 scvs_inchain.get(c).set(0,i,scv.get(sourceIdx,(int)inchain.get(i)));
             }
             Matrix lambdas_inchain_C = lambdas_inchain.get(c).clone();
-            lambdas_inchain_C.removeINF();
+            lambdas_inchain_C.removeInfinite();
             lambda.set(c,lambdas_inchain_C.elementSum());
             d2c.set(c,qna_superpos(lambdas_inchain.get(c),scvs_inchain.get(c)));
             boolean openChain = false;
@@ -777,7 +777,7 @@ public class SolverMAM extends NetworkSolver {
                                         Qret = MMAPPH1FCFS(mmap_shorten(aggrArrivalAtNode), pie.get(ist), DO.get(ist), 1, null, null, null, false, false, null, null).get("ncMoms");
                                     } else {
                                         Matrix finite_N = N.clone();
-                                        finite_N.removeINF();
+                                        finite_N.removeInfinite();
                                         double maxLevel = finite_N.elementMax()+1;
                                         Map<Integer, Matrix> D = mmap_shorten(aggrArrivalAtNode);
                                         Map<Integer, Matrix> pdistr = new HashMap<>();
@@ -1376,7 +1376,7 @@ public class SolverMAM extends NetworkSolver {
 
                             }
                             Matrix finite_N = N.clone();
-                            finite_N.removeINF();
+                            finite_N.removeInfinite();
                             double maxLevel = finite_N.elementMax()+1;
                             Map<Integer, Matrix> D = mmap_shorten(arri_node);
                             Map<Integer, Matrix> pdistr = new HashMap<>();

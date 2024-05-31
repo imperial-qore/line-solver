@@ -457,7 +457,7 @@ public class SolverLQNS extends Solver {
 
     public static void main(String[] args) throws Exception {
         GlobalConstants.getInstance().setVerbose(VerboseLevel.DEBUG);
-        LayeredNetwork lqnmodel = jline.examples.LayeredNetwork.test0();
+        LayeredNetwork lqnmodel = jline.examples.LayeredExamples.test0();
         SolverLQNS s = new SolverLQNS(lqnmodel);
         LayeredNetworkAvgTable AvgTable = s.getAvgTable();
         AvgTable.printTable();

@@ -86,7 +86,7 @@ public class QNAHandler implements MVASolverHandler{
                 scvs_inchain.get(c).set(0,i,scv.get(sourceIdx,(int)inchain.get(i)));
             }
             Matrix lambdas_inchain_C = lambdas_inchain.get(c).clone();
-            lambdas_inchain_C.removeINF();
+            lambdas_inchain_C.removeInfinite();
             lambda.set(c,lambdas_inchain_C.elementSum());
             d2c.set(c,qna_superpos(lambdas_inchain.get(c),scvs_inchain.get(c)));
             boolean openChain = false;

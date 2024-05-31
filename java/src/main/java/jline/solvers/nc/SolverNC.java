@@ -1030,10 +1030,14 @@ public class SolverNC extends NetworkSolver {
         // Continue from line 213
     }
     X = snDeaggragatedChains.X;
-    X.setNonFiniteValuesToZero();
-    U.setNonFiniteValuesToZero();
-    Q.setNonFiniteValuesToZero();
-    R.setNonFiniteValuesToZero();
+    X.apply(Double.POSITIVE_INFINITY, 0, "equal");
+    X.apply(Double.NaN, 0, "equal");
+    U.apply(Double.POSITIVE_INFINITY, 0, "equal");
+    U.apply(Double.NaN, 0, "equal");
+    Q.apply(Double.POSITIVE_INFINITY, 0, "equal");
+    Q.apply(Double.NaN, 0, "equal");
+    R.apply(Double.POSITIVE_INFINITY, 0, "equal");
+    R.apply(Double.NaN, 0, "equal");
     return new SolverNCLDReturn(Q, U, R, snDeaggragatedChains.T, C, X, lG, runtime, iter, method);
   }
 

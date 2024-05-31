@@ -13,7 +13,7 @@ P2 = Processor(model, 'P2', 4, SchedStrategy.FCFS);
 % T2 = Task(model, 'T2', 1, SchedStrategy.FCFS).on(P2);
 T2 = FunctionTask(model, 'F2', 6, SchedStrategy.FCFS).on(P2).setThinkTime(Exp.fitMean(8.0));
 T2.setSetupTime(Exp(1.0));
-T2.setDelayedOffTime(Exp(2.0));
+T2.setDelayOffTime(Exp(2.0));
 
 E2 = Entry(model, 'E2').on(T2);
 

@@ -478,7 +478,8 @@ public class AMVALDHandler implements MVASolverHandler {
         }
 
         if (sn.lldscaling == null || sn.lldscaling.isEmpty()) {
-            lldscaling = new Matrix(M, (int) Nt);
+            //lldscaling = new Matrix(M, (int) Math.ceil(Nt)); // fails on LayeredExamples.ex3
+            lldscaling = new Matrix(M, (int) 1);
             lldscaling.fill(1);
         } else {
             lldscaling = sn.lldscaling.clone();

@@ -20,6 +20,59 @@ import java.util.Collections;
  * Examples of closed queueing networks
  */
 public class ClosedModel {
+
+    public static Network ex0f() {
+        Network model = new Network("myModel");
+
+        // Block 1: nodes
+        Delay node1 = new Delay(model, "Delay");
+        Queue node2 = new Queue(model, "Queue1", SchedStrategy.FCFS);
+
+        // Block 2: classes
+        ClosedClass jobclass1 = new ClosedClass(model, "Class1", 10, node1, 0);
+
+        node1.setService(jobclass1, Exp.fitMean(100)); // (Delay,Class1)
+        node2.setService(jobclass1, new Exp(2.0/3.0)); // (Queue1,Class1)
+
+        // Block 3: topology
+        RoutingMatrix routingMatrix = new RoutingMatrix(model,
+                Collections.singletonList(jobclass1),
+                Arrays.asList(node1, node2));
+
+        routingMatrix.set(jobclass1, jobclass1, node1, node1, 0.0); // (Delay,Class1) -> (Delay,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.0);// (Delay,Class1) -> (Queue1,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node2, node1, 1.000000); // (Queue1,Class1) -> (Delay,Class1)
+
+        model.link(routingMatrix);
+
+        return model;
+    }
+    public static Network ex0p() {
+        Network model = new Network("myModel");
+
+        // Block 1: nodes
+        Delay node1 = new Delay(model, "Delay");
+        Queue node2 = new Queue(model, "Queue1", SchedStrategy.PS);
+
+        // Block 2: classes
+        ClosedClass jobclass1 = new ClosedClass(model, "Class1", 10, node1, 0);
+
+        node1.setService(jobclass1, new Exp(1.0)); // (Delay,Class1)
+        node2.setService(jobclass1, Exp.fitMean(5)); // (Queue1,Class1)
+
+        // Block 3: topology
+        RoutingMatrix routingMatrix = new RoutingMatrix(model,
+                Collections.singletonList(jobclass1),
+                Arrays.asList(node1, node2));
+
+        routingMatrix.set(jobclass1, jobclass1, node1, node1, 0.0); // (Delay,Class1) -> (Delay,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.0); // (Delay,Class1) -> (Queue1,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node2, node1, 1.000000); // (Queue1,Class1) -> (Delay,Class1)
+
+        model.link(routingMatrix);
+
+        return model;
+    }
     public static Network ex1() {
         Network model = new Network("myModel");
 
@@ -39,7 +92,7 @@ public class ClosedModel {
                 Arrays.asList(node1, node2));
 
         routingMatrix.set(jobclass1, jobclass1, node1, node1, 0.700000); // (Delay,Class1) -> (Delay,Class1)
-        routingMatrix.set(jobclass1, jobclass1, node1, node2, 0.300000); // (Delay,Class1) -> (Queue1,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node1, node2, 0.3); // (Delay,Class1) -> (Queue1,Class1)
         routingMatrix.set(jobclass1, jobclass1, node2, node1, 1.000000); // (Queue1,Class1) -> (Delay,Class1)
 
         model.link(routingMatrix);

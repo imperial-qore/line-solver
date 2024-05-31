@@ -619,18 +619,21 @@ public class LayeredNetwork extends Ensemble {
                                     lqn.actpretype.set(0, preaidx, ActivityPrecedence.getPrecedenceId(tasks.get(t).precedences.get(ap).preType));//TODO:String to ASCII array
                                     lqn.actposttype.set(0, postaidx, ActivityPrecedence.getPrecedenceId(tasks.get(t).precedences.get(ap).postType));
                                 }
+                                break;
                             case POST_LOOP:
                                 Matrix counts = tasks.get(t).precedences.get(ap).postParams;
                                 int enda = postacts.size();
-                                int endaidx = Utils.findString(lqn.hashnames, "A:" + tasks.get(t).precedences.get(ap).postActs.get(enda));
+                                int endaidx = Utils.findString(lqn.hashnames, "A:" + tasks.get(t).precedences.get(ap).postActs.get(enda - 1));
                                 for (int posta = 0; posta < postacts.size() - 1; posta++) {
                                     int postaidx = Utils.findString(lqn.hashnames, "A:" + tasks.get(t).precedences.get(ap).postActs.get(posta));
                                     double postParam = 1.0 / (postacts.size() - 1);
                                     lqn.graph.set(preaidx, postaidx, preParam * postParam);
                                     lqn.graph.set(postaidx, postaidx, 1 - 1.0 / counts.length());
                                     lqn.graph.set(postaidx, endaidx, 1.0 / counts.length());
-                                    lqn.actposttype.set(0, endaidx, ActivityPrecedence.getPrecedenceId(tasks.get(t).precedences.get(ap).postType));
+                                    lqn.actposttype.set(0, postaidx, ActivityPrecedence.getPrecedenceId(tasks.get(t).precedences.get(ap).postType));
                                 }
+                                lqn.actposttype.set(0, endaidx, ActivityPrecedence.getPrecedenceId(tasks.get(t).precedences.get(ap).postType));
+                                break;
                             default:
                                 for (int posta = 0; posta < postacts.size(); posta++) {
                                     int postaidx = Utils.findString(lqn.hashnames, "A:" + tasks.get(t).precedences.get(ap).postActs.get(posta));

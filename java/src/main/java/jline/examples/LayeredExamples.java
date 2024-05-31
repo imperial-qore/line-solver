@@ -13,7 +13,7 @@ import java.util.Arrays;
 /**
  * Examples of layered queueing network models
  */
-public class LayeredNetwork {
+public class LayeredExamples {
 
     public static jline.lang.layered.LayeredNetwork testSimple() throws Exception {
         jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_simple");
@@ -57,7 +57,7 @@ public class LayeredNetwork {
         Activity A1 = new Activity(model, "A1", new Exp(1));
         A1.on(T1);
         A1.boundTo(E1);
-        A1.synchCall(E2,1);
+        A1.synchCall(E2, 1);
 
         Activity A2 = new Activity(model, "A2", new Exp(1));
         A2.on(T2);
@@ -66,13 +66,14 @@ public class LayeredNetwork {
 //        T1.addPrecedence(ActivityPrecedence.Sequence("A1","A2"));
         return model;
     }
+
     public static jline.lang.layered.LayeredNetwork test1() throws Exception {
         jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_LQN_1");
 
         Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
 
         Task T1 = new Task(model, "T1", 50, SchedStrategy.REF);
-        T1.setThinkTime(new Exp(1.0/100));
+        T1.setThinkTime(new Exp(1.0 / 100));
         T1.on(P1);
 
         Entry E1 = new Entry(model, "E1");
@@ -82,10 +83,10 @@ public class LayeredNetwork {
         A1.on(T1);
         A1.boundTo(E1);
 
-        Activity A2 = new Activity(model, "A2", new Exp(1.0/1.5));
+        Activity A2 = new Activity(model, "A2", new Exp(1.0 / 1.5));
         A2.on(T1);
 
-        T1.addPrecedence(ActivityPrecedence.Sequence("A1","A2"));
+        T1.addPrecedence(ActivityPrecedence.Sequence("A1", "A2"));
 
         return model;
     }
@@ -98,7 +99,7 @@ public class LayeredNetwork {
 
         Task T1 = new Task(model, "T1", 10, SchedStrategy.REF);
         T1.on(P1);
-        T1.setThinkTime(new Exp(1.0/100));
+        T1.setThinkTime(new Exp(1.0 / 100));
 
         Task T2 = new Task(model, "T2", 1, SchedStrategy.FCFS);
         T2.on(P2);
@@ -110,24 +111,49 @@ public class LayeredNetwork {
         Entry E2 = new Entry(model, "E2");
         E2.on(T2);
 
-        Activity A1 = new Activity(model, "A1", new Exp(1/1.6));
+        Activity A1 = new Activity(model, "A1", new Exp(1 / 1.6));
         A1.on(T1);
         A1.boundTo(E1);
 
         Activity A2 = new Activity(model, "A2", new Immediate());
         A2.on(T1);
-        A2.synchCall(E2,1);
 
-        Activity A3 = new Activity(model, "A3", new Exp(1.0/5));
-        A3.on(T2);
-        A3.boundTo(E2);
+        Activity A3 = new Activity(model, "A3", new Immediate());
+        A3.on(T1);
+        A3.synchCall(E2, 1);
 
-        Activity A4 = new Activity(model, "A4", new Exp(1));
+        Activity A4 = new Activity(model, "A4", new Exp(1.0 / 5));
         A4.on(T2);
-        A4.repliesTo(E2);
+        A4.boundTo(E2);
 
-        T1.addPrecedence(ActivityPrecedence.Sequence("A1","A2"));
-        T2.addPrecedence(ActivityPrecedence.Sequence("A3","A4"));
+        Activity A5 = new Activity(model, "A5", new Exp(1));
+        A5.on(T2);
+        A5.repliesTo(E2);
+
+        T1.addPrecedence(ActivityPrecedence.Sequence("A1", "A2"));
+        T1.addPrecedence(ActivityPrecedence.Sequence("A2", "A3"));
+        T2.addPrecedence(ActivityPrecedence.Sequence("A4", "A5"));
+
+        return model;
+    }
+
+    public static jline.lang.layered.LayeredNetwork test3() throws Exception {
+
+        jline.lang.layered.LayeredNetwork model = new LayeredNetwork("myLayeredModel");
+
+        Processor P1 = new Processor(model, "P1", Integer.MAX_VALUE, SchedStrategy.INF);
+        Processor P2 = new Processor(model, "P2", Integer.MAX_VALUE, SchedStrategy.INF);
+
+        Task T1 = new Task(model, "T1", 1, SchedStrategy.REF); T1.on(P1);
+        T1.setThinkTime(Erlang.fitMeanAndSCV(0.0001,0.5));
+        Task T2 = new Task(model, "T2", Integer.MAX_VALUE, SchedStrategy.INF); T2.on(P2);
+        T2.setThinkTime(new Immediate());
+
+        Entry E1 = new Entry(model, "E1"); E1.on(T1);
+        Entry E2 = new Entry(model, "E2"); E2.on(T2);
+
+        Activity A1 = new Activity(model, "A1", new Exp(1)); A1.on(T1); A1.boundTo(E1); A1.synchCall(E2,3);
+        Activity A2 = new Activity(model, "A2", APH.fitMeanAndSCV(1.0,10.0)); A2.on(T2); A2.boundTo(E2); A2.repliesTo(E2);
 
         return model;
     }
@@ -184,25 +210,62 @@ public class LayeredNetwork {
         Entry E1 = new Entry(model, "E1");
         E1.on(T1);
 
-        Activity A1 = new Activity(model, "A1", new Exp( 1/2));
+        Activity A1 = new Activity(model, "A1", new Exp((double) 1/2));
         A1.on(T1);
         A1.boundTo(E1);
 
-        Activity A2 = new Activity(model, "A2", new Exp(1/3));
+        Activity A2 = new Activity(model, "A2", new Exp((double)1/3));
         A2.on(T1);
 
-        Activity A3 = new Activity(model, "A3", new Exp(1/4));
+        Activity A3 = new Activity(model, "A3", new Exp((double)1/4));
         A3.on(T1);
 
-        Activity A4 = new Activity(model, "A4", new Exp(1/5));
+        Activity A4 = new Activity(model, "A4", new Exp((double)1/5));
         A4.on(T1);
 
-        Activity A5 = new Activity(model, "A5", new Exp(1/6));
+        Activity A5 = new Activity(model, "A5", new Exp((double)1/6));
         A5.on(T1);
 
 
         T1.addPrecedence(ActivityPrecedence.AndFork("A1", Arrays.asList("A2", "A3", "A4")));
         T1.addPrecedence(ActivityPrecedence.AndJoin(Arrays.asList("A2", "A3", "A4"), "A5", new Matrix(0, 0)));
+
+        return model;
+    }
+
+    public static jline.lang.layered.LayeredNetwork testOrForkJoin() throws Exception {
+        jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_or_fork_join");
+        Processor P1 = new Processor(model, "P1", 10, SchedStrategy.FCFS);
+
+        Task T1 = new Task(model, "T1", 1, SchedStrategy.REF);
+        T1.on(P1);
+        T1.setThinkTime(new Immediate());
+
+        Entry E1 = new Entry(model, "E1");
+        E1.on(T1);
+
+        Activity A1 = new Activity(model, "A1", new Exp((double) 1/2));
+        A1.on(T1);
+        A1.boundTo(E1);
+
+        Activity A2 = new Activity(model, "A2", new Exp((double)1/3));
+        A2.on(T1);
+
+        Activity A3 = new Activity(model, "A3", new Exp((double)1/4));
+        A3.on(T1);
+
+        Activity A4 = new Activity(model, "A4", new Exp((double)1/5));
+        A4.on(T1);
+
+        Activity A5 = new Activity(model, "A5", new Exp((double)1/6));
+        A5.on(T1);
+
+        Matrix params = new Matrix(1, 3);
+        params.set(0,0,0.3);
+        params.set(0,1,0.3);
+        params.set(0,2,0.4);
+        T1.addPrecedence(ActivityPrecedence.OrFork("A1", Arrays.asList("A2", "A3", "A4"),  params));
+        T1.addPrecedence(ActivityPrecedence.OrJoin(Arrays.asList("A2", "A3", "A4"), "A5"));
 
         return model;
     }
@@ -246,7 +309,7 @@ public class LayeredNetwork {
 //        B2.on(T2);
 //        B2.repliesTo(E2);
 
-        T1.addPrecedence(ActivityPrecedence.Loop("A1", Arrays.asList("A2", "A3"), new Matrix(0)));
+        T1.addPrecedence(ActivityPrecedence.Loop("A1", Arrays.asList("A2", "A3"), new Matrix(1)));
 //        T1.addPrecedence(ActivityPrecedence.Sequence("B1", "B2"));
 
         return model;
@@ -587,7 +650,7 @@ public class LayeredNetwork {
     }
 
     public static void main(String[] args) throws Exception{
-        jline.lang.layered.LayeredNetwork model = test2();
+        jline.lang.layered.LayeredNetwork model = test3();
         SolverOptions solverOptions= new SolverOptions(SolverType.LN);
         SolverLN solver = new SolverLN(model, solverOptions);
 
