@@ -22,9 +22,10 @@ public class Entry extends LayeredNetworkElement{
         this.model = model;
     }
 
-    public  void on(Task newParent){//TODO
+    public Entry on(Task newParent){//TODO
         newParent.addEntry(this);
         this.parent = newParent;
+        return this;
     }
 }
 

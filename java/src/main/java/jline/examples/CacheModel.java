@@ -22,7 +22,7 @@ import java.util.Arrays;
 /**
  * Examples of caching models
  */
-public class Cache {
+public class CacheModel {
 
     public static Network ex1(){
         Network model = new Network("model");

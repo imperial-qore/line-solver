@@ -61,7 +61,7 @@ abstract public class Distribution  implements Serializable  {
     }
 
     public boolean isImmediate() {
-        return getMean() < GlobalConstants.Zero;
+        return this.immediate || getMean() < GlobalConstants.Zero;
     }
 
     public boolean isContinuous() {

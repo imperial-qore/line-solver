@@ -28,8 +28,9 @@ public class ItemEntry extends Entry {
     }
 
     @Override
-    public  void on(Task newParent){
+    public ItemEntry on(Task newParent){
         newParent.addEntry(this);
         this.parent = newParent;
+        return this;
     }
 }

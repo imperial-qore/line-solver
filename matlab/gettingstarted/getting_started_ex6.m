@@ -1,7 +1,7 @@
 % https://github.com/imperial-qore/line-solver/wiki/Getting-started#example-6-a-queueing-network-with-caching
 
 % Block 1: nodes
-model = Network('model');
+model = Network('Model');
 
 % Block 1: nodes
 clientDelay = Delay(model, 'Client');

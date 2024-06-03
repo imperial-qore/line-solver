@@ -522,7 +522,8 @@ public class Network extends Model implements Serializable {
                     System.err.format("Default initialisation failed on station %d", i);
                 } else {
                     ((StatefulNode) this.nodes.get(i)).setState(state_i);
-                    Matrix prior_state_i = new Matrix(1, state_i.getNumRows());
+
+                    Matrix prior_state_i = new Matrix(state_i.getNumRows(), 1);
                     prior_state_i.zero();
                     prior_state_i.set(0, 0, 1);
                     ((StatefulNode) this.nodes.get(i)).setStatePrior(prior_state_i);
@@ -566,7 +567,7 @@ public class Network extends Model implements Serializable {
         for (int ist = 0; ist < snTmp.nstations; ist++) {
             int isf = (int) snTmp.stationToStateful.get(0, ist);
             if (snTmp.state.get(snTmp.stations.get(ist)).getNumRows() > 1) {
-                System.err.format("isStateValid will ignore some states of station %d, define a unique initial state to address this problem.", ist);
+                System.err.format("isStateValid will ignore some states of station %d, define a unique initial state to address this problem.\n", ist);
                 Matrix initialState = new Matrix(1, snTmp.state.get(snTmp.stations.get(ist)).getNumCols());
                 Matrix.extractRows(snTmp.state.get(snTmp.stations.get(ist)), 0, 1, initialState);
                 snTmp.state.put(snTmp.stations.get(ist), initialState);
@@ -2963,7 +2964,16 @@ public class Network extends Model implements Serializable {
     }
 
     public RoutingMatrix initRoutingMatrix() {
-        return new RoutingMatrix(this, jobClasses, nodes);
+        RoutingMatrix rt = new RoutingMatrix(this, jobClasses, nodes);
+        for (JobClass j:jobClasses) {
+            if (j instanceof SelfLoopingClass) {
+                for (Node i:nodes) {
+                    //rt.set(j, j, ((SelfLoopingClass) j).getRefstat(), ((SelfLoopingClass) j).getRefstat(), 1.0);
+                    rt.set(j, j, i,i, 1.0);
+                }
+            }
+        }
+        return rt;
     }
 
     public NetworkAttribute getAttribute() {

@@ -245,4 +245,8 @@ public class ActivityPrecedence {
         preActs.add(preAct);
         return new ActivityPrecedence(preActs,postActs,ActivityPrecedenceType.PRE_SEQ,ActivityPrecedenceType.POST_CACHE);
     }
+
+    public static ActivityPrecedence Serial(Activity a20, Activity a21, Activity a22) {
+        return null;
+    }
 }

@@ -102,7 +102,9 @@ public class Erlang extends MarkovianDistribution implements Serializable {
     public static Erlang fitMeanAndSCV(double mean, double SCV) {
         long r = (long)  Math.ceil(1 / SCV);
         double alpha = r/mean;
-        return new Erlang(alpha, r);
+        Erlang er = new Erlang(alpha, r);
+        er.immediate = mean < GlobalConstants.CoarseTol;
+        return er;
     }
 
     public static Erlang fitMeanAndStdDev(double mean, double stdDev) {

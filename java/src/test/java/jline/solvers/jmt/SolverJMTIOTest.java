@@ -67,7 +67,7 @@ public class SolverJMTIOTest {
 
     @Test
     public void test_example_forkJoin_1() throws ParserConfigurationException {
-        Network model = ForkJoin.ex1_line();
+        Network model = ForkJoinModel.ex1_line();
 
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;
@@ -94,7 +94,7 @@ public class SolverJMTIOTest {
     }
 
     @Test void test_example_forkJoin_2() {
-        Network model = ForkJoin.ex2_line();
+        Network model = ForkJoinModel.ex2_line();
 
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;
@@ -120,7 +120,7 @@ public class SolverJMTIOTest {
     }
 
     @Test void test_example_forkJoin_3() throws ParserConfigurationException {
-        Network model = ForkJoin.ex3_line();
+        Network model = ForkJoinModel.ex3_line();
 
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;

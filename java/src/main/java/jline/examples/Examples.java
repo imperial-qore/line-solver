@@ -3,6 +3,7 @@ package jline.examples;
 import jline.lang.*;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.distributions.APH;
+import jline.lang.distributions.Distribution;
 import jline.lang.distributions.Erlang;
 import jline.lang.distributions.Exp;
 import jline.lang.nodes.*;
@@ -573,12 +574,8 @@ public class Examples {
         //SolverCTMC solver = new SolverCTMC(model);
         //SolverJMT solver = new SolverJMT(model);
         SolverMVA solver = new SolverMVA(model);
-        //solver.applyCutoff(3);
         solver.getAvgTable().print();
         solver.getAvgSysTable().print();
-        //solver.jsimgView();
-//        solver.getGenerator();
-//        solver.getStateSpace();
-//        solver.getProbabilityVector();
+
     }
 }

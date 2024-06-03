@@ -61,6 +61,7 @@ public class NCRunner {
             wasDefault = true;
           }
         }
+        break;
       case "exact":
         if (!solver.model.hasProductFormSolution()) {
           throw new RuntimeException("The exact method requires the model to have a product-form solution. This model does not have one. You can use Network.hasProductFormSolution() to check before running the solver.");
@@ -78,6 +79,7 @@ public class NCRunner {
             }
           }
         }
+        break;
     }
     solver.resetRandomGeneratorSeed(options.seed);
     List<NodeType> nonReentrant = new ArrayList<>(Arrays.asList(NodeType.Source, NodeType.Cache, NodeType.Sink));

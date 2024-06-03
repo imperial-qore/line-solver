@@ -1,5 +1,5 @@
 % https://github.com/imperial-qore/line-solver/wiki/Getting-started#example-7-response-time-distribution-and-percentiles
-model = Network('model');
+model = Network('Model');
 
 % Block 1: nodes
 node{1} = Delay(model, 'Delay');

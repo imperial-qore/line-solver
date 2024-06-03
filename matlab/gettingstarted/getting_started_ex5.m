@@ -14,10 +14,10 @@ P{jobclass{2},jobclass{3}}(queue,queue) = 1.0;
 P{jobclass{3},jobclass{1}}(queue,queue) = 1.0;
 model.link(P);
 
-ctmcAvgTable = SolverCTMC(model).getAvgTable
+ncAvgTable = SolverNC(model).getAvgTable
 
-ctmcAvgSysTable = SolverCTMC(model).getAvgSysTable
+ncAvgSysTable = SolverNC(model).getAvgSysTable
 
 jobclass{1}.completes = false;
 jobclass{2}.completes = false;
-ctmcAvgSysTable2 = SolverCTMC(model).getAvgSysTable
+ncAvgSysTable2 = SolverNC(model).getAvgSysTable

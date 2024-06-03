@@ -37,6 +37,10 @@ public class Cache extends StatefulNode implements Serializable {
     private final Matrix[] graph;
     private final CacheClassSwitcher cacheServer;
 
+    public Cache(Network model, String name, int nitems, int itemLevelCap, ReplacementStrategy replPolicy) {
+        this(model, name, nitems, new Matrix(itemLevelCap), replPolicy, null);
+    }
+
     public Cache(Network model, String name, int nitems, Matrix itemLevelCap, ReplacementStrategy replPolicy) {
         this(model, name, nitems, itemLevelCap, replPolicy, null);
     }
@@ -134,7 +138,7 @@ public class Cache extends StatefulNode implements Serializable {
                 ObjectInputStream in = new ObjectInputStream(bis);
                 distribution_copy = (Distribution) in.readObject();
             } catch (IOException | ClassNotFoundException e) {
-                System.err.println("Could not copy the distribution in the setRead method of Cache.java");
+                System.err.println("Could not copy the distribution in the setRead method of CacheExamples.java");
                 e.printStackTrace();
             }
             this.popularitySet(itemclass.getIndex(), jobClass.getIndex() - 1, distribution_copy);
@@ -161,7 +165,7 @@ public class Cache extends StatefulNode implements Serializable {
                 ObjectInputStream in = new ObjectInputStream(bis);
                 popularity_copy = (Distribution) in.readObject();
             } catch (IOException | ClassNotFoundException e) {
-                System.err.println("Could not copy the distribution in the setReadItemEntry method of Cache.java");
+                System.err.println("Could not copy the distribution in the setReadItemEntry method of CacheExamples.java");
                 e.printStackTrace();
             }
             this.popularitySet(jobClass.getIndex(), popularity_copy);

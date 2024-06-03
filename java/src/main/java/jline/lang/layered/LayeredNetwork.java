@@ -139,6 +139,9 @@ public class LayeredNetwork extends Ensemble {
         }
     }
 
+    public void writeXML(String filename) {
+        writeXML(filename, false);
+    }
 
     public void writeXML(String filename, boolean abstractNames) {
         Map<String, String> nodeHashMap = new HashMap<>();
@@ -769,8 +772,11 @@ public class LayeredNetwork extends Ensemble {
         this_lqn.print();
     }
 
+    public static LayeredNetwork parseXML(String filename) {
+        return parseXML(filename, false);
+    }
 
-    public static LayeredNetwork parseXML(String filename, int verbose) {
+    public static LayeredNetwork parseXML(String filename, boolean verbose) {
 
         LayeredNetwork myLN = new LayeredNetwork(filename.replace("_", "\\_"));
 
@@ -793,7 +799,7 @@ public class LayeredNetwork extends Ensemble {
 
         doc.getDocumentElement().normalize();
 
-        if (verbose > 0) {
+        if (verbose) {
             System.out.println("Parsing LQN file" + filename);
             System.out.println("Root element:" + doc.getDocumentElement().getNodeName());
         }

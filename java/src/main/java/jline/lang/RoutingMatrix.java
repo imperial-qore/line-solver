@@ -413,6 +413,10 @@ public class RoutingMatrix implements Serializable {
         this.addConnection(srcNode, destNode, probability);
     }
 
+    public void set(JobClass jobclass, Matrix rt) {
+        this.routings.get(jobclass.getIndex()-1).get(jobclass.getIndex()-1).setTo(rt);
+    }
+
     public void set(JobClass jobclass1, JobClass jobclass2, Matrix rt) {
         this.routings.get(jobclass1.getIndex()-1).get(jobclass2.getIndex()-1).setTo(rt);
     }

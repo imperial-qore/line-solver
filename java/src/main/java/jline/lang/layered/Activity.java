@@ -76,9 +76,10 @@ public class Activity extends LayeredNetworkElement {
 
     }
 
-    public void on(Task parent){
+    public Activity on(Task parent){
         parent.addActivity(this);
         this.parent = parent;
+        return this;
     }
 
 
@@ -101,7 +102,7 @@ public class Activity extends LayeredNetworkElement {
         this.hostDemandSCV = hostDemand.getSCV();
     }
 
-    public void repliesTo(Entry entry) throws Exception {
+    public Activity repliesTo(Entry entry) throws Exception {
         if(this.parent!=null){
             if (Objects.requireNonNull(this.parent.scheduling) == SchedStrategy.REF) {
                 throw new Exception("Activities in reference tasks cannot reply.");
@@ -111,70 +112,83 @@ public class Activity extends LayeredNetworkElement {
         }else{
             entry.replyActivity.put( entry.replyActivity.size(), this.getName());
         }
+        return this;
     }
 
-    public  void boundTo(Entry entry){
+    public Activity boundTo(Entry entry){
             this.boundToEntry = entry.getName();
+            return this;
     }
 
-    public void boundTo(String entry) {
+    public Activity boundTo(String entry) {
         this.boundToEntry = entry;
+        return this;
     }
 
-    public void setCallOrder(String callOrder) {
+    public Activity setCallOrder(String callOrder) {
         if (callOrder.equals("STOCHASTIC") || callOrder.equals("DETERMINISTIC")){
             this.callOrder = callOrder.toUpperCase(Locale.ROOT);
         }else{
             this.callOrder = "STOCHASTIC";
         }
+
+        return this;
     }
 
-    public void synchCall(Entry synchCallDest, double synchCallMean){//TODO:condition?
+    public Activity synchCall(Entry synchCallDest, double synchCallMean){//TODO:condition?
         this.syncCallDests.put(syncCallDests.size(),synchCallDest.getName());
         this.syncCallMeans.growMaxColumns(syncCallMeans.getNumCols()+1,true);
         this.syncCallMeans.set(0,syncCallMeans.length()-1,synchCallMean);
+        return this;
     }
 
-    public void synchCall(String synchCallDest, double synchCallMean){//TODO:condition?
+    public Activity synchCall(String synchCallDest, double synchCallMean){//TODO:condition?
         this.syncCallDests.put(syncCallDests.size(),synchCallDest);
         this.syncCallMeans.growMaxColumns(syncCallMeans.getNumCols()+1,true);
         this.syncCallMeans.set(0,syncCallMeans.length()-1,synchCallMean);
+        return this;
     }
 
-    public void synchCall(Entry synchCallDest){//TODO:condition?
+    public Activity synchCall(Entry synchCallDest){//TODO:condition?
         this.syncCallDests.put(syncCallDests.size(),synchCallDest.getName());
         this.syncCallMeans.growMaxColumns(syncCallMeans.getNumCols()+1,true);
         this.syncCallMeans.growMaxLength(syncCallMeans.getNonZeroLength()+1,true);
         this.syncCallMeans.set(0,syncCallMeans.getNumCols()-1,1);
+        return this;
     }
 
-    public void synchCall(String synchCallDest){//TODO:condition?
+    public Activity synchCall(String synchCallDest){//TODO:condition?
         this.syncCallDests.put(syncCallDests.size(),synchCallDest);
         this.syncCallMeans.growMaxColumns(syncCallMeans.getNumCols()+1,true);
         this.syncCallMeans.set(0,syncCallMeans.length()-1,1);
+        return this;
     }
 
-    public void asynchCall(Entry asynchCallDest, double asynchCallMean){//TODO: type checking?
+    public Activity asynchCall(Entry asynchCallDest, double asynchCallMean){//TODO: type checking?
         this.asyncCallDests.put(asyncCallDests.size(), asynchCallDest.getName());
         this.asyncCallMeans.growMaxColumns(asyncCallMeans.getNumCols()+1,true);
         this.asyncCallMeans.set(0,asyncCallMeans.length()-1,asynchCallMean);
+        return this;
     }
 
-    public void asynchCall(String asynchCallDest, double asynchCallMean){//TODO: type checking?
+    public Activity asynchCall(String asynchCallDest, double asynchCallMean){//TODO: type checking?
         this.asyncCallDests.put(asyncCallDests.size(), asynchCallDest);
         this.asyncCallMeans.growMaxColumns(asyncCallMeans.getNumCols()+1,true);
         this.asyncCallMeans.set(0,asyncCallMeans.length()-1,asynchCallMean);
+        return this;
     }
 
-    public void asynchCall(Entry asynchCallDest){
+    public Activity asynchCall(Entry asynchCallDest){
         this.asyncCallDests.put(asyncCallDests.size(), asynchCallDest.getName());
         this.asyncCallMeans.growMaxColumns(asyncCallMeans.getNumCols()+1,true);
         this.asyncCallMeans.set(0,asyncCallMeans.length()-1,1);
+        return this;
     }
 
-    public void asynchCall(String asynchCallDest){
+    public Activity asynchCall(String asynchCallDest){
         this.asyncCallDests.put(asyncCallDests.size(), asynchCallDest);
         this.asyncCallMeans.growMaxColumns(asyncCallMeans.getNumCols()+1,true);
         this.asyncCallMeans.set(0,asyncCallMeans.length()-1,1);
+        return this;
     }
 }

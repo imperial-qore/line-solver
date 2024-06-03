@@ -20,7 +20,7 @@ import java.util.Collections;
 /**
  * Examples of models with fork-join subsystems
  */
-public class ForkJoin {
+public class ForkJoinModel {
 
     public static Network ex1(){
         Network model = new Network("model");

@@ -71,7 +71,7 @@ public class Station extends StatefulNode implements Serializable {
     }
 
     public void setChainCapacity() {
-
+        // TODO
     }
 
     @Override

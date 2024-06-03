@@ -91,29 +91,33 @@ public class Task extends LayeredNetworkElement{
         model.tasks.put(model.tasks.size(),this);
     }
 
-    public void setReplication(int replication) {
+    public Task setReplication(int replication) {
         this.replication = replication;
+        return this;
     }
 
-    public void on(Processor parent){
+    public Task on(Processor parent){
         if (this.parent != null) {
             this.parent.removeTask(this);
         }
         this.parent = parent;
         this.parent.addTask(this);
+        return this;
     }
 
-    public void setAsReferenceTask(){
+    public Task setAsReferenceTask(){
         this.scheduling = SchedStrategy.REF;
+        return this;
     }
 
-    public void setThinkTime(Distribution thinkTime) {
+    public Task setThinkTime(Distribution thinkTime) {
         this.thinkTime = thinkTime;
         this.thinkTimeMean = thinkTime.getMean();
         this.thinkTimeSCV = thinkTime.getSCV();
+        return this;
     }
 
-    public void setThinkTime(double thinkTime){
+    public Task setThinkTime(double thinkTime){
         if(thinkTime<=GlobalConstants.Zero){
             this.thinkTime = new Immediate();
             this.thinkTimeMean = GlobalConstants.Zero;
@@ -123,36 +127,43 @@ public class Task extends LayeredNetworkElement{
             this.thinkTimeMean = thinkTime;
             this.thinkTimeSCV = 1.0;
         }
+        return this;
     }
 
-    public void addEntry(Entry newEntry){
+    public Task addEntry(Entry newEntry){
         this.entries.add(newEntry);
+        return this;
     }
 
-    public void addActivity(Activity newActivity) {
-
+    public Task addActivity(Activity newActivity) {
         newActivity.setParent(this);
         this.activities.add(newActivity);
+        return this;
     }
 
-    public void setActivity(Activity newActivity, int index){
+    public Task setActivity(Activity newActivity, int index){
         this.activities.set(index,newActivity);
+        return this;
     }
 
-    public void removeActivity(int index){
+    public Task removeActivity(int index){
         this.activities.remove(index);
+        return this;
     }
 
-    public void addPrecedence(ActivityPrecedence newPrec){
+    public Task addPrecedence(ActivityPrecedence newPrec){
         this.precedences.add(newPrec);
+        return this;
     }
 
-    public void addPrecedence(List<ActivityPrecedence> newPrec){
+    public Task addPrecedence(List<ActivityPrecedence> newPrec){
         this.precedences.addAll(newPrec);
+        return this;
     }
 
-    public void setReplyEntry(List<Entry> replyEntry) {
+    public Task setReplyEntry(List<Entry> replyEntry) {
         this.replyEntry = replyEntry;
+        return this;
     }
 
     public double getMeanHostDemand(String entryName){

@@ -14,7 +14,7 @@ public class CLI {
     public static void solverLN(String[] args) throws  Exception{
         List<LayeredNetwork> layeredNetworks = new ArrayList<>(args.length);
         for (String arg : args) {
-            layeredNetworks.add(LayeredNetwork.parseXML(arg, 0));
+            layeredNetworks.add(LayeredNetwork.parseXML(arg, false));
         }
         List<SolverLN> solverLNs = new ArrayList<>(layeredNetworks.size());
         for (LayeredNetwork layeredNetwork : layeredNetworks) {

@@ -960,14 +960,23 @@ public class SolverLN extends EnsembleSolver {
             if (is_processor_layer || issynccaller) {
                 if (njobs.get(tidx_caller, receiver_index) == 0) {
                     curnjobs = lqn.mult.get(0, tidx_caller) * lqn.repl.get(0, tidx_caller);
-                    if (Double.isInfinite(curnjobs)) {
+                    if (Double.isInfinite(curnjobs) || Integer.MAX_VALUE == curnjobs) {
                         curnjobs = 0;
-                        for (int i = 1; i < lqn.mult.getNumCols(); i++) {
-                            if (Double.isFinite(lqn.mult.get(0, i))) {
-                                curnjobs = curnjobs + lqn.mult.get(0, i) * lqn.repl.get(0, i);
+                        for (int col = 0; col < lqn.taskgraph.getNumCols(); col++) {
+                            if (lqn.taskgraph.get(col, tidx_caller) != 0) {
+                                curnjobs += lqn.mult.get(0, col);
                             }
                         }
-                        curnjobs = Math.min(curnjobs, 1000000);
+                        if (Double.isInfinite(curnjobs) || Integer.MAX_VALUE == curnjobs) {
+                            // If the callers of tidx_caller are inf servers, then use a heuristic
+                            curnjobs = 0;
+                            for (int i = 1; i < lqn.mult.getNumCols(); i++) {
+                                if (Double.isFinite(lqn.mult.get(0, i))) {
+                                    curnjobs = curnjobs + lqn.mult.get(0, i) * lqn.repl.get(0, i);
+                                }
+                            }
+                            curnjobs = Math.min(curnjobs, 1000000);
+                        }
                     }
                     njobs.set(tidx_caller, receiver_index, curnjobs);
                 } else {
@@ -1166,7 +1175,7 @@ public class SolverLN extends EnsembleSolver {
                                                 P.addConnection(cidxclass.get(cidx), cidxclass.get(cidx), serverStation.get(m), clientDelay, 1.0);
                                             }
                                         } else {
-                                            for (int m = 1; m < nreplicas; m++) {
+                                            for (int m = 1; m <= nreplicas; m++) {
                                                 P.addConnection(curClass, cidxclass.get(cidx), clientDelay, serverStation.get(m), 1.0 / (double) nreplicas);
                                                 P.addConnection(cidxclass.get(cidx), cidxauxclass.get(cidx), serverStation.get(m), clientDelay, 1.0);
                                                 P.addConnection(cidxauxclass.get(cidx), cidxclass.get(cidx), clientDelay, serverStation.get(m), 1.0 - 1.0 / (callmean.get(cidx) / nreplicas));
@@ -1371,7 +1380,7 @@ public class SolverLN extends EnsembleSolver {
                                     }
                                     cell_servt_classes_updmap.get(receiver_index).add(new Integer[]{receiver_index, nextaidx, 2, aidxclass.get(nextaidx).getIndex()});
                                 } else {
-                                    for (int m = 1; m < nreplicas; m++) {
+                                    for (int m = 1; m <= nreplicas; m++) {
                                         if (isNextPrecFork.get(0, aidx) != 0) {
                                             P.addConnection(curClass, curClass, serverStation.get(m), forkNode, 1.0);
                                             int f = 0;

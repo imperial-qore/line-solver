@@ -62,6 +62,21 @@ public class Matrix implements Serializable {
 		}
 	}
 
+	public Matrix(String matlabString) {
+		matlabString = matlabString.replaceAll("[\\[\\]\\s]", "");
+		String[] rows = matlabString.split(";");
+		int numRows = rows.length;
+		int numCols = rows[0].split(",").length;
+
+		data = new DMatrixSparseCSC(numRows, numCols);
+		for (int i = 0; i < numRows; i++) {
+			String[] elements = rows[i].split(",");
+			for (int j = 0; j < elements.length; j++) {
+				this.set(i, j, Double.parseDouble(elements[j]));
+			}
+		}
+	}
+
 	public static Matrix allbut(Matrix y, int xset) {
 		int index = -1;
 		if (xset >= 0 && xset < y.length()) {

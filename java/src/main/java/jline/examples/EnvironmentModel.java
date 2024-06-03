@@ -18,7 +18,6 @@ import jline.solvers.fluid.SolverFluid;
 //import jline.solvers.fluid.smoothing.PStarSearcher;
 import jline.util.Maths;
 import jline.util.Matrix;
-import org.apache.commons.math3.optim.PointValuePair;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -26,7 +25,7 @@ import java.util.Collections;
 /**
  * Examples of models evolving in a random environment
  */
-public class RandomEnvironment {
+public class EnvironmentModel {
 
   // For System-Testing and Performance Evaluation
   // Corresponds to example_randomEnvironment_1.m in LINE

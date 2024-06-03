@@ -51,7 +51,7 @@ public class StatefulNode extends Node implements Serializable {
     public void setStatePrior(Matrix prior) {
     	this.statePrior = prior;
     	try {
-    		if(state.getNumRows() != statePrior.getNumRows())
+    		if(state.getNumRows() != this.statePrior.getNumRows())
     			throw new Exception("The prior probability vector must have the same rows of the station state vector");
     	} catch (Exception e) {
     		e.printStackTrace();
