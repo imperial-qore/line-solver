@@ -25,7 +25,7 @@ import java.util.Collections;
 /**
  * Examples of models evolving in a random environment
  */
-public class EnvironmentModel {
+public class EnvModel {
 
   // For System-Testing and Performance Evaluation
   // Corresponds to example_randomEnvironment_1.m in LINE
@@ -408,8 +408,8 @@ public class EnvironmentModel {
 
   public static void main(String[] args) {
 
-    SolverEnv envSolver = ex4();
-    envSolver.printAvgTable();
+    //SolverEnv envSolver = EnvModel.ex4();
+    //envSolver.printAvgTable();
     // envSolver.printEnsembleAvgTables();
   }
 }
