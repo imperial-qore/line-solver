@@ -218,10 +218,11 @@ public class ActivityPrecedence {
         return new ActivityPrecedence(preActs,postActs,ActivityPrecedenceType.PRE_OR,ActivityPrecedenceType.POST_SEQ);
     }
 
-    public static ActivityPrecedence AndFork(String preAct, List<String> postActs) {
+    public static ActivityPrecedence AndFork(String preAct, List<String> postActs, Matrix fanout) {
         List<String> preActs = new ArrayList<>();
         preActs.add(preAct);
-        return new ActivityPrecedence(preActs,postActs,ActivityPrecedenceType.PRE_SEQ,ActivityPrecedenceType.POST_AND);    }
+        return new ActivityPrecedence(preActs,postActs,ActivityPrecedenceType.PRE_SEQ,ActivityPrecedenceType.POST_AND, null, fanout);
+    }
 
     public static ActivityPrecedence Xor(String preAct, List<String> postActs, Matrix probs) {
 
@@ -244,9 +245,5 @@ public class ActivityPrecedence {
         List<String> preActs = new ArrayList<>();
         preActs.add(preAct);
         return new ActivityPrecedence(preActs,postActs,ActivityPrecedenceType.PRE_SEQ,ActivityPrecedenceType.POST_CACHE);
-    }
-
-    public static ActivityPrecedence Serial(Activity a20, Activity a21, Activity a22) {
-        return null;
     }
 }

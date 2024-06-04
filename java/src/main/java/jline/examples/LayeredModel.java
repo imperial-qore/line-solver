@@ -6,7 +6,6 @@ import jline.lang.layered.*;
 import jline.solvers.LayeredNetworkAvgTable;
 import jline.solvers.SolverOptions;
 import jline.solvers.ln.SolverLN;
-import jline.solvers.lqns.SolverLQNS;
 import jline.util.Matrix;
 
 import java.util.Arrays;
@@ -137,24 +136,23 @@ public class LayeredModel {
 
         return model;
     }
+    public static jline.lang.layered.LayeredNetwork test35() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("myLayeredModel");
 
-    public static jline.lang.layered.LayeredNetwork example_layeredModel_2() throws Exception {
-            LayeredNetwork model = new LayeredNetwork("myLayeredModel");
+        Processor P1 = new Processor(model, "P1", Integer.MAX_VALUE, SchedStrategy.INF);
+        Processor P2 = new Processor(model, "P2", Integer.MAX_VALUE, SchedStrategy.INF);
 
-            Processor P1 = new Processor(model, "P1", Integer.MAX_VALUE, SchedStrategy.INF);
-            Processor P2 = new Processor(model, "P2", Integer.MAX_VALUE, SchedStrategy.INF);
+        Task T1 = new Task(model, "T1", 1, SchedStrategy.REF); T1.on(P1);
+        T1.setThinkTime(Erlang.fitMeanAndSCV(0.0001,0.5));
+        Task T2 = new Task(model, "T2", Integer.MAX_VALUE, SchedStrategy.INF); T2.on(P2);
+        T2.setThinkTime(new Immediate());
 
-            Task T1 = new Task(model, "T1", 1, SchedStrategy.REF); T1.on(P1);
-            T1.setThinkTime(Erlang.fitMeanAndSCV(0.0001,0.5));
-            Task T2 = new Task(model, "T2", Integer.MAX_VALUE, SchedStrategy.INF); T2.on(P2);
-            T2.setThinkTime(new Immediate());
+        Entry E1 = new Entry(model, "E1"); E1.on(T1);
+        Entry E2 = new Entry(model, "E2"); E2.on(T2);
 
-            Entry E1 = new Entry(model, "E1"); E1.on(T1);
-            Entry E2 = new Entry(model, "E2"); E2.on(T2);
-
-            Activity A1 = new Activity(model, "A1", new Exp(1)); A1.on(T1); A1.boundTo(E1); A1.synchCall(E2,3);
-            Activity A2 = new Activity(model, "A2", APH.fitMeanAndSCV(1,10)); A2.on(T2); A2.boundTo(E2); A2.repliesTo(E2);
-            return model;
+        Activity A1 = new Activity(model, "A1", new Exp(1)); A1.on(T1); A1.boundTo(E1); A1.synchCall(E2,3);
+        Activity A2 = new Activity(model, "A2", APH.fitMeanAndSCV(1,10)); A2.on(T2); A2.boundTo(E2); A2.repliesTo(E2);
+        return model;
     }
     public static jline.lang.layered.LayeredNetwork test3() throws Exception {
 
@@ -246,7 +244,7 @@ public class LayeredModel {
         A5.on(T1);
 
 
-        T1.addPrecedence(ActivityPrecedence.AndFork("A1", Arrays.asList("A2", "A3", "A4")));
+        T1.addPrecedence(ActivityPrecedence.AndFork("A1", Arrays.asList("A2", "A3", "A4"), new Matrix(0, 0)));
         T1.addPrecedence(ActivityPrecedence.AndJoin(Arrays.asList("A2", "A3", "A4"), "A5", new Matrix(0, 0)));
 
         return model;
@@ -413,7 +411,7 @@ public class LayeredModel {
 
         T1.addPrecedence(ActivityPrecedence.Loop("A1", Arrays.asList("A2", "A3"), new Matrix(3)));
         T2.addPrecedence(ActivityPrecedence.Sequence("B4", "B5"));
-        T2.addPrecedence(ActivityPrecedence.AndFork("B1", Arrays.asList("B2", "B3", "B4")));
+        T2.addPrecedence(ActivityPrecedence.AndFork("B1", Arrays.asList("B2", "B3", "B4"), new Matrix(0, 0)));
         T2.addPrecedence(ActivityPrecedence.AndJoin(Arrays.asList("B2", "B3", "B5"), "B6", new Matrix(0, 0)));
         T3.addPrecedence(ActivityPrecedence.OrFork("C1", Arrays.asList("C2", "C3", "C4"), new Matrix(Arrays.asList(0.3, 0.3, 0.4))));
         T3.addPrecedence(ActivityPrecedence.OrJoin(Arrays.asList("C2", "C3", "C4"), "C5"));
@@ -669,6 +667,32 @@ public class LayeredModel {
     }
 
     public static void main(String[] args) throws Exception{
+        jline.lang.layered.LayeredNetwork model = test35();
+        SolverOptions solverOptions= new SolverOptions(SolverType.LN);
+        SolverLN solver = new SolverLN(model, solverOptions);
+
+//        // Use this block to test single layer.
+//        // Layer 1
+//        System.out.println("The MVA solver result for Layer 1");
+//        Network network1 = solver.getEnsemble().get(0);
+//        SolverMVA layersolver1 = new SolverMVA(network1);
+//        layersolver1.getAvgTable();
+//        System.out.println("----------------------------------------------------------------------------------------");
+//
+//        //layer 2
+//        System.out.println("The MVA solver result for Layer 2");
+//        Network network2 = solver.getEnsemble().get(1);
+//        SolverMVA layersolver2 = new SolverMVA(network2);
+//        layersolver2.getAvgTable();
+//        System.out.println("----------------------------------------------------------------------------------------");
+
+        // Use this Line to test the solverLN result
+        System.out.println("The LN solver result ");
+        LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
+        System.out.println(1);
+    }
+}
+
 //        jline.lang.layered.LayeredNetwork model = example_layeredModel_2();
 //
 //        SolverOptions solverOptions= new SolverOptions(SolverType.LN);
@@ -686,20 +710,3 @@ public class LayeredModel {
 //        avg.print();
 
 
-        LayeredNetwork model = new LayeredNetwork("myLayeredModel");
-
-        Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
-        Processor P2 = new Processor(model, "P2", 1, SchedStrategy.PS);
-        Task T1 = new Task(model, "T1", 5, SchedStrategy.REF).on(P1);
-        Task T2 = new Task(model, "T2", Integer.MAX_VALUE, SchedStrategy.INF).on(P2);
-        Entry E1 = new Entry(model, "E1").on(T1);
-        Entry E2 = new Entry(model, "E2").on(T2);
-        Activity A1 = new Activity(model, "A1", new Exp(1.0)).on(T1).boundTo(E1).synchCall(E2,3.5);
-        Activity A2 = new Activity(model, "A2", new Exp(2.0)).on(T2).boundTo(E2).repliesTo(E2);
-        Activity A20 = new Activity(model, "A20", new Exp(1.0)).on(T2).boundTo(E2);
-        Activity A21 = new Activity(model, "A21", Erlang.fitMeanAndOrder(1.0,2)).on(T2);
-        Activity A22 = new Activity(model, "A22", new Exp(1.0)).on(T2).repliesTo(E2);
-        T2.addPrecedence(ActivityPrecedence.Serial(A20, A21, A22));
-        new SolverLQNS(model).getAvgTable().print();
-    }
-}

@@ -6,10 +6,7 @@ import jline.lang.nodes.Cache;
 import jline.solvers.SolverOptions;
 import jline.solvers.SolverResult;
 import jline.solvers.mva.SolverMVA;
-import jline.solvers.nc.analyzers.SolverNCAnalyzer;
-import jline.solvers.nc.analyzers.SolverNCCacheAnalyzer;
-import jline.solvers.nc.analyzers.SolverNCCacheQNAnalyzer;
-import jline.solvers.nc.analyzers.SolverNCLDAnalyzer;
+import jline.solvers.nc.analyzers.*;
 import jline.util.Matrix;
 
 import java.util.ArrayList;
@@ -43,6 +40,7 @@ public class NCRunner {
       throw new RuntimeException("This model contains features not supported by the solver.");
     }
     SolverNCResult ret = new SolverNCResult();
+    NCAnalyzer analyzer;
     boolean wasDefault = false;
     switch (options.method) {
       case "default":
@@ -106,7 +104,8 @@ public class NCRunner {
         }
       }
       solver.model.refreshChains(true);
-      new SolverNCCacheAnalyzer().analyze(this.sn, this.options, ret);
+      analyzer = new SolverNCAnalyzer();
+      analyzer.analyze(this.sn, this.options, ret);
       for (int ind = 0; ind < this.sn.nnodes; ind++) {
         if (this.sn.nodetypes.get(ind) == NodeType.Cache) {
           Cache cacheNode = (Cache) solver.model.getNodes().get(ind);
@@ -146,7 +145,8 @@ public class NCRunner {
       this.solver.model.refreshChains(true);
     } else {
       if (sn.nodetypes.contains(NodeType.Cache)) {
-        new SolverNCCacheQNAnalyzer().analyze(this.sn, this.options, ret);
+        analyzer = new SolverNCCacheQNAnalyzer();
+        analyzer.analyze(this.sn, this.options, ret);
         for (int ind = 0; ind < sn.nnodes; ind++) {
           if (sn.nodetypes.get(ind) == NodeType.Cache) {
             Cache cacheNode = (Cache) solver.model.getNodes().get(ind);
@@ -156,26 +156,31 @@ public class NCRunner {
         }
         solver.model.refreshChains(true);
       } else {
-        if (!sn.lldscaling.isEmpty() || !sn.cdscaling.isEmpty()) {
-          new SolverNCLDAnalyzer().analyze(this.sn, this.options, ret);
+        if ((!(sn.lldscaling == null) && !(sn.cdscaling == null)) && (!sn.lldscaling.isEmpty() || !sn.cdscaling.isEmpty())) {
+          analyzer = new SolverNCLDAnalyzer();
+          analyzer.analyze(this.sn, this.options, ret);
         } else {
           switch (options.method) {
             case "exact":
               if (!solver.model.hasOpenClasses()) {
-                new SolverNCLDAnalyzer().analyze(this.sn, this.options, ret);
+                analyzer = new SolverNCLDAnalyzer();
+                analyzer.analyze(this.sn, this.options, ret);
               } else {
-                new SolverNCAnalyzer().analyze(this.sn, this.options, ret);
+                analyzer = new SolverNCAnalyzer();
+                analyzer.analyze(this.sn, this.options, ret);
               }
+              break;
             case "rd": case "nrp": case "nr.probit": case "nrl": case "nr.logit": case "comomld":
-              new SolverNCLDAnalyzer().analyze(this.sn, this.options, ret);
+              analyzer = new SolverNCLDAnalyzer();
+              analyzer.analyze(this.sn, this.options, ret);
             default:
-              new SolverNCAnalyzer().analyze(this.sn, this.options, ret);
+              analyzer = new SolverNCAnalyzer();
+              analyzer.analyze(this.sn, this.options, ret);
           }
         }
 
       }
     }
-    // TODO: lines 116 to end. Computing avg results
     return ret;
   }
 }

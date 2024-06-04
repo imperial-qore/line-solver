@@ -8,6 +8,7 @@ import jline.lang.constant.SchedStrategy;
 import jline.lang.distributions.*;
 import jline.lang.nodes.Cache;
 import jline.lang.processes.Replayer;
+import jline.solvers.NetworkAvgSysTable;
 import jline.solvers.fluid.SolverFluid;
 import jline.solvers.jmt.SolverJMT;
 import jline.solvers.mam.SolverMAM;
@@ -182,7 +183,9 @@ public class GettingStarted {
 
     public static void main(String[] args) throws IllegalAccessException, ParserConfigurationException {
         Network model = GettingStarted.ex5();
-        new SolverNC(model).getAvgTable().print();
+        //new SolverNC(model).getAvgTable().print();
+        NetworkAvgSysTable ast = new SolverNC(model).getAvgSysTable();
+        ast.print();
         //new SolverJMT(model).getAvgTable().print();
         //new SolverFluid(model).getAvgTable().print();
     }

@@ -1,5 +1,6 @@
 package jline.solvers.nc;
 
+import jline.examples.GettingStarted;
 import jline.lang.*;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.constant.SolverType;
@@ -7,6 +8,7 @@ import jline.lang.distributions.Exp;
 import jline.lang.nodes.*;
 import jline.solvers.SolverOptions;
 import jline.util.Matrix;
+import jline.util.SerializableFunction;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -431,5 +433,43 @@ public class SolverNCTest {
     assertEquals(-7.957151776898646e+00, ret2.lG, tolerance);
     assertEquals(-8.635479492422949e+00, ret3.lG, tolerance);
   }
+
+  @Test
+  public void SolverNCLDTestModel5() {
+    int N = 16;
+    int c = 2;
+    Network cdmodel = new Network("cdmodel");
+    Delay node1 = new Delay(cdmodel, "Delay");
+    Queue node2 = new Queue(cdmodel, "Queue1", SchedStrategy.PS);
+    ClosedClass jobclass1 = new ClosedClass(cdmodel, "Class1", N, node1, 0);
+    ClosedClass jobclass2 = new ClosedClass(cdmodel, "Class2", N/2, node1, 0);
+
+    node1.setService(jobclass1, Exp.fitMean(1.0));
+    node1.setService(jobclass2, Exp.fitMean(2.0));
+    node2.setService(jobclass1, Exp.fitMean(1.5));
+    node2.setService(jobclass2, Exp.fitMean(2.5));
+    SerializableFunction<Matrix, Double> lcd = matrix -> Math.min(matrix.get(0), c);
+    node2.setClassDependence(lcd);
+    Matrix LD = new Matrix(1, N );
+    for (int i=0; i<N; i++) {
+      LD.set(i, Math.min(i + 1, c));
+    }
+    RoutingMatrix P = cdmodel.initRoutingMatrix();
+    P.set(jobclass1, jobclass1, cdmodel.serialRouting(node1, node2));
+    P.set(jobclass2, jobclass2, cdmodel.serialRouting(node1, node2));
+    cdmodel.link(P);
+    NetworkStruct sn = cdmodel.getStruct(false);
+    SolverOptions options = new SolverOptions(SolverType.NC);
+    options.method = "nr.logit";
+    SolverNC.SolverNCLDReturn ret1 = solver_ncld(sn, options);
+    options.method = "nr.probit";
+    SolverNC.SolverNCLDReturn ret2 = solver_ncld(sn, options);
+    options.method = "rd";
+    SolverNC.SolverNCLDReturn ret3 = solver_ncld(sn, options);
+    assertEquals(2.754023211796183e+01, ret1.lG, tolerance);
+    assertEquals(2.554890090416877e+01, ret2.lG, tolerance);
+    assertEquals(2.802932951958689e+01, ret3.lG, tolerance);
+  }
+
 
 }

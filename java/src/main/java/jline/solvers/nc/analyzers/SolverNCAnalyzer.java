@@ -45,28 +45,28 @@ public class SolverNCAnalyzer implements NCAnalyzer {
     if (nonIntegerJob) {
       SolverNC.SolverNCReturn retfloor = SolverNC.solver_nc(snfloor, options);
       SolverNC.SolverNCReturn retceil = SolverNC.solver_nc(snceil, options);
-      res.Q = retfloor.Q.add(1, eta.elementMult(retceil.Q.sub(1, retfloor.Q), null));
-      res.U = retfloor.U.add(1, eta.elementMult(retceil.U.sub(1, retfloor.U), null));
-      res.R = retfloor.R.add(1, eta.elementMult(retceil.R.sub(1, retfloor.R), null));
-      res.T = retfloor.T.add(1, eta.elementMult(retceil.T.sub(1, retfloor.T), null));
-      res.C = retfloor.C; // TODO: Decide how to handle C in this case.
-      res.X = retfloor.X.add(1, eta.elementMult(retceil.X.sub(1, retfloor.X), null));
+      res.QN = retfloor.Q.add(1, eta.elementMult(retceil.Q.sub(1, retfloor.Q), null));
+      res.UN = retfloor.U.add(1, eta.elementMult(retceil.U.sub(1, retfloor.U), null));
+      res.RN = retfloor.R.add(1, eta.elementMult(retceil.R.sub(1, retfloor.R), null));
+      res.TN = retfloor.T.add(1, eta.elementMult(retceil.T.sub(1, retfloor.T), null));
+      res.CN = new Matrix(retfloor.C); // TODO: Decide how to handle C in this case.
+      res.XN = retfloor.X.add(1, eta.elementMult(retceil.X.sub(1, retfloor.X), null));
       // TODO: ret.lG for more than one non-integer job quantity
       res.lG = retfloor.lG + eta.elementMult(new Matrix(retfloor.lG - retceil.lG), null).get(0, 0);
       res.it = retfloor.it + retceil.it;
     }
     else {
       SolverNC.SolverNCReturn ret = SolverNC.solver_nc(sn, options);
-      res.Q = ret.Q;
-      res.U = ret.U;
-      res.R = ret.R;
-      res.T = ret.T;
-      res.C = ret.C;
-      res.X = ret.X;
+      res.QN = ret.Q;
+      res.UN = ret.U;
+      res.RN = ret.R;
+      res.TN = ret.T;
+      res.CN = new Matrix(ret.C);
+      res.XN = ret.X;
       res.lG = ret.lG;
       res.it = ret.it;
       res.method = ret.method;
     }
-    long runtime = System.currentTimeMillis() - Tstart;
+    res.runtime = System.currentTimeMillis() - Tstart;
   }
 }

@@ -66,6 +66,23 @@ public class SolverNC extends NetworkSolver {
 
     NCRunner runner = new NCRunner(this);
     this.result = runner.run();
+
+    int M = sn.nstations;
+    int R = sn.nclasses;
+    if(result.TN.length()>0){
+      result.AN = new Matrix(M,R,M*R);
+      for(int i=0;i<M;i++){
+        for(int j=0;j<M;j++){
+          for(int k=0;k<R;k++){
+            for(int r=0;r<R;r++){
+              result.AN.set(i,k,result.AN.get(i,k)+result.TN.get(j,r)*sn.rt.get(j*R+r,i*R+k));
+            }
+          }
+        }
+      }
+    } else {
+      result.AN = new Matrix(0,0,0);
+    }
   }
 
 
@@ -682,7 +699,7 @@ public class SolverNC extends NetworkSolver {
       X = ret1.X;
       STeff = ST.clone();
       //TODO: Depend on npfqn_nonexp_approx
-      NPFQN.npfqnNonexpApproxReturn NPFQNret = NPFQN.npfqn_nonexp_approx(options.config.highvar,sn,ST0,V,SCV,T,U,gamma,nservers);
+      NPFQN.npfqnNonexpApproxReturn NPFQNret = NPFQN.npfqn_nonexp_approx(options.config.highvar == null ? "default": options.config.highvar,sn,ST0,V,SCV,T,U,gamma,nservers);
       ST = NPFQNret.ST;
       gamma = NPFQNret.gamma;
       eta = NPFQNret.eta;
@@ -984,7 +1001,7 @@ public class SolverNC extends NetworkSolver {
       T = snDeaggragatedChains.T;
       C = (int) snDeaggragatedChains.C.get(0);
       X = snDeaggragatedChains.X;
-      NPFQN.npfqnNonexpApproxReturn NPFQNret = NPFQN.npfqn_nonexp_approx(options.config.highvar,sn,ST0,V,SCV,T,U,gamma,nservers);
+      NPFQN.npfqnNonexpApproxReturn NPFQNret = NPFQN.npfqn_nonexp_approx(options.config.highvar == null ? "default": options.config.highvar,sn,ST0,V,SCV,T,U,gamma,nservers);
       ST = NPFQNret.ST;
       gamma = NPFQNret.gamma;
       eta = NPFQNret.eta.transpose();

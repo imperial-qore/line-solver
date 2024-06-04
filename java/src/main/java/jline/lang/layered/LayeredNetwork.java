@@ -631,8 +631,8 @@ public class LayeredNetwork extends Ensemble {
                                     int postaidx = Utils.findString(lqn.hashnames, "A:" + tasks.get(t).precedences.get(ap).postActs.get(posta));
                                     double postParam = 1.0 / (postacts.size() - 1);
                                     lqn.graph.set(preaidx, postaidx, preParam * postParam);
-                                    lqn.graph.set(postaidx, postaidx, 1 - 1.0 / counts.length());
-                                    lqn.graph.set(postaidx, endaidx, 1.0 / counts.length());
+                                    lqn.graph.set(postaidx, postaidx, 1 - 1.0 / counts.get(0,0));
+                                    lqn.graph.set(postaidx, endaidx, 1.0 / counts.get(0,0));
                                     lqn.actposttype.set(0, postaidx, ActivityPrecedence.getPrecedenceId(tasks.get(t).precedences.get(ap).postType));
                                 }
                                 lqn.actposttype.set(0, endaidx, ActivityPrecedence.getPrecedenceId(tasks.get(t).precedences.get(ap).postType));

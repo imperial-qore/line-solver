@@ -68,6 +68,6 @@ public class SolverNCLDAnalyzer implements NCAnalyzer {
       res.it = ret.it;
       res.method = ret.method;
     }
-    long runtime = System.currentTimeMillis() - Tstart;
+    res.runtime = System.currentTimeMillis() - Tstart;
   }
 }
