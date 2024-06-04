@@ -114,6 +114,21 @@ for ind=1:self.getNumberOfNodes
             %         case 'Place'
             %             varsparam{ind}.nodeToPlace = nodeToPlace(ind);
             %             varsparam{ind}.capacityc = node.classCap;
+        case {'Source'}
+            for r=1:self.getNumberOfClasses
+                switch class(node.arrivalProcess{r})
+                    case 'MAP'
+                        nvars(ind,r) = nvars(ind,r) + 1;
+                    case 'Replayer'
+                        if isempty(nodeparam{ind})
+                            nodeparam{ind} = cell(1,self.getNumberOfClasses);
+                        end
+                        if isempty(nodeparam{ind}{r})
+                            nodeparam{ind}{r} = struct();
+                        end
+                        nodeparam{ind}{r}.(node.arrivalProcess{r}.params{1}.paramName) = node.arrivalProcess{r}.params{1}.paramValue;
+                end
+            end
         case {'Queue','QueueingStation','Delay','DelayStation','Transition'}
             for r=1:self.getNumberOfClasses
                 switch class(node.server.serviceProcess{r}{3})
@@ -138,7 +153,7 @@ for ind=1:self.getNumberOfNodes
                     nodeparam{ind}{r}.setupTime = node.setupTime{r};
                     nodeparam{ind}{r}.delayoffTime = node.delayoffTime{r}.getRepres();
                 end
-                if (strcmp(class(node),'Queue') || strcmp(class(node),'QueueingStation')) 
+                if (strcmp(class(node),'Queue') || strcmp(class(node),'QueueingStation'))
                     if isempty(nodeparam{ind}) && (~isempty(node.pollingType) || ~isempty(node.switchoverTime))
                         nodeparam{ind} = cell(1,self.getNumberOfClasses);
                         for s=1:self.getNumberOfClasses
@@ -157,7 +172,7 @@ for ind=1:self.getNumberOfNodes
                             for t=1:length(node.switchoverTime)
                                 nodeparam{ind}{r}.switchoverTime{t} = node.switchoverTime{r,t}.getPH();
                                 nodeparam{ind}{r}.switchoverProcId(t) = ProcessType.toId(ProcessType.fromText(class(node.switchoverTime{r,t})));
-                        end
+                            end
                         end
                     end
                 end
