@@ -10,6 +10,8 @@ Windows: make sure that JAVA_HOME is correctly configured and java.exe is availa
 The Python syntax is nearly identical to the MATLAB one, see for example the scripts in the Python [gettingstarted/](https://github.com/imperial-qore/line-solver/tree/main/python/gettingstarted) folder compared to the ones in the corresponding MATLAB [gettingstarted/](https://github.com/imperial-qore/line-solver/tree/main/matlab/gettingstarted) folder.
 For documentation of the MATLAB version check the [Wiki](https://github.com/imperial-qore/line-solver/wiki).
 
+A Python version of the [manual](https://github.com/imperial-qore/line-solver/blob/main/doc/LINE-python.pdf) is also available.
+
 ## Example
 Solve a simple M/M/1 model with 50% utilization running: ```python3 mm1.py```. You should then get as output the following pandas DataFrame
 ```
