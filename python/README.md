@@ -4,7 +4,7 @@ This folder includes the Python version of the [LINE solver](https://github.com/
 ## Installation
 Requirements: Python 3.10 or later versions; a Java Virtual Machine, either Sun/Oracle JDK/JRE Variant or OpenJDK. 
 
-Windows: make sure that JAVA_HOME is correctly configured and java.exe is available on the system path.
+On Windows, make sure that JAVA_HOME is correctly configured and java.exe is available on the system path.
 
 ## Documentation
 The Python syntax is nearly identical to the MATLAB one, see for example the scripts in the Python [gettingstarted/](https://github.com/imperial-qore/line-solver/tree/main/python/gettingstarted) folder compared to the ones in the corresponding MATLAB [gettingstarted/](https://github.com/imperial-qore/line-solver/tree/main/matlab/gettingstarted) folder.
