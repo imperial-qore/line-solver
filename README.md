@@ -59,7 +59,7 @@ public class MM1 {
         Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
         Sink sink = new Sink(model, "Sink");
         
-        OpenClass jobclass = new OpenClass(model, "Class1", 0);
+        OpenClass jobclass = new OpenClass(model, "Class1");
         source.setArrival(jobclass, new Exp(1.0)); 
         queue.setService(jobclass, new Exp(2.0)); 
         
