@@ -86,5 +86,5 @@ if __name__ == "__main__":
     model.addLink(source, queue)
     model.addLink(queue, sink)
     # Block 4: solution
-    avgTable = SolverJMT(model,'seed',23000).getAvgTable()  # pandas.DataFrame
+    avgTable = SolverJMT(model,'seed',23000).getAvgTable()
 ```
