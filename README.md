@@ -23,6 +23,7 @@ LINE is released as open source under the [BSD-3 license](https://raw.githubuser
 The development of LINE has been partially funded by the European Commission grants FP7-318484 (MODAClouds), H2020-644869 (DICE), H2020-825040 (RADON), and by the EPSRC grant EP/M009211/1 (OptiMAM).
 
 ### Example: Solving a M/M/1 queue
+We illustrate how to simulate an M/M/1 queue with arrival rate 0.5 and service rate 1.0:
 
 **MATLAB**: 
 ```
@@ -75,21 +76,18 @@ public class MM1 {
 from line_solver import *
 
 if __name__ == "__main__":
-    GlobalConstants.setVerbose(VerboseLevel.STD)
-
     model = Network("M/M/1 model")
+    % Block 1: nodes
     source = Source(model, "Source")
     queue = Queue(model, "Queue", SchedStrategy.FCFS)
     sink = Sink(model, "Sink")
-
-    # An M/M/1 queue with arrival rate 0.5 and service rate 1.0
+    % Block 2: classes
     jobclass = OpenClass(model, "Class1")
     source.setArrival(jobclass, Exp(1.0))
     queue.setService(jobclass, Exp(2.0))
-
+    % Block 3: topology
     model.addLink(source, queue)
     model.addLink(queue, sink)
-
-    solver = SolverJMT(model)
-    table = solver.getAvgTable()  # pandas.DataFrame
+    % Block 4: solution
+    avgTable = SolverJMT(model,'seed',23000,'samples',10000).getAvgTable()  # pandas.DataFrame
 ```
