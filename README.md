@@ -43,8 +43,6 @@ AvgTable = SolverJMT(model,'seed',23000).getAvgTable
 ```
 **Java**: 
 ```
-package jline.examples;
-
 import jline.lang.*;
 import jline.lang.constant.*;
 import jline.lang.distributions.*;
