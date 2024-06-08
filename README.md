@@ -66,8 +66,7 @@ public class MM1 {
         // Block 3: topology
         model.link(model.serialRouting(source, queue, sink));
         // Block 4: solution
-        NetworkAvgTable avgTable = new SolverJMT(model, SolverJMT.defaultOptions().seed(23000)).getAvgTable();
-        avgTable.print();
+        new SolverJMT(model, SolverJMT.defaultOptions().seed(23000)).getAvgTable().print();
     }
 }
 ```
