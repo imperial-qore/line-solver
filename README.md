@@ -74,7 +74,7 @@ public class MM1 {
 from line_solver import *
 
 if __name__ == "__main__":
-    model = Network("M/M/1 model")
+    model = Network("M/M/1")
 
     source = Source(model, "Source")
     queue = Queue(model, "Queue", SchedStrategy.FCFS)
