@@ -27,6 +27,7 @@ We illustrate how to simulate an M/M/1 queue with arrival rate 0.5 and service r
 
 **MATLAB**: 
 ```
+lineStart;
 model = Network('M/M/1');
 
 source = Source(model, 'Source');
