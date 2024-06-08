@@ -42,13 +42,16 @@ AvgTable = SolverJMT(model,'seed',23000,'samples',10000).getAvgTable
 ```
 **Java**: 
 ```
+package jline.examples;
+
 import jline.lang.*;
 import jline.lang.constant.*;
 import jline.lang.distributions.*;
-import jline.solvers.*;
 import jline.lang.nodes.*;
+import jline.solvers.*;
+import jline.solvers.jmt.SolverJMT;
 
- public class MM1 {
+public class MM1 {
     public static void main(String[] args){
         Network model = new Network("M/M/1");
         // Block 1: nodes
@@ -64,9 +67,6 @@ import jline.lang.nodes.*;
         // Block 4: solution
         NetworkAvgTable avgTable = new SolverJMT(model, SolverJMT.defaultOptions().seed(23000)).getAvgTable();
         avgTable.print();
-        model.jsimgView();
-        avgTable.tget(queue, jobclass).print();
-        avgTable.tget("Queue", "Class1").print();
     }
 }
 ```
