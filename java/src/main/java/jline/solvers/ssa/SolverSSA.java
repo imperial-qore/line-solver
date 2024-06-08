@@ -40,14 +40,17 @@ public class SolverSSA extends NetworkSolver {
     public SolverSSA(Network model) {
         // If no options provided, use default options
         this(model, new SolverOptions(SolverType.SSA));
+        this.result = new SolverSSAResult();
     }
 
     public SolverSSA(Network model, String method) {
         super(model, "SolverSSA", SolverSSA.defaultOptions().method(method));
+        this.result = new SolverSSAResult();
     }
 
     public SolverSSA(Network model, SolverOptions options) {
         super(model, "SolverSSA", options);
+        this.result = new SolverSSAResult();
     }
 
 

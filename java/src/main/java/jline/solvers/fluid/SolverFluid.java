@@ -34,6 +34,7 @@ public class SolverFluid extends NetworkSolver {
 
   public SolverFluid(Network model) {
     this(model, SolverFluid.defaultOptions());
+    this.result = new SolverFluidResult();
   }
 
   public SolverFluid(Network model, String method) {

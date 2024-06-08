@@ -6,6 +6,7 @@ package jline.solvers;
 import jline.lang.Model;
 import jline.lang.Network;
 import jline.lang.constant.SolverType;
+import jline.util.Matrix;
 
 import javax.xml.parsers.ParserConfigurationException;
 import java.io.IOException;
@@ -28,7 +29,7 @@ public abstract class Solver {
     this.model = model;
     this.name = name;
     this.setOptions(options);
-    this.result = new SolverResult();
+    //this.result = new SolverResult();
     this.enableChecks = true;
     this.random = new Random(options.seed);
   }
@@ -57,7 +58,7 @@ public abstract class Solver {
 
   // Dispose previously stored results
   public void resetResults() {
-    this.result = new SolverResult();
+    this.result.reset();
   }
 
   // Set a new options data structure

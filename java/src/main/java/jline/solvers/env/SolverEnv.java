@@ -34,6 +34,7 @@ public class SolverEnv extends EnsembleSolver {
     this.sn = new NetworkStruct[E];
     this.resetFromMarginal = new Env.ResetQueueLengthsFunction[E][E];
     this.resetEnvRates = new Env.ResetEnvRatesFunction[E][E];
+    this.result = new SolverResult();
 
     for (int e = 0; e < E; e++) {
       this.sn[e] = this.ensemble[e].getStruct(true);
@@ -55,6 +56,7 @@ public class SolverEnv extends EnsembleSolver {
     this.sn = new NetworkStruct[E];
     this.resetFromMarginal = new Env.ResetQueueLengthsFunction[E][E];
     this.resetEnvRates = new Env.ResetEnvRatesFunction[E][E];
+    this.result = new SolverResult();
 
     for (int e = 0; e < E; e++) {
       this.sn[e] = this.ensemble[e].getStruct(true);
@@ -366,8 +368,8 @@ public class SolverEnv extends EnsembleSolver {
   }
 
   @Override
-  public LayeredNetworkAvgTable getEnsembleAvg() {
-    if (this.result.QN == null || this.result.QN.isEmpty() || this.options.force) {
+  public AvgTable getEnsembleAvg() {
+    if (this.result == null || this.result.QN == null || this.result.QN.isEmpty() || this.options.force) {
       iterate();
     }
       return null;

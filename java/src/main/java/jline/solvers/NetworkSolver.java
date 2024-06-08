@@ -452,7 +452,7 @@ public abstract class NetworkSolver extends Solver {
             }
         }
         double runtime = this.result.runtime;
-        this.result = new SolverResult();
+        this.result.reset();
         this.result.QN = QNclass;
         this.result.UN = UNclass;
         this.result.RN = RNclass;

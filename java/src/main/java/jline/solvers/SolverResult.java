@@ -33,6 +33,23 @@ public class SolverResult {
 
   public double runtime;
 
+  public void reset() {
+    this.QN = null;
+    this.UN = null;
+    this.RN = null;
+    this.TN = null;
+    this.AN = null;
+    this.WN = null;
+    this.CN = null;
+    this.XN = null;
+
+    this.QNt = null;
+    this.UNt = null;
+    this.TNt = null;
+    this.t = null;
+    this.runtime = 0.0;
+  }
+
   public SolverResult deepCopy() {
 
     SolverResult clone = new SolverResult();
