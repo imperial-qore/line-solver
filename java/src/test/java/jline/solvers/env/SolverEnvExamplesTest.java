@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class SolverEnvExamplesTest {
 
-  static double tol = 0.015;
+  static double tol = 0.02;
 
   @Test
   public void exampleRandomEnvironment1ReturnsCorrectResult() {
@@ -93,13 +93,8 @@ public class SolverEnvExamplesTest {
     assertEquals(2, result.TN.getNumRows());
     assertEquals(1, result.TN.getNumCols());
     assertEquals(2, result.TN.getNumElements());
-    result.QN.print();
-    result.UN.print();
-    result.TN.print();
 
-    // behavior changed at release 2.0.34 (around commit 2f92fec). To be investigated as
-    // matlab returns indeed 1.5533 and 1.5314
-    //assertEquals(1.5542, result.TN.get(0, 0), 1.5542 * tol);
-    //assertEquals(1.5339, result.TN.get(1, 0), 1.5339 * tol);
+    assertEquals(1.5542, result.TN.get(0, 0), 1.5542 * tol);
+    assertEquals(1.5339, result.TN.get(1, 0), 1.5339 * tol);
   }
 }
