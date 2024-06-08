@@ -41,9 +41,7 @@ AvgTable =
     mySource    myClass      0        0       0        0        0       1  
     myQueue     myClass      4      0.8       4        4        1       1  
 ```    
-
-A [getting started](https://github.com/imperial-qore/line-solver/wiki/Getting-started) walkthrough and a [Wiki](https://github.com/imperial-qore/line-solver/wiki) are available.
-
+Additional examples are available in the manual.
 
 ### License
 LINE is released as open source under the [BSD-3 license](https://raw.githubusercontent.com/imperial-qore/line-solver/main/matlab/LICENSE).
