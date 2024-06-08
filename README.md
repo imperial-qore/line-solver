@@ -63,7 +63,7 @@ public class MM1 {
         source.setArrival(jobclass, new Exp(1.0)); 
         queue.setService(jobclass, new Exp(2.0)); 
         
-        model.link(model.serialRouting(source, queue, sink));
+        model.link(Network.serialRouting(source, queue, sink));
         
         new SolverJMT(model, new JMTOptions().seed(23000)).getAvgTable().print();
     }
