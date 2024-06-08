@@ -21,3 +21,75 @@ LINE is released as open source under the [BSD-3 license](https://raw.githubuser
 
 ### Acknowledgement
 The development of LINE has been partially funded by the European Commission grants FP7-318484 (MODAClouds), H2020-644869 (DICE), H2020-825040 (RADON), and by the EPSRC grant EP/M009211/1 (OptiMAM).
+
+### Example: Solving a M/M/1 queue
+
+**MATLAB**: 
+```
+model = Network('M/M/1');
+%% Block 1: nodes
+source = Source(model, 'Source');
+queue = Queue(model, 'Queue', SchedStrategy.FCFS);
+sink = Sink(model, 'Sink');
+%% Block 2: classes
+jobclass = OpenClass(model, 'Class1');
+source.setArrival(jobclass, Exp(1));
+queue.setService(jobclass, Exp(2));
+%% Block 3: topology
+model.link(Network.serialRouting(source,queue,sink));
+%% Block 4: solution
+AvgTable = SolverJMT(model,'seed',23000,'samples',10000).getAvgTable
+'''
+**Java**: 
+```
+import jline.lang.*;
+import jline.lang.constant.*;
+import jline.lang.distributions.*;
+import jline.solvers.*;
+import jline.lang.nodes.*;
+
+ public class MM1 {
+    public static void main(String[] args){
+        Network model = new Network("M/M/1");
+        // Block 1: nodes
+        Source source = new Source(model, "Source");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "Sink");
+        // Block 2: classes
+        OpenClass jobclass = new OpenClass(model, "Class1", 0);
+        source.setArrival(jobclass, new Exp(1.0)); // (source, jobclass)
+        queue.setService(jobclass, new Exp(2.0)); // (queue, jobclass)
+        // Block 3: topology
+        model.link(model.serialRouting(source, queue, sink));
+        // Block 4: solution
+        NetworkAvgTable avgTable = new SolverJMT(model, SolverJMT.defaultOptions().seed(23000)).getAvgTable();
+        avgTable.print();
+        model.jsimgView();
+        avgTable.tget(queue, jobclass).print();
+        avgTable.tget("Queue", "Class1").print();
+    }
+}
+'''
+**Python**: 
+```
+from line_solver import *
+
+if __name__ == "__main__":
+    GlobalConstants.setVerbose(VerboseLevel.STD)
+
+    model = Network("M/M/1 model")
+    source = Source(model, "Source")
+    queue = Queue(model, "Queue", SchedStrategy.FCFS)
+    sink = Sink(model, "Sink")
+
+    # An M/M/1 queue with arrival rate 0.5 and service rate 1.0
+    jobclass = OpenClass(model, "Class1")
+    source.setArrival(jobclass, Exp(1.0))
+    queue.setService(jobclass, Exp(2.0))
+
+    model.addLink(source, queue)
+    model.addLink(queue, sink)
+
+    solver = SolverJMT(model)
+    table = solver.getAvgTable()  # pandas.DataFrame
+```
