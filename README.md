@@ -39,7 +39,7 @@ queue.setService(jobclass, Exp(2));
 model.link(Network.serialRouting(source,queue,sink));
 %% Block 4: solution
 AvgTable = SolverJMT(model,'seed',23000,'samples',10000).getAvgTable
-'''
+```
 **Java**: 
 ```
 import jline.lang.*;
@@ -69,7 +69,7 @@ import jline.lang.nodes.*;
         avgTable.tget("Queue", "Class1").print();
     }
 }
-'''
+```
 **Python**: 
 ```
 from line_solver import *
