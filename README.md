@@ -84,8 +84,7 @@ if __name__ == "__main__":
     source.setArrival(jobclass, Exp(1.0))
     queue.setService(jobclass, Exp(2.0))
    
-    model.addLink(source, queue)
-    model.addLink(queue, sink)
+    model.link(Network.serialRouting(source, queue, sink))
     
     avgTable = SolverJMT(model,'seed',23000).getAvgTable()
 ```
