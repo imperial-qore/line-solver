@@ -66,7 +66,7 @@ public class MM1 {
         // Block 3: topology
         model.link(model.serialRouting(source, queue, sink));
         // Block 4: solution
-        new SolverJMT(model, SolverJMT.defaultOptions().seed(23000)).getAvgTable().print();
+        new SolverJMT(model, new JMTOptions().seed(23000)).getAvgTable().print();
     }
 }
 ```
