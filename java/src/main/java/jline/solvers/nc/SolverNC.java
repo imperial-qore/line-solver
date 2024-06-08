@@ -4,6 +4,7 @@ import jline.api.NPFQN;
 import jline.api.PFQN;
 import jline.api.SN;
 import jline.lang.FeatureSet;
+import jline.solvers.mam.SolverMAM;
 import jline.util.Maths;
 import jline.lang.Network;
 import jline.lang.NetworkStruct;
@@ -37,6 +38,12 @@ public class SolverNC extends NetworkSolver {
 
   public SolverNC(Network model) {
     super(model, "SolverNC");
+    this.sn = model.getStruct(false);
+    this.result = new SolverNCResult();
+  }
+
+  public SolverNC(Network model, String method) {
+    super(model, "SolverNC", SolverNC.defaultOptions().method(method));
     this.sn = model.getStruct(false);
     this.result = new SolverNCResult();
   }

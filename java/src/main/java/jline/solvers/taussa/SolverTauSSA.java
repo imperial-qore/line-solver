@@ -7,6 +7,8 @@ import jline.lang.nodes.StatefulNode;
 import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.solvers.SolverResult;
+import jline.solvers.nc.SolverNC;
+import jline.solvers.nc.SolverNCResult;
 import jline.solvers.taussa.events.DepartureEvent;
 import jline.solvers.taussa.events.Event;
 import jline.solvers.taussa.metrics.Metrics;
@@ -35,6 +37,10 @@ public class SolverTauSSA extends NetworkSolver {
 
     public SolverTauSSA(Network model) {
         this(model, new SolverOptions(SolverType.SSA));
+    }
+
+    public SolverTauSSA(Network model, String method) {
+        super(model, "SolverTauSSA", SolverTauSSA.defaultOptions().method(method));
     }
 
     public SolverTauSSA(Network model, SolverOptions options) {

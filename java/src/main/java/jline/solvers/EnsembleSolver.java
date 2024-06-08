@@ -157,7 +157,7 @@ public abstract class EnsembleSolver extends Solver {
 
   // Ensemble Solver options
   public static SolverOptions defaultOptions() {
-    return new SolverOptions(SolverType.Env);
+    return new SolverOptions(SolverType.ENV);
   }
 
   // NOTE: the following LINE methods have not been migrated to JLINE

@@ -3,10 +3,11 @@
 
 package jline.solvers.fluid;
 
+import jline.solvers.SolverResult;
 import jline.util.Matrix;
 
 // Class to store results specific to SolverFluid
-public class SolverFluidResult {
+public class SolverFluidResult extends SolverResult {
 
   // Results from getAvg
   public Matrix odeStateVec;

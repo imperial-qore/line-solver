@@ -1,5 +1,6 @@
 package jline.api;
 
+import jline.api.CACHE;
 import jline.util.Matrix;
 import org.junit.jupiter.api.Test;
 

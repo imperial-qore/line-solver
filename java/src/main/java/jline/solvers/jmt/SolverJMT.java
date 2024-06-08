@@ -2,6 +2,8 @@ package jline.solvers.jmt;
 
 import jline.api.SN;
 import jline.io.SysUtils;
+import jline.solvers.mam.SolverMAM;
+import jline.solvers.mva.SolverMVAResult;
 import jline.util.Maths;
 import jline.lang.*;
 import jline.lang.constant.*;
@@ -42,7 +44,7 @@ public class SolverJMT extends NetworkSolver {
     private double maxSimulatedTime;
     private int maxSamples;
     private int maxEvents;
-    private int seed;
+    private long seed;
     private double simConfInt;
     private double simMaxRelErr;
 
@@ -450,7 +452,7 @@ public class SolverJMT extends NetworkSolver {
                         case TRACE:
                             subParNodeAlpha.setAttribute("classPath", "java.lang.String");
                             subParNodeAlpha.setAttribute("name", "fileName");
-                            String istFileName = sn.nodeparam.get(sn.nodes.get(ind)).fileName;
+                            String istFileName = sn.nodeparam.get(sn.nodes.get(ind)).fileName.get(r);
                             subParValue.appendChild(simDoc.createTextNode(istFileName));
                             subParNodeAlpha.appendChild(subParValue);
                             distrParNode.appendChild(subParNodeAlpha);
@@ -1333,7 +1335,7 @@ public class SolverJMT extends NetworkSolver {
                     case TRACE:
                         subParNodeAlpha.setAttribute("classPath", "java.lang.String");
                         subParNodeAlpha.setAttribute("name", "fileName");
-                        subParValue.appendChild(simDoc.createTextNode(sn.nodeparam.get(sn.nodes.get(i)).fileName));
+                        subParValue.appendChild(simDoc.createTextNode(sn.nodeparam.get(sn.nodes.get(i)).fileName.get(r)));
                         subParNodeAlpha.appendChild(subParValue);
                         distrParNode.appendChild(subParNodeAlpha);
                         break;
@@ -1418,7 +1420,7 @@ public class SolverJMT extends NetworkSolver {
         }
 
         List<String> loggerNodesValues = new ArrayList<>();
-        loggerNodesValues.add(sn.nodeparam.get(istNode).fileName);
+        loggerNodesValues.add(sn.nodeparam.get(istNode).fileName.get(0));
         loggerNodesValues.add(sn.nodeparam.get(istNode).filePath);
         loggerNodesValues.add(sn.nodeparam.get(istNode).startTime);
         loggerNodesValues.add(sn.nodeparam.get(istNode).loggerName);
@@ -3576,7 +3578,7 @@ public class SolverJMT extends NetworkSolver {
         this.maxEvents = maxEvents;
     }
 
-    public int getSeed() {
+    public long getSeed() {
         return seed;
     }
 

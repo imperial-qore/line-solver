@@ -10,7 +10,6 @@ import jline.lang.constant.SolverType;
 //import jline.solvers.fluid.smoothing.PStarSearcher;
 import jline.util.Matrix;
 import jline.util.Utils;
-import org.apache.commons.math3.optim.PointValuePair;
 
 import java.text.NumberFormat;
 import java.util.ArrayList;
@@ -27,7 +26,7 @@ public class SolverEnv extends EnsembleSolver {
   private final Env.ResetEnvRatesFunction[][] resetEnvRates;
 
   public SolverEnv(Env renv, NetworkSolver[] solvers) {
-    super(renv, "SolverEnv", new SolverOptions(SolverType.Env));
+    super(renv, "SolverEnv", new SolverOptions(SolverType.ENV));
     int E = getNumberOfModels();
     this.envObj = renv;
     this.ensemble = renv.getEnsemble().toArray(new Network[0]);
@@ -510,6 +509,6 @@ public class SolverEnv extends EnsembleSolver {
   }
 
   public static SolverOptions defaultOptions() {
-    return new SolverOptions(SolverType.Env);
+    return new SolverOptions(SolverType.ENV);
   }
 }

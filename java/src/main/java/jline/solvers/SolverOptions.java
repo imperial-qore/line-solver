@@ -6,7 +6,6 @@ package jline.solvers;
 import jline.lang.constant.GlobalConstants;
 import jline.lang.constant.VerboseLevel;
 import jline.solvers.taussa.strategies.TauLeapingConfig;
-import jline.solvers.taussa.strategies.TauLeapingType;
 import jline.util.Matrix;
 import jline.lang.constant.SolverType;
 import org.apache.commons.math3.ode.FirstOrderIntegrator;
@@ -61,7 +60,7 @@ public class SolverOptions {
   public String remote_endpoint;
   public ODESolvers odesolvers;
   public int samples;
-  public int seed;
+  public long seed;
   public boolean stiff;
   public double[] timespan;
   public VerboseLevel verbose;
@@ -116,11 +115,11 @@ public class SolverOptions {
 
     // Solver-specific Defaults
     switch (solverType) {
-      case Env:
+      case ENV:
         this.iter_max = 100;
         this.verbose = VerboseLevel.SILENT;
         break;
-      case Fluid:
+      case FLUID:
         this.config.highvar = "none";
         this.iter_max = 5;
         this.timespan[0] = 0;
@@ -180,5 +179,20 @@ public class SolverOptions {
             new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 3, 3);
     this.odesolvers.accurateStiffODESolver =
             new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 12, 5);
+  }
+
+  public SolverOptions keep(boolean s) {
+    this.keep = s;
+    return this;
+  }
+
+  public SolverOptions method(String s) {
+    this.method = s;
+    return this;
+  }
+
+  public SolverOptions seed(long s) {
+    this.seed = s;
+    return this;
   }
 }

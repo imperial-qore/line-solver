@@ -2,8 +2,14 @@ package jline.solvers.jmt;
 
 import jline.examples.*;
 import jline.lang.Network;
+import jline.lang.OpenClass;
+import jline.lang.constant.SchedStrategy;
 import jline.lang.constant.SolverType;
 import jline.lang.constant.VerboseLevel;
+import jline.lang.distributions.Exp;
+import jline.lang.nodes.Queue;
+import jline.lang.nodes.Sink;
+import jline.lang.nodes.Source;
 import jline.solvers.NetworkAvgTable;
 import jline.solvers.SolverOptions;
 import org.junit.jupiter.api.Test;
@@ -30,7 +36,16 @@ public class SolverJMTIOTest {
 
     @Test
     public void test_getting_started_example_1() {
-        Network model = GettingStarted.ex1();
+        Network model = new Network("M/M/1");
+        Source source = new Source(model, "Source");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "Sink");
+
+        OpenClass oclass = new OpenClass(model, "Class1");
+        source.setArrival(oclass, new Exp(1));
+        queue.setService(oclass, new Exp(2));
+
+        model.link(model.serialRouting(source, queue, sink));
 
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;

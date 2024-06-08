@@ -87,7 +87,7 @@ public class Maths {
       matlabRandom = matlab_style;
   }
 
-  public static void setMatlabRandomSeed(final int seed) {
+  public static void setMatlabRandomSeed(final long seed) {
       ThreadLocalRandom.setSeed(seed);
   }
 

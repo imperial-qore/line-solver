@@ -115,26 +115,33 @@ public class SolverSSAClosedExamplesTest {
         NetworkAvgTable avgTable = solver.getAvgTable();
 
         // Needed as we only consider non-zero rows
-        for (int i = 0; i < avgTable.getQLen().size(); i++) {
-            if (avgTable.getQLen().get(i) <= GlobalConstants.Zero && avgTable.getUtil().get(i) <= GlobalConstants.Zero &&
-                    avgTable.getRespT().get(i) <= GlobalConstants.Zero && avgTable.getResidT().get(i) <= GlobalConstants.Zero
-                    && avgTable.getArvR().get(i) <= GlobalConstants.Zero && avgTable.getTput().get(i) <= GlobalConstants.Zero) {
-                avgTable.getQLen().remove(i);
-                avgTable.getUtil().remove(i);
-                avgTable.getRespT().remove(i);
-                avgTable.getResidT().remove(i);
-                avgTable.getArvR().remove(i);
-                avgTable.getTput().remove(i);
+        List<Double> aQLen = avgTable.getQLen();
+        List<Double> aUtil = avgTable.getUtil();
+        List<Double> aRespT = avgTable.getRespT();
+        List<Double> aResidT = avgTable.getResidT();
+        List<Double> aArvR = avgTable.getArvR();
+        List<Double> aTput = avgTable.getTput();
+
+        for (int i = 0; i < aQLen.size(); i++) {
+            if (aQLen.get(i) <= GlobalConstants.Zero && aUtil.get(i) <= GlobalConstants.Zero &&
+                    aRespT.get(i) <= GlobalConstants.Zero && aResidT.get(i) <= GlobalConstants.Zero
+                    && aArvR.get(i) <= GlobalConstants.Zero && aTput.get(i) <= GlobalConstants.Zero) {
+                aQLen.remove(i);
+                aUtil.remove(i);
+                aRespT.remove(i);
+                aResidT.remove(i);
+                aArvR.remove(i);
+                aTput.remove(i);
                 i--;
             }
         }
 
-        assertTrue(closeEnough(QLen, avgTable.getQLen(), allowedDeviation));
-        assertTrue(closeEnough(Util, avgTable.getUtil(), allowedDeviation));
-        assertTrue(closeEnough(RespT, avgTable.getRespT(), allowedDeviation));
-        assertTrue(closeEnough(ResidT, avgTable.getResidT(), allowedDeviation));
-        assertTrue(closeEnough(ArvR, avgTable.getArvR(), allowedDeviation));
-        assertTrue(closeEnough(Tval, avgTable.getTput(), allowedDeviation));
+        assertTrue(closeEnough(QLen, aQLen, allowedDeviation));
+        assertTrue(closeEnough(Util, aUtil, allowedDeviation));
+        assertTrue(closeEnough(RespT, aRespT, allowedDeviation));
+        assertTrue(closeEnough(ResidT, aResidT, allowedDeviation));
+        assertTrue(closeEnough(ArvR, aArvR, allowedDeviation));
+        assertTrue(closeEnough(Tval, aTput, allowedDeviation));
     }
 
 
@@ -152,26 +159,33 @@ public class SolverSSAClosedExamplesTest {
         NetworkAvgTable avgTable = solver.getAvgTable();
 
         // Needed as we only consider non-zero rows
-        for (int i = 0; i < avgTable.getQLen().size(); i++) {
-            if (avgTable.getQLen().get(i) <= GlobalConstants.Zero && avgTable.getUtil().get(i) <= GlobalConstants.Zero &&
-                    avgTable.getRespT().get(i) <= GlobalConstants.Zero && avgTable.getResidT().get(i) <= GlobalConstants.Zero
-                    && avgTable.getArvR().get(i) <= GlobalConstants.Zero && avgTable.getTput().get(i) <= GlobalConstants.Zero) {
-                avgTable.getQLen().remove(i);
-                avgTable.getUtil().remove(i);
-                avgTable.getRespT().remove(i);
-                avgTable.getResidT().remove(i);
-                avgTable.getArvR().remove(i);
-                avgTable.getTput().remove(i);
+        List<Double> aQLen = avgTable.getQLen();
+        List<Double> aUtil = avgTable.getUtil();
+        List<Double> aRespT = avgTable.getRespT();
+        List<Double> aResidT = avgTable.getResidT();
+        List<Double> aArvR = avgTable.getArvR();
+        List<Double> aTput = avgTable.getTput();
+
+        for (int i = 0; i < aQLen.size(); i++) {
+            if (aQLen.get(i) <= GlobalConstants.Zero && aUtil.get(i) <= GlobalConstants.Zero &&
+                    aRespT.get(i) <= GlobalConstants.Zero && aResidT.get(i) <= GlobalConstants.Zero
+                    && aArvR.get(i) <= GlobalConstants.Zero && aTput.get(i) <= GlobalConstants.Zero) {
+                aQLen.remove(i);
+                aUtil.remove(i);
+                aRespT.remove(i);
+                aResidT.remove(i);
+                aArvR.remove(i);
+                aTput.remove(i);
                 i--;
             }
         }
 
-        assertTrue(closeEnough(QLen, avgTable.getQLen(), allowedDeviation));
-        assertTrue(closeEnough(Util, avgTable.getUtil(), allowedDeviation));
-        assertTrue(closeEnough(RespT, avgTable.getRespT(), allowedDeviation));
-        assertTrue(closeEnough(ResidT, avgTable.getResidT(), allowedDeviation));
-        assertTrue(closeEnough(ArvR, avgTable.getArvR(), allowedDeviation));
-        assertTrue(closeEnough(Tval, avgTable.getTput(), allowedDeviation));
+        assertTrue(closeEnough(QLen, aQLen, allowedDeviation));
+        assertTrue(closeEnough(Util, aUtil, allowedDeviation));
+        assertTrue(closeEnough(RespT, aRespT, allowedDeviation));
+        assertTrue(closeEnough(ResidT, aResidT, allowedDeviation));
+        assertTrue(closeEnough(ArvR, aArvR, allowedDeviation));
+        assertTrue(closeEnough(Tval, aTput, allowedDeviation));
 
     }
 
@@ -189,26 +203,33 @@ public class SolverSSAClosedExamplesTest {
         NetworkAvgTable avgTable = solver.getAvgTable();
 
         // Needed as we only consider non-zero rows
-        for (int i = 0; i < avgTable.getQLen().size(); i++) {
-            if (avgTable.getQLen().get(i) <= GlobalConstants.Zero && avgTable.getUtil().get(i) <= GlobalConstants.Zero &&
-                    avgTable.getRespT().get(i) <= GlobalConstants.Zero && avgTable.getResidT().get(i) <= GlobalConstants.Zero
-                    && avgTable.getArvR().get(i) <= GlobalConstants.Zero && avgTable.getTput().get(i) <= GlobalConstants.Zero) {
-                avgTable.getQLen().remove(i);
-                avgTable.getUtil().remove(i);
-                avgTable.getRespT().remove(i);
-                avgTable.getResidT().remove(i);
-                avgTable.getArvR().remove(i);
-                avgTable.getTput().remove(i);
+        List<Double> aQLen = avgTable.getQLen();
+        List<Double> aUtil = avgTable.getUtil();
+        List<Double> aRespT = avgTable.getRespT();
+        List<Double> aResidT = avgTable.getResidT();
+        List<Double> aArvR = avgTable.getArvR();
+        List<Double> aTput = avgTable.getTput();
+
+        for (int i = 0; i < aQLen.size(); i++) {
+            if (aQLen.get(i) <= GlobalConstants.Zero && aUtil.get(i) <= GlobalConstants.Zero &&
+                    aRespT.get(i) <= GlobalConstants.Zero && aResidT.get(i) <= GlobalConstants.Zero
+                    && aArvR.get(i) <= GlobalConstants.Zero && aTput.get(i) <= GlobalConstants.Zero) {
+                aQLen.remove(i);
+                aUtil.remove(i);
+                aRespT.remove(i);
+                aResidT.remove(i);
+                aArvR.remove(i);
+                aTput.remove(i);
                 i--;
             }
         }
 
-        assertTrue(closeEnough(QLen, avgTable.getQLen(), allowedDeviation));
-        assertTrue(closeEnough(Util, avgTable.getUtil(), allowedDeviation));
-        assertTrue(closeEnough(RespT, avgTable.getRespT(), allowedDeviation));
-        assertTrue(closeEnough(ResidT, avgTable.getResidT(), allowedDeviation));
-        assertTrue(closeEnough(ArvR, avgTable.getArvR(), allowedDeviation));
-        assertTrue(closeEnough(Tval, avgTable.getTput(), allowedDeviation));
+        assertTrue(closeEnough(QLen, aQLen, allowedDeviation));
+        assertTrue(closeEnough(Util, aUtil, allowedDeviation));
+        assertTrue(closeEnough(RespT, aRespT, allowedDeviation));
+        assertTrue(closeEnough(ResidT, aResidT, allowedDeviation));
+        assertTrue(closeEnough(ArvR, aArvR, allowedDeviation));
+        assertTrue(closeEnough(Tval, aTput, allowedDeviation));
 
     }
 
@@ -226,26 +247,33 @@ public class SolverSSAClosedExamplesTest {
         NetworkAvgTable avgTable = solver.getAvgTable();
 
         // Needed as we only consider non-zero rows
-        for (int i = 0; i < avgTable.getQLen().size(); i++) {
-            if (avgTable.getQLen().get(i) <= GlobalConstants.Zero && avgTable.getUtil().get(i) <= GlobalConstants.Zero &&
-                    avgTable.getRespT().get(i) <= GlobalConstants.Zero && avgTable.getResidT().get(i) <= GlobalConstants.Zero
-                    && avgTable.getArvR().get(i) <= GlobalConstants.Zero && avgTable.getTput().get(i) <= GlobalConstants.Zero) {
-                avgTable.getQLen().remove(i);
-                avgTable.getUtil().remove(i);
-                avgTable.getRespT().remove(i);
-                avgTable.getResidT().remove(i);
-                avgTable.getArvR().remove(i);
-                avgTable.getTput().remove(i);
+        List<Double> aQLen = avgTable.getQLen();
+        List<Double> aUtil = avgTable.getUtil();
+        List<Double> aRespT = avgTable.getRespT();
+        List<Double> aResidT = avgTable.getResidT();
+        List<Double> aArvR = avgTable.getArvR();
+        List<Double> aTput = avgTable.getTput();
+
+        for (int i = 0; i < aQLen.size(); i++) {
+            if (aQLen.get(i) <= GlobalConstants.Zero && aUtil.get(i) <= GlobalConstants.Zero &&
+                    aRespT.get(i) <= GlobalConstants.Zero && aResidT.get(i) <= GlobalConstants.Zero
+                    && aArvR.get(i) <= GlobalConstants.Zero && aTput.get(i) <= GlobalConstants.Zero) {
+                aQLen.remove(i);
+                aUtil.remove(i);
+                aRespT.remove(i);
+                aResidT.remove(i);
+                aArvR.remove(i);
+                aTput.remove(i);
                 i--;
             }
         }
 
-        assertTrue(closeEnough(QLen, avgTable.getQLen(), allowedDeviation));
-        assertTrue(closeEnough(Util, avgTable.getUtil(), allowedDeviation));
-        assertTrue(closeEnough(RespT, avgTable.getRespT(), allowedDeviation));
-        assertTrue(closeEnough(ResidT, avgTable.getResidT(), allowedDeviation));
-        assertTrue(closeEnough(ArvR, avgTable.getArvR(), allowedDeviation));
-        assertTrue(closeEnough(Tval, avgTable.getTput(), allowedDeviation));
+        assertTrue(closeEnough(QLen, aQLen, allowedDeviation));
+        assertTrue(closeEnough(Util, aUtil, allowedDeviation));
+        assertTrue(closeEnough(RespT, aRespT, allowedDeviation));
+        assertTrue(closeEnough(ResidT, aResidT, allowedDeviation));
+        assertTrue(closeEnough(ArvR, aArvR, allowedDeviation));
+        assertTrue(closeEnough(Tval, aTput, allowedDeviation));
 
     }
 
@@ -265,26 +293,33 @@ public class SolverSSAClosedExamplesTest {
         NetworkAvgTable avgTable = solver.getAvgTable();
 
         // Needed as we only consider non-zero rows
-        for (int i = 0; i < avgTable.getQLen().size(); i++) {
-            if (avgTable.getQLen().get(i) <= GlobalConstants.Zero && avgTable.getUtil().get(i) <= GlobalConstants.Zero &&
-                    avgTable.getRespT().get(i) <= GlobalConstants.Zero && avgTable.getResidT().get(i) <= GlobalConstants.Zero
-                    && avgTable.getArvR().get(i) <= GlobalConstants.Zero && avgTable.getTput().get(i) <= GlobalConstants.Zero) {
-                avgTable.getQLen().remove(i);
-                avgTable.getUtil().remove(i);
-                avgTable.getRespT().remove(i);
-                avgTable.getResidT().remove(i);
-                avgTable.getArvR().remove(i);
-                avgTable.getTput().remove(i);
+        List<Double> aQLen = avgTable.getQLen();
+        List<Double> aUtil = avgTable.getUtil();
+        List<Double> aRespT = avgTable.getRespT();
+        List<Double> aResidT = avgTable.getResidT();
+        List<Double> aArvR = avgTable.getArvR();
+        List<Double> aTput = avgTable.getTput();
+
+        for (int i = 0; i < aQLen.size(); i++) {
+            if (aQLen.get(i) <= GlobalConstants.Zero && aUtil.get(i) <= GlobalConstants.Zero &&
+                    aRespT.get(i) <= GlobalConstants.Zero && aResidT.get(i) <= GlobalConstants.Zero
+                    && aArvR.get(i) <= GlobalConstants.Zero && aTput.get(i) <= GlobalConstants.Zero) {
+                aQLen.remove(i);
+                aUtil.remove(i);
+                aRespT.remove(i);
+                aResidT.remove(i);
+                aArvR.remove(i);
+                aTput.remove(i);
                 i--;
             }
         }
 
-        assertTrue(closeEnough(QLen, avgTable.getQLen(), allowedDeviation));
-        assertTrue(closeEnough(Util, avgTable.getUtil(), allowedDeviation));
-        assertTrue(closeEnough(RespT, avgTable.getRespT(), allowedDeviation));
-        assertTrue(closeEnough(ResidT, avgTable.getResidT(), allowedDeviation));
-        assertTrue(closeEnough(ArvR, avgTable.getArvR(), allowedDeviation));
-        assertTrue(closeEnough(Tval, avgTable.getTput(), allowedDeviation));
+        assertTrue(closeEnough(QLen, aQLen, allowedDeviation));
+        assertTrue(closeEnough(Util, aUtil, allowedDeviation));
+        assertTrue(closeEnough(RespT, aRespT, allowedDeviation));
+        assertTrue(closeEnough(ResidT, aResidT, allowedDeviation));
+        assertTrue(closeEnough(ArvR, aArvR, allowedDeviation));
+        assertTrue(closeEnough(Tval, aTput, allowedDeviation));
 
     }
 

@@ -45,27 +45,31 @@ public class NetworkAvgTable extends AvgTable {
     }
 
     public List<Double> get(int col) {
-        return this.T.get(col);
+        return new ArrayList<>(this.T.get(col));
     }
 
     public List<Double> getQLen() {
-        return this.T.get(0);
+        return this.get(0);
     }
 
-    public List<Double> getUtil() { return this.T.get(1); }
+    public List<Double> getUtil() {
+        return this.get(1);
+    }
 
     public List<Double> getRespT() {
-        return this.T.get(2);
+        return this.get(2);
     }
 
     public List<Double> getResidT() {
-        return this.T.get(3);
+        return this.get(3);
     }
 
-    public List<Double> getArvR() { return this.T.get(4); }
+    public List<Double> getArvR() {
+        return this.get(4);
+    }
 
     public List<Double> getTput() {
-        return this.T.get(5);
+        return this.get(5);
     }
 
     //    List<Double> getArvR() {

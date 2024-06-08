@@ -451,3 +451,43 @@ class SolverSSA(Solver):
 class SolverOptions():
     def __init__(self, solvertype):
         self.obj = jpype.JPackage('jline').solvers.SolverOptions(solvertype)
+
+class CTMCOptions():
+    def __init__(self):
+        self.obj = jpype.JPackage('jline').solvers.CTMCOptions()
+
+class EnvOptions():
+    def __init__(self):
+        self.obj = jpype.JPackage('jline').solvers.EnvOptions()
+
+class FluidOptions():
+    def __init__(self):
+        self.obj = jpype.JPackage('jline').solvers.FluidOptions()
+
+class JMTOptions():
+    def __init__(self):
+        self.obj = jpype.JPackage('jline').solvers.JMTOptions()
+
+class LNOptions():
+    def __init__(self):
+        self.obj = jpype.JPackage('jline').solvers.LNOptions()
+
+class LQNSOptions():
+    def __init__(self):
+        self.obj = jpype.JPackage('jline').solvers.LQNSOptions()
+
+class MAMOptions():
+    def __init__(self):
+        self.obj = jpype.JPackage('jline').solvers.MAMOptions()
+
+class MVAOptions():
+    def __init__(self):
+        self.obj = jpype.JPackage('jline').solvers.MVAOptions()
+
+class NCOptions():
+    def __init__(self):
+        self.obj = jpype.JPackage('jline').solvers.NCOptions()
+
+class SSAOptions():
+    def __init__(self):
+        self.obj = jpype.JPackage('jline').solvers.SSAOptions()

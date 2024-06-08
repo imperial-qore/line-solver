@@ -12,6 +12,8 @@ import jline.examples.ClosedModel;
 import jline.lang.state.ThreadLocalRandom;
 import jline.lib.KPCToolbox;
 import jline.solvers.*;
+import jline.solvers.nc.SolverNC;
+import jline.solvers.nc.SolverNCResult;
 import jline.util.Maths;
 import jline.util.Matrix;
 import jline.util.UniqueRowResult;
@@ -38,6 +40,10 @@ public class SolverSSA extends NetworkSolver {
     public SolverSSA(Network model) {
         // If no options provided, use default options
         this(model, new SolverOptions(SolverType.SSA));
+    }
+
+    public SolverSSA(Network model, String method) {
+        super(model, "SolverSSA", SolverSSA.defaultOptions().method(method));
     }
 
     public SolverSSA(Network model, SolverOptions options) {

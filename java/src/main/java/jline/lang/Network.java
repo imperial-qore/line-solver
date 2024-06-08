@@ -2588,24 +2588,42 @@ public class Network extends Model implements Serializable {
                 case Logger:
                     // TODOgetAvgSysRespT
                     throw new RuntimeException("Logger node is not supported in JLINE");
+                case Source:
+                    // TODO, refactor getServiceProcess? in MATLAB this is .arrivalProcess
+                    for (int r = 0; r < R; r++) {
+                        ServiceBinding serviceProcess = node.getServer().getServiceProcess(this.getClassByIndex(r));
+                        if (serviceProcess != null) {
+                            Distribution serviceDistrib = serviceProcess.getDistribution();
+                            param.fileName = new ArrayList<>(R);
+                            if (serviceDistrib instanceof Replayer) {
+                                param.fileName.set(r, ((Replayer) serviceDistrib).getFileName());
+                            }
+                        }
+                    }
+                    break;
                 case Queue:
                     // TODO
                     for (int r = 0; r < R; r++) {
                         ServiceBinding serviceProcess = node.getServer().getServiceProcess(this.getClassByIndex(r));
-                        Distribution serviceDistrib = serviceProcess.getDistribution();
-                        if (serviceDistrib instanceof Replayer) {
-                            param.fileName = ((Replayer) serviceDistrib).getFileName();
+                        if (serviceProcess != null) {
+                            Distribution serviceDistrib = serviceProcess.getDistribution();
+                            param.fileName = new ArrayList<>(R);
+                            if (serviceDistrib instanceof Replayer) {
+                                param.fileName.set(r, ((Replayer) serviceDistrib).getFileName());
+                            }
                         }
                     }
+                    break;
                 case Delay:
                     // TODO
                     for (int r = 0; r < R; r++) {
                         ServiceBinding serviceProcess = node.getServer().getServiceProcess(this.getClassByIndex(r));
                         Distribution serviceDistrib = serviceProcess.getDistribution();
                         if (serviceDistrib instanceof Replayer) {
-                            param.fileName = ((Replayer) serviceDistrib).getFileName();
+                            param.fileName.set(r,((Replayer) serviceDistrib).getFileName());
                         }
                     }
+                    break;
                 case Transition:
                     // TODO
 //	    			for(int r = 0; r < R; r++) {

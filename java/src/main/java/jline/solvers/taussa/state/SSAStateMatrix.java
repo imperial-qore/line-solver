@@ -296,6 +296,10 @@ public class SSAStateMatrix {
         return true;
     }
 
+    public void print() {
+        this.printStateVector();
+    }
+
     public void printStateVector(){
         List<Integer>[] state = this.getStateVectors();
         for (List<Integer> list : state){

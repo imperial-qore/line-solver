@@ -74,12 +74,12 @@ public class EnvModel {
 
     // envModel.printStageTable();
 
-    SolverOptions options = new SolverOptions(SolverType.Env);
+    SolverOptions options = new SolverOptions(SolverType.ENV);
     options.iter_tol = 0.01;
     options.timespan[0] = 0;
     options.verbose = VerboseLevel.STD;
 
-    SolverOptions fluidOptions = new SolverOptions(SolverType.Fluid);
+    SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
     fluidOptions.timespan[1] = 1000;
     fluidOptions.stiff = false;
     fluidOptions.setODEMaxStep(0.25);
@@ -162,12 +162,12 @@ public class EnvModel {
 
     // envModel.printStageTable();
 
-    SolverOptions options = new SolverOptions(SolverType.Env);
+    SolverOptions options = new SolverOptions(SolverType.ENV);
     options.iter_tol = 0.05;
     options.timespan[0] = 0;
     options.verbose = VerboseLevel.STD;
 
-    SolverOptions fluidOptions = new SolverOptions(SolverType.Fluid);
+    SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
     fluidOptions.stiff = false;
     fluidOptions.setODEMaxStep(0.25);
     fluidOptions.verbose = VerboseLevel.SILENT;
@@ -225,11 +225,11 @@ public class EnvModel {
 
     // envModel.printStageTable();
 
-    SolverOptions options = new SolverOptions(SolverType.Env);
+    SolverOptions options = new SolverOptions(SolverType.ENV);
     options.iter_tol = 0.05;
     options.timespan[0] = 0;
 
-    SolverOptions fluidOptions = new SolverOptions(SolverType.Fluid);
+    SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
     fluidOptions.stiff = false;
     fluidOptions.setODEMaxStep(0.25);
     fluidOptions.verbose = VerboseLevel.SILENT;
@@ -291,12 +291,12 @@ public class EnvModel {
     }
     envModel.resetEnvRatesFun[0][1] = resetEnvRatesFunction;
 
-    SolverOptions options = new SolverOptions(SolverType.Env);
+    SolverOptions options = new SolverOptions(SolverType.ENV);
     options.iter_tol = 0.01;
     options.timespan[0] = 0;
     options.method = "statedep";
 
-    SolverOptions fluidOptions = new SolverOptions(SolverType.Fluid);
+    SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
     fluidOptions.method = "matrix";
     fluidOptions.stiff = false;
     fluidOptions.setODEMaxStep(0.1);
@@ -351,11 +351,11 @@ public class EnvModel {
       }
     }
 
-    SolverOptions options = new SolverOptions(SolverType.Env);
+    SolverOptions options = new SolverOptions(SolverType.ENV);
     options.iter_tol = 0.01;
     options.timespan[0] = 0;
 
-    SolverOptions fluidOptions = new SolverOptions(SolverType.Fluid);
+    SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
     fluidOptions.method = "matrix";
     fluidOptions.stiff = false;
     fluidOptions.setODEMaxStep(0.1);

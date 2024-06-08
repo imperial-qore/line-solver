@@ -12,6 +12,8 @@ import jline.lang.nodes.Station;
 import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.solvers.SolverResult;
+import jline.solvers.fluid.SolverFluid;
+import jline.solvers.fluid.SolverFluidResult;
 import jline.util.Matrix;
 
 import java.util.*;
@@ -28,6 +30,10 @@ import static jline.lib.thirdparty.BUTOOLS.*;
 public class SolverMAM extends NetworkSolver {
     public SolverMAM(Network model){
         super(model,"SolverMAM",new SolverOptions(SolverType.MAM));
+    }
+
+    public SolverMAM(Network model, String method){
+        super(model, "SolverMAM", SolverMAM.defaultOptions().method(method));
     }
 
     public SolverMAM(Network model, SolverOptions options){

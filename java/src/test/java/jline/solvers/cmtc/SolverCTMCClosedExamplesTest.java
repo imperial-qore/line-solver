@@ -1,14 +1,11 @@
 package jline.solvers.cmtc;
 
 import jline.examples.ClosedModel;
-import jline.examples.Examples;
-import jline.examples.GettingStarted;
+import jline.examples.ExamplesModel;
 import jline.lang.Network;
 import jline.solvers.SolverResult;
 import jline.solvers.ctmc.SolverCTMC;
 import org.junit.jupiter.api.Test;
-
-import static jline.examples.GettingStarted.*;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -171,7 +168,7 @@ public class SolverCTMCClosedExamplesTest {
     @Test
     public void ErlangEx1ReturnsCorrectResultFromRunAnalyzer() {
 
-        Network model = Examples.erlangExample1();
+        Network model = ExamplesModel.erlangExample1();
         SolverCTMC solver = new SolverCTMC(model);
         solver.runAnalyzer();
         SolverResult result = solver.result;
@@ -220,7 +217,7 @@ public class SolverCTMCClosedExamplesTest {
     @Test
     public void ErlangEx2ReturnsCorrectResultFromRunAnalyzer() {
 
-        Network model = Examples.erlangExample2();
+        Network model = ExamplesModel.erlangExample2();
         SolverCTMC solver = new SolverCTMC(model);
         solver.runAnalyzer();
         SolverResult result = solver.result;
@@ -269,7 +266,7 @@ public class SolverCTMCClosedExamplesTest {
     @Test
     public void ErlangEx3ReturnsCorrectResultFromRunAnalyzer() {
 
-        Network model = Examples.erlangExample3();
+        Network model = ExamplesModel.erlangExample3();
         SolverCTMC solver = new SolverCTMC(model);
         solver.runAnalyzer();
         SolverResult result = solver.result;

@@ -26,13 +26,13 @@ public class SolverFluidOtherTest {
 
     Network model = ex1();
 
-    SolverOptions options = new SolverOptions(SolverType.Fluid);
+    SolverOptions options = new SolverOptions(SolverType.FLUID);
     options.iter_max = 200;
     SolverFluid solver = new SolverFluid(model, options);
 
     solver.options.stiff = true;
     solver.runAnalyzer();
-    SolverFluidResult fluidResult = solver.fluidResult;
+    SolverFluidResult fluidResult = solver.result;
     SolverResult result = solver.result;
 
     // method
@@ -163,13 +163,13 @@ public class SolverFluidOtherTest {
 
     Network model = ex2();
 
-    SolverOptions options = new SolverOptions(SolverType.Fluid);
+    SolverOptions options = new SolverOptions(SolverType.FLUID);
     options.iter_max = 200;
     SolverFluid solver = new SolverFluid(model, options);
 
     solver.options.stiff = true;
     solver.runAnalyzer();
-    SolverFluidResult fluidResult = solver.fluidResult;
+    SolverFluidResult fluidResult = solver.result;
     SolverResult result = solver.result;
 
     // method
@@ -394,13 +394,13 @@ public class SolverFluidOtherTest {
 
     model.link(model.serialRouting(delay, queue));
 
-    SolverOptions options = new SolverOptions(SolverType.Fluid);
+    SolverOptions options = new SolverOptions(SolverType.FLUID);
     options.iter_max = 200;
     SolverFluid solverFluid = new SolverFluid(model, options);
 
     solverFluid.options.stiff = false;
     solverFluid.runAnalyzer();
-    SolverFluidResult fluidResult = solverFluid.fluidResult;
+    SolverFluidResult fluidResult = solverFluid.result;
     SolverResult result = solverFluid.result;
 
     // method
@@ -526,14 +526,14 @@ public class SolverFluidOtherTest {
     routingMatrix.addConnection(queue, delay, closedClass3, 1.0);
     model.link(routingMatrix);
 
-    SolverOptions options = new SolverOptions(SolverType.Fluid);
+    SolverOptions options = new SolverOptions(SolverType.FLUID);
     options.iter_max = 200;
     SolverFluid solverFluid = new SolverFluid(model, options);
 
     solverFluid.options.iter_max = 100;
     solverFluid.options.stiff = false;
     solverFluid.runAnalyzer();
-    SolverFluidResult fluidResult = solverFluid.fluidResult;
+    SolverFluidResult fluidResult = solverFluid.result;
     SolverResult result = solverFluid.result;
 
     // method
@@ -707,7 +707,7 @@ public class SolverFluidOtherTest {
     routingMatrix.addConnection(queue, delay, closedClass3, 1.0);
     model.link(routingMatrix);
 
-    SolverOptions options = new SolverOptions(SolverType.Fluid);
+    SolverOptions options = new SolverOptions(SolverType.FLUID);
     options.iter_max = 200;
     SolverFluid solverFluid = new SolverFluid(model, options);
 
@@ -715,7 +715,7 @@ public class SolverFluidOtherTest {
     solverFluid.options.method = "statedep";
     solverFluid.options.stiff = false;
     solverFluid.runAnalyzer();
-    SolverFluidResult fluidResult = solverFluid.fluidResult;
+    SolverFluidResult fluidResult = solverFluid.result;
     SolverResult result = solverFluid.result;
 
     // method

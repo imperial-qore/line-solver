@@ -66,7 +66,7 @@ public class NodeParam implements Serializable {
 
 	public Matrix fireweight;
 
-	public String fileName = null;
+	public List<String> fileName = null;
 
 	public String filePath = null;
 

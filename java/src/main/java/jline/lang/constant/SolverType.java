@@ -8,8 +8,8 @@ package jline.lang.constant;
  */
 public enum SolverType {
   CTMC,
-  Env,
-  Fluid,
+  ENV,
+  FLUID,
   JMT,
   LN,
   LQNS,

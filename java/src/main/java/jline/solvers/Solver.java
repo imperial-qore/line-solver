@@ -66,7 +66,7 @@ public abstract class Solver {
   }
 
   // Assign a new seed to the random number generator
-  public void resetRandomGeneratorSeed(int seed) {
+  public void resetRandomGeneratorSeed(long seed) {
     this.random = new Random(seed);
   }
 
