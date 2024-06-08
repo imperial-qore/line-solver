@@ -21,7 +21,7 @@ LINE is released as open source under the [BSD-3 license](https://raw.githubuser
 The development of LINE has been partially funded by the European Commission grants FP7-318484 (MODAClouds), H2020-644869 (DICE), H2020-825040 (RADON), and by the EPSRC grant EP/M009211/1 (OptiMAM).
 
 ### Example: Solving a M/M/1 queue
-We illustrate how to simulate an M/M/1 queue with arrival rate 0.5 and service rate 1.0:
+We illustrate how to simulate an M/M/1 queue:
 
 **MATLAB**: 
 ```
