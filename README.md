@@ -47,7 +47,7 @@ import jline.lang.*;
 import jline.lang.constant.*;
 import jline.lang.distributions.*;
 import jline.lang.nodes.*;
-import jline.solvers.*;
+import jline.solvers.jmt.JMTOptions;
 import jline.solvers.jmt.SolverJMT;
 
 public class MM1 {
