@@ -114,7 +114,7 @@ for ind=1:self.getNumberOfNodes
             %         case 'Place'
             %             varsparam{ind}.nodeToPlace = nodeToPlace(ind);
             %             varsparam{ind}.capacityc = node.classCap;
-        case {'Source'}
+        case {'Source'}            
             for r=1:self.getNumberOfClasses
                 switch class(node.arrivalProcess{r})
                     case 'MAP'

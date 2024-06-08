@@ -112,6 +112,7 @@ if isempty(self.sn)
                 for k=1:K
                     if k > length(self.nodes{i}.input.sourceClasses) || isempty(self.nodes{i}.input.sourceClasses{k})
                         self.nodes{i}.input.sourceClasses{k} = {[],ServiceStrategy.LI,Disabled.getInstance()};
+                        self.nodes{i}.arrivalProcess{k} = {[],ServiceStrategy.LI,Disabled.getInstance()};
                     end
                 end
             case 'Place'

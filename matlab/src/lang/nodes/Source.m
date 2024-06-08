@@ -24,7 +24,7 @@ classdef Source < Station
                     self.input = RandomSource(classes);
                     self.schedStrategy = SchedStrategy.EXT;
                     self.setModel(model);
-                    addNode(model, self);
+                    addNode(model, self);                    
                 end
             elseif isa(model,'JNetwork')
                 self.setModel(model);
