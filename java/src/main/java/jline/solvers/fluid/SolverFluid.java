@@ -32,8 +32,6 @@ import static java.lang.Math.min;
 // SolverFluid is based on fluid and mean-field approximation methods.
 public class SolverFluid extends NetworkSolver {
 
-  public final SolverFluidResult result;
-
   public SolverFluid(Network model) {
     this(model, SolverFluid.defaultOptions());
   }
@@ -396,7 +394,7 @@ public class SolverFluid extends NetworkSolver {
       }
     }
 
-    this.result.odeStateVec = analyzer.getXVecIt();
+    ((SolverFluidResult) this.result).odeStateVec = analyzer.getXVecIt();
     // In LINE, sn is stored within result too - feels unnecessary, so I've not added
   }
 
@@ -516,7 +514,7 @@ public class SolverFluid extends NetworkSolver {
         // space inefficiency in storing larger arrays than is necessary. For that reason I've not
         // transferred the 'unique' functionality across to JLINE
 
-        if (this.result.odeStateVec.isEmpty()) { // If the solution has failed
+        if (((SolverFluidResult) this.result).odeStateVec.isEmpty()) { // If the solution has failed
           for (int k = 0; k < K; k++) {
             for (int j = 0; j < M; j++) {
               Q.set(j, k, NaN);
@@ -589,9 +587,9 @@ public class SolverFluid extends NetworkSolver {
     long startTime = System.nanoTime();
     this.sn = model.getStruct(true);
     this.getAvg(); // Get steady-state solution
-    this.options.init_sol = this.result.odeStateVec;
-    this.result.distribC = passageTime();
-    this.result.distribRuntime = (System.nanoTime() - startTime) / 1000000000.0;
+    this.options.init_sol = ((SolverFluidResult) this.result).odeStateVec;
+    ((SolverFluidResult) this.result).distribC = passageTime();
+    ((SolverFluidResult) this.result).distribRuntime = (System.nanoTime() - startTime) / 1000000000.0;
     // TODO: add in setDistribResults method once implemented
   }
 
@@ -614,8 +612,8 @@ public class SolverFluid extends NetworkSolver {
     }
 
     initSol();
-    this.result.distribC = passageTime();
-    this.result.distribRuntime = (System.nanoTime() - startTime) / 1000000000.0;
+    ((SolverFluidResult) this.result).distribC = passageTime();
+    ((SolverFluidResult) this.result).distribRuntime = (System.nanoTime() - startTime) / 1000000000.0;
     // TODO: add in setDistribResults method once implemented
   }
 
@@ -650,14 +648,14 @@ public class SolverFluid extends NetworkSolver {
               null);
       // Binomial approximation with mean fitted to queue-lengths.
       // Rainer Schmidt, "An approximate MVA ...", PEVA 29:245-254, 1997.
-      result.logPnir = 0;
+      ((SolverFluidResult) this.result).logPnir = 0;
       for (int r = 0; r < stats.nir.getNumCols(); r++) {
         // TODO x 3: logPnir = logPnir + nchoosekln(N(r),nir(r));
         // logPnir = logPnir + nir(r)*log(Q(ist,r)/N(r));
         // logPnir = logPnir + (N(r)-nir(r))*log(1-Q(ist,r)/N(r));
       }
       // TODO: return real part of the array only
-      result.Pnir = Math.exp(result.logPnir);
+      ((SolverFluidResult) this.result).Pnir = Math.exp(((SolverFluidResult) this.result).logPnir);
     } else {
       throw new RuntimeException("getProbAggr not yet implemented for models with open classes.");
     }

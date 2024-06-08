@@ -225,9 +225,9 @@ public class EnvModel {
 
     // envModel.printStageTable();
 
-    SolverOptions options = new SolverOptions(SolverType.ENV);
-    options.iter_tol = 0.05;
-    options.timespan[0] = 0;
+    SolverOptions envOptions = new SolverOptions(SolverType.ENV);
+    envOptions.iter_tol = 0.05;
+    envOptions.timespan[0] = 0;
 
     SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
     fluidOptions.stiff = false;
@@ -240,7 +240,7 @@ public class EnvModel {
       solvers[e].options = fluidOptions;
     }
 
-    return new SolverEnv(envModel, solvers, options);
+    return new SolverEnv(envModel, solvers, envOptions);
   }
 
   // For demonstration of State-Dependent Random Environments

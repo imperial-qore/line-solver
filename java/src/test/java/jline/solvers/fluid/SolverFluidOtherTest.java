@@ -32,7 +32,7 @@ public class SolverFluidOtherTest {
 
     solver.options.stiff = true;
     solver.runAnalyzer();
-    SolverFluidResult fluidResult = solver.result;
+    SolverFluidResult fluidResult = (SolverFluidResult) solver.result;
     SolverResult result = solver.result;
 
     // method
@@ -169,7 +169,7 @@ public class SolverFluidOtherTest {
 
     solver.options.stiff = true;
     solver.runAnalyzer();
-    SolverFluidResult fluidResult = solver.result;
+    SolverFluidResult fluidResult = (SolverFluidResult) solver.result;
     SolverResult result = solver.result;
 
     // method
@@ -400,7 +400,7 @@ public class SolverFluidOtherTest {
 
     solverFluid.options.stiff = false;
     solverFluid.runAnalyzer();
-    SolverFluidResult fluidResult = solverFluid.result;
+    SolverFluidResult fluidResult = (SolverFluidResult) solverFluid.result;
     SolverResult result = solverFluid.result;
 
     // method
@@ -533,7 +533,7 @@ public class SolverFluidOtherTest {
     solverFluid.options.iter_max = 100;
     solverFluid.options.stiff = false;
     solverFluid.runAnalyzer();
-    SolverFluidResult fluidResult = solverFluid.result;
+    SolverFluidResult fluidResult = (SolverFluidResult) solverFluid.result;
     SolverResult result = solverFluid.result;
 
     // method
@@ -715,7 +715,7 @@ public class SolverFluidOtherTest {
     solverFluid.options.method = "statedep";
     solverFluid.options.stiff = false;
     solverFluid.runAnalyzer();
-    SolverFluidResult fluidResult = solverFluid.result;
+    SolverFluidResult fluidResult = (SolverFluidResult) solverFluid.result;
     SolverResult result = solverFluid.result;
 
     // method

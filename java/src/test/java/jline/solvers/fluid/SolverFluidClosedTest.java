@@ -23,7 +23,7 @@ public class SolverFluidClosedTest {
     SolverFluid solver = new SolverFluid(model, options);
     solver.options.stiff = true;
     solver.runAnalyzer();
-    SolverFluidResult fluidResult = solver.result;
+    SolverFluidResult fluidResult = (SolverFluidResult) solver.result;
     SolverResult result = solver.result;
 
     // method
@@ -129,7 +129,7 @@ public class SolverFluidClosedTest {
 
     solver.options.stiff = true;
     solver.runAnalyzer();
-    SolverFluidResult fluidResult = solver.result;
+    SolverFluidResult fluidResult = (SolverFluidResult) solver.result;
     SolverResult result = solver.result;
 
     // method
@@ -256,7 +256,7 @@ public class SolverFluidClosedTest {
 
     solver.options.stiff = true;
     solver.runAnalyzer();
-    SolverFluidResult fluidResult = solver.result;
+    SolverFluidResult fluidResult = (SolverFluidResult) solver.result;
     SolverResult result = solver.result;
 
     // method
@@ -427,7 +427,7 @@ public class SolverFluidClosedTest {
 
     solver.options.stiff = true;
     solver.runAnalyzer();
-    SolverFluidResult fluidResult = solver.result;
+    SolverFluidResult fluidResult = (SolverFluidResult) solver.result;
     SolverResult result = solver.result;
 
     // method
@@ -556,7 +556,7 @@ public class SolverFluidClosedTest {
 
     solver.options.stiff = true;
     solver.runAnalyzer();
-    SolverFluidResult fluidResult = solver.result;
+    SolverFluidResult fluidResult = (SolverFluidResult) solver.result;
     SolverResult result = solver.result;
 
     // method
@@ -733,7 +733,7 @@ public class SolverFluidClosedTest {
 
     solver.options.stiff = true;
     solver.runAnalyzer();
-    SolverFluidResult fluidResult = solver.result;
+    SolverFluidResult fluidResult = (SolverFluidResult) solver.result;
     SolverResult result = solver.result;
 
     // method
@@ -1006,7 +1006,7 @@ public class SolverFluidClosedTest {
 
     solver.options.stiff = true;
     solver.runAnalyzer();
-    SolverFluidResult fluidResult = solver.result;
+    SolverFluidResult fluidResult = (SolverFluidResult) solver.result;
     SolverResult result = solver.result;
 
     // method
@@ -1133,7 +1133,7 @@ public class SolverFluidClosedTest {
 
     solver.options.stiff = true;
     solver.runAnalyzer();
-    SolverFluidResult fluidResult = solver.result;
+    SolverFluidResult fluidResult = (SolverFluidResult) solver.result;
     SolverResult result = solver.result;
 
     // method

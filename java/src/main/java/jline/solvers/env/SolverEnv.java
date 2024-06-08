@@ -109,12 +109,12 @@ public class SolverEnv extends EnsembleSolver {
 
     if (it == 1) {
       for (int e = 0; e < E; e++) {
-        if (Double.isInfinite(solvers[e].options.timespan[1])) {
+        if (Double.isInfinite(this.solvers[e].options.timespan[1])) {
           this.solvers[e].getAvg();
         } else {
           this.solvers[e].getTranAvg();
         }
-        this.ensemble[e].initFromMarginal(solvers[e].result.QN);
+        this.ensemble[e].initFromMarginal(this.solvers[e].result.QN);
       }
     }
   }
