@@ -39,7 +39,7 @@ queue.setService(jobclass, Exp(2));
 %% Block 3: topology
 model.link(Network.serialRouting(source,queue,sink));
 %% Block 4: solution
-AvgTable = SolverJMT(model,'seed',23000,'samples',10000).getAvgTable
+AvgTable = SolverJMT(model,'seed',23000).getAvgTable
 ```
 **Java**: 
 ```
@@ -76,17 +76,17 @@ from line_solver import *
 
 if __name__ == "__main__":
     model = Network("M/M/1 model")
-    % Block 1: nodes
+    # Block 1: nodes
     source = Source(model, "Source")
     queue = Queue(model, "Queue", SchedStrategy.FCFS)
     sink = Sink(model, "Sink")
-    % Block 2: classes
+    # Block 2: classes
     jobclass = OpenClass(model, "Class1")
     source.setArrival(jobclass, Exp(1.0))
     queue.setService(jobclass, Exp(2.0))
-    % Block 3: topology
+    # Block 3: topology
     model.addLink(source, queue)
     model.addLink(queue, sink)
-    % Block 4: solution
-    avgTable = SolverJMT(model,'seed',23000,'samples',10000).getAvgTable()  # pandas.DataFrame
+    # Block 4: solution
+    avgTable = SolverJMT(model,'seed',23000).getAvgTable()  # pandas.DataFrame
 ```
