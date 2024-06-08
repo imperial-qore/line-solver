@@ -1,6 +1,6 @@
 ## LINE Solver for MATLAB
 
-This repository includes the MATLAB version of the [LINE solver](https://github.com/imperial-qore/line-solver).
+This repository includes the MATLAB version of the [LINE solver](https://github.com/imperial-qore/line-solver). A MATLAB version of the [manual](https://github.com/imperial-qore/line-solver/blob/main/doc/LINE-matlab.pdf) includes getting started information.
 
 [![View LINE on File Exchange](https://www.mathworks.com/matlabcentral/images/matlab-file-exchange.svg)](https://www.mathworks.com/matlabcentral/fileexchange/71486-line)
 
@@ -41,9 +41,7 @@ AvgTable =
     mySource    myClass      0        0       0        0        0       1  
     myQueue     myClass      4      0.8       4        4        1       1  
 ```    
-
-A [getting started](https://github.com/imperial-qore/line-solver/wiki/Getting-started) walkthrough and a [Wiki](https://github.com/imperial-qore/line-solver/wiki) are available.
-
+Additional examples are available in the manual.
 
 ### License
 LINE is released as open source under the [BSD-3 license](https://raw.githubusercontent.com/imperial-qore/line-solver/main/matlab/LICENSE).

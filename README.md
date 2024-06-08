@@ -33,8 +33,8 @@ queue = Queue(model, 'Queue', SchedStrategy.FCFS);
 sink = Sink(model, 'Sink');
 
 jobclass = OpenClass(model, 'Class1');
-source.setArrival(jobclass, Exp(1));
-queue.setService(jobclass, Exp(2));
+source.setArrival(jobclass, Exp(1.0));
+queue.setService(jobclass, Exp(2.0));
 
 model.link(Network.serialRouting(source,queue,sink));
 
