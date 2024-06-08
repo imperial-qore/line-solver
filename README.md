@@ -28,17 +28,17 @@ We illustrate how to simulate an M/M/1 queue with arrival rate 0.5 and service r
 **MATLAB**: 
 ```
 model = Network('M/M/1');
-%% Block 1: nodes
+
 source = Source(model, 'Source');
 queue = Queue(model, 'Queue', SchedStrategy.FCFS);
 sink = Sink(model, 'Sink');
-%% Block 2: classes
+
 jobclass = OpenClass(model, 'Class1');
 source.setArrival(jobclass, Exp(1));
 queue.setService(jobclass, Exp(2));
-%% Block 3: topology
+
 model.link(Network.serialRouting(source,queue,sink));
-%% Block 4: solution
+
 AvgTable = SolverJMT(model,'seed',23000).getAvgTable
 ```
 **Java**: 
@@ -53,17 +53,17 @@ import jline.solvers.jmt.SolverJMT;
 public class MM1 {
     public static void main(String[] args){
         Network model = new Network("M/M/1");
-        // Block 1: nodes
+        
         Source source = new Source(model, "Source");
         Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
         Sink sink = new Sink(model, "Sink");
-        // Block 2: classes
+        
         OpenClass jobclass = new OpenClass(model, "Class1", 0);
-        source.setArrival(jobclass, new Exp(1.0)); // (source, jobclass)
-        queue.setService(jobclass, new Exp(2.0)); // (queue, jobclass)
-        // Block 3: topology
+        source.setArrival(jobclass, new Exp(1.0)); 
+        queue.setService(jobclass, new Exp(2.0)); 
+        
         model.link(model.serialRouting(source, queue, sink));
-        // Block 4: solution
+        
         new SolverJMT(model, new JMTOptions().seed(23000)).getAvgTable().print();
     }
 }
@@ -74,17 +74,17 @@ from line_solver import *
 
 if __name__ == "__main__":
     model = Network("M/M/1 model")
-    # Block 1: nodes
+
     source = Source(model, "Source")
     queue = Queue(model, "Queue", SchedStrategy.FCFS)
     sink = Sink(model, "Sink")
-    # Block 2: classes
+    
     jobclass = OpenClass(model, "Class1")
     source.setArrival(jobclass, Exp(1.0))
     queue.setService(jobclass, Exp(2.0))
-    # Block 3: topology
+   
     model.addLink(source, queue)
     model.addLink(queue, sink)
-    # Block 4: solution
+    
     avgTable = SolverJMT(model,'seed',23000).getAvgTable()
 ```
