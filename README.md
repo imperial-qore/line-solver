@@ -63,7 +63,7 @@ public class MM1 {
         
         model.link(Network.serialRouting(source, queue, sink));
         
-        new SolverJMT(model, new JMTOptions().seed(23000)).getAvgTable().print();
+        new SolverJMT(model, "seed", 23000).getAvgTable().print();
     }
 }
 ```
