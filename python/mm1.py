@@ -8,7 +8,7 @@ if __name__ == "__main__":
     queue = Queue(model, "Queue", SchedStrategy.FCFS)
     sink = Sink(model, "Sink")
 
-    # An M/M/1 queue with arrival rate 0.5 and service rate 1.0
+    # An M/M/1 queue with arrival rate 1.0 and service rate 2.0
     jobclass = OpenClass(model, "Class1")
     source.setArrival(jobclass, Exp(1.0))
     queue.setService(jobclass, Exp(2.0))
