@@ -513,21 +513,21 @@ classdef JLINE
                 node_object = jline.lang.nodes.Join(java_network, line_node.name, forkNode);
             elseif isa(line_node, 'Cache')
                 nitems = line_node.items.nitems;
-                  switch line_node.replacementPolicy
-                      case ReplacementStrategy.ID_RR
-                          repStrategy = jline.lang.constant.ReplacementStrategy.RR;
-                      case ReplacementStrategy.ID_FIFO
-                          repStrategy = jline.lang.constant.ReplacementStrategy.FIFO;
-                      case ReplacementStrategy.ID_SFIFO
-                          repStrategy = jline.lang.constant.ReplacementStrategy.SFIFO;
-                      case ReplacementStrategy.ID_LRU                            
-                          repStrategy = jline.lang.constant.ReplacementStrategy.LRU;
-                  end
-                  if ~isempty(line_node.graph)
-                      node_object = jline.lang.nodes.Cache(java_network, line_node.name, nitems, JLINE.matrix_to_jlinematrix(line_node.itemLevelCap), repStrategy, JLINE.matrix_to_jlinematrix(line_node.graph));
-                  else
-                      node_object = jline.lang.nodes.Cache(java_network, line_node.name, nitems, JLINE.matrix_to_jlinematrix(line_node.itemLevelCap), repStrategy);
-                  end
+                switch line_node.replacementPolicy
+                    case ReplacementStrategy.ID_RR
+                        repStrategy = jline.lang.constant.ReplacementStrategy.RR;
+                    case ReplacementStrategy.ID_FIFO
+                        repStrategy = jline.lang.constant.ReplacementStrategy.FIFO;
+                    case ReplacementStrategy.ID_SFIFO
+                        repStrategy = jline.lang.constant.ReplacementStrategy.SFIFO;
+                    case ReplacementStrategy.ID_LRU
+                        repStrategy = jline.lang.constant.ReplacementStrategy.LRU;
+                end
+                if ~isempty(line_node.graph)
+                    node_object = jline.lang.nodes.Cache(java_network, line_node.name, nitems, JLINE.matrix_to_jlinematrix(line_node.itemLevelCap), repStrategy, JLINE.matrix_to_jlinematrix(line_node.graph));
+                else
+                    node_object = jline.lang.nodes.Cache(java_network, line_node.name, nitems, JLINE.matrix_to_jlinematrix(line_node.itemLevelCap), repStrategy);
+                end
             else
                 line_error(mfilename,'Node not supported by JLINE.');
             end
@@ -631,7 +631,7 @@ classdef JLINE
             % [ ] Update to consider different weights/routing for classes
             for i = 1:m
                 line_node = line_nodes{i};
-                for k = 1:n_classes                    
+                for k = 1:n_classes
                     output_strat = line_node.output.outputStrategy{k};
                     switch output_strat{2}
                         case 'Disabled'
@@ -1385,11 +1385,6 @@ classdef JLINE
             %mam.compile(network_object);
         end
 
-        function [nc] = SolverNC(network_object)
-            solverOptions = jline.solvers.SolverOptions(jline.lang.constant.SolverType.NC);
-            nc = jline.solvers.nc.SolverNC(network_object, solverOptions);
-        end
-
         function [jmt] = SolverJMT(network_object)
             %solverOptions = jline.solvers.SolverOptions(jline.lang.constant.SolverType.JMT);
             jmt = jline.solvers.jmt.SolverJMT(network_object);
@@ -1450,6 +1445,47 @@ classdef JLINE
                 end
             end
             mva = jline.solvers.mva.SolverMVA(network_object, solverOptions);
+        end
+
+        function [nc] = SolverNC(network_object, options)
+            solverOptions = jline.solvers.SolverOptions(jline.lang.constant.SolverType.MVA);
+            fn = fieldnames(options);
+            fn2 = fieldnames(solverOptions);
+            for f = 1:length(fn)
+                found = 0;
+                for j = 1:length(fn2)
+                    if strcmp(fn{f}, fn2{j})
+                        found = 1;
+                        switch fn{f}
+                            case 'config'
+                                solverOptions.config.highvar = options.config.highvar;
+                                solverOptions.config.multiserver = options.config.multiserver;
+                                solverOptions.config.np_priority = options.config.np_priority;
+                                solverOptions.config.fork_join = options.config.fork_join;
+                            case 'verbose'
+                                switch options.(fn{f})
+                                    case 1
+                                        solverOptions.verbose = solverOptions.verbose.SILENT;
+                                    case 2
+                                        solverOptions.verbose = solverOptions.verbose.STD;
+                                    case 3
+                                        solverOptions.verbose = solverOptions.verbose.DEBUG;
+                                end
+                            case 'init_sol'
+                                solverOptions.(fn{f}) = JLINE.matrix_to_jlinematrix(options.init_sol);
+                            case 'odesolvers'
+                            otherwise
+                                solverOptions.(fn{f}) = options.(fn{f});
+                        end
+
+                        break;
+                    end
+                end
+                if ~found
+                    line_printf('Could not find option %s in the JLINE options.\n', fn{f});
+                end
+            end
+            nc = jline.solvers.nc.SolverNC(network_object, solverOptions);
         end
 
         function [ln] = SolverLN(layered_network_object)
