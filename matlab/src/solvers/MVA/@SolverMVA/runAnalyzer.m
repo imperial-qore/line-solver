@@ -11,7 +11,7 @@ self.runAnalyzerChecks(options);
 Solver.resetRandomGeneratorSeed(options.seed);
 
 iter = 0;
-options.lang = 'java';
+
 
 switch options.lang
     case 'java'
@@ -19,7 +19,7 @@ switch options.lang
         M = jmodel.getNumberOfStatefulNodes;
         R = jmodel.getNumberOfClasses;
         jsolver = JLINE.SolverMVA(jmodel, options);
-        [QN,UN,RN,~,TN] = JLINE.arrayListToResults(jsolver.getAvgTable);
+        [QN,UN,RN,TN,~,WN] = JLINE.arrayListToResults(jsolver.getAvgTable);
         runtime = jsolver.result.runtime;
         CN = [];
         XN = [];
