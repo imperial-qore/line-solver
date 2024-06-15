@@ -413,7 +413,7 @@ classdef JLINE
         end
 
         function set_service(line_node, java_node, job_classes)
-            if (isa(line_node, 'Sink') || isa(line_node, 'Router') || isa(line_node, 'ClassSwitch') || isa(line_node, 'Fork') || isa(line_node, 'Join'))
+            if (isa(line_node, 'Sink') || isa(line_node, 'Router') || isa(line_node, 'Cache') || isa(line_node, 'ClassSwitch') || isa(line_node, 'Fork') || isa(line_node, 'Join'))
                 return;
             end
 
@@ -421,7 +421,7 @@ classdef JLINE
                 if (isa(line_node, 'Queue') || isa(line_node, 'Delay'))
                     matlab_dist = line_node.getService(job_classes{n});
                 elseif (isa(line_node, 'Source'))
-                    matlab_dist = line_node.getArrivalProcess(n);
+                    matlab_dist = line_node.getArrivalProcess(job_classes{n});
                 else
                     line_error(mfilename,'Node not supported by JLINE.');
                 end
@@ -511,6 +511,23 @@ classdef JLINE
                 node_object = jline.lang.nodes.Fork(java_network);
             elseif isa(line_node, 'Join')
                 node_object = jline.lang.nodes.Join(java_network, line_node.name, forkNode);
+            elseif isa(line_node, 'Cache')
+                nitems = line_node.items.nitems;
+                  switch line_node.replacementPolicy
+                      case ReplacementStrategy.ID_RR
+                          repStrategy = jline.lang.constant.ReplacementStrategy.RR;
+                      case ReplacementStrategy.ID_FIFO
+                          repStrategy = jline.lang.constant.ReplacementStrategy.FIFO;
+                      case ReplacementStrategy.ID_SFIFO
+                          repStrategy = jline.lang.constant.ReplacementStrategy.SFIFO;
+                      case ReplacementStrategy.ID_LRU                            
+                          repStrategy = jline.lang.constant.ReplacementStrategy.LRU;
+                  end
+                  if ~isempty(line_node.graph)
+                      node_object = jline.lang.nodes.Cache(java_network, line_node.name, nitems, JLINE.matrix_to_jlinematrix(line_node.itemLevelCap), repStrategy, JLINE.matrix_to_jlinematrix(line_node.graph));
+                  else
+                      node_object = jline.lang.nodes.Cache(java_network, line_node.name, nitems, JLINE.matrix_to_jlinematrix(line_node.itemLevelCap), repStrategy);
+                  end
             else
                 line_error(mfilename,'Node not supported by JLINE.');
             end
