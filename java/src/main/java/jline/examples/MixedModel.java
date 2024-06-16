@@ -8,6 +8,7 @@ import jline.lang.nodes.*;
 import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.solvers.mva.SolverMVA;
+import jline.solvers.nc.SolverNC;
 import jline.solvers.NetworkAvgTable;
 
 import java.util.Arrays;
@@ -310,14 +311,14 @@ public class MixedModel {
 
 
     public static void main(String[] args) throws Exception {
-        Network model = ex2();
-
-        NetworkStruct sn = model.getStruct(false);
-        sn.rt.print();
-        SolverOptions options = new SolverOptions(SolverType.MVA);
-        options.method = "exact";
-        NetworkSolver solver = new SolverMVA(model, options);
-        NetworkAvgTable t = solver.getAvgTable();
-        t.print(options);
+        Network model = ex4();
+        new SolverNC(model).getAvgTable().print();
+//        NetworkStruct sn = model.getStruct(false);
+//        sn.rt.print();
+//        SolverOptions options = new SolverOptions(SolverType.MVA);
+//        options.method = "exact";
+//        NetworkSolver solver = new SolverMVA(model, options);
+//        NetworkAvgTable t = solver.getAvgTable();
+//        t.print(options);
     }
 }

@@ -85,19 +85,19 @@ public class SolverNC extends NetworkSolver {
 
     int M = sn.nstations;
     int R = sn.nclasses;
-    if(!result.TN.isEmpty()){
-      result.AN = new Matrix(M,R,M*R);
+    if(!this.result.TN.isEmpty()){
+      this.result.AN = new Matrix(M,R,M*R);
       for(int i=0;i<M;i++){
         for(int j=0;j<M;j++){
           for(int k=0;k<R;k++){
             for(int r=0;r<R;r++){
-              result.AN.set(i,k,result.AN.get(i,k)+result.TN.get(j,r)*sn.rt.get(j*R+r,i*R+k));
+              this.result.AN.set(i,k,this.result.AN.get(i,k)+this.result.TN.get(j,r)*sn.rt.get(j*R+r,i*R+k));
             }
           }
         }
       }
     } else {
-      result.AN = new Matrix(0,0,0);
+      this.result.AN = new Matrix(0,0,0);
     }
   }
 

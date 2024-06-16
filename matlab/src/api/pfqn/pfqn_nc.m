@@ -42,6 +42,7 @@ for i=1:size(L,1)
     %lGopen = lGopen + log(Ut(i));
 end
 Qopen(isnan(Qopen))=0;
+ocl = find(isinf(N));
 % then erase open classes
 N(isinf(N)) = 0;
 
@@ -51,7 +52,6 @@ lambda = lambda(:,nnzClasses);
 L = L(:,nnzClasses);
 N = N(:,nnzClasses);
 Z = Z(:,nnzClasses);
-ocl = find(isinf(N));
 
 % then scale demands in [0,1], importat that stays before the other
 % simplications in case both D and Z are all very small or very large in a

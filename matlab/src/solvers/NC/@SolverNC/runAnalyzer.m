@@ -10,8 +10,7 @@ self.runAnalyzerChecks(options);
 Solver.resetRandomGeneratorSeed(options.seed);
 method = options.method;
 wasDefault = false;
-options.lang = 'java';
-options.method = 'exact';
+%options.lang = 'java';
 
 switch options.lang
     case 'java'
@@ -19,7 +18,7 @@ switch options.lang
         M = jmodel.getNumberOfStatefulNodes;
         R = jmodel.getNumberOfClasses;
         jsolver = JLINE.SolverNC(jmodel, options);
-        [QN,UN,RN,TN,~,WN] = JLINE.arrayListToResults(jsolver.getAvgTable);
+        [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(jsolver.getAvgTable);
         runtime = jsolver.result.runtime;
         CN = [];
         XN = [];
@@ -27,35 +26,10 @@ switch options.lang
         UN = reshape(UN',R,M)';
         RN = reshape(RN',R,M)';
         TN = reshape(TN',R,M)';
+        WN = reshape(WN',R,M)';
+        AN = reshape(AN',R,M)';
         lG = NaN;
         lastiter = NaN;
-        sn = self.getStruct;
-        M = sn.nstations;
-        R = sn.nclasses;
-        C = sn.nchains;
-        T = getAvgTputHandles(self);
-        if ~isempty(T) && ~isempty(TN)
-            AN = zeros(M,R);
-            WN = zeros(M,R);
-            for c=1:C
-                inchain = sn.inchain{c};
-                refstat = sn.refstat(inchain(1));
-                XN(c) = sum(TN(refstat,inchain));
-            end
-            for i=1:M
-                for j=1:M
-                    for k=1:R
-                        for r=1:R
-                            AN(i,k) = AN(i,k) + TN(j,r)*sn.rt((j-1)*R+r, (i-1)*R+k);
-                            c = find(sn.chains(:,r));
-                            WN(i,r) = RN(i,r)*TN(i,r)/XN(c);
-                        end
-                    end
-                end
-            end
-        else
-            AN = [];
-        end
         self.setAvgResults(QN,UN,RN,TN,AN,WN,CN,XN,runtime,options.method,lastiter);
         self.result.Prob.logNormConstAggr = lG;
         return

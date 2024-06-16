@@ -85,6 +85,14 @@ public class PFQN {
 			Qopen = Matrix.concatRows(Qopen, tmp, null);
 		}
 		Qopen.removeNaN();
+
+		List<Integer> ocl = new ArrayList<>();
+		for (int i = 0; i < N_new.length(); i++) {
+			if (Double.isInfinite(N_new.get(i))) {
+				ocl.add(i);
+			}
+		}
+
 		for (int i = 0; i < N_new.length(); i++) {
 			if (Double.isInfinite(N_new.get(i))) {
 				N_new.set(i, 0);
@@ -110,22 +118,23 @@ public class PFQN {
 		L_new = L_tmp;
 		N_new = N_tmp;
 		Z_new = Z_tmp;
-		lambda_new = lambda_tmp;
 
-		List<Integer> ocl = new ArrayList<>();
-		for (int i = 0; i < N_new.length(); i++) {
-			if (Double.isInfinite(N_new.get(i))) {
-				ocl.add(i);
-			}
-		}
 		int R = N_new.length();
 		Matrix scalevec = new Matrix(1, R);
 		scalevec.fill(1.0);
 		for (int r = 0; r < R; r++) {
 			Matrix L_col_r = new Matrix(L_new.getNumRows(), 1);
-			Matrix.extract(L_new, 0, L_new.getNumRows(), r, r+1, L_col_r, 0, 0);
+			if (L_new.getNumCols() > 0) {
+				Matrix.extractColumn(L_new, r, L_col_r);
+			} else {
+				L_col_r.fill(0.0);
+			}
 			Matrix Z_col_r = new Matrix(Z_new.getNumRows(), 1);
-			Matrix.extract(Z_new, 0, Z_new.getNumRows(), r, r+1, Z_col_r, 0, 0);
+			if (Z_new.getNumCols() > 0) {
+				Matrix.extractColumn(Z_new, r, Z_col_r);
+			} else {
+				Z_col_r.fill(0.0);
+			}
 			scalevec.set(r, Math.max(L_col_r.elementMax(), Z_col_r.elementMax()));
 		}
 
@@ -135,7 +144,7 @@ public class PFQN {
 			}
 		}
 
-		for (int i = 0; i < Z_new.length(); i++) {
+		for (int i = 0; i < Z_new.getNumCols(); i++) {
 			Z_new.set(i, Z_new.get(i)/scalevec.get(i));
 		}
 
@@ -166,7 +175,7 @@ public class PFQN {
 		L_new = L_tmp;
 
 		boolean flag = false;
-		for (int i = 0; i < N_new.length(); i++) {
+		for (int i = 0; i < N_new.getNumCols(); i++) {
 			if (abs(L_new.sumCols(i)+Z_new.sumCols(i))<GlobalConstants.FineTol && N_new.get(i) > GlobalConstants.FineTol) {
 				flag = true;
 				break;
@@ -918,6 +927,10 @@ public class PFQN {
 						method = "ca";
 					} else {
 						if (M <= R) {
+							pfqnNcReturn ret = pfqn_kt(L,N,Z.sumCols());
+							lG = ret.lG;
+							method = "kt";
+						} else {
 							pfqnNcReturn ret = pfqn_le(L,N,Z.sumCols());
 							lG = ret.lG;
 							method = "le";
@@ -1733,6 +1746,10 @@ public class PFQN {
 		return f;
 	}
 
+	public static pfqnNcReturn pfqn_kt(Matrix L, Matrix N, Matrix Z) {
+		System.err.println("Warning: pfqn_kt not yet available in JLINE, running pfqn_le instead.");
+		return pfqn_le(L, N, Z);
+	}
 	/**
 	 * Logistic expansion method to compute the normalizing constant
 	 * @param L - demands at all stations
@@ -4849,16 +4866,16 @@ public class PFQN {
         public pfqnNcXQReturn(Double G, Double lG, Matrix X, Matrix Q, String method) {
             this.G = G;
             this.lG = lG;
-            this.X = X;
-            this.Q = Q;
+			this.X = new Matrix(X);
+			this.Q = new Matrix(Q);
             this.method = method;
         }
 
         public pfqnNcXQReturn(Double lG, Matrix X, Matrix Q, String method) {
             this.G = Math.exp(lG);
             this.lG = lG;
-            this.X = X;
-            this.Q = Q;
+			this.X = new Matrix(X);
+			this.Q = new Matrix(Q);
             this.method = method;
         }
     }

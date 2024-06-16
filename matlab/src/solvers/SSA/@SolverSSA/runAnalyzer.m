@@ -13,6 +13,8 @@ end
 self.runAnalyzerChecks(options);
 Solver.resetRandomGeneratorSeed(options.seed);
 
+%options.lang = 'java';
+
 switch options.method
     case 'taussa'
         options.lang = 'java';

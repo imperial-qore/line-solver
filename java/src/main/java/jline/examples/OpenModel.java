@@ -11,6 +11,7 @@ import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.solvers.jmt.SolverJMT;
 import jline.solvers.mva.SolverMVA;
+import jline.solvers.nc.SolverNC;
 import jline.util.Matrix;
 import jline.solvers.NetworkAvgTable;
 
@@ -36,7 +37,7 @@ public class OpenModel {
         node1.setService(jobclass1, new HyperExp(0.5, 3.0, 10.0));
         node2.setService(jobclass1, new Exp(1));
         //node2.setService(jobclass1, new Replayer("/home/gcasale/Dropbox/code/line-solver.git/python/gettingstarted/example_trace.txt"));
-        node3.setArrival(jobclass1, new Det(0.1));
+        node3.setArrival(jobclass1, new Exp(0.1));
 
         // Block 3: topology
 
@@ -409,12 +410,7 @@ public class OpenModel {
     }
 
     public static void main(String[] args) throws Exception {
-        Network model = ex1_line();
-        NetworkStruct sn = model.getStruct(false);
-        SolverOptions options = new SolverOptions(SolverType.MVA);
-        NetworkSolver solver = new SolverJMT(model, options);
-        NetworkAvgSysTable t = solver.getAvgSysTable();
-        //model.jsimgView();
-        t.print(options);
+        Network model = ex6();
+        new SolverNC(model).getAvgTable().print();
     }
 }

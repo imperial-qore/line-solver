@@ -793,6 +793,18 @@ classdef JLINE
             line_network = JLINE.from_jline_links(line_network, java_network);
         end
 
+        function matrix = arraylist_to_matrix(jline_matrix)
+            if isempty(jline_matrix)
+                matrix = [];
+            else
+                matrix = zeros(jline_matrix.size(), 1);
+                for row = 1:jline_matrix.size()
+                    matrix(row, 1) = jline_matrix.get(row-1);
+
+                end
+            end
+        end
+
         function matrix = jlinematrix_to_matrix(jline_matrix)
             if isempty(jline_matrix)
                 matrix = [];
@@ -1324,31 +1336,12 @@ classdef JLINE
         end
 
         function [QN,UN,RN,WN,AN,TN] = arrayListToResults(alist)
-            n = alist.get(0).size;
-            QN = zeros(n,1);
-            for i=1:n
-                QN(i) = alist.get(0).get(i-1);
-            end
-            UN = zeros(n,1);
-            for i=1:n
-                UN(i) = alist.get(1).get(i-1);
-            end
-            RN = zeros(n,1);
-            for i=1:n
-                RN(i) = alist.get(2).get(i-1);
-            end
-            TN = zeros(n,1);
-            for i=1:n
-                TN(i) = alist.get(3).get(i-1);
-            end
-            WN = zeros(n,1);
-            for i=1:n
-                WN(i) = alist.get(4).get(i-1);
-            end
-            AN = zeros(n,1);
-            %for i=1:n
-            %    AN(i) = alist.get(5).get(i-1);
-            %end
+            QN = JLINE.arraylist_to_matrix(alist.getQLen());
+            UN = JLINE.arraylist_to_matrix(alist.getUtil());
+            RN = JLINE.arraylist_to_matrix(alist.getRespT());
+            WN = JLINE.arraylist_to_matrix(alist.getResidT());
+            AN = JLINE.arraylist_to_matrix(alist.getArvR());
+            TN = JLINE.arraylist_to_matrix(alist.getTput());
         end
 
         function featSupported = getFeatureSet()
@@ -1432,6 +1425,13 @@ classdef JLINE
                                 end
                             case 'init_sol'
                                 solverOptions.(fn{f}) = JLINE.matrix_to_jlinematrix(options.init_sol);
+                            case 'cutoff'
+                                if length(options.cutoff) == 1
+                                    solverOptions.(fn{f}) = options.cutoff;
+                                else
+                                    line_error(mfilename,'Matrix cutoff assignments not yet supported in JLINE.');
+                                    %solverOptions.(fn{f}) = JLINE.matrix_to_jlinematrix(options.cutoff);
+                                end
                             case 'odesolvers'
                             otherwise
                                 solverOptions.(fn{f}) = options.(fn{f});
