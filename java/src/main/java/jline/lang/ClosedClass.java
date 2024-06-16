@@ -14,11 +14,11 @@ import java.io.Serializable;
  * Class where jobs perpetually loop without arriving or leaving (Closed class)
  */
 public class ClosedClass extends JobClass implements Serializable {
-    protected long population;
+    protected double population;
     protected Station refstat;
     protected int classIndex;
     protected Network model;
-    public ClosedClass(Network model, String name, long njobs, Station refstat, int priority) {
+    public ClosedClass(Network model, String name, double njobs, Station refstat, int priority) {
         super(JobClassType.Closed, name);
         this.index = model.getNumberOfClasses()+1;
         model.addJobClass(this);
@@ -36,7 +36,7 @@ public class ClosedClass extends JobClass implements Serializable {
         this.classIndex = -1;
         this.setPriority(priority);
     }
-    public ClosedClass(Network model, String name, long njobs, Station refstat) {
+    public ClosedClass(Network model, String name, double njobs, Station refstat) {
         this(model, name,njobs, refstat,0);
     }
 
@@ -47,14 +47,14 @@ public class ClosedClass extends JobClass implements Serializable {
 
     @Override
     public double getNumberOfJobs() {
-        return (double)population;
+        return population;
     }
 
     public Station getRefstat() {
         return this.refstat;
     }
 
-    public long getPopulation() {
+    public double getPopulation() {
         return this.population;
     }
 
@@ -66,7 +66,7 @@ public class ClosedClass extends JobClass implements Serializable {
         return this.classIndex;
     }
 
-    public void setPopulation(long pop){
+    public void setPopulation(double pop){
         this.population = pop;
     }
 }

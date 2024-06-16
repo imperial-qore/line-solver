@@ -2,10 +2,10 @@ package jline.examples;
 
 import jline.lang.constant.RoutingStrategy;
 import jline.lang.constant.SolverType;
+import jline.lang.constant.VerboseLevel;
 import jline.lang.nodes.*;
 import jline.lang.processes.Replayer;
-import jline.solvers.NetworkAvgTable;
-import jline.solvers.SolverOptions;
+import jline.solvers.*;
 import jline.solvers.ctmc.SolverCTMC;
 import jline.lang.nodes.Delay;
 import jline.lang.*;
@@ -25,6 +25,7 @@ import java.net.URISyntaxException;
 import java.nio.file.Paths;
 import de.xypron.jcobyla.Calcfc;
 import de.xypron.jcobyla.Cobyla;
+import jline.solvers.nc.SolverNC;
 
 
 import java.util.function.Function;
@@ -49,7 +50,7 @@ public class GettingStarted {
         // Block 3: topology
         model.link(model.serialRouting(source, queue, sink));
         // Block 4: solution
-        NetworkAvgTable avgTable = new SolverJMT(model, new JMTOptions().seed(23000)).getAvgTable();
+        NetworkAvgTable avgTable = new SolverJMT(model, "seed", 23000).getAvgTable();
         avgTable.print();
         //model.jsimgView();
         avgTable.tget(queue, jobclass).print();
@@ -78,13 +79,13 @@ public class GettingStarted {
         P.set(jobclass1, jobclass1, Network.serialRouting(source,queue,sink));
         P.set(jobclass2, jobclass2, Network.serialRouting(source,queue,sink));
         model.link(P);
-        NetworkAvgTable avgTable = new SolverJMT(model, new JMTOptions().seed(23000)).getAvgTable();
+        NetworkAvgTable avgTable = new SolverJMT(model, "seed", 23000).getAvgTable();
         avgTable.print();
     }
 
     public static void getting_started_3() {
         Network model = new Network("MRP");
-        Delay delay = new Delay(model, "Working State");
+        Delay delay = new Delay(model, "WorkingState");
         Queue queue = new Queue(model, "RepairQueue", SchedStrategy.FCFS);
         queue.setNumberOfServers(2);
         ClosedClass closedClass = new ClosedClass(model, "Machines", 3, delay);
@@ -120,11 +121,31 @@ public class GettingStarted {
                 {queue1, sink},
                 {queue2, sink}
         });
-        SolverOptions options = new JMTOptions().seed(23000);
-        new SolverJMT(model, options).getAvgTable().print();
+        new SolverJMT(model, "seed", 23000).getAvgTable().print();
         model.reset();
         lb.setRouting(jobclass, RoutingStrategy.RROBIN);
-        new SolverJMT(model, options).getAvgTable().print();
+        new SolverJMT(model, "seed", 23000).getAvgTable().print();
+    }
+
+    public static void getting_started_5() {
+        Network model = new Network("RL");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+        ClosedClass jobClass1 = new ClosedClass(model, "Class1", 1, queue);
+        ClosedClass jobClass2 = new ClosedClass(model, "Class2", 0, queue);
+        ClosedClass jobClass3 = new ClosedClass(model, "Class3", 0, queue);
+        queue.setService(jobClass1, Erlang.fitMeanAndOrder(1, 2));
+        queue.setService(jobClass2, Erlang.fitMeanAndOrder(2, 2));
+        queue.setService(jobClass3, Erlang.fitMeanAndOrder(3, 2));
+        RoutingMatrix P = model.initRoutingMatrix();
+        P.set(jobClass1, jobClass2, queue, queue, 1.0);
+        P.set(jobClass2, jobClass3, queue, queue, 1.0);
+        P.set(jobClass3, jobClass1, queue, queue, 1.0);
+        model.link(P);
+        new SolverNC(model).getAvgTable().print();
+        new SolverNC(model).getAvgSysTable().print();
+        jobClass1.setCompletes(false);
+        jobClass2.setCompletes(false);
+        new SolverNC(model).getAvgSysTable().print();
     }
 
 

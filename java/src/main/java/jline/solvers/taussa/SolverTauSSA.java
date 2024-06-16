@@ -110,7 +110,7 @@ public class SolverTauSSA extends NetworkSolver {
 
         this.random = new Random(this.options.seed);
         int samplesCollected = 1;
-        int maxSamples = options.samples;
+        long maxSamples = options.samples;
         double curTime = options.timespan[0];
         double maxTime = options.timespan[1];
 

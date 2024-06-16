@@ -567,7 +567,9 @@ public class Network extends Model implements Serializable {
         for (int ist = 0; ist < snTmp.nstations; ist++) {
             int isf = (int) snTmp.stationToStateful.get(0, ist);
             if (snTmp.state.get(snTmp.stations.get(ist)).getNumRows() > 1) {
-                System.err.format("isStateValid will ignore some states of station %d, define a unique initial state to address this problem.\n", ist);
+                if (snTmp.stateprior.get(snTmp.stations.get(ist)).elementMax() < 1 - GlobalConstants.FineTol) {
+                    System.err.format("isStateValid will ignore some states of station %d, define a unique initial state to address this problem.\n", ist);
+                }
                 Matrix initialState = new Matrix(1, snTmp.state.get(snTmp.stations.get(ist)).getNumCols());
                 Matrix.extractRows(snTmp.state.get(snTmp.stations.get(ist)), 0, 1, initialState);
                 snTmp.state.put(snTmp.stations.get(ist), initialState);
@@ -1332,6 +1334,21 @@ public class Network extends Model implements Serializable {
                 }
             }
         }
+    }
+
+    public void refreshJobs() {
+        refreshStruct(true);
+        Matrix njobs = getNumberOfJobs();
+        double njobsSum = 0;
+        for (int j = 0; j < njobs.length(); j++) {
+            List<Double> njobsList = njobs.toList1D();
+            if (!njobsList.get(j).isInfinite()) {
+                njobsSum += njobsList.get(j);
+            }
+        }
+        this.sn.nclosedjobs = njobsSum;
+        this.sn.njobs = njobs.transpose();
+
     }
 
     public boolean[] refreshRates(List<Integer> statSet, List<Integer> classSet) {
@@ -2594,7 +2611,7 @@ public class Network extends Model implements Serializable {
                         ServiceBinding serviceProcess = node.getServer().getServiceProcess(this.getClassByIndex(r));
                         if (serviceProcess != null) {
                             Distribution serviceDistrib = serviceProcess.getDistribution();
-                            param.fileName = new ArrayList<>(R);
+                            param.fileName = new ArrayList<String>(Collections.nCopies(R, null));
                             if (serviceDistrib instanceof Replayer) {
                                 param.fileName.set(r, ((Replayer) serviceDistrib).getFileName());
                             }
@@ -2607,7 +2624,7 @@ public class Network extends Model implements Serializable {
                         ServiceBinding serviceProcess = node.getServer().getServiceProcess(this.getClassByIndex(r));
                         if (serviceProcess != null) {
                             Distribution serviceDistrib = serviceProcess.getDistribution();
-                            param.fileName = new ArrayList<>(R);
+                            param.fileName = new ArrayList<String>(Collections.nCopies(R, null));
                             if (serviceDistrib instanceof Replayer) {
                                 param.fileName.set(r, ((Replayer) serviceDistrib).getFileName());
                             }
@@ -2619,6 +2636,7 @@ public class Network extends Model implements Serializable {
                     for (int r = 0; r < R; r++) {
                         ServiceBinding serviceProcess = node.getServer().getServiceProcess(this.getClassByIndex(r));
                         Distribution serviceDistrib = serviceProcess.getDistribution();
+                        param.fileName = new ArrayList<String>(Collections.nCopies(R, null));
                         if (serviceDistrib instanceof Replayer) {
                             param.fileName.set(r,((Replayer) serviceDistrib).getFileName());
                         }

@@ -10,7 +10,9 @@ import jline.lang.nodes.Source;
 import jline.lang.nodes.StatefulNode;
 import jline.lang.state.State;
 import jline.solvers.NetworkSolver;
+import jline.solvers.Solver;
 import jline.solvers.SolverOptions;
+import jline.solvers.jmt.SolverJMT;
 import jline.solvers.mam.SolverMAM;
 import jline.solvers.taussa.EventStack;
 import jline.solvers.taussa.events.*;
@@ -25,7 +27,6 @@ public class  SolverCTMC extends NetworkSolver {
     public Map<Node, Map<JobClass, Double>> cutoffMatrix;
     public Map<Node, Double> nodeCutoffMatrix;
     public EventStack eventStack;
-    public final SolverCTMCResult result;
 
     private Map<SSAStateMatrix,Integer> indexMap = null;
     private int stateN = 0;
@@ -40,6 +41,12 @@ public class  SolverCTMC extends NetworkSolver {
         this.sn = model.getStruct(false);
         this.result = new SolverCTMCResult();
     }
+
+    public SolverCTMC(Network model, Object... varargin) {
+        this(model, new SolverOptions(SolverType.CTMC));
+        this.options = Solver.parseOptions(this.options, varargin);
+    }
+
 
     public SolverCTMC(Network model, SolverOptions options) {
         super(model, "SolverCTMC", options);
@@ -113,18 +120,18 @@ public class  SolverCTMC extends NetworkSolver {
     }
 
     public ArrayList<SSAStateMatrix> getStateSpace() {
-        if(result.stateSpace == null) {
+        if((((SolverCTMCResult)result).stateSpace) == null) {
             solver_ctmc();
         }
 //        System.out.println("\nStateSpace =");
 //        for(SSAStateMatrix state : ctmcResult.stateSpace) {
 //            state.printStateVector();
 //        }
-        return result.stateSpace;
+        return (((SolverCTMCResult)result).stateSpace);
     }
 
     public Matrix getGenerator() {
-        if(result.infGen == null) {
+        if((((SolverCTMCResult)result).infGen) == null) {
             solver_ctmc();
         }
 //        System.out.println("\nInfGen =");
@@ -134,15 +141,15 @@ public class  SolverCTMC extends NetworkSolver {
 //            }
 //            System.out.println();
 //        }
-        return result.infGen;
+        return (((SolverCTMCResult)result).infGen);
     }
 
     public void getProbabilityVector() {
-        if(result.piVector == null) {
+        if((((SolverCTMCResult)result).piVector) == null) {
             solver_ctmc_analyzer();
         }
         System.out.println("\nProbability Vector =");
-        result.piVector.print();
+        (((SolverCTMCResult)result).piVector).print();
     }
 
 
@@ -195,13 +202,13 @@ public class  SolverCTMC extends NetworkSolver {
 
         // Compute probability vector
 
-        result.piVector = CTMC.ctmc_solve(result.infGen);
+        (((SolverCTMCResult)result).piVector) = CTMC.ctmc_solve((((SolverCTMCResult)result).infGen));
         this.stateN = this.initialNetworkState.state.length;
 
         int nClasses = model.getNumberOfClasses();
 
-        double[][] ssprobabilities = result.piVector.toArray2D();
-        double [][][] arrRates = new double[stateN][nClasses][result.stateSpace.size()];
+        double[][] ssprobabilities = (((SolverCTMCResult)result).piVector).toArray2D();
+        double [][][] arrRates = new double[stateN][nClasses][(((SolverCTMCResult)result).stateSpace).size()];
         Matrix UN = new Matrix(stateN, nClasses);
         Matrix QN = new Matrix(stateN, nClasses);
         Matrix TN = new Matrix(stateN, nClasses);
@@ -212,9 +219,9 @@ public class  SolverCTMC extends NetworkSolver {
 
 
         // q length
-        for (int i = 0; i< result.stateSpace.size(); i++){
+        for (int i = 0; i< (((SolverCTMCResult)result).stateSpace).size(); i++){
             if(ssprobabilities[0][i]>0){
-                SSAStateMatrix currState = result.stateSpace.get(i);
+                SSAStateMatrix currState = (((SolverCTMCResult)result).stateSpace).get(i);
                 int[][] state = currState.state;
                 for(int j = 0;j<state.length;j++){
                     for(int k=0;k<state[j].length;k++){
@@ -225,7 +232,7 @@ public class  SolverCTMC extends NetworkSolver {
         }
 
         // arrival rates, throughput
-        for(EventData eventData : result.eventSpace){
+        for(EventData eventData : (((SolverCTMCResult)result).eventSpace)){
             int eventIdx = eventData.getValue0().getNode().getNodeIdx();
             int event2Idx;
             int classIdx = eventData.getValue1().getLeft().getClassIdx();
@@ -236,7 +243,7 @@ public class  SolverCTMC extends NetworkSolver {
                 event2Idx = eventData.getValue1().getLeft().getNode().getNodeIdx();
                 SSAStateMatrix depState = eventData.getValue2();
                 double rate = eventData.getValue1().getRight();
-                double prob = result.piVector.get(indexMap.get(depState));
+                double prob = (((SolverCTMCResult)result).piVector).get(indexMap.get(depState));
                 if(!(eventData.getValue0() instanceof ErlangPhaseEvent)) {
                     rate *= eventData.getValue0().getRate(eventData.getValue2());
                 }
@@ -284,8 +291,8 @@ public class  SolverCTMC extends NetworkSolver {
                             for(int k = 0; k < nClasses; k++) {
                                 Distribution dist =  node.getServer().getServiceDistribution(this.model.getJobClassFromIndex(k));
                                 double arrEstimate = 0.0;
-                                for(int j = 0; j < result.stateSpace.size(); j++) {
-                                    arrEstimate += result.piVector.get(j) * arrRates[i][k][j];
+                                for(int j = 0; j < (((SolverCTMCResult)result).stateSpace).size(); j++) {
+                                    arrEstimate += (((SolverCTMCResult)result).piVector).get(j) * arrRates[i][k][j];
                                 }
                                 arrEstimate = arrEstimate * dist.getMean() / statefulNode.getNumberOfServers();
                                 double depEstimate = TN.get(i, k) * dist.getMean() / statefulNode.getNumberOfServers();
@@ -295,7 +302,7 @@ public class  SolverCTMC extends NetworkSolver {
                         else {
                             //TODO lld/cd cases not finished
                             double arrEstimate, depEstimate;
-                            for(int j = 0; j < result.stateSpace.size(); j++) {
+                            for(int j = 0; j < (((SolverCTMCResult)result).stateSpace).size(); j++) {
                                 State.StateMarginalStatistics stats = State.toMarginal(sn, i, sn.state.get(sn.stations.get(i)), null, null, null, null, null);
                                 Matrix ni = stats.ni;
                                 Matrix nir = stats.nir;
@@ -311,8 +318,8 @@ public class  SolverCTMC extends NetworkSolver {
                             for(int k = 0; k < nClasses; k++) {
                                 Distribution dist =  node.getServer().getServiceDistribution(this.model.getJobClassFromIndex(k));
                                 double arrEstimate = 0.0;
-                                for(int j = 0; j < result.stateSpace.size(); j++) {
-                                    arrEstimate += result.piVector.get(j) * arrRates[i][k][j];
+                                for(int j = 0; j < (((SolverCTMCResult)result).stateSpace).size(); j++) {
+                                    arrEstimate += (((SolverCTMCResult)result).piVector).get(j) * arrRates[i][k][j];
                                 }
                                 arrEstimate = arrEstimate * dist.getMean() / statefulNode.getNumberOfServers();
                                 double depEstimate = TN.get(i, k) * dist.getMean() / statefulNode.getNumberOfServers();
@@ -363,7 +370,7 @@ public class  SolverCTMC extends NetworkSolver {
         Set<SSAStateMatrix> stateSet = new HashSet<>();
         stateSet.add(initialNetworkState);
         this.eventStack.updateStateSpace(stateSpace,queue, stateSet);
-        result.stateSpace = stateSpace;
+        (((SolverCTMCResult)result).stateSpace) = stateSpace;
         // Compute event space
         eventSet.add(new EventData(null,null,this.initialNetworkState,null));
         eventSpace.add(new EventData(null,null,this.initialNetworkState,null));
@@ -372,7 +379,7 @@ public class  SolverCTMC extends NetworkSolver {
         this.eventStack.updateEventSpace(eventSpace,queue, eventSet);
 
         eventSpace.remove(0);
-        result.eventSpace = eventSpace;
+        (((SolverCTMCResult)result).eventSpace) = eventSpace;
         int size = stateSpace.size();
         Map<SSAStateMatrix,Integer> indexMap = new HashMap<>();
         for(int i = 0; i< stateSpace.size(); i++){
@@ -411,7 +418,7 @@ public class  SolverCTMC extends NetworkSolver {
             }
             infGen.set(i, i, - sum);
         }
-        result.infGen = infGen;
+        (((SolverCTMCResult)result).infGen) = infGen;
     }
     public static SolverOptions defaultOptions() {
         return new SolverOptions(SolverType.CTMC);

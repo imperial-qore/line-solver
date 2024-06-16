@@ -177,7 +177,7 @@ public abstract class NetworkSolver extends Solver {
             throw new RuntimeException(
                     "The getAvg method does not support the timespan option, use the getTranAvg method instead.");
         } else {
-            this.options.timespan[0] = 0;
+            this.options.timespan[0] = Double.POSITIVE_INFINITY;
             this.options.timespan[1] = Double.POSITIVE_INFINITY;
         }
 
@@ -947,7 +947,7 @@ public abstract class NetworkSolver extends Solver {
         java.util.List<String> chainNames = new ArrayList<>();
         java.util.List<String> inChainNames = new ArrayList<>();
         for (int c = 0; c < this.sn.nchains; c++) {
-            chainNames.add("Chain" + Integer.toString(c));
+            chainNames.add("Chain" + Integer.toString(c+1));
             Matrix inchain = sn.inchain.get(c);
             String chainMembers = new String("(");
             for (int i = 0; i < inchain.length(); i++) {

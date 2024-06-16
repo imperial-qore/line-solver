@@ -278,6 +278,8 @@ public class SolverNCTest {
 
   @Test
   public void SolverNCLDTestModel1() {
+    int N = 16;
+    int c = 2;
     Network model = new Network("example_closedModel");
 
     Delay node1 = new Delay(model, "Delay");
@@ -287,16 +289,13 @@ public class SolverNCTest {
 
     node1.setService(jobclass1, Exp.fitMean(1.000000));
     node2.setService(jobclass1, Exp.fitMean(1.500000));
-    node2.setNumberOfServers(2);
+    Matrix LD = new Matrix(1, N);
+    for (int i=0; i<N; i++) {
+      LD.set(i, Math.min(i + 1, c));
+    }
+    node2.setLoadDependence(LD);
 
-    RoutingMatrix routingMatrix = new RoutingMatrix(model,
-        Arrays.asList(jobclass1),
-        Arrays.asList(node1, node2));
-
-    routingMatrix.addConnection(jobclass1, jobclass1, node1, node2, 1); // (Delay,Class1) -> (Queue1,Class1)
-    routingMatrix.addConnection(jobclass1, jobclass1, node2, node1, 1.000000); // (Queue1,Class1) -> (Delay,Class1)
-
-    model.link(routingMatrix);
+    model.link(model.serialRouting(node1, node2));
 
     NetworkStruct sn = model.getStruct(true);
 
@@ -312,7 +311,6 @@ public class SolverNCTest {
     assertEquals(-2.350641375431591e+00, ret1.lG, 3.303193953352507e+00*tolerance*10000);
     assertEquals(-2.576432728076320e+00, ret2.lG, tolerance);
     assertEquals(-2.633413431541626e+00, ret3.lG, tolerance);
-
 
   }
 

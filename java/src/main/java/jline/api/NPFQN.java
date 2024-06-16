@@ -151,8 +151,8 @@ public class NPFQN {
                                 for (int j=0; j<nnzClasses.getNumElements(); j++) {
                                     if (nnzClasses.get(j) > 0) {
                                         STinnz.set(tempj, ST.get(i, j));
-                                        SCVinnz.set(tempj, ST.get(i, j));
-                                        T.set(tempj, ST.get(i, j));
+                                        SCVinnz.set(tempj, SCV.get(i, j));
+                                        T.set(tempj, T.get(i, j));
                                         tempj++;
                                     }
                                 }

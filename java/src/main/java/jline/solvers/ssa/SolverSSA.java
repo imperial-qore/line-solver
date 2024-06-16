@@ -12,6 +12,7 @@ import jline.examples.ClosedModel;
 import jline.lang.state.ThreadLocalRandom;
 import jline.lib.KPCToolbox;
 import jline.solvers.*;
+import jline.solvers.mam.SolverMAM;
 import jline.solvers.nc.SolverNC;
 import jline.solvers.nc.SolverNCResult;
 import jline.util.Maths;
@@ -41,6 +42,11 @@ public class SolverSSA extends NetworkSolver {
         // If no options provided, use default options
         this(model, new SolverOptions(SolverType.SSA));
         this.result = new SolverSSAResult();
+    }
+
+    public SolverSSA(Network model, Object... varargin) {
+        this(model, SolverMAM.defaultOptions());
+        this.options = Solver.parseOptions(this.options, varargin);
     }
 
     public SolverSSA(Network model, String method) {
@@ -201,7 +207,7 @@ public class SolverSSA extends NetworkSolver {
         Map<Integer, Matrix> arvRatesSamples = new HashMap<>();
         Map<Integer, Matrix> depRatesSamples = new HashMap<>();
         for (int r = 0; r < R; r++) {
-            Matrix m = new Matrix(options.samples, nstateful);
+            Matrix m = new Matrix((int) options.samples, nstateful);
             m.zero();
             arvRatesSamples.put(r, m);
             depRatesSamples.put(r, m.clone());

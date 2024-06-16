@@ -112,7 +112,7 @@ public class AMVALDHandler implements MVASolverHandler {
         Matrix XchainOuter_1 = Xchain.clone();
         Matrix UchainOuter_1 = Uchain.clone();
         Matrix STeff = null;
-        while ((outer_iter < 2 || Qchain.sub(1, QchainOuter_1).elementMaxAbs() > tol) && (outer_iter < options.iter_max)) {
+        while ((outer_iter < 2 || Qchain.sub(1, QchainOuter_1).elementMaxAbs() > tol) && (outer_iter <= options.iter_max)) {
             outer_iter++;
 
             QchainOuter_1 = Qchain.clone();
@@ -186,7 +186,7 @@ public class AMVALDHandler implements MVASolverHandler {
                                 ehprio_common.addAll(hprio_common);
                                 nnzclasses_ehprio.put(r, new ArrayList<Integer>(ehprio_common));
                             }
-                            while ((iter_s < 2 || Qchain_s.sub(1, Qchain_s_1).elementMaxAbs() > tol) && (iter_s < options.iter_max)) {
+                            while ((iter_s < 2 || Qchain_s.sub(1, Qchain_s_1).elementMaxAbs() > tol) && (iter_s <= options.iter_max)) {
                                 iter_s++;
 
                                 Qchain_s_1 = Qchain_s.clone();
@@ -305,7 +305,7 @@ public class AMVALDHandler implements MVASolverHandler {
                 ehprio_common.addAll(hprio_common);
                 nnzclasses_ehprio.put(r, new ArrayList<Integer>(ehprio_common));
             }
-            while ((inner_iter < 2 || Qchain_inner.sub(1, Qchain).elementMaxAbs() > tol) && (inner_iter < options.iter_max)) {
+            while ((inner_iter < 2 || Qchain_inner.sub(1, Qchain).elementMaxAbs() > tol) && (inner_iter <= options.iter_max)) {
                 inner_iter++;
 
                 Qchain_inner = Qchain.clone();

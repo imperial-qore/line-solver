@@ -35,7 +35,7 @@ public class NCRunner {
   public SolverResult run() {
     long T0 = System.currentTimeMillis();
     int iter = 0;
-    if (this.solver.enableChecks && !SolverMVA.supports(this.solver.model)) {
+    if (this.solver.enableChecks && !SolverNC.supports(this.solver.model)) {
       // TODO: not implemented
       throw new RuntimeException("This model contains features not supported by the solver.");
     }

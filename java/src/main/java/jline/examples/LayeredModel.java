@@ -137,22 +137,22 @@ public class LayeredModel {
         return model;
     }
     public static jline.lang.layered.LayeredNetwork test35() throws Exception {
-        LayeredNetwork model = new LayeredNetwork("myLayeredModel");
+            LayeredNetwork model = new LayeredNetwork("myLayeredModel");
 
-        Processor P1 = new Processor(model, "P1", Integer.MAX_VALUE, SchedStrategy.INF);
-        Processor P2 = new Processor(model, "P2", Integer.MAX_VALUE, SchedStrategy.INF);
+            Processor P1 = new Processor(model, "P1", Integer.MAX_VALUE, SchedStrategy.INF);
+            Processor P2 = new Processor(model, "P2", Integer.MAX_VALUE, SchedStrategy.INF);
 
-        Task T1 = new Task(model, "T1", 1, SchedStrategy.REF); T1.on(P1);
-        T1.setThinkTime(Erlang.fitMeanAndSCV(0.0001,0.5));
-        Task T2 = new Task(model, "T2", Integer.MAX_VALUE, SchedStrategy.INF); T2.on(P2);
-        T2.setThinkTime(new Immediate());
+            Task T1 = new Task(model, "T1", 1, SchedStrategy.REF); T1.on(P1);
+            T1.setThinkTime(Erlang.fitMeanAndSCV(0.0001,0.5));
+            Task T2 = new Task(model, "T2", Integer.MAX_VALUE, SchedStrategy.INF); T2.on(P2);
+            T2.setThinkTime(new Immediate());
 
-        Entry E1 = new Entry(model, "E1"); E1.on(T1);
-        Entry E2 = new Entry(model, "E2"); E2.on(T2);
+            Entry E1 = new Entry(model, "E1"); E1.on(T1);
+            Entry E2 = new Entry(model, "E2"); E2.on(T2);
 
-        Activity A1 = new Activity(model, "A1", new Exp(1)); A1.on(T1); A1.boundTo(E1); A1.synchCall(E2,3);
-        Activity A2 = new Activity(model, "A2", APH.fitMeanAndSCV(1,10)); A2.on(T2); A2.boundTo(E2); A2.repliesTo(E2);
-        return model;
+            Activity A1 = new Activity(model, "A1", new Exp(1)); A1.on(T1); A1.boundTo(E1); A1.synchCall(E2,3);
+            Activity A2 = new Activity(model, "A2", APH.fitMeanAndSCV(1,10)); A2.on(T2); A2.boundTo(E2); A2.repliesTo(E2);
+            return model;
     }
     public static jline.lang.layered.LayeredNetwork test3() throws Exception {
 
@@ -326,7 +326,7 @@ public class LayeredModel {
 //        B2.on(T2);
 //        B2.repliesTo(E2);
 
-        T1.addPrecedence(ActivityPrecedence.Loop("A1", Arrays.asList("A2", "A3"), new Matrix(1)));
+        T1.addPrecedence(ActivityPrecedence.Loop("A1", Arrays.asList("A2", "A3"), new Matrix(2)));
 //        T1.addPrecedence(ActivityPrecedence.Sequence("B1", "B2"));
 
         return model;
@@ -667,7 +667,7 @@ public class LayeredModel {
     }
 
     public static void main(String[] args) throws Exception{
-        jline.lang.layered.LayeredNetwork model = test35();
+        jline.lang.layered.LayeredNetwork model = testLoop();
         SolverOptions solverOptions= new SolverOptions(SolverType.LN);
         SolverLN solver = new SolverLN(model, solverOptions);
 
@@ -692,21 +692,3 @@ public class LayeredModel {
         System.out.println(1);
     }
 }
-
-//        jline.lang.layered.LayeredNetwork model = example_layeredModel_2();
-//
-//        SolverOptions solverOptions= new SolverOptions(SolverType.LN);
-//        SolverLN solverLN = new SolverLN(model, solverOptions);
-//        SolverOptions solverLQNSOptions = new SolverOptions(SolverType.LQNS);
-//        solverLQNSOptions.verbose = VerboseLevel.DEBUG;
-//        SolverLQNS solver = new SolverLQNS(model, solverLQNSOptions);
-//
-//        // Use this Line to test the solverLN result
-//        System.out.println("LN solver result: ");
-//        solverLN.getEnsembleAvg();
-//        // Use this Line to test the solverLQNS result
-//        System.out.println("LQNS solver result: ");
-//        LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getAvgTable();
-//        avg.print();
-
-

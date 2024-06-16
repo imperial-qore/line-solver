@@ -37,13 +37,20 @@ public class SolverNC extends NetworkSolver {
   }
 
   public SolverNC(Network model) {
-    super(model, "SolverNC");
+    super(model, "SolverNC", new NCOptions());
     this.sn = model.getStruct(false);
     this.result = new SolverNCResult();
   }
 
   public SolverNC(Network model, String method) {
-    super(model, "SolverNC", SolverNC.defaultOptions().method(method));
+    super(model, "SolverNC", new NCOptions().method(method));
+    this.sn = model.getStruct(false);
+    this.result = new SolverNCResult();
+  }
+
+  public SolverNC(Network model, Object... varargin) {
+    super(model, "SolverNC", new NCOptions());
+    this.options = SolverNC.parseOptions(this.options, varargin);
     this.sn = model.getStruct(false);
     this.result = new SolverNCResult();
   }
@@ -66,17 +73,19 @@ public class SolverNC extends NetworkSolver {
   public void runAnalyzer() throws IllegalAccessException {
     if (this.model == null)
       throw new RuntimeException("Model is not provided");
+
     if (this.sn == null)
       this.sn = this.model.getStruct(false);
+
     if (this.options == null)
-      this.options = new SolverOptions(SolverType.NC);
+      this.options = new NCOptions();
 
     NCRunner runner = new NCRunner(this);
     this.result = runner.run();
 
     int M = sn.nstations;
     int R = sn.nclasses;
-    if(result.TN.length()>0){
+    if(!result.TN.isEmpty()){
       result.AN = new Matrix(M,R,M*R);
       for(int i=0;i<M;i++){
         for(int j=0;j<M;j++){
@@ -706,7 +715,7 @@ public class SolverNC extends NetworkSolver {
       X = ret1.X;
       STeff = ST.clone();
       //TODO: Depend on npfqn_nonexp_approx
-      NPFQN.npfqnNonexpApproxReturn NPFQNret = NPFQN.npfqn_nonexp_approx(options.config.highvar == null ? "default": options.config.highvar,sn,ST0,V,SCV,T,U,gamma,nservers);
+      NPFQN.npfqnNonexpApproxReturn NPFQNret = NPFQN.npfqn_nonexp_approx(options.config.highvar == null ? "interp": options.config.highvar,sn,ST0,V,SCV,T,U,gamma,nservers);
       ST = NPFQNret.ST;
       gamma = NPFQNret.gamma;
       eta = NPFQNret.eta;
@@ -1073,11 +1082,11 @@ public class SolverNC extends NetworkSolver {
     FeatureSet s = new FeatureSet();
     // TODO: update with the features supported by JLINE. These are the features supported by LINE.
     String[] features = {"Sink", "Source",
-        "ClassSwitch", "DelayStation", "Queue",
+        "ClassSwitch", "Delay", "Queue",
         "APH", "Coxian", "Erlang", "Det", "Exp", "HyperExp",
         "StatelessClassSwitcher", "InfiniteServer",
         "SharedServer", "Buffer", "Dispatcher",
-        "Server", "JobSink", "RandomSource", "ServiceTunnel",
+        "Server", "Sink", "RandomSource", "ServiceTunnel",
         "SchedStrategy_INF", "SchedStrategy_PS", "SchedStrategy_SIRO",
         "RoutingStrategy_PROB", "RoutingStrategy_RAND",
         "SchedStrategy_FCFS", "ClosedClass", "ClosedClass",

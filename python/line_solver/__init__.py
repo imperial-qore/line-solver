@@ -33,9 +33,10 @@ def jlineStart():
         package_dir = os.path.dirname(os.path.realpath(__file__))
         jar_file_path = os.path.join(package_dir, f"jline.jar")
         if not os.path.isfile(jar_file_path):
-            print("Downloading LINE jar, please wait - this may take several minutes.")
+            print("Downloading LINE solver JAR, please wait... ", end='')
             urlretrieve("https://github.com/imperial-qore/line-solver/raw/main/python/line_solver/jline.jar",
                         jar_file_path)
+            print("done.")
         jpype.startJVM()
         #jpype.startJVM("-Xint", "-Xdebug", "-Xnoagent","-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005")
         jpype.addClassPath('jline.jar')

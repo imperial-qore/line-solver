@@ -10,6 +10,7 @@ import jline.lang.constant.*;
 import jline.lang.distributions.APH;
 import jline.lang.nodes.Station;
 import jline.solvers.NetworkSolver;
+import jline.solvers.Solver;
 import jline.solvers.SolverOptions;
 import jline.solvers.SolverResult;
 import jline.solvers.fluid.SolverFluid;
@@ -35,6 +36,12 @@ public class SolverMAM extends NetworkSolver {
     public SolverMAM(Network model, String method){
         super(model, "SolverMAM", SolverMAM.defaultOptions().method(method));
     }
+
+    public SolverMAM(Network model, Object... varargin) {
+        this(model, SolverMAM.defaultOptions());
+        this.options = Solver.parseOptions(this.options, varargin);
+    }
+
 
     public SolverMAM(Network model, SolverOptions options){
         super(model,"SolverMAM",options);

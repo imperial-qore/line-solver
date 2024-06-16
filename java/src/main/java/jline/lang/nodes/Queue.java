@@ -166,7 +166,7 @@ public class Queue extends Station implements HasSchedStrategy, Serializable {
         System.out.format("--Name: %s\n", this.getName());
         System.out.format("--Service Processes:\n");
         for (JobClass jobClass : this.model.getClasses()) {
-            System.out.format("----%s: %s\n", jobClass.getName(), this.getServiceProcess(jobClass).toString());
+            System.out.format("----%s: %s (Mean: %g, SCV: %g)\n", jobClass.getName(), this.getServiceProcess(jobClass).toString(), this.getServiceProcess(jobClass).getMean(), this.getServiceProcess(jobClass).getSCV());
         }
         System.out.format("--Number of Servers: %d\n", this.getNumberOfServers());
         this.output.printSummary();

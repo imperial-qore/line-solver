@@ -538,6 +538,36 @@ public class Matrix implements Serializable {
 		}
 	}
 
+	public Matrix findNumber(double number) {
+		List<Integer> array = new ArrayList<Integer>();
+		for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {
+			for(int rowIdx = 0; rowIdx < this.data.numRows; rowIdx++) {
+				if (this.get(rowIdx, colIdx) == number)
+					array.add(colIdx * this.data.numRows + rowIdx);
+			}
+		}
+
+		Matrix res = new Matrix(array.size(), 1, array.size());
+		for(int i = 0; i < array.size(); i++)
+			res.set(i, 0, array.get(i));
+		return res;
+	}
+
+	public Matrix findZero() {
+		List<Integer> array = new ArrayList<Integer>();
+		for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {
+			for(int rowIdx = 0; rowIdx < this.data.numRows; rowIdx++) {
+				if (this.get(rowIdx, colIdx) == 0)
+					array.add(colIdx * this.data.numRows + rowIdx);
+			}
+		}
+
+		Matrix res = new Matrix(array.size(), 1, array.size());
+		for(int i = 0; i < array.size(); i++)
+			res.set(i, 0, array.get(i));
+		return res;
+	}
+
 	public Matrix findNonNegative() {
 		List<Integer> array = new ArrayList<Integer>();
 		for(int colIdx = 0; colIdx < this.data.numCols; colIdx++) {

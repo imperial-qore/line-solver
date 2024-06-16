@@ -2,10 +2,11 @@ from setuptools import setup, find_packages
 
 setup(
     name='line_solver',
-    version='2.0.31.11',
+    version='2.0.34',
     author='Giuliano Casale',
     author_email='g.casale@imperial.ac.uk',
     description='Queueing theory algorithms in Python',
+    long_description='LINE is an open-source software package to analyze queueing models via analytical methods or simulation. Homepage: https://line-solver.sf.net/',
     packages=find_packages(),
     classifiers=[
         'Programming Language :: Python :: 3',

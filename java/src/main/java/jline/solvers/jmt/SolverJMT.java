@@ -2,8 +2,6 @@ package jline.solvers.jmt;
 
 import jline.api.SN;
 import jline.io.SysUtils;
-import jline.solvers.mam.SolverMAM;
-import jline.solvers.mva.SolverMVAResult;
 import jline.util.Maths;
 import jline.lang.*;
 import jline.lang.constant.*;
@@ -42,8 +40,8 @@ public class SolverJMT extends NetworkSolver {
     private String filePath;
     private String fileName;
     private double maxSimulatedTime;
-    private int maxSamples;
-    private int maxEvents;
+    private long maxSamples;
+    private long maxEvents;
     private long seed;
     private double simConfInt;
     private double simMaxRelErr;
@@ -64,6 +62,7 @@ public class SolverJMT extends NetworkSolver {
         this.simMaxRelErr = 0.03;
         this.maxEvents = -1;
         this.jmtPath = jmtGetPath();
+        this.result = new SolverJMTResult();
     }
 
     public SolverJMT(Network model, SolverOptions options, String jmtPath) {
@@ -72,10 +71,17 @@ public class SolverJMT extends NetworkSolver {
         this.simMaxRelErr = 0.03;
         this.maxEvents = -1;
         this.jmtPath = jmtGetPath(jmtPath);
+        this.result = new SolverJMTResult();
     }
 
     public SolverJMT(Network model, String jmtPath) {
         this(model, SolverJMT.defaultOptions(), jmtPath);
+    }
+
+    public SolverJMT(Network model, Object... varargin) {
+        this(model, SolverJMT.defaultOptions());
+        this.options = SolverJMT.parseOptions(this.options, varargin);
+        this.result = new SolverJMTResult();
     }
 
     public NetworkStruct getStruct() {
@@ -3180,7 +3186,7 @@ public class SolverJMT extends NetworkSolver {
         throw new RuntimeException("getTranProbAggr() has not yet been implemented in JLINE.");
     }
 
-    public NetworkStruct sampleSysAggr(int numEvents, boolean markActivePassive) {
+    public NetworkStruct sampleSysAggr(long numEvents, boolean markActivePassive) {
         if (GlobalConstants.DummyMode) {
             return null;
         }
@@ -3194,13 +3200,13 @@ public class SolverJMT extends NetworkSolver {
 //        modelCopy.resetNetwork();
     }
 
-    public NetworkStruct sampleSysAggr(int numEvents) {
+    public NetworkStruct sampleSysAggr(long numEvents) {
         boolean markActivePassive = false;
         return sampleSysAggr(numEvents, markActivePassive);
     }
 
     public NetworkStruct sampleSysAggr() {
-        int numEvents = this.options.samples;
+        long numEvents = this.options.samples;
         return sampleSysAggr(numEvents);
     }
 
@@ -3562,19 +3568,19 @@ public class SolverJMT extends NetworkSolver {
         this.maxSimulatedTime = maxSimulatedTime;
     }
 
-    public int getMaxSamples() {
+    public long getMaxSamples() {
         return maxSamples;
     }
 
-    public void setMaxSamples(int maxSamples) {
+    public void setMaxSamples(long maxSamples) {
         this.maxSamples = maxSamples;
     }
 
-    public int getMaxEvents() {
+    public long getMaxEvents() {
         return maxEvents;
     }
 
-    public void setMaxEvents(int maxEvents) {
+    public void setMaxEvents(long maxEvents) {
         this.maxEvents = maxEvents;
     }
 

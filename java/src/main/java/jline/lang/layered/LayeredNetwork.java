@@ -732,9 +732,66 @@ public class LayeredNetwork extends Ensemble {
         }
 
         // TODO:
-        // lqn.refset = zeros(lqn.nidx,1);
+        int newRow = lqn.taskgraph.getNumCols() - lqn.nhosts - 1;
+        int newCol = lqn.taskgraph.getNumRows() - lqn.nhosts - 1;
+        Matrix taskgraphSection = new Matrix(newRow, newCol);
+        for (int r = 0; r < newRow; r++) {
+            for (int c = 0; c < newCol; c++) {
+                taskgraphSection.set(r, c,lqn.taskgraph.get(lqn.nhosts + r + 1, lqn.nhosts + c + 1));
+            }
+        }
+        Matrix labels = new Matrix(1, newCol);
+        labels.zero();
+        int ccc = 0;
+        List<Double> roots = new ArrayList<>();
+        List<Double> vectorList = new ArrayList<>();
+        List<Double> vectorListNew;
+        // graph_connected_components
+        while(!labels.findZero().isEmpty()) {
+            Matrix ccZero = labels.findZero();
+            double fue = ccZero.get(0, 0); // first unexplored vertex
+            roots.add(fue + 1);
+            vectorList.add(fue);
+            ccc++;
+            labels.set(0, (int) fue, ccc);
+            while (!vectorList.isEmpty()) {
+                vectorListNew = new ArrayList<>();
+                for (int lc = 0; lc < vectorList.size(); lc++) {
+                    int point = vectorList.get(lc).intValue();
+                    Matrix connectedPoint = Matrix.extractRows(taskgraphSection, point, point + 1,null);
+                    connectedPoint = connectedPoint.find();
+                    List<Double> labelConnectedPoints = new ArrayList<>();
+                    for (Double cp: connectedPoint.toList1D()) {
+                        labelConnectedPoints.add(labels.get(0, cp.intValue()));
+                    }
+                    List<Double> intermediate = new ArrayList<>();
+                    for (int lcpIdx = 0; lcpIdx < labelConnectedPoints.size(); lcpIdx++) {
+                        if (labelConnectedPoints.get(lcpIdx) == 0) {
+                            intermediate.add((double) lcpIdx);
+                        }
+                    }
+                    List<Double> cp1 = new ArrayList<>();
+                    for (Double icp : intermediate) {
+                        cp1.add(connectedPoint.get(0, icp.intValue()));
+                    }
+                    for (Double cp1value: cp1) {
+                        labels.set(0, cp1value.intValue(), ccc);
+                    }
+                    vectorListNew.addAll(cp1);
+                }
+                vectorList = new ArrayList<>(vectorListNew);
+            }
+
+        }
         //  [conncomps, roots]=graph_connected_components(lqn.taskgraph(lqn.nhosts+1:end, lqn.nhosts+1:end));
-        // lqn.conntasks = conncomps;
+        lqn.conntasks = labels;
+        for (int r = 1; r < roots.size() + 1; r++) {
+            for (int ctidx = 0; ctidx < labels.length(); ctidx++) {
+                if (labels.get(0, ctidx) == r) {
+                    lqn.conntasks.set(0, ctidx, lqn.tshift + roots.get(r - 1));
+                }
+            }
+        }
         // for r=1:length(roots)
         // lqn.conntasks(find(lqn.conntasks == r)) = lqn.tshift+roots(r);
         // end

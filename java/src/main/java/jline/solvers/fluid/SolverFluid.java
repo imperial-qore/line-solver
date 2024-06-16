@@ -5,6 +5,7 @@ package jline.solvers.fluid;
 
 import jline.lang.constant.*;
 import jline.lang.state.State;
+import jline.solvers.Solver;
 import jline.util.PopulationLattice;
 import jline.util.Matrix;
 import jline.lang.JobClass;
@@ -35,6 +36,11 @@ public class SolverFluid extends NetworkSolver {
   public SolverFluid(Network model) {
     this(model, SolverFluid.defaultOptions());
     this.result = new SolverFluidResult();
+  }
+  public SolverFluid(Network model, Object... varargin) {
+    this(model, SolverFluid.defaultOptions());
+    this.result = new SolverFluidResult();
+    this.options = Solver.parseOptions(this.options, varargin);
   }
 
   public SolverFluid(Network model, String method) {

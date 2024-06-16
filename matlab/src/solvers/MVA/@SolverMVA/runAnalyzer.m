@@ -11,7 +11,7 @@ self.runAnalyzerChecks(options);
 Solver.resetRandomGeneratorSeed(options.seed);
 
 iter = 0;
-%options.lang = 'java';
+options.lang = 'java';
 
 switch options.lang
     case 'java'

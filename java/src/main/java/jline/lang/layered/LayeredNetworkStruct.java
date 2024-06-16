@@ -67,6 +67,8 @@ public class LayeredNetworkStruct {
 
     public Matrix isref;
 
+    public Matrix conntasks; // 1 * n matrix
+
     public LayeredNetworkStruct () {
 
     }

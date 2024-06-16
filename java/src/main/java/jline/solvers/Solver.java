@@ -6,10 +6,13 @@ package jline.solvers;
 import jline.lang.Model;
 import jline.lang.Network;
 import jline.lang.constant.SolverType;
+import jline.lang.constant.VerboseLevel;
 import jline.util.Matrix;
 
 import javax.xml.parsers.ParserConfigurationException;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Random;
 
 // Abstract class for model solution algorithms and tools
@@ -88,9 +91,47 @@ public abstract class Solver {
   }
 
   // Parse option parameters into options data structure
-  protected static SolverOptions parseOptions() {
-    // TODO: implementation - note arguments should likely not be void
-    throw new RuntimeException("parseOptions() has not yet been implemented in JLINE.");
+  protected static SolverOptions parseOptions(Object... varargin) throws IllegalArgumentException {
+    SolverOptions options = new SolverOptions();
+    return parseOptions(options, varargin);
+  }
+  protected static SolverOptions parseOptions(SolverOptions options, Object... varargin) throws IllegalArgumentException {
+    // TODO: highly simplified implementation, redo
+    for (int i = 0; i < varargin.length; i += 2) {
+      String key = (String) varargin[i];
+      Object value = varargin[i + 1];
+      switch (key) {
+        case "exact":
+          options.method((String) "exact");
+          i = i-1;
+          break;
+        case "method":
+          options.method((String) value);
+          break;
+        case "seed":
+          if (value instanceof Integer) {
+            options.seed(((Integer) value).intValue());
+          } else if (value instanceof String) {
+            options.seed(Integer.parseInt((String) value));
+          } else {
+            System.err.println("Error: unrecognized argument type to seed option.");
+          }
+          break;
+        case "samples":
+          if (value instanceof Integer) {
+            options.samples(((Integer) value).intValue());
+          } else if (value instanceof String) {
+            options.samples(Integer.parseInt((String) value));
+          } else {
+            System.err.println("Error: unrecognized argument type to samples option.");
+          }
+          break;
+        case "verbose":
+          options.verbose = (VerboseLevel) value;
+          break;
+      }
+    }
+    return options;
   }
 
   // Returns a solver configured to run the chosen method

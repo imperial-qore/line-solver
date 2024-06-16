@@ -14,6 +14,7 @@ import org.apache.commons.math3.ode.nonstiff.*;
 import java.util.ArrayList;
 import java.util.List;
 
+import static java.lang.Double.NEGATIVE_INFINITY;
 import static java.lang.Double.POSITIVE_INFINITY;
 
 import odesolver.LSODA;
@@ -60,7 +61,7 @@ public class SolverOptions {
   public String remote_endpoint;
   public ODESolvers odesolvers;
   public int samples;
-  public long seed;
+  public int seed;
   public boolean stiff;
   public double[] timespan;
   public VerboseLevel verbose;
@@ -146,6 +147,8 @@ public class SolverOptions {
       case NC:
         this.samples = 100000;
         this.config.highvar = "interp";
+        this.timespan[0] = NEGATIVE_INFINITY;
+        this.timespan[1] = POSITIVE_INFINITY;
         break;
       case SSA:
         this.timespan[0] = 0;
@@ -181,8 +184,8 @@ public class SolverOptions {
             new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 12, 5);
   }
 
-  public SolverOptions keep(boolean s) {
-    this.keep = s;
+  public SolverOptions cutoff(int s) {
+    this.cutoff = s;
     return this;
   }
 
@@ -191,8 +194,32 @@ public class SolverOptions {
     return this;
   }
 
-  public SolverOptions seed(long s) {
+  public SolverOptions keep(boolean s) {
+    this.keep = s;
+    return this;
+  }
+
+  public SolverOptions seed(int s) {
     this.seed = s;
+    return this;
+  }
+
+  public SolverOptions samples(int s) {
+    this.samples = s;
+    return this;
+  }
+
+  public SolverOptions verbose(VerboseLevel s) {
+    this.verbose = s;
+    return this;
+  }
+
+  public SolverOptions verbose(boolean s) {
+    if (s) {
+      this.verbose = VerboseLevel.STD;
+    } else {
+      this.verbose = VerboseLevel.SILENT;
+    }
     return this;
   }
 }

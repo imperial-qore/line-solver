@@ -14,8 +14,7 @@ import org.apache.commons.math3.analysis.interpolation.SplineInterpolator;
 import org.apache.commons.math3.distribution.MultivariateNormalDistribution;
 import org.apache.commons.math3.util.CombinatoricsUtils;
 
-import java.io.File;
-import java.io.FileNotFoundException;
+import java.io.*;
 import java.net.URISyntaxException;
 import java.util.*;
 
@@ -1417,29 +1416,24 @@ public class PFQN {
 		List<Double> gausslegendreWeights = new ArrayList<>();
 
 		if (gausslegendreNodes.isEmpty()) {
-			Scanner scan;
-			File nodeFile;
-			File weightFile;
 			try {
-				nodeFile = new File(PFQN.class.getResource("/gausslegendre-nodes.txt").toURI());
-				weightFile = new File(PFQN.class.getResource("/gausslegendre-weights.txt").toURI());
-				try {
-					scan = new Scanner(nodeFile);
-					while (scan.hasNextDouble()) {
-						gausslegendreNodes.add(scan.nextDouble());
-					}
-
-					scan = new Scanner(weightFile);
-					while (scan.hasNextDouble()) {
-						gausslegendreWeights.add(scan.nextDouble());
-					}
-				} catch (FileNotFoundException e1) {
-					e1.printStackTrace();
+				InputStream nodeStream = PFQN.class.getResourceAsStream("/gausslegendre-nodes.txt");
+				BufferedReader nodeReader = new BufferedReader(new InputStreamReader(nodeStream));
+				String line;
+				while ((line = nodeReader.readLine()) != null) {
+					gausslegendreNodes.add(Double.parseDouble(line));
 				}
-			} catch (URISyntaxException e2) {
-				e2.printStackTrace();
-			}
 
+				InputStream weightStream = PFQN.class.getResourceAsStream("/gausslegendre-weights.txt");
+				BufferedReader weightReader = new BufferedReader(new InputStreamReader(weightStream));
+				while ((line = weightReader.readLine()) != null) {
+					gausslegendreWeights.add(Double.parseDouble(line));
+				}
+			} catch (FileNotFoundException e1) {
+				e1.printStackTrace();
+			} catch (IOException e) {
+				throw new RuntimeException(e);
+			}
 		}
 
 		int n = (int) Math.max(300, Math.min(gausslegendreNodes.size(),
@@ -1813,7 +1807,7 @@ public class PFQN {
 	 * @param I - number of samples
 	 * @return normalizing constant and its logarithm
 	 */
-	public static pfqnNcReturn pfqn_ls(Matrix L, Matrix N, Matrix Z, int I) {
+	public static pfqnNcReturn pfqn_ls(Matrix L, Matrix N, Matrix Z, long I) {
 		return pfqn_ls(L,N,Z,I,23000);
 	}
 
@@ -1826,7 +1820,7 @@ public class PFQN {
 	 * @param seed - random number generation seed
 	 * @return normalizing constant and its logarithm
 	 */
-	public static pfqnNcReturn pfqn_ls(Matrix L, Matrix N, Matrix Z, int I, long seed) {
+	public static pfqnNcReturn pfqn_ls(Matrix L, Matrix N, Matrix Z, long I, long seed) {
 		int M = L.getNumRows();
 		int R = L.getNumCols();
 		Matrix Lsum = new Matrix(M, 1);
@@ -1886,11 +1880,11 @@ public class PFQN {
 			mvd.reseedRandomGenerator(seed);
 
 			if (sample == null) {
-				sample = mvd.sample(I);
+				sample = mvd.sample((int)I);
 			}
 
-			Matrix T = new Matrix(I, 1);
-			Matrix dpdf = new Matrix(1, I);
+			Matrix T = new Matrix((int)I, 1);
+			Matrix dpdf = new Matrix(1, (int) I);
 			for (int i = 0; i < I; i++) {
 				double[] sample_i = sample[i];
 				T.set(i, simplex_fun(sample_i, L_new, N));
@@ -1938,15 +1932,15 @@ public class PFQN {
 			MultivariateNormalDistribution mvd = new MultivariateNormalDistribution(x0_array, iA_array);
 
 			if (sample == null) {
-				sample = mvd.sample(I);
+				sample = mvd.sample((int) I);
 			}
 
-			Matrix T = new Matrix(I, 1);
+			Matrix T = new Matrix((int) I, 1);
 			double epsilon = 1e-10;
 			double eN = epsilon * N.elementSum();
 			double eta = N.elementSum() + M*(1+eN);
 			int K = M;
-			Matrix dpdf = new Matrix(1, I);
+			Matrix dpdf = new Matrix(1, (int) I);
 
 			for (int i = 0; i < I; i++) {
 				double[] sample_i = sample[i];

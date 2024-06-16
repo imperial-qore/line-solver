@@ -82,6 +82,14 @@ public class NetworkAvgArvRTable extends AvgTable {
         }
     }
 
+    public NetworkAvgArvRTable get(Station station, JobClass jobclass) {
+        return this.tget(station, jobclass);
+    }
+
+    public NetworkAvgArvRTable get(String stationname, String classname) {
+        return this.tget(stationname, classname);
+    }
+
     public NetworkAvgArvRTable tget(Station station, JobClass jobclass) {
         return this.tget((String)station.getName(), (String)jobclass.getName());
     }

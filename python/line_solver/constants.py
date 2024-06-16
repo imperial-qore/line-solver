@@ -220,8 +220,8 @@ class SolverType(Enum):
     def __repr__(self):
         return str(self.value)
     CTMC = jpype.JPackage('jline').lang.constant.SolverType.CTMC
-    Env = jpype.JPackage('jline').lang.constant.SolverType.Env
-    Fluid = jpype.JPackage('jline').lang.constant.SolverType.Fluid
+    ENV = jpype.JPackage('jline').lang.constant.SolverType.ENV
+    FLUID = jpype.JPackage('jline').lang.constant.SolverType.FLUID
     JMT = jpype.JPackage('jline').lang.constant.SolverType.JMT
     LN = jpype.JPackage('jline').lang.constant.SolverType.LN
     LQNS = jpype.JPackage('jline').lang.constant.SolverType.LQNS

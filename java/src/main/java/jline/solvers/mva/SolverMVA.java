@@ -5,6 +5,7 @@ import jline.lang.Network;
 import jline.lang.NetworkStruct;
 import jline.lang.constant.SolverType;
 import jline.solvers.NetworkSolver;
+import jline.solvers.Solver;
 import jline.solvers.SolverOptions;
 import jline.solvers.mam.SolverMAM;
 
@@ -20,6 +21,11 @@ public class SolverMVA extends NetworkSolver {
 		super(model, "SolverMVA", options);
 		this.sn = model.getStruct(false);
 		this.result = new SolverMVAResult();
+	}
+
+	public SolverMVA(Network model, Object... varargin) {
+		this(model, SolverMVA.defaultOptions());
+		this.options = Solver.parseOptions(this.options, varargin);
 	}
 
 	public SolverMVA(Network model) {

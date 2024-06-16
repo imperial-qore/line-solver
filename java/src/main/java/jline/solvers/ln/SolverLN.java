@@ -19,6 +19,7 @@ import jline.lang.nodes.Queue;
 import jline.solvers.*;
 import jline.solvers.mva.SolverMVA;
 import jline.util.Matrix;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.NotImplementedException;
 
 import java.util.*;
@@ -266,7 +267,7 @@ public class SolverLN extends EnsembleSolver {
             for (int e = 0; e < E; e++) {
                 Matrix metric = results.get(results.size()).get(e).QN;
                 Matrix metric_1 = results.get(results.size() - 1).get(e).QN;
-                int N = (int) this.ensemble[e].getNumberOfJobs().elementSum();
+                double N = this.ensemble[e].getNumberOfJobs().elementSum();
                 if (N > 0) {
                     double IterErr;
                     try {
@@ -423,6 +424,12 @@ public class SolverLN extends EnsembleSolver {
             }
             ensemble[e - 1].refreshRates(null, null);
             solvers[e - 1].resetResults();
+        }
+
+        if (this.options.config.interlocking) {
+            for (int e = 0; e < this.nlayers; e++) {
+                ensemble[e].refreshJobs();
+            }
         }
 
         if (it == 1) {
@@ -983,7 +990,7 @@ public class SolverLN extends EnsembleSolver {
                     curnjobs = njobs.get(tidx_caller, receiver_index);
                 }
                 String caller_name = lqn.hashnames.get(tidx_caller);
-                aidxclass.put(tidx_caller, new ClosedClass(model, caller_name, (long) curnjobs, clientDelay));
+                aidxclass.put(tidx_caller, new ClosedClass(model, caller_name, curnjobs, clientDelay));
                 aidxclass.get(tidx_caller).setReferenceClass(true);
                 aidxclass.get(tidx_caller).setAttribute(new Integer[]{LayeredNetworkElement.TASK, tidx_caller});
                 aidxclass.get(tidx_caller).setCompletes(false);
@@ -1483,7 +1490,7 @@ public class SolverLN extends EnsembleSolver {
                 // aidx here is actually set to tidx in buildLayersRecursive
                 if (tmp_class.getJobClassType() == JobClassType.Closed) {
                     ClosedClass tmp_class_c = (ClosedClass) tmp_class;
-                    tmp_class_c.setPopulation((long) this.njobs.get((int) aidx, (int) idx));
+                    tmp_class_c.setPopulation(this.njobs.get((int) aidx, (int) idx));
                 }
             }
             Queue node = (Queue) this.ensemble[idxhash.get((int) idx).intValue() - 1].getNodeByStatefulIndex((int) nodeidx - 1);
@@ -1564,59 +1571,69 @@ public class SolverLN extends EnsembleSolver {
             }
         }
 
-        for (int step = 1; step <= this.nlayers; step++) {
-            for (int h = 1; h <= lqn.nhosts; h++) {
+        for (int h = 1; h <= lqn.nhosts; h++) {
+            for (int step = 1; step <= this.nlayers; step++) {
                 int hidx = h;
-                ilscaling.set(hidx, 1.0);
+                ilscaling.set(hidx - 1, 1.0);
                 if (lqn.isref.get(hidx) == 0) {
                     //the following are remote (indirect) callers that certain to be callers
                     //of task t, hence if they have multiplicity m ten task t cannot have as
                     //a matter of fact multiplicity more than m
                     List<Integer> callers = lqn.tasksof.get(hidx);
+                    List<Integer> caller_conn_components = new ArrayList<>();
+                    for (int i = 0; i < callers.size(); i++) {
+                        caller_conn_components.add((int) lqn.conntasks.get(0, callers.get(i) - lqn.tshift - 1));
+                    }
                     int multcallers = 0;
                     for (int i : callers) {
                         multcallers += this.njobsorig.get(i, hidx);
                     }
                     Matrix rowhidx = new Matrix(1, this.ptaskcallers_step.get(step).getNumCols() + 1,
                             this.ptaskcallers_step.get(step).getNumCols());
-                    Matrix.extractRows(this.ptaskcallers_step.get(step), hidx, hidx + 1, rowhidx);
+                    Matrix.extractRows(this.ptaskcallers_step.get(step), hidx - 1, hidx, rowhidx);
                     Matrix step_callers = rowhidx.find();
-                    int multremote = 0;
-                    for (int i = 1; i < step_callers.length(); i++) {
-                        int remidx = (int) step_callers.get(i);
+                    double multremote = 0;
+                    for (Double remidxDouble :step_callers.toList1D()) {
+                        int remidx = remidxDouble.intValue();
                         if (lqn.schedid.get(remidx) == SchedStrategy.toID(SchedStrategy.INF)) {
-                            multremote += this.ptaskcallers_step.get(step).get(hidx, remidx) * this.util.get(remidx);
+                            multremote += Double.POSITIVE_INFINITY;
                         } else {
-                            multremote += this.ptaskcallers_step.get(step).get(hidx, remidx) * this.util.get(remidx) *
-                                    lqn.mult.get(remidx);
+                            multremote += this.ptaskcallers_step.get(step).get(hidx - 1, remidx) * this.njobsorig.get(remidx + 1, hidx);
                         }
                     }
                     if ((multcallers > multremote && multremote > 0) && !Double.isInfinite(multremote)) {
                         // we spread the scaling proportionally to the direct caller probabilities
                         List<Double> caller_spreading_ratio = new ArrayList<Double>();
                         for (int i = 0; i < callers.size(); i++) {
-                            caller_spreading_ratio.set(i, this.ptaskcallers.get(hidx, callers.get(i)));
+                            caller_spreading_ratio.add(i, this.ptaskcallers.get(hidx, callers.get(i)));
                         }
-                        double caller_ratio_sum = 0;
-                        for (int i = 0; i < callers.size(); i++) {
-                            caller_ratio_sum += caller_spreading_ratio.get(i);
-                        }
-                        for (int i = 0; i < callers.size(); i++) {
-                            caller_spreading_ratio.set(i, caller_spreading_ratio.get(i) / caller_ratio_sum);
+                        List<Integer> uniqueCallerConnComponents = new ArrayList<>(new HashSet<>(caller_conn_components));
+                        for (int u : uniqueCallerConnComponents) {
+                            double caller_ratio_sum = 0;
+                            for (int i = 0; i < callers.size(); i++) {
+                                if (caller_conn_components.get(i) == u) {
+                                    caller_ratio_sum += caller_spreading_ratio.get(i);
+                                }
+                            }
+                            for (int i = 0; i < callers.size(); i++) {
+                                if (caller_conn_components.get(i) == u) {
+                                    caller_spreading_ratio.set(i, caller_spreading_ratio.get(i) / caller_ratio_sum);
+                                }
+                            }
                         }
                         for (int k = 0; k < callers.size(); k++) {
                             int c = callers.get(k);
-                            double num1 = ilscaling.get(c, hidx);
-                            double num2 = (double) multremote / (double) multcallers * caller_spreading_ratio.get(k);
-                            double num = Math.min(num1, num2);
-                            ilscaling.set(c, hidx, num);
+                            double num = Math.min(1, (double) multremote / (double) multcallers * caller_spreading_ratio.get(k));
+                            ilscaling.set(c - 1, hidx - 1, num);
                         }
                     }
                 }
             }
+        }
 
 
-            for (int t = 1; t <= lqn.ntasks; t++) {
+        for (int t = 1; t <= lqn.ntasks; t++) {
+            for (int step = 1; step <= this.nlayers; step++) {
                 int tidx = lqn.tshift + t;
                 if (lqn.isref.get(tidx) == 0) {
                     // the following are remote (indirect) callers that certain to be
@@ -1624,6 +1641,7 @@ public class SolverLN extends EnsembleSolver {
                     // cannot have as a matter of fact multiplicity more than m
                     boolean isolated_task = true;
                     List<Integer> callers = new ArrayList<>();
+
                     for (int i = 1; i <= lqn.nidx; i++) {
                         if (lqn.iscaller.isAssigned(tidx, i) || lqn.iscaller.isAssigned(i, tidx)) {
                             isolated_task = false;
@@ -1640,43 +1658,51 @@ public class SolverLN extends EnsembleSolver {
                             }
                         }
                     }
+                    List<Integer> caller_conn_components = new ArrayList<>();
+                    for (int i = 0; i < callers.size(); i++) {
+                        caller_conn_components.add((int) lqn.conntasks.get(0, callers.get(i) - lqn.tshift - 1));
+                    }
                     int multcallers = 0;
                     for (int i : callers) {
                         multcallers += this.njobsorig.get(i, tidx);
                     }
                     Matrix rowhidx = new Matrix(1, this.ptaskcallers_step.get(step).getNumCols(),
                             this.ptaskcallers_step.get(step).getNumCols());
-                    Matrix.extractRows(this.ptaskcallers_step.get(step), tidx, tidx, rowhidx);
+                    Matrix.extractRows(this.ptaskcallers_step.get(step), tidx - 1, tidx, rowhidx);
                     Matrix step_callers = rowhidx.find();
                     int multremote = 0;
-                    for (int i = 1; i < step_callers.length(); i++) {
-                        int remidx = (int) step_callers.get(i);
+                    for (Double remidxDouble: step_callers.toList1D()) {
+                        int remidx = remidxDouble.intValue();
                         if (lqn.schedid.get(remidx) == SchedStrategy.toID(SchedStrategy.INF)) {
-                            multremote += this.ptaskcallers_step.get(step).get(tidx, remidx) * this.util.get(remidx);
+                            multremote += Double.POSITIVE_INFINITY;
                         } else {
-                            multremote += this.ptaskcallers_step.get(step).get(tidx, remidx) * this.util.get(remidx) *
-                                    lqn.mult.get(remidx);
+                            multremote += this.ptaskcallers_step.get(step).get(tidx - 1, remidx) * this.njobsorig.get(remidx + 1, tidx);;
                         }
                     }
                     if ((multcallers > multremote && multremote > 0) && !Double.isInfinite(multremote)) {
                         // we spread the scaling proportionally to the direct caller probabilities
                         List<Double> caller_spreading_ratio = new ArrayList<Double>();
                         for (int i = 0; i < callers.size(); i++) {
-                            caller_spreading_ratio.set(i, this.ptaskcallers.get(tidx, callers.get(i)));
+                            caller_spreading_ratio.add(i, this.ptaskcallers.get(tidx, callers.get(i)));
                         }
-                        double caller_ratio_sum = 0;
-                        for (int i = 0; i < callers.size(); i++) {
-                            caller_ratio_sum += caller_spreading_ratio.get(i);
-                        }
-                        for (int i = 0; i < callers.size(); i++) {
-                            caller_spreading_ratio.set(i, caller_spreading_ratio.get(i) / caller_ratio_sum);
+                        List<Integer> uniqueCallerConnComponents = new ArrayList<>(new HashSet<>(caller_conn_components));
+                        for (int u : uniqueCallerConnComponents) {
+                            double caller_ratio_sum = 0;
+                            for (int i = 0; i < callers.size(); i++) {
+                                if (caller_conn_components.get(i) == u) {
+                                    caller_ratio_sum += caller_spreading_ratio.get(i);
+                                }
+                            }
+                            for (int i = 0; i < callers.size(); i++) {
+                                if (caller_conn_components.get(i) == u) {
+                                    caller_spreading_ratio.set(i, caller_spreading_ratio.get(i) / caller_ratio_sum);
+                                }
+                            }
                         }
                         for (int k = 0; k < callers.size(); k++) {
                             int c = callers.get(k);
-                            double num1 = ilscaling.get(c, tidx);
-                            double num2 = (double) multremote / (double) multcallers * caller_spreading_ratio.get(k);
-                            double num = Math.min(num1, num2);
-                            ilscaling.set(c, tidx, num);
+                            double num = Math.min(1, (double) multremote / (double) multcallers * caller_spreading_ratio.get(k));
+                            ilscaling.set(c - 1, tidx - 1, num);
                         }
                     }
                 }
@@ -1687,7 +1713,7 @@ public class SolverLN extends EnsembleSolver {
         this.ilscaling = ilscaling.clone();
         for (int i = 0; i < this.ilscaling.getNumRows(); i++) {
             for (int j = 0; j < this.ilscaling.getNumCols(); j++) {
-                this.njobs.set(i, j, this.njobsorig.get(i, j) * this.ilscaling.get(i, j));
+                this.njobs.set(i + 1, j + 1, this.njobsorig.get(i + 1, j + 1) * this.ilscaling.get(i, j));
             }
         }
     }
@@ -1730,7 +1756,7 @@ public class SolverLN extends EnsembleSolver {
                         this.thinkt.set(tidx - 1, (njobs - this.util.get(tidx - 1)) / this.tput.get(tidx - 1) - tidx_thinktime);
                     } else { // otherwise we consider the case where t is a regular queueing station (other than an infinite server)
                         // key think time update formula for LQNs, this accounts that in LINE self.utilization is scaled in [0,1] for all queueing stations irrespectively of the number of servers
-                        this.thinkt.set(tidx - 1, njobs * Math.abs(1 - this.util.get(tidx - 1)) / this.tput.get(tidx - 1) - tidx_thinktime);
+                        this.thinkt.set(tidx - 1, Math.max(GlobalConstants.Zero, njobs * Math.abs(1 - this.util.get(tidx - 1)) / this.tput.get(tidx - 1) - tidx_thinktime));
                     }
                     Exp exponential = new Exp(1/(this.thinkt.get(tidx - 1) + tidx_thinktime));
                     this.thinktproc.put(tidx, exponential);
@@ -1857,7 +1883,7 @@ public class SolverLN extends EnsembleSolver {
                         get(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getClientIdx() - 1, eidxclass.get(i) - 1);
             }
 
-            this.servt.set(eidx - 1, entry_servt.get(eidx - 1) * task_tput / entry_tput);
+            this.servt.set(eidx - 1, entry_servt.get(eidx - 1) * task_tput / Math.max(GlobalConstants.Zero, entry_tput));
         }
 
         for (int i = 1; i < this.call_classes_updmap.getNumRows(); i++) {
@@ -1942,7 +1968,7 @@ public class SolverLN extends EnsembleSolver {
                     task_tput += caller_tput.get(i - 1);
                 }
                 for (int i = 1; i <= lqn.ntasks; i++) {
-                    this.ptaskcallers.set(tidx, lqn.tshift + i, caller_tput.get(i - 1) / task_tput);
+                    this.ptaskcallers.set(tidx, lqn.tshift + i, caller_tput.get(i - 1) / Math.max(GlobalConstants.Zero, task_tput));
                 }
             }
         }
@@ -1971,7 +1997,7 @@ public class SolverLN extends EnsembleSolver {
             }
             double host_tput = caller_tput.elementSum();
             for (int i = 1; i <= lqn.ntasks; i++) {
-                this.ptaskcallers.set(hidx, lqn.tshift + i, caller_tput.get(i) / host_tput);
+                this.ptaskcallers.set(hidx, lqn.tshift + i, caller_tput.get(i) / Math.max(GlobalConstants.Zero, host_tput));
             }
         }
 
@@ -1991,7 +2017,11 @@ public class SolverLN extends EnsembleSolver {
                 for (int j = 0; j < P.getNumCols(); j++) {
                     P.set(i, j, P.get(i, j) / P.sumRows(i));
                 }
-                P.set(i, i, 1 - P.sumRows(i) - P.get(i, i));
+                double value = Math.min(Math.max(0, 1 - P.sumRows(i) - P.get(i, i)), 1);
+                if (value < GlobalConstants.Zero) {
+                    value = 0;
+                }
+                P.set(i, i, value);
             } else {
                 for (int j = 0; j < P.getNumCols(); j++) {
                     P.set(i, j, 0);
@@ -2028,15 +2058,18 @@ public class SolverLN extends EnsembleSolver {
 
                     if (sum > 1.0 - GlobalConstants.CoarseTol)
                         break;
-                    for (int index = 1; index < x.getNumRows(); index++) {
-                        this.ptaskcallers_step.get(step).set(index, tidx, x.get(index));
+                    // ptaskcallers_step.get(step) is a matrix that is not 0-padded -- index starts at 0
+                    for (int index = 0; index < ptaskcallers_step.get(step).getNumRows(); index++) {
+                        this.ptaskcallers_step.get(step).set(index, tidx - 1, x.get(index));
                     }
-                    for (int index = 1; index < x.getNumRows(); index++) {
-                        Matrix out1 = new Matrix(ptaskcallers.getNumRows(), 1, ptaskcallers.getNumRows());
-                        out1 = Matrix.extractColumn(this.ptaskcallers, tidx, out1);
-                        double x1 = out1.elementMax();
-                        double x2 = x.elementMax();
-                        double max = Math.max(x1, x2);
+                    // ptaskcallers is a matrix that is 0-padded -- index starts at 1
+                    for (int index = 1; index < ptaskcallers.getNumRows(); index++) {
+//                        Matrix out1 = new Matrix(ptaskcallers.getNumRows(), 1, ptaskcallers.getNumRows());
+//                        out1 = Matrix.extractColumn(this.ptaskcallers, tidx, out1);
+                        double max = Math.max(ptaskcallers.get(index, tidx), x.get(0,index - 1));
+//                        double x1 = out1.elementMax();
+//                        double x2 = x.elementMax();
+//                        double max = Math.max(x1, x2);
                         max = max >= 0 ? max : 0;
                         this.ptaskcallers.set(index, tidx, max);
                     }

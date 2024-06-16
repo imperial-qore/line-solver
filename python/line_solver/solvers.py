@@ -17,23 +17,29 @@ class Solver:
             for ctr in range(len(args) - 1):
                 match args[ctr]:
                     case 'cutoff':
-                        self.solveropt.obj.cutoff = args[ctr + 1]
+                        self.solveropt.obj.cutoff(args[ctr + 1])
                     case 'method':
-                        self.solveropt.obj.method = args[ctr + 1]
+                        self.solveropt.obj.method(args[ctr + 1])
                     case 'keep':
-                        self.solveropt.obj.keep = args[ctr + 1]
+                        self.solveropt.obj.keep(args[ctr + 1])
                     case 'seed':
-                        self.solveropt.obj.seed = args[ctr + 1]
+                        self.solveropt.obj.seed(args[ctr + 1])
                     case 'samples':
-                        self.solveropt.obj.samples = args[ctr + 1]
+                        self.solveropt.obj.samples(args[ctr + 1])
                     case 'verbose':
                         if isinstance(args[ctr + 1], bool):
                             if args[ctr + 1]:
-                                self.solveropt.obj.verbose = VerboseLevel.STD.value
+                                self.solveropt.obj.verbose(jpype.JPackage('jline').lang.constant.VerboseLevel.STD)
                             else:
-                                self.solveropt.obj.verbose = VerboseLevel.SILENT.value
+                                self.solveropt.obj.verbose(jpype.JPackage('jline').lang.constant.VerboseLevel.SILENT)
                         else:
-                            self.solveropt.obj.verbose = args[ctr + 1].value
+                            match (args[ctr + 1]):
+                                case VerboseLevel.SILENT:
+                                    self.solveropt.obj.verbose(jpype.JPackage('jline').lang.constant.VerboseLevel.SILENT)
+                                case VerboseLevel.STD:
+                                    self.solveropt.obj.verbose(jpype.JPackage('jline').lang.constant.VerboseLevel.STD)
+                                case VerboseLevel.DEBUG:
+                                    self.solveropt.obj.verbose(jpype.JPackage('jline').lang.constant.VerboseLevel.DEBUG)
                 ctr += 2
 
     def getName(self):
@@ -41,6 +47,7 @@ class Solver:
 
     def getAvgTable(self):
         table = self.obj.getAvgTable()
+
         # convert to NumPy
 
         QLen = np.array(list(table.getQLen()))
@@ -65,7 +72,7 @@ class Solver:
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
         if not (
-                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:  # and not is_interactive():
             print(AvgTable)
 
         return AvgTable
@@ -90,7 +97,7 @@ class Solver:
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
         if not (
-                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:  # and not is_interactive():
             print(AvgTable)
 
         return AvgTable
@@ -115,7 +122,7 @@ class Solver:
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:  # and not is_interactive():
             print(AvgTable)
 
         return AvgTable
@@ -140,7 +147,7 @@ class Solver:
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:  # and not is_interactive():
             print(AvgTable)
 
         return AvgTable
@@ -165,7 +172,7 @@ class Solver:
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:  # and not is_interactive():
             print(AvgTable)
 
         return AvgTable
@@ -190,7 +197,7 @@ class Solver:
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:  # and not is_interactive():
             print(AvgTable)
 
         return AvgTable
@@ -215,7 +222,7 @@ class Solver:
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
-        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
+        if not (GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:  # and not is_interactive():
             print(AvgTable)
 
         return AvgTable
@@ -242,63 +249,63 @@ class Solver:
         AvgSysTable.insert(0, "Chain", chains)
         AvgSysTable = AvgSysTable.loc[tokeep]  # eliminate zero rows
         if not (
-                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:
             print(AvgSysTable)
         return AvgSysTable
 
     def getAvgTput(self):
         Tput = jlineMatrixToArray(self.obj.getAvgTput())
         if not (
-                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:
             print(Tput)
         return Tput
 
     def getAvgResidT(self):
         ResidT = jlineMatrixToArray(self.obj.getAvgResidT())
         if not (
-                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:
             print(ResidT)
         return ResidT
 
     def getAvgArvR(self):
         ArvR = jlineMatrixToArray(self.obj.getAvgArvR())
         if not (
-                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:
             print(ArvR)
         return ArvR
 
     def getAvgUtil(self):
         Util = jlineMatrixToArray(self.obj.getAvgUtil())
         if not (
-                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:
             print(Util)
         return Util
 
     def getAvgQLen(self):
         QLen = jlineMatrixToArray(self.obj.getAvgQLen())
         if not (
-                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:
             print(QLen)
         return QLen
 
     def getAvgRespT(self):
         RespT = jlineMatrixToArray(self.obj.getAvgRespT())
         if not (
-                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:
             print(RespT)
         return RespT
 
     def getAvgSysTput(self):
         SysTput = jlineMatrixToArray(self.obj.getAvgSysTput())
         if not (
-                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:
             print(SysTput)
         return SysTput
 
     def getAvgSysRespT(self):
         SysRespT = jlineMatrixToArray(self.obj.getAvgSysRespT())
         if not (
-                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:
             print(SysRespT)
         return SysRespT
 
@@ -332,7 +339,7 @@ class SolverCTMC(Solver):
 
 class SolverEnv(Solver):
     def __init__(self, *args):
-        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.Env)
+        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.ENV)
         super().__init__(options, args)
         model = args[0]
         solvers = jpype.JPackage('jline').solvers.NetworkSolver[len(args[1])]
@@ -349,7 +356,7 @@ class SolverEnv(Solver):
 
 class SolverFluid(Solver):
     def __init__(self, *args):
-        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.Fluid)
+        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.FLUID)
         super().__init__(options, args)
         model = args[0]
         self.obj = jpype.JPackage('jline').solvers.fluid.SolverFluid(model.obj, self.solveropt.obj)
@@ -418,7 +425,7 @@ class SolverLQNS(Solver):
         AvgTable.insert(0, "Node", mynodenames)
         AvgTable = AvgTable.loc[tokeep]  # eliminate zero rows
         if not (
-                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT.value:  # and not is_interactive():
+                GlobalConstants.getVerbose() == VerboseLevel.SILENT) and not self.solveropt.obj.verbose == VerboseLevel.SILENT:  # and not is_interactive():
             print(AvgTable)
 
         return AvgTable
@@ -451,6 +458,15 @@ class SolverSSA(Solver):
 class SolverOptions():
     def __init__(self, solvertype):
         self.obj = jpype.JPackage('jline').solvers.SolverOptions(solvertype)
+
+    def method(self, value):
+        self.obj.method(value)
+    def samples(self, value):
+        self.obj.samples(value)
+    def seed(self, value):
+        self.obj.seed(value)
+    def verbose(self, value):
+        self.obj.verbose(value)
 
 class CTMCOptions():
     def __init__(self):

@@ -8,7 +8,13 @@ import jline.lang.nodes.ClassSwitch;
 import jline.lang.nodes.Delay;
 import jline.lang.nodes.Queue;
 import jline.lang.layered.*;
+import jline.solvers.LayeredNetworkAvgTable;
 import jline.solvers.mva.SolverMVA;
+import jline.util.Matrix;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -80,7 +86,7 @@ class SolverLNTest {
 
     // This is the former TestSolverLN2
     LayeredNetwork buildModel3() throws Exception {
-        LayeredNetwork model = new LayeredNetwork("test_LQN_4");
+        LayeredNetwork model = new LayeredNetwork("test_LQN_3");
         Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
 
         Task T1 = new Task(model, "T1", 10, SchedStrategy.REF);
@@ -118,10 +124,107 @@ class SolverLNTest {
         return model;
     }
 
+    /* Model for calls */
+    LayeredNetwork buildModel4() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("test_LQN_4");
+
+        Processor P1 = new Processor(model, "P1", 2, SchedStrategy.PS);
+        Processor P2 = new Processor(model, "P2", 3, SchedStrategy.PS);
+
+        Task T1 = new Task(model, "T1", 50, SchedStrategy.REF); T1.on(P1);
+        T1.setThinkTime(new Exp((double) 1/ 2));
+        Task T2 = new Task(model, "T2", 50, SchedStrategy.FCFS); T2.on(P1);
+        T2.setThinkTime(new Exp((double) 1/ 3));
+        Task T3 = new Task(model, "T3", 25, SchedStrategy.FCFS); T3.on(P2);
+        T3.setThinkTime(new Exp((double) 1 /4));
+
+        Entry E1 = new Entry(model, "E1"); E1.on(T1);
+        Entry E2 = new Entry(model, "E2"); E2.on(T2);
+        Entry E3 = new Entry(model, "E3"); E3.on(T3);
+
+        Activity A1 = new Activity(model, "AS1", new Exp((double) 1 / 10));
+        A1.on(T1); A1.boundTo(E1); A1.synchCall(E2,1);
+        Activity A2 = new Activity(model, "AS2", new Exp((double) 1/20));
+        A2.on(T2); A2.boundTo(E2); A2.synchCall(E3,5); A2.repliesTo(E2);
+        Activity A3 = new Activity(model, "AS3", new Exp((double) 1/50));
+        A3.on(T3); A3.boundTo(E3); A3.repliesTo(E3);
+
+        return model;
+    }
+
+    /* Model for Loop Precedences */
+    LayeredNetwork buildModel5() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("myLayeredModel");
+
+        Processor P1 = new Processor(model, "P1", 10, SchedStrategy.INF);
+
+        Task T1 = new Task(model, "T1", 1, SchedStrategy.REF); T1.on(P1);
+        T1.setThinkTime(new Immediate());
+
+        Entry E1 = new Entry(model, "Entry"); E1.on(T1);
+
+        Activity A1 = new Activity(model, "A1", new Exp(0.5)); A1.on(T1); A1.boundTo(E1);
+        Activity A2 = new Activity(model, "A2", new Exp(0.333333)); A2.on(T1);
+        Activity A3 = new Activity(model, "A3", new Exp(0.25)); A3.on(T1);
+
+
+        // Loop Activity Precedence
+        ArrayList<String> precActs = new ArrayList<String>();
+        precActs.add("A2");
+        precActs.add("A3");
+        T1.addPrecedence(ActivityPrecedence.Loop("A1", precActs, new Matrix(2.2)));
+        return model;
+    }
+
+    LayeredNetwork buildModel6() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("myLayeredModel");
+
+        Processor P1 = new Processor(model, "P1", 10, SchedStrategy.FCFS);
+
+        Task T1 = new Task(model, "T1", 1, SchedStrategy.REF); T1.on(P1);
+        T1.setThinkTime(new Immediate());
+
+        Entry E1 = new Entry(model, "Entry"); E1.on(T1);
+
+        Activity A1 = new Activity(model, "B1", new Exp(0.5)); A1.on(T1); A1.boundTo(E1);
+        Activity A2 = new Activity(model, "B2", new Exp(0.333333)); A2.on(T1);
+        Activity A3 = new Activity(model, "B3", new Exp(0.25)); A3.on(T1);
+        Activity A4 = new Activity(model, "B4", new Exp(0.2)); A4.on(T1);
+        Activity A5 = new Activity(model, "B5", new Exp(0.166667)); A5.on(T1);
+
+
+        // OrFork Activity Precedence
+        ArrayList<String> precActs = new ArrayList<String>();
+        Matrix probs = new Matrix(1,3);
+        precActs.add("B2");
+        precActs.add("B3");
+        precActs.add("B4");
+        probs.set(0,0,0.3);
+        probs.set(0,1,0.3);
+        probs.set(0,2,0.4);
+        T1.addPrecedence(ActivityPrecedence.OrFork("B1", precActs, probs));
+
+        // OrJoin Activity Precedence
+        precActs.clear();
+        precActs.add("B2");
+        precActs.add("B3");
+        precActs.add("B4");
+        T1.addPrecedence(ActivityPrecedence.OrJoin(precActs, "B5"));
+
+        return model;
+    }
+
     final double errorRate = 0.02;
 
     boolean compare(double actual, double expected){
         return Math.abs((actual - expected) / expected) <= errorRate;
+    }
+
+    boolean compareOutput(double actual, double expected){
+        if (Double.isNaN(actual) && Double.isNaN(expected)) {
+            return true;
+        }
+        return Math.abs(actual - expected) <= errorRate;
     }
 
     @org.junit.jupiter.api.Test
@@ -631,6 +734,59 @@ class SolverLNTest {
         assertEquals(solverLN.getIdxhash().get(1), 1);
         assertEquals(solverLN.getIdxhash().get(2), Double.NaN);
         assertEquals(solverLN.getIdxhash().get(3), 2);
+    }
+
+    @org.junit.jupiter.api.Test
+    public void testSolveCallModel() throws  Exception{
+        SolverLN solver = new SolverLN(buildModel4());
+        double[] expectedQlen = {0, Double.NaN, Double.NaN, 45.466, 0, 17.508, 45.466,0, 17.508, 49.599, 0, 20.336};
+        double[] expectedUtil = {0, 0.9999, 0.9998, 0.9999, 0, 0.9998, Double.NaN, Double.NaN, Double.NaN, 0.9999, 0, 0.9998};
+        double[] expectedRespT = {0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 227.334, 0, 291.858, 248.00151, 3295.913, 339.0034};
+        double[] expectedResidT = {0, Double.NaN, Double.NaN, 248.00151, 0, 339.0034, Double.NaN, Double.NaN, Double.NaN, 248.00151, 0, 339.0034};
+        double[] expectedTput = {0, 0, 0.0599, 0.199, 0, 0.0599, 0.199, 0, 0.0599, 0.199, 0, 0.0599};
+        LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
+        for (int idx = 0; idx < avg.getQLen().size(); idx++) {
+            assertTrue(compareOutput(avg.getQLen().get(idx), expectedQlen[idx]));
+            assertTrue(compareOutput(avg.getUtil().get(idx), expectedUtil[idx]));
+            assertTrue(compareOutput(avg.getRespT().get(idx), expectedRespT[idx]));
+            assertTrue(compareOutput(avg.getResidT().get(idx), expectedResidT[idx]));
+            assertTrue(compareOutput(avg.getTput().get(idx), expectedTput[idx]));
+        }
+    }
+
+    @org.junit.jupiter.api.Test
+    public void testSolveLoopModel() throws  Exception{
+        SolverLN solver = new SolverLN(buildModel5());
+        double[] expectedQlen = {0, Double.NaN, 1, 1, 0.1587, 0.5238, 0.3174};
+        double[] expectedUtil = {0, 1, 1, Double.NaN, 0.1587, 0.5238, 0.3174};
+        double[] expectedRespT = {0, Double.NaN, Double.NaN, 12.6, 2, 3, 4};
+        double[] expectedResidT = {0, Double.NaN, 12.6, Double.NaN, 2, 6.6, 4};
+        double[] expectedTput = {0, 0.07936, 0.07936, 0.07936, 0.07936, 0.1746, 0.07936};
+        LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
+        for (int idx = 0; idx < avg.getQLen().size(); idx++) {
+            assertTrue(compareOutput(avg.getQLen().get(idx), expectedQlen[idx]));
+            assertTrue(compareOutput(avg.getUtil().get(idx), expectedUtil[idx]));
+            assertTrue(compareOutput(avg.getRespT().get(idx), expectedRespT[idx]));
+            assertTrue(compareOutput(avg.getResidT().get(idx), expectedResidT[idx]));
+            assertTrue(compareOutput(avg.getTput().get(idx), expectedTput[idx]));
+        }
+    }
+    @org.junit.jupiter.api.Test
+    public void testSolveOrForkOrJoinModel() throws  Exception{
+        SolverLN solver = new SolverLN(buildModel6());
+        double[] expectedQlen = {0, Double.NaN, 1, 1, 0.16529, 0.07438, 0.09917, 0.1652, 0.4958};
+        double[] expectedUtil = {0, 0.1, 0.1, Double.NaN, 0.01652, 0.00743, 0.00991, 0.01652, 0.04958};
+        double[] expectedRespT = {0, Double.NaN, Double.NaN, 12.1, 2, 3, 4, 5, 6};
+        double[] expectedResidT = {0, Double.NaN, 12.1, Double.NaN, 2, 0.9, 1.2, 2, 6};
+        double[] expectedTput = {0, 0.08264, 0.08264, 0.08264, 0.08264, 0.02479, 0.02479, 0.03305, 0.08264};
+        LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
+        for (int idx = 0; idx < avg.getQLen().size(); idx++) {
+            assertTrue(compareOutput(avg.getQLen().get(idx), expectedQlen[idx]));
+            assertTrue(compareOutput(avg.getUtil().get(idx), expectedUtil[idx]));
+            assertTrue(compareOutput(avg.getRespT().get(idx), expectedRespT[idx]));
+            assertTrue(compareOutput(avg.getResidT().get(idx), expectedResidT[idx]));
+            assertTrue(compareOutput(avg.getTput().get(idx), expectedTput[idx]));
+        }
     }
 }
 
