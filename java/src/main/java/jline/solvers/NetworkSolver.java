@@ -502,7 +502,7 @@ public abstract class NetworkSolver extends Solver {
         Matrix TN = this.result.TN;
         Matrix AN = this.result.AN;
 
-        if (QN.isEmpty()) {
+        if (QN == null || QN.isEmpty()) {
             throw new RuntimeException(
                     "Unable to compute results and therefore unable to print AvgTable.");
         }

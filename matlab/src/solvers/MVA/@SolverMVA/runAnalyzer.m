@@ -2,7 +2,6 @@ function runtime = runAnalyzer(self, options)
 % RUNTIME = RUNANALYZER(OPTIONS)
 % Run the solver
 
-T0=tic;
 if nargin<2
     options = self.getOptions;
 end
@@ -36,7 +35,7 @@ switch options.lang
         return
     case 'matlab'
         sn = getStruct(self); % doesn't need initial state
-        snorig = sn;
+        %snorig = sn;
         forkLoop = true;
         forkIter = 0;
         % create artificial classes arrival rates

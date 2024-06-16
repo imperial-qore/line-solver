@@ -634,11 +634,21 @@ classdef JLINE
                 for k = 1:n_classes
                     output_strat = line_node.output.outputStrategy{k};
                     switch output_strat{2}
-                        case 'Disabled'
+                        case RoutingStrategy.DISABLED
                             nodes.get(i-1).setRouting(classes.get(k-1),jline.lang.constant.RoutingStrategy.DISABLED);
-                        case 'Random'
+                        case RoutingStrategy.RAND
                             nodes.get(i-1).setRouting(classes.get(k-1),jline.lang.constant.RoutingStrategy.RAND);
-                        case 'Probabilities'
+                            outlinks_i=find(connections(i,:));
+                            for j= outlinks_i
+                                routing_matrix.addConnection(nodes.get(i-1), nodes.get(j-1), classes.get(k-1), 1/length(outlinks_i));
+                            end
+%                         case RoutingStrategy.RROBIN
+%                             nodes.get(i-1).setRouting(classes.get(k-1),jline.lang.constant.RoutingStrategy.RROBIN);
+%                             outlinks_i=find(connections(i,:))';
+%                             for j= outlinks_i
+%                                 routing_matrix.addConnection(nodes.get(i-1), nodes.get(j-1), classes.get(k-1), 1/length(outlinks_i));
+%                             end
+                        case RoutingStrategy.PROB
                             if length(output_strat) >= 3
                                 probabilities = output_strat{3};
                                 for j = 1:length(probabilities)
@@ -1473,6 +1483,12 @@ classdef JLINE
                                 end
                             case 'init_sol'
                                 solverOptions.(fn{f}) = JLINE.matrix_to_jlinematrix(options.init_sol);
+                            case 'cutoff'
+                                if length(options.cutoff)==1
+                                    solverOptions.cutoff = options.cutoff;
+                                else
+                                    line_printf('Could not assign cutoff parameter as JLINE does not support Matrix cutoff arguments yet.\n');
+                                end
                             case 'odesolvers'
                             otherwise
                                 solverOptions.(fn{f}) = options.(fn{f});

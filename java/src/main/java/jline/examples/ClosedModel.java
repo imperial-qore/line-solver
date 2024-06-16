@@ -9,6 +9,8 @@ import jline.lang.nodes.*;
 import jline.solvers.SolverOptions;
 import jline.solvers.fluid.SolverFluid;
 import jline.solvers.jmt.SolverJMT;
+import jline.solvers.mva.SolverMVA;
+import jline.solvers.nc.SolverNC;
 import jline.util.Maths;
 import jline.util.Matrix;
 import jline.solvers.NetworkAvgTable;
@@ -815,31 +817,38 @@ public class ClosedModel {
         return model;
     }
 
+    public static Network test_CQN_JMT_2() {
+        Network model = new Network("jmtregression_11");
+
+        // Block 1: nodes
+        Delay node1 = new Delay(model, "Delay 1");
+        Queue node2 = new Queue(model, "Queue 1", SchedStrategy.PS);
+        Queue node3 = new Queue(model, "Queue 2", SchedStrategy.FCFS);
+
+        // Block 2: classes
+        ClosedClass jobclass1 = new ClosedClass(model, "Class1", 1, node1, 0);
+
+        node1.setService(jobclass1, Exp.fitMean(0.010000)); // (Delay 1,Class1)
+        node2.setService(jobclass1, Exp.fitMean(75.000000)); // (Queue 1,Class1)
+        node3.setService(jobclass1, Exp.fitMean(5.000000)); // (Queue 2,Class1)
+
+        // Block 3: topology
+        RoutingMatrix routingMatrix = new RoutingMatrix(model,
+                Arrays.asList(jobclass1),
+                Arrays.asList(node1, node2, node3));
+
+        routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Delay 1,Class1) -> (Queue 1,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node2, node3, 1.000000); // (Queue 1,Class1) -> (Queue 2,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node3, node1, 1.000000); // (Queue 2,Class1) -> (Delay 1,Class1)
+
+        model.link(routingMatrix);
+
+        return model;
+    }
 
     public static void main(String[] args) throws Exception {
-//        Network model = ex2_line();
-//
-//        NetworkStruct sn = model.getStruct(false);
-//        sn.rt.print();
-//        SolverOptions options = new SolverOptions(SolverType.MVA);
-//        options.method = "egflin";
-//        NetworkSolver solver = new SolverMVA(model, options);
-//        NetworkAvgTable t = solver.getAvgTable();
-//        t.print(options);
-
-        Network model = ex6_line();
-        NetworkStruct sn = model.getStruct(false);
-        sn.rt.print();
-        // SolverOptions options = new SolverOptions(SolverType.Fluid);
-        // options.iter_max = 200;
-        // SolverFluid solver = new SolverFluid(model,options);
-
-        SolverOptions options = new SolverOptions(SolverType.JMT);
-        SolverFluid solver = new SolverFluid(model,options);
-
-        solver.options.stiff = true;
-        //solver.runAnalyzer();
-        NetworkAvgTable t = solver.getAvgTable();
-        t.print(options);
+        Network model = ex1();
+        new SolverMVA(model).getAvgTable().print();
+        new SolverNC(model).getAvgTable().print();
     }
 }

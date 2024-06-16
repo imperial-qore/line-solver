@@ -216,7 +216,7 @@ for k = 1:sn.nclasses
                 if myP{k,c}(i,m) > 0 && sn.nodetype(i) ~= NodeType.Sink
                     % do not change %d into %f to avoid round-off errors in
                     % the total probability
-                    fprintf(fid,'\t\troutingMatrix.set(jobclass%d, jobclass%d, node%d, node%d, %f); // (%s,%s) -> (%s,%s)\n',i,m,k,c,myP{k,c}(i,m),sn.nodenames{i},sn.classnames{k},sn.nodenames{m},sn.classnames{c});
+                    fprintf(fid,'\t\troutingMatrix.set(jobclass%d, jobclass%d, node%d, node%d, %f); // (%s,%s) -> (%s,%s)\n',k,c,i,m,myP{k,c}(i,m),sn.nodenames{i},sn.classnames{k},sn.nodenames{m},sn.classnames{c});
                 end
             end
         end

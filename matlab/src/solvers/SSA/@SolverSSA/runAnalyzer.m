@@ -42,28 +42,18 @@ switch options.lang
             case 'default'
                 jmodel = LINE2JLINE(self.model);
                 jsolver = JLINE.SolverSSA(jmodel);
-                import jline.solvers.ssa.*;
-                import jline.solvers.ssa.strategies.*;
-
-                M = jmodel.getNumberOfStatefulNodes; %number of stations
-                K = jmodel.getNumberOfClasses;    %number of classes
-
                 jsolver.options.samples = options.samples;
                 jsolver.options.seed = options.seed;
                 tic;
                 jsolver.getAvg();
-                QN = JLINE.jlinematrix_to_matrix(jsolver.getAvgQLen()); 
-                UN = JLINE.jlinematrix_to_matrix(jsolver.getAvgUtil());
-                RN = JLINE.jlinematrix_to_matrix(jsolver.getAvgRespT());
-                WN = JLINE.jlinematrix_to_matrix(jsolver.getAvgResidT());
-                TN = JLINE.jlinematrix_to_matrix(jsolver.getAvgTput());
-                AN = JLINE.jlinematrix_to_matrix(jsolver.getAvgArvR());
+                jsolver = JLINE.SolverSSA(jmodel, options);
+                [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(jsolver.getAvgTable);           
                 CN = JLINE.jlinematrix_to_matrix(jsolver.getAvgSysRespT());
                 XN = JLINE.jlinematrix_to_matrix(jsolver.getAvgSysTput());
                 runtime = toc;
                 self.setAvgResults(QN,UN,RN,TN,AN,WN,CN,XN,runtime);
             case 'taussa'
-                line_error(mfilename, 'taussa method is no longer supported.');
+                line_error(mfilename, 'taussa method is temporarily disabled.');
                 % [XN,UN,QN,RN,TN,CN, tranSysState, tranSync] = solver_ssa_analyzer_taussa(self.model, options, 0, 0.0);
                 % runtime = toc(T0);
                 % T = getAvgTputHandles(self);
@@ -83,7 +73,7 @@ switch options.lang
                 % end
                 % self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,runtime);
             case {'tauleap'}
-                line_error(mfilename, 'tauleap method is no longer supported.');
+                line_error(mfilename, 'tauleap method is temporarily disabled.');
                 % [XN,UN,QN,RN,TN,CN, tranSysState, tranSync] = solver_ssa_analyzer_taussa(self.model, options, 1, 0.0);
                 % runtime = toc(T0);
                 % sn = self.getStruct;
