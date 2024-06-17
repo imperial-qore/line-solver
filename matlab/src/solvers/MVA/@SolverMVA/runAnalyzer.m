@@ -30,6 +30,20 @@ switch options.lang
         AN = reshape(AN',R,M)';
         lG = NaN;
         lastiter = NaN;
+        sn = getStruct(self);
+        mustRefresh = false;
+        for ind = 1:sn.nnodes
+            if sn.nodetype(ind) == NodeType.Cache
+                hitprob = JLINE.jlinematrix_to_matrix(jmodel.getNodes.get(ind-1).getHitRatio());
+                self.model.nodes{ind}.setResultHitProb(hitprob);
+                self.model.nodes{ind}.setResultMissProb(1-hitprob);
+                mustRefresh = true;
+            end
+        end
+        if mustRefresh
+            %self.model.refreshChains();
+            self.model.refreshStruct(true);
+        end
         self.setAvgResults(QN,UN,RN,TN,AN,WN,CN,XN,runtime,options.method,lastiter);
         self.result.Prob.logNormConstAggr = lG;
         return
