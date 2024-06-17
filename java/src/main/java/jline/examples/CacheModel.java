@@ -13,6 +13,7 @@ import jline.lang.distributions.Exp;
 import jline.lang.nodes.*;
 import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
+import jline.solvers.mva.MVAOptions;
 import jline.solvers.mva.SolverMVA;
 import jline.util.Matrix;
 import jline.solvers.NetworkAvgTable;
@@ -28,8 +29,7 @@ public class CacheModel {
         Network model = new Network("model");
 
         int n = 5; // Number of items
-        Matrix m = new Matrix(1,1); // cache capacity
-        m.set(0, 2);
+        int m = 2;
 
         Source source = new Source(model, "Source");
         jline.lang.nodes.Cache cacheNode = new jline.lang.nodes.Cache(model, "Cache", n, m, ReplacementStrategy.FIFO, null);
@@ -50,9 +50,7 @@ public class CacheModel {
         cacheNode.setHitClass(jobClass, hitClass);
         cacheNode.setMissClass(jobClass, missClass);
 
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobClass, hitClass, missClass),
-                Arrays.asList(source, cacheNode, sink));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobClass, jobClass, source, cacheNode, 1);
         routingMatrix.set(hitClass, hitClass, cacheNode, sink, 1);
@@ -165,11 +163,11 @@ public class CacheModel {
     }
 
     public static void main(String[] args) {
-        Network model = ex5();
-        SolverOptions options = new SolverOptions(SolverType.MVA);
+        Network model = ex1();
+        SolverOptions options = new MVAOptions();
         options.seed = 1;
         options.iter_max = 100;
-        NetworkSolver solver = new SolverMVA(model, options);
+        NetworkSolver solver = new SolverMVA(model);
         try{
             NetworkAvgTable t = solver.getAvgTable();
             t.print(options);

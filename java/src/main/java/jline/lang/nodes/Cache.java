@@ -41,6 +41,10 @@ public class Cache extends StatefulNode implements Serializable {
         this(model, name, nitems, new Matrix(itemLevelCap), replPolicy, null);
     }
 
+    public Cache(Network model, String name, int nitems, int itemLevelCap, ReplacementStrategy replPolicy, Matrix[] graph) {
+        this(model, name, nitems, new Matrix(itemLevelCap), replPolicy, graph);
+    }
+
     public Cache(Network model, String name, int nitems, Matrix itemLevelCap, ReplacementStrategy replPolicy) {
         this(model, name, nitems, itemLevelCap, replPolicy, null);
     }

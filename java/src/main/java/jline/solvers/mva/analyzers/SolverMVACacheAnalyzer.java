@@ -16,13 +16,13 @@ public class SolverMVACacheAnalyzer implements MVAAnalyzer{
     @Override
     public void analyze(NetworkStruct sn, SolverOptions options, SolverMVAResult res) {
         long startTime = System.currentTimeMillis();
-        Matrix QN = new Matrix(0,0);
-        Matrix UN = new Matrix(0,0);
-        Matrix RN = new Matrix(0,0);
-        Matrix TN = new Matrix(0,0);
-        Matrix CN = new Matrix(0,0);
-        Matrix AN = new Matrix(0,0);
-        Matrix WN = new Matrix(0,0);
+        Matrix QN = new Matrix(sn.nnodes, sn.nclasses);
+        Matrix UN = new Matrix(sn.nnodes, sn.nclasses);
+        Matrix RN = new Matrix(sn.nnodes, sn.nclasses);
+        Matrix TN = new Matrix(sn.nnodes, sn.nclasses);
+        Matrix CN = new Matrix(1, sn.nclasses);
+        Matrix AN = new Matrix(sn.nnodes, sn.nclasses);
+        Matrix WN = new Matrix(sn.nnodes, sn.nclasses);
         Matrix XN = new Matrix(1, sn.nclasses);
         double lG = Double.NaN;
         int iter = 1;

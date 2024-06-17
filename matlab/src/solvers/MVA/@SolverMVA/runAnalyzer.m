@@ -15,7 +15,7 @@ iter = 0;
 switch options.lang
     case 'java'
         jmodel = LINE2JLINE(self.model);
-        M = jmodel.getNumberOfStatefulNodes;
+        M = jmodel.getNumberOfStations;
         R = jmodel.getNumberOfClasses;
         jsolver = JLINE.SolverMVA(jmodel, options);
         [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(jsolver.getAvgTable);

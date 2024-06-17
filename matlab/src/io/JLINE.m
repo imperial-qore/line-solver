@@ -622,12 +622,13 @@ classdef JLINE
 
         function from_line_links(line_network, network_object)
             connections = line_network.getConnectionMatrix();
-            [m, ~] = size(connections);
+            [m, ~] = size(connections);            
             nodes = network_object.getNodes();
             classes = network_object.getClasses();
-            n_classes = classes.size();
-            routing_matrix = jline.lang.RoutingMatrix(network_object, classes, nodes);
+            routing_matrix = network_object.initRoutingMatrix();
             line_nodes = line_network.getNodes;
+            n_classes = classes.size();
+
             % [ ] Update to consider different weights/routing for classes
             for i = 1:m
                 line_node = line_nodes{i};
@@ -762,6 +763,33 @@ classdef JLINE
                     JLINE.set_csMatrix(network_nodes{n}, java_nodes{n});
                 elseif isa(network_nodes{n},"Join")
                     java_nodes{n}.initJoinJobClasses();
+                elseif isa(network_nodes{n},"Cache")
+                    line_nodes = line_network.getNodes;
+                    line_node = line_nodes{n};
+                    for r = 1 : length(line_node.popularity)                        
+                        switch class(line_node.popularity{r})
+                            case 'DiscreteSampler'
+                                p = JLINE.matrix_to_jlinematrix(line_node.popularity{r}.params{1}.paramValue);
+                                java_nodes{n}.setRead(java_classes{r}, jline.lang.distributions.DiscreteSampler(p));
+                            case 'Zipf'
+                                k = line_node.popularity{r}.params{2}.paramValue;
+                                s = line_node.popularity{r}.params{3}.paramValue;
+                                java_nodes{n}.setRead(java_classes{r}, jline.lang.distributions.Zipf(s,k));
+                            case 'Disabled'
+                                % no-op
+                            otherwise
+                                line_error(mfilename,'Unsupported cache popularity distribution');
+                        end
+                    end
+                    % set Cache hit/miss  relationships
+                    for r=1:length(line_node.server.inputJobClasses)
+                        inputClass = line_node.server.inputJobClasses{r}{1};
+                        jobClass = java_classes{inputClass.index};
+                        hitClass = java_classes{line_node.server.hitClass(r)};
+                        missClass = java_classes{line_node.server.missClass(r)};
+                        java_nodes{n}.setHitClass(jobClass, hitClass);
+                        java_nodes{n}.setMissClass(jobClass, missClass);
+                    end
                 end
             end
 
