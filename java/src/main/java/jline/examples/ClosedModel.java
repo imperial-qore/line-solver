@@ -24,7 +24,7 @@ import java.util.Collections;
 public class ClosedModel {
 
     public static Network ex0f() {
-        Network model = new Network("myModel");
+        Network model = new Network("myModel0f");
 
         // Block 1: nodes
         Delay node1 = new Delay(model, "Delay");
@@ -50,7 +50,7 @@ public class ClosedModel {
         return model;
     }
     public static Network ex0p() {
-        Network model = new Network("myModel");
+        Network model = new Network("myModel0p");
 
         // Block 1: nodes
         Delay node1 = new Delay(model, "Delay");

@@ -836,6 +836,9 @@ public class Network extends Model implements Serializable {
         sn.nodenames = nodenames;
         sn.classnames = classnames;
         sn.connmatrix = conn;
+
+        sn.eventCache = new HashMap<>();
+
         //line 97-108 is ignored since for transition node
 
         sn.nodeToStateful = new Matrix(1, nodes.size(), nodes.size());

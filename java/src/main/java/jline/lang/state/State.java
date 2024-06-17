@@ -2,6 +2,8 @@ package jline.lang.state;
 
 import java.io.Serializable;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import jline.examples.ClosedModel;
 import jline.examples.MixedModel;
@@ -1798,129 +1800,92 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
     return newSpace;
   }
 
-  public static void main(String[] args) {
-
-//    ARRIVALS:
-//    NetworkStruct sn = ClosedModel.ex4().getStruct(false);
-//    Matrix inspace = new Matrix(1, );
-//    inspace.fromArray2D(new int[][]{{1,2,1,1}});
-//    EventResult result = afterEvent(sn, 0, inspace, EventType.ARV, 0, false);
-//
-//
-//    System.out.println(result.outspace);
-//    System.out.println(result.outrate);
-//    System.out.println(result.outprob);
-
-//
-//    NetworkStruct sn = ClosedModel.ex4().getStruct(false);
-//    Matrix inspace = new Matrix(1, 7);
-//    inspace.fromArray2D(new int[][]{{0,0,1,1,0,1,1}});
-//    EventResult result = afterEvent(sn, 2, inspace, EventType.ARV, 3, false);
-//
-//
-
-    // DEPARTURES:
-//    NetworkStruct sn = ClosedModel.ex4().getStruct(false);
-//    Matrix inspace = new Matrix(1, 4);
-//    inspace.fromArray2D(new int[][]{{4,8,3,2}});
-//    EventResult result = afterEvent(sn, 0, inspace, EventType.DEP, 3, false);
-
-
-//    NetworkStruct sn = ClosedModel.ex2_line().getStruct(false);
-//    Matrix inspace = new Matrix(1, 3);
-//    inspace.fromArray2D(new int[][]{{1,0,0}});
-//    EventResult result = afterEvent(sn, 1, inspace, EventType.DEP, 0, false);
-
-//    NetworkStruct sn = ClosedModel.ex2_line().getStruct(false);
-//    Matrix inspace = new Matrix(1, 3);
-//    inspace.fromArray2D(new int[][]{{1,0,0}});
-//    EventResult result = afterEvent(sn, 1, inspace, EventType.DEP, 0, false);
-
-    // FCFS
-//    NetworkStruct sn = ClosedModel.ex4().getStruct(false);
-//    Matrix inspace = new Matrix(1, 7);
-//    inspace.fromArray2D(new int[][]{{4,2,1,1,1,1,1}});
-//    EventResult result = afterEvent(sn, 2, inspace, EventType.DEP, 2, false);
-
-//    NetworkStruct sn = ClosedModel.ex4().getStruct(false);
-//    Matrix inspace = new Matrix(1, 7);
-//    inspace.fromArray2D(new int[][]{{4,2,1,1,1,1,1}});
-//    EventResult result = afterEvent(sn, 1, inspace, EventType.DEP, 0, false);
-
-//    NetworkStruct sn = ClosedModel.ex4().getStruct(false);
-//    Matrix inspace = new Matrix(1, 7);
-//    inspace.fromArray2D(new int[][]{{0,2,1,1,0,1,1}});
-//    EventResult result = afterEvent(sn, 1, inspace, EventType.DEP, 1, false);
-//
-//    NetworkStruct sn = ClosedModel.ex4().getStruct(false);
-//    Matrix inspace = new Matrix(1, 7);
-//    inspace.fromArray2D(new int[][]{{0,0,0,1,0,0,1}});
-//    EventResult result = afterEvent(sn, 1, inspace, EventType.DEP, 1, false);
-
-//    NetworkStruct sn = ClosedModel.ex4().getStruct(false);
-//    Matrix inspace = new Matrix(1, 7);
-//    inspace.fromArray2D(new int[][]{{0,0,0,1,0,0,1}});
-//    EventResult result = afterEvent(sn, 2, inspace, EventType.DEP, 3, false);
-
-//    NetworkStruct sn = ClosedModel.ex4().getStruct(false);
-//    Matrix inspace = new Matrix(1, 7);
-//    inspace.fromArray2D(new int[][]{{0,0,1,1,0,1,1}});
-//    EventResult result = afterEvent(sn, 1, inspace, EventType.PHASE, 1, false);
-
-//    NetworkStruct sn = ClosedModel.ex2_line().getStruct(false);
-//    Matrix inspace = new Matrix(1, 4);
-//    inspace.fromArray2D(new int[][]{{1,0,1,0}});
-//    EventResult result = afterEvent(sn, 0, inspace, EventType.PHASE, 0, false);
-
-//    NetworkStruct sn = ClosedModel.ex2_line().getStruct(false);
-//    Matrix inspace = new Matrix(1, 3);
-//    inspace.fromArray2D(new int[][]{{1,1,1}});
-//    EventResult result = afterEvent(sn, 1, inspace, EventType.PHASE, 0, true);
-
-
-//    NetworkStruct sn = ClosedModel.ex4_line().getStruct(false);
-//    Matrix inspace = new Matrix(1, 7);
-//    inspace.fromArray2D(new int[][]{{0,2,0,0,0,0,0}});
-//
-//    // time this call
-//    long startTime = System.nanoTime();
-//    EventResult result = afterEvent(sn, 1, inspace, EventType.ARV, 0, true);
-//    long endTime = System.nanoTime();
-//    long elapsedTimeSec = (endTime - startTime) / 1_000_000; // Convert nanoseconds to milli
-
-//    NetworkStruct sn = ClosedModel.ex2_line().getStruct(false);
-//    Matrix inspace = new Matrix(1, 4);
-//    inspace.fromArray2D(new int[][]{{0,0,2,0}});
-//    EventResult result = afterEvent(sn, 0, inspace, EventType.ARV, 0, true);
-
-    NetworkStruct sn = ClosedModel.ex0p().getStruct(false);
-    Matrix inspace = new Matrix(1,1 );
-    inspace.fromArray2D(new double[][]{{10.0}});
-    EventResult result = afterEvent(sn, 0, inspace, EventType.DEP, 0, true);
-//
-//    System.out.println("Outspace: ");
-//    System.out.println(result.outspace);
-//    System.out.println("Outrate: ");
-//    System.out.println(result.outrate);
-//    System.out.println("Outprob");
-//    System.out.println(result.outprob);
-//    System.out.println(elapsedTimeSec);
-
-//    Network sn = MixedModel.ex1_line();
-//    SolverSSA solver = new SolverSSA(sn);
-//    long startTime = System.nanoTime();
-//    NetworkAvgTable avgTable = solver.getAvgTable();
-//    long endTime = System.nanoTime();
-//    long elapsedTimeSec = (endTime - startTime) / 1_000_000_000; // Convert nanoseconds to sec
-//    System.out.println("Duration: ");
-//    System.out.println(elapsedTimeSec);
-//    avgTable.print();
-
-
-  }
-
 
   public static EventResult afterEvent(NetworkStruct sn, int ind, Matrix inspace, EventType event, int jobClass, boolean isSimulation) {
+    EventCacheKey key = new EventCacheKey(ind, inspace, event, jobClass, isSimulation);
+
+      if (sn.eventCache.containsKey(key) && sn.eventCacheEnabled) {
+        EventResult result = sn.eventCache.get(key);
+        Matrix outprob = result.outprob;
+        Matrix outspace =  result.outspace;
+        Matrix outrate = result.outrate;
+        switch(event) {
+          case ARV:
+            if (isSimulation) {
+              if (outprob.getNumRows() > 1) {
+                Matrix cum_sum = outprob.cumsumViaCol();
+                Matrix sum_by_col = outprob.sumCols();
+                Matrix cum_prob = Matrix.scale_mult(cum_sum, 1.0 / sum_by_col.get(0, 0));
+                int firing_ctr = -1;
+                double rand = Maths.random();
+                // we need the indicies where rand is bigger than cum_prob
+                for (int row = 0; row < cum_prob.getNumRows(); row++) {
+                  if (rand > cum_prob.get(row, 0)) {
+                    firing_ctr = row;
+                  }
+                }
+                firing_ctr++;
+                outspace = Matrix.extractRows(outspace, firing_ctr, firing_ctr + 1, null);
+                outrate = new Matrix(1, 1);
+                outrate.set(0, 0, -1);
+                outprob = new Matrix(1, 1);
+                outprob.set(0, 0, 1);
+              }
+            }
+            break;
+          case DEP:
+            if (isSimulation) {
+              if (outspace.getNumRows() > 1) {
+                Matrix tot_rate = outrate.sumCols();
+                Matrix cum_sum = outrate.cumsumViaCol();
+                Matrix cum_rate = Matrix.scale_mult(cum_sum, (double) 1 / tot_rate.get(0,0));
+                int firing_ctr = -1;
+                double rand = Maths.random();
+                // we need the indicies where rand is bigger than cum_prob
+                for (int row = 0; row < cum_rate.getNumRows(); row++) {
+                  if (rand > cum_rate.get(row)) {
+                    firing_ctr = row;
+                  }
+                }
+                firing_ctr++;
+                outspace = Matrix.extractRows(outspace, firing_ctr, firing_ctr + 1, null);
+                double outrate_val = outrate.elementSum();
+                outrate = new Matrix(1,1);
+                outrate.set(0, 0, outrate_val);
+                outprob = Matrix.extractRows(outprob, firing_ctr, firing_ctr + 1, null);
+              }
+            }
+            break;
+          case PHASE:
+            if (isSimulation) {
+              if (outspace.getNumRows() > 1) {
+                Matrix tot_rate = outrate.sumCols();
+                Matrix cum_sum = outrate.cumsumViaCol();
+                Matrix cum_rate = Matrix.scale_mult(cum_sum, (double) 1 / tot_rate.get(0,0));
+                int firing_ctr = -1;
+                double rand = Maths.random();
+                // we need the indicies where rand is bigger than cum_prob
+                for (int row = 0; row < cum_rate.getNumRows(); row++) {
+                  if (rand > cum_rate.get(row)) {
+                    firing_ctr = row;
+                  }
+                }
+                firing_ctr++;
+                outspace = Matrix.extractRows(outspace, firing_ctr, firing_ctr + 1, null);
+                double outrate_val = outrate.elementSum();
+                outrate.set(0, 0, outrate_val);
+                outprob = Matrix.extractRows(outprob, firing_ctr, firing_ctr + 1, null);
+              }
+
+            }
+        }
+
+        return new EventResult(outspace, outrate, outprob, result.new_job);
+      }
+
+
+
+
 
 
     int M = sn.nstations;
@@ -1994,7 +1959,9 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
     if (sn.isstation.get(ind) == 1) {
       if (K.get(jobClass) == 0) {
         new_job = false;
-        return new EventResult(outspace, outrate, outprob);
+        EventResult result = new EventResult(outspace, outrate, outprob, new_job);
+        sn.eventCache.put(key, result);
+        return result;
       }
       V = Matrix.extractRows(sn.nvars, ind, ind + 1, null).elementSum();
       int inspaceRows = inspace.getNumRows();
@@ -2384,6 +2351,11 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 
             outprob = Matrix.concatRows(outprob, outprob_k_en_o, null);
           }
+
+          // cache before choosing random event:
+          EventResult result = new EventResult(outspace, outrate, outprob, new_job);
+          sn.eventCache.put(key, result);
+
           if (isSimulation) {
             if (outprob.getNumRows() > 1) {
               Matrix cum_sum = outprob.cumsumViaCol();
@@ -2747,6 +2719,7 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
                       break;
 
                     case FCFS:
+                      // job departing
                       for (int row = 0; row < spaceSrv.getNumRows(); row++) {
                         if (en.get(row, 0) == 1) {
                           spaceSrv.set(row, (int) (Ks.get(jobClass) + k), spaceSrv.get(row, (int) (Ks.get(jobClass) + k)) - 1);
@@ -2761,6 +2734,10 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
                           enWbuf.set(row, 0, 0);
                         }
                       }
+                      if (enWbuf.elementSum() == 0) {
+                        new_job = false;
+                      }
+
                       for (int kdest = 0; kdest < K.get(jobClass); kdest++) {
                         Matrix space_buf_kd = spaceBuf.clone();
                         Matrix space_var_kd = spaceVar.clone();
@@ -2793,7 +2770,6 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
                             }
                           }
                         }
-
 
                         for (int row = 0; row < rate_kd.getNumRows(); row++) {
                           if (en.get(row, 0) == 1) {
@@ -3109,6 +3085,8 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 
                 }
               }
+              EventResult result_d = new EventResult(outspace, outrate, outprob, new_job);
+              sn.eventCache.put(key, result_d);
               if (isSimulation) {
                 if (outspace.getNumRows() > 1) {
                   Matrix tot_rate = outrate.sumCols();
@@ -3132,9 +3110,12 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 
               }
             }
+          } else {
+            EventResult result_d = new EventResult(outspace, outrate, outprob, new_job);
+            sn.eventCache.put(key, result_d);
           }
-          break;
-          case PHASE:
+        break;
+        case PHASE:
             outspace = new Matrix(0,0);
             outrate = new Matrix(0,0);
             outprob = new Matrix(0,0);
@@ -3265,6 +3246,8 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
                   }
                 }
               }
+              EventResult result_p = new EventResult(outspace, outrate, outprob, new_job);
+              sn.eventCache.put(key, result_p);
               if (isSimulation) {
                 if (outspace.getNumRows() > 1) {
                   Matrix tot_rate = outrate.sumCols();
@@ -3287,6 +3270,9 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 
               }
 
+            } else {
+              EventResult result_p = new EventResult(outspace, outrate, outprob, new_job);
+              sn.eventCache.put(key, result_p);
             }
             break;
           }
@@ -3297,7 +3283,7 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 
     }
 
-    return new EventResult(outspace, outrate, outprob);
+    return new EventResult(outspace, outrate, outprob, new_job);
 
   }
 

@@ -12,6 +12,8 @@ import jline.lang.constant.SchedStrategy;
 import jline.lang.nodes.Node;
 import jline.lang.nodes.StatefulNode;
 import jline.lang.nodes.Station;
+import jline.lang.state.EventCacheKey;
+import jline.lang.state.EventResult;
 import jline.util.*;
 
 /**
@@ -47,7 +49,7 @@ public class NetworkStruct implements Serializable, Cloneable {
 	public Map<Node, NodeParam> nodeparam;
 	public Map<Integer, Sync> sync;
 	public Map<Station, SerializableFunction<Matrix, Double>> cdscaling;
-
+    
     public Matrix refstat;
     public Matrix njobs;
     public Matrix nservers;
@@ -78,9 +80,9 @@ public class NetworkStruct implements Serializable, Cloneable {
     public Matrix refclass;
     public Matrix lldscaling;
     public Matrix fj;
-
+    
     SerializableFunction<Pair<Map<Node, Matrix>, Map<Node, Matrix>>, Matrix> rtfun;
-
+    
     public List<NodeType> nodetypes;
     public List<String> classnames;
     public List<String> nodenames;
@@ -88,6 +90,8 @@ public class NetworkStruct implements Serializable, Cloneable {
     public List<StatefulNode> stateful;
     public List<JobClass> jobclasses;
     public List<Node> nodes;
+    public Map<EventCacheKey, EventResult> eventCache;
+    public boolean eventCacheEnabled = true;
 
     @Override
     public Object clone() throws CloneNotSupportedException {
