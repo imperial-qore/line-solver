@@ -783,12 +783,14 @@ classdef JLINE
                     end
                     % set Cache hit/miss  relationships
                     for r=1:length(line_node.server.inputJobClasses)
-                        inputClass = line_node.server.inputJobClasses{r}{1};
-                        jobClass = java_classes{inputClass.index};
-                        hitClass = java_classes{line_node.server.hitClass(r)};
-                        missClass = java_classes{line_node.server.missClass(r)};
-                        java_nodes{n}.setHitClass(jobClass, hitClass);
-                        java_nodes{n}.setMissClass(jobClass, missClass);
+                        if ~isempty(line_node.server.inputJobClasses{r})
+                            inputClass = line_node.server.inputJobClasses{r}{1};
+                            jobClass = java_classes{inputClass.index};
+                            hitClass = java_classes{line_node.server.hitClass(r)};
+                            missClass = java_classes{line_node.server.missClass(r)};
+                            java_nodes{n}.setHitClass(jobClass, hitClass);
+                            java_nodes{n}.setMissClass(jobClass, missClass);
+                        end
                     end
                 end
             end

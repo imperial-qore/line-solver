@@ -15,8 +15,8 @@ missClass = OpenClass(model, 'MissClass', 0);
 
 source.setArrival(jobClass, Exp(2));
 
-%pAccess = DiscreteSampler((1/n)*ones(1,n));  % uniform item references
-pAccess = Zipf(1.4, n);  % Zipf-like item references
+pAccess = DiscreteSampler((1/n)*ones(1,n));  % uniform item references
+%pAccess = Zipf(1.4, n);  % Zipf-like item references
 cacheNode.setRead(jobClass, pAccess);
 
 cacheNode.setHitClass(jobClass, hitClass);

@@ -126,7 +126,7 @@ classdef Cache < StatefulNode
             
             itemclass = self.items;
             if distribution.isDiscrete
-                self.server.inputJobClasses{jobclass.index} = {jobclass, self.schedPolicy, DropStrategy.WaitingQueue};
+                self.server.inputJobClasses{1,jobclass.index} = {jobclass, self.schedPolicy, DropStrategy.WaitingQueue};
                 self.popularity{itemclass.index, jobclass.index} = distribution.copy;
                 if self.popularity{itemclass.index, jobclass.index}.support(2) ~= itemclass.nitems
                     line_error(mfilename,sprintf('The reference model is defined on a number of items different from the ones used to instantiate %s.',self.name));
