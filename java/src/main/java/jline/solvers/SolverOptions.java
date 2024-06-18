@@ -65,6 +65,7 @@ public class SolverOptions {
   public boolean stiff;
   public double[] timespan;
   public VerboseLevel verbose;
+  public boolean eventcache;
 
   public SolverOptions() {
 
@@ -106,6 +107,7 @@ public class SolverOptions {
     this.timespan[0] = POSITIVE_INFINITY;
     this.timespan[1] = POSITIVE_INFINITY;
     this.verbose = GlobalConstants.getInstance().getVerbose();
+    this.eventcache = true;
   }
 
   public SolverOptions(SolverType solverType) {
@@ -153,7 +155,7 @@ public class SolverOptions {
       case SSA:
         this.timespan[0] = 0;
         this.timespan[1] = POSITIVE_INFINITY;
-        // TODO: set verbosity
+        this.verbose = VerboseLevel.STD;
         break;
       case JMT:
         //TODO add configs

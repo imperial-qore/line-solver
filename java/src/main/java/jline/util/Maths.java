@@ -88,7 +88,7 @@ public class Maths {
   }
 
   public static void setMatlabRandomSeed(final long seed) {
-      ThreadLocalRandom.setSeed(seed);
+      ThreadLocalRandom.setSeed((int)seed);
   }
 
   // returns a random double in interal (0,0)

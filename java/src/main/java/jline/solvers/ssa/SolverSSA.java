@@ -1,42 +1,42 @@
 package jline.solvers.ssa;
 
-import jline.examples.MixedModel;
-import jline.examples.OpenModel;
 import jline.lang.*;
 import jline.lang.constant.*;
 import jline.lang.nodes.StatefulNode;
 import jline.lang.nodes.Station;
+import jline.lang.state.EventCache;
+import jline.lang.state.EventCacheKey;
 import jline.lang.state.EventResult;
 import jline.lang.state.State;
 import jline.examples.ClosedModel;
-import jline.lang.state.ThreadLocalRandom;
 import jline.lib.KPCToolbox;
 import jline.solvers.*;
-import jline.solvers.mam.SolverMAM;
-import jline.solvers.nc.SolverNC;
-import jline.solvers.nc.SolverNCResult;
 import jline.util.Maths;
 import jline.util.Matrix;
+import jline.util.Pair;
 import jline.util.UniqueRowResult;
-import org.apache.commons.math3.random.MersenneTwister;
 
 import javax.xml.parsers.ParserConfigurationException;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
+import static java.lang.Double.POSITIVE_INFINITY;
 import static java.util.stream.Collectors.toMap;
 
 public class SolverSSA extends NetworkSolver {
 
+    private final int DEFAULT_THREADS = 4;
+    private boolean cached_results = false;
     private ExecutorService threadPool;
+    private int numThreads = DEFAULT_THREADS;
+    private EventCache eventCache;
+
+    private SSAValues cached_values;
+
 
     public SolverSSA(Network model) {
         // If no options provided, use default options
@@ -45,7 +45,7 @@ public class SolverSSA extends NetworkSolver {
     }
 
     public SolverSSA(Network model, Object... varargin) {
-        this(model, SolverMAM.defaultOptions());
+        this(model, SolverSSA.defaultOptions());
         this.options = Solver.parseOptions(this.options, varargin);
     }
 
@@ -111,8 +111,11 @@ public class SolverSSA extends NetworkSolver {
 
     }
 
-
-    public SSAValues solver_ssa() {
+    public SSAValues solver_ssa(EventCache eventCache) {
+        if (cached_results) {
+            System.out.println("Using cached values");
+            return cached_values;
+        }
         NetworkStruct sn = this.sn;
         SolverOptions options = this.options;
 
@@ -295,9 +298,6 @@ public class SolverSSA extends NetworkSolver {
         Map<Integer, Integer> enabled_sync = new HashMap<>();
         Map<Integer, Matrix> stateCell_1 = new HashMap<>();
         while (samples_collected < options.samples && cur_time <= options.timespan[1]) {
-            if (samples_collected % 100 == 0) {
-//                System.out.println("SSA simulation: " + samples_collected + " samples collected");
-            }
             int ctr = 1;
             Map<Integer, Integer> node_a_sf = new HashMap<>();
             Map<Integer, Integer> node_p_sf = new HashMap<>();
@@ -311,7 +311,7 @@ public class SolverSSA extends NetworkSolver {
                 {
                     int isf = (int) sn.nodeToStateful.get(node_a.get(act));
                     EventResult eventResult = State.afterEvent(sn, node_a.get(act),
-                            stateCell.get(isf), event_a.get(act), class_a.get(act), isSimulation);
+                            stateCell.get(isf), event_a.get(act), class_a.get(act), isSimulation, eventCache);
                     if (!eventResult.outspace.isEmpty()) {
                         newStateCell.get(act).put((int) sn.nodeToStateful.get(node_a.get(act)), eventResult.outspace);
                     } else {
@@ -357,10 +357,11 @@ public class SolverSSA extends NetworkSolver {
                     if (rate_a.get(act).get(ia) > 0) {
                         if (node_p.get(act) != local) {
                             if (node_p.get(act).equals(node_a.get(act))) {
+
                                 // self-loop
                                 EventResult eventResult = State.afterEvent(sn, node_p.get(act),
                                         newStateCell.get(act).get((int) sn.nodeToStateful.get(node_a.get(act))),
-                                        event_p.get(act), class_p.get(act), isSimulation);
+                                        event_p.get(act), class_p.get(act), isSimulation, eventCache);
                                 if (!eventResult.outspace.isEmpty()) {
                                     newStateCell.get(act).put((int) sn.nodeToStateful.get(node_p.get(act)), eventResult.outspace);
                                 } else {
@@ -369,16 +370,12 @@ public class SolverSSA extends NetworkSolver {
                                 if (!eventResult.outprob.isEmpty()) {
                                     outprob_p.put(act, eventResult.outprob.toDouble());
                                 }
-//                                This seems to cause issues with mixed models
-//                                else {
-//                                    outprob_p.remove(act);
-//                                }
 
                             } else {
                                 // departure
                                 EventResult eventResult = State.afterEvent(sn, node_p.get(act),
                                         newStateCell.get(act).get((int) sn.nodeToStateful.get(node_p.get(act))),
-                                        event_p.get(act), class_p.get(act), isSimulation);
+                                        event_p.get(act), class_p.get(act), isSimulation, eventCache);
 
                                 if (!eventResult.outspace.isEmpty()) {
                                     newStateCell.get(act).put((int) sn.nodeToStateful.get(node_p.get(act)), eventResult.outspace);
@@ -453,7 +450,6 @@ public class SolverSSA extends NetworkSolver {
             double tot_rate = enabled_rates_m.elementSum();
             Matrix cum_sum = enabled_rates_m.cumsumViaRow();
             Matrix cum_rate = Matrix.scale_mult(cum_sum, 1 / tot_rate);
-            // TODO: change to Math.random()
 
             double rand = Maths.random();
             int firing_ctr = -1;
@@ -506,7 +502,7 @@ public class SolverSSA extends NetworkSolver {
                     }
                 }
             }
-//             TODO: change to Math.random()
+
             double dt = -(Math.log(Maths.random()) / tot_rate);
             cur_time += dt;
 
@@ -569,7 +565,22 @@ public class SolverSSA extends NetworkSolver {
                     stateCell.entrySet().stream().collect(toMap(Map.Entry::getKey, e -> e.getValue().clone()));
             stateCell = newStateCell.get(enabled_sync.get(firing_ctr));
 
-            // TODO: verbosity-based prints, lines 246-262 MATLAB
+            if (options.verbose == VerboseLevel.STD || options.verbose == VerboseLevel.DEBUG) {
+                if (samples_collected == 100) {
+                    System.out.printf("\b\nSSA samples: %6d", samples_collected);
+                } else if (options.verbose == VerboseLevel.DEBUG) {
+                    if (samples_collected == 0) {
+                        System.out.printf("\b\nSSA samples: %6d\n", samples_collected);
+                    } else {
+                        System.out.printf("\b\b\b\b\b\b\b%6d\n", samples_collected);
+                    }
+                } else if (samples_collected % 100 == 0) {
+                    System.out.printf("\b\b\b\b\b\b\b %6d", samples_collected);
+                }
+            }
+            if (samples_collected == options.samples) {
+                System.out.println("\n");
+            }
         }
 
         tranState = tranState.transpose();
@@ -655,7 +666,7 @@ public class SolverSSA extends NetworkSolver {
 
     @Override
     protected void runAnalyzer() throws IllegalAccessException, ParserConfigurationException, IOException {
-        threadPool = Executors.newFixedThreadPool(8);
+        threadPool = Executors.newFixedThreadPool(this.numThreads);
 
         long T0 = java.lang.System.currentTimeMillis();
         if (this.options == null) {
@@ -754,7 +765,6 @@ public class SolverSSA extends NetworkSolver {
     }
 
     private SolverSSAResult solver_ssa_analyzer_parallel() {
-//        final AtomicReference<NetworkStruct>[] snc = new AtomicReference[]{new AtomicReference<>(this.sn)};
         int M = sn.nstations;
         int K = sn.nclasses;
         Map<Station, Map<JobClass, Map<Integer, Matrix>>> PH = sn.proc;
@@ -762,8 +772,7 @@ public class SolverSSA extends NetworkSolver {
         Matrix NK = sn.njobs.transpose();
 
 
-        // TODO: should this value be variable?
-        int numThreads = 8;
+
 
         Map<Integer, Matrix> QNs = new ConcurrentHashMap<>();
         Map<Integer, Matrix> UNs = new ConcurrentHashMap<>();
@@ -773,16 +782,13 @@ public class SolverSSA extends NetworkSolver {
         Map<Integer, Matrix> XNs = new ConcurrentHashMap<>();
 
 
-        this.options.samples = (int) Math.ceil(this.options.samples / (double) 4);
+        this.options.samples = (int) Math.ceil(this.options.samples / (double) numThreads);
 
 
-//        Thread[] threads = new Thread[numThreads];
         for (int t = 0; t < numThreads; t++) {
             final int threadIndex = t;
-//            threads[t] = new Thread(() -> {
             threadPool.submit(() -> {
-                Maths.setRandomNumbersMatlab(true);
-                Maths.setMatlabRandomSeed(this.options.seed);
+
 
                 Matrix probSysState = new Matrix(0,0);
                 Matrix SSq = new Matrix(0,0);
@@ -792,12 +798,12 @@ public class SolverSSA extends NetworkSolver {
                 switch (this.options.method) {
                     case "para":
                     case "parallel":
-                        SSAValues result = solver_ssa();
+                        eventCache = new EventCache(true, this.options.eventcache);
+                        SSAValues result = solver_ssa(eventCache);
                         probSysState = result.pi;
                         SSq = result.SSq;
                         arvRates = result.arvRates;
                         depRates = result.depRates;
-//                        snc[0] = new AtomicReference<>(result.sn);
                         break;
                 }
                 Matrix XN = new Matrix(1, K);
@@ -857,12 +863,12 @@ public class SolverSSA extends NetworkSolver {
                     }
                     CN.set(k, NK.get(k) / XN.get(k));
                 }
-                QN.replace(Double.NaN, 0);
-                CN.replace(Double.NaN, 0);
-                RN.replace(Double.NaN, 0);
-                UN.replace(Double.NaN, 0);
-                XN.replace(Double.NaN, 0);
-                TN.replace(Double.NaN, 0);
+                QN.apply(Double.NaN, 0, "equal");
+                CN.apply(Double.NaN, 0, "equal");
+                RN.apply(Double.NaN, 0, "equal");
+                UN.apply(Double.NaN, 0, "equal");
+                XN.apply(Double.NaN, 0, "equal");
+                TN.apply(Double.NaN, 0, "equal");
 
                 QNs.put(threadIndex, QN);
                 CNs.put(threadIndex, CN);
@@ -880,14 +886,7 @@ public class SolverSSA extends NetworkSolver {
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
-        // wait for all threads to finish
-//        for (int t = 0; t < numThreads; t++) {
-//            try {
-//                threads[t].join();
-//            } catch (InterruptedException e) {
-//                e.printStackTrace();
-//            }
-//        }
+
 
         Matrix XN = new Matrix(1, K);
         for (int i = 0; i < XN.getNumRows(); i++){
@@ -952,7 +951,6 @@ public class SolverSSA extends NetworkSolver {
         }
         CN = Matrix.scale_mult(CN,  1 /(double) numThreads);
 
-
         Map<Integer, Matrix> tranSysState = new HashMap<>();
         Matrix tranSync = new Matrix(0, 0);
         return new SolverSSAResult(QN, UN, RN, TN, CN, XN, tranSysState, tranSync, sn);
@@ -989,7 +987,8 @@ public class SolverSSA extends NetworkSolver {
         CN.fill(Double.NaN);
 
         this.options.samples++;
-        SSAValues result = solver_ssa();
+        eventCache = new EventCache(false, this.options.eventcache);
+        SSAValues result = solver_ssa(eventCache);
         Matrix probSysState = result.pi;
         Matrix StateSpaceAggr = result.SSq;
         Map<Integer, Matrix> arvRates = result.arvRates;
@@ -1075,12 +1074,12 @@ public class SolverSSA extends NetworkSolver {
         // TODO: Cache nodetype case
 
         // matrices QN, CN, RN, UN, XN, TN, where they are Double.isNan set to 0
-        QN.replace(Double.NaN, 0);
-        CN.replace(Double.NaN, 0);
-        RN.replace(Double.NaN, 0);
-        UN.replace(Double.NaN, 0);
-        XN.replace(Double.NaN, 0);
-        TN.replace(Double.NaN, 0);
+        QN.apply(Double.NaN, 0, "equal");
+        CN.apply(Double.NaN, 0,  "equal");
+        RN.apply(Double.NaN, 0, "equal");
+        UN.apply(Double.NaN, 0, "equal");
+        XN.apply(Double.NaN, 0, "equal");
+        TN.apply(Double.NaN, 0, "equal");
 
 
 
@@ -1088,6 +1087,10 @@ public class SolverSSA extends NetworkSolver {
         return new SolverSSAResult(QN, UN, RN, TN, CN, XN, tranSysState, tranSync, sn);
     }
 
+    // set number of threads for para SolverSSA
+    public void setParallelism(int numThreads) {
+        this.numThreads = numThreads;
+    }
 
 
 

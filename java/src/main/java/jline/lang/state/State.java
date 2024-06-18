@@ -1800,12 +1800,16 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
     return newSpace;
   }
 
-
-  public static EventResult afterEvent(NetworkStruct sn, int ind, Matrix inspace, EventType event, int jobClass, boolean isSimulation) {
+  public static EventResult afterEvent(NetworkStruct sn, int ind, Matrix inspace, EventType event,
+                                       int jobClass, boolean isSimulation) {
+    return afterEvent(sn, ind, inspace, event, jobClass, isSimulation, new EventCache(false, false));
+  }
+  public static EventResult afterEvent(NetworkStruct sn, int ind, Matrix inspace, EventType event,
+                                       int jobClass, boolean isSimulation, EventCache eventCache) {
     EventCacheKey key = new EventCacheKey(ind, inspace, event, jobClass, isSimulation);
 
-      if (sn.eventCache.containsKey(key) && sn.eventCacheEnabled) {
-        EventResult result = sn.eventCache.get(key);
+      if (eventCache.contains(key) && eventCache.isEnabled()) {
+        EventResult result = eventCache.get(key);
         Matrix outprob = result.outprob;
         Matrix outspace =  result.outspace;
         Matrix outrate = result.outrate;
@@ -1880,7 +1884,7 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
             }
         }
 
-        return new EventResult(outspace, outrate, outprob, result.new_job);
+        return new EventResult(outspace, outrate, outprob);
       }
 
 
@@ -1954,13 +1958,12 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
     Matrix spaceVar = new Matrix(0,0);
     Matrix spaceSrv = new Matrix(0,0);
     Matrix spaceBuf = new Matrix(0,0);
-    boolean new_job = true;
+
 
     if (sn.isstation.get(ind) == 1) {
       if (K.get(jobClass) == 0) {
-        new_job = false;
-        EventResult result = new EventResult(outspace, outrate, outprob, new_job);
-        sn.eventCache.put(key, result);
+        EventResult result = new EventResult(outspace, outrate, outprob);
+        eventCache.put(key, result);
         return result;
       }
       V = Matrix.extractRows(sn.nvars, ind, ind + 1, null).elementSum();
@@ -2083,10 +2086,6 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
                     } else {
                       idle_srv.set(i, 0, 0);
                     }
-                  }
-                  if (idle_srv.elementSum() <= 0) {
-                    // job will not enter service immediately
-                    new_job = false;
                   }
 
                   // job enters service, increments idle server terms in space_srv_k
@@ -2353,8 +2352,8 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
           }
 
           // cache before choosing random event:
-          EventResult result = new EventResult(outspace, outrate, outprob, new_job);
-          sn.eventCache.put(key, result);
+          EventResult result = new EventResult(outspace, outrate, outprob);
+          eventCache.put(key, result);
 
           if (isSimulation) {
             if (outprob.getNumRows() > 1) {
@@ -2734,9 +2733,6 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
                           enWbuf.set(row, 0, 0);
                         }
                       }
-                      if (enWbuf.elementSum() == 0) {
-                        new_job = false;
-                      }
 
                       for (int kdest = 0; kdest < K.get(jobClass); kdest++) {
                         Matrix space_buf_kd = spaceBuf.clone();
@@ -3085,8 +3081,8 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 
                 }
               }
-              EventResult result_d = new EventResult(outspace, outrate, outprob, new_job);
-              sn.eventCache.put(key, result_d);
+              EventResult result_d = new EventResult(outspace, outrate, outprob);
+              eventCache.put(key, result_d);
               if (isSimulation) {
                 if (outspace.getNumRows() > 1) {
                   Matrix tot_rate = outrate.sumCols();
@@ -3111,8 +3107,8 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
               }
             }
           } else {
-            EventResult result_d = new EventResult(outspace, outrate, outprob, new_job);
-            sn.eventCache.put(key, result_d);
+            EventResult result_d = new EventResult(outspace, outrate, outprob);
+            eventCache.put(key, result_d);
           }
         break;
         case PHASE:
@@ -3246,8 +3242,8 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
                   }
                 }
               }
-              EventResult result_p = new EventResult(outspace, outrate, outprob, new_job);
-              sn.eventCache.put(key, result_p);
+              EventResult result_p = new EventResult(outspace, outrate, outprob);
+              eventCache.put(key, result_p);
               if (isSimulation) {
                 if (outspace.getNumRows() > 1) {
                   Matrix tot_rate = outrate.sumCols();
@@ -3271,8 +3267,8 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
               }
 
             } else {
-              EventResult result_p = new EventResult(outspace, outrate, outprob, new_job);
-              sn.eventCache.put(key, result_p);
+              EventResult result_p = new EventResult(outspace, outrate, outprob);
+              eventCache.put(key, result_p);
             }
             break;
           }
@@ -3283,7 +3279,7 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 
     }
 
-    return new EventResult(outspace, outrate, outprob, new_job);
+    return new EventResult(outspace, outrate, outprob);
 
   }
 

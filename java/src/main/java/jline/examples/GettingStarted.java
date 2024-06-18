@@ -26,6 +26,7 @@ import java.nio.file.Paths;
 import de.xypron.jcobyla.Calcfc;
 import de.xypron.jcobyla.Cobyla;
 import jline.solvers.nc.SolverNC;
+import jline.solvers.ssa.SolverSSA;
 
 
 import java.util.function.Function;
