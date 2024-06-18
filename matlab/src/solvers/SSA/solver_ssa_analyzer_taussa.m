@@ -2,7 +2,7 @@ function [XN,UN,QN,RN,TN,CN,tranSysState,tranSync]=solver_ssa_analyzer_taussa(ne
 % [XN,UN,QN,RN,TN,CN]=SOLVER_SSA_ANALYZER_SERIAL(SN, OPTIONS)
 
 jmodel = LINE2JLINE(network);
-jsolver = JLINE.SolverSSA(jmodel);
+jsolver = JLINE.SolverTauSSA(jmodel);
 import jline.solvers.ssa.*;
 import jline.solvers.ssa.strategies.*;
 

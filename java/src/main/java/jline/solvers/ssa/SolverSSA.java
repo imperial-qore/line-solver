@@ -30,8 +30,7 @@ import static java.util.stream.Collectors.toMap;
 
 public class SolverSSA extends NetworkSolver {
 
-        private final int DEFAULT_THREADS = (int) Math.ceil(Runtime.getRuntime().availableProcessors() / 2);
-    private boolean cached_results = false;
+    private final int DEFAULT_THREADS = (int) Math.ceil(Runtime.getRuntime().availableProcessors() / 2);
     private ExecutorService threadPool;
     private int numThreads = DEFAULT_THREADS;
     private EventCache eventCache;
@@ -55,58 +54,6 @@ public class SolverSSA extends NetworkSolver {
     public SolverSSA(Network model, SolverOptions options) {
         super(model, "SolverSSA", options);
         this.result = new SolverSSAResult();
-    }
-
-
-    public static void main(String[] args) throws InterruptedException {
-
-//        Maths.setRandomNumbersMatlab(true);
-//        Maths.setMatlabRandomSeed(1);
-        Network sn = ClosedModel.ex1();
-        SolverOptions options = new SolverOptions();
-//        options.method = "para";
-//        options.seed = 1;
-        SolverSSA solver = new SolverSSA(sn, options);
-        long startTime = System.nanoTime();
-        NetworkAvgTable avgTable = solver.getAvgTable();
-        long endTime = System.nanoTime();
-        long elapsedTimeSec = (endTime - startTime) / 1_000_000_000; // Convert nanoseconds to sec
-        System.out.println("Duration: ");
-        System.out.println(elapsedTimeSec);
-        avgTable.print();
-
-
-//
-//        // these are being doing here because ordinarily done in runAnalyzer but not implemented yet
-//        Map<StatefulNode, Matrix> state = sn.getStruct(true).state;
-//        sn.getStruct(true).space = new HashMap<>();
-//        // copy entries in state into space
-//        for (int i = 0; i < state.size(); i++) {
-//            sn.getStruct(true).space.put(sn.getStruct(true).stations.get(i), state.get(sn.getStruct(true).stateful.get(i)));
-//        }
-//
-//        SolverSSA solverSSA = new SolverSSA(sn);
-//        solverSSA.options.samples++;
-//        // Record the start time
-//        long startTime = System.nanoTime();
-//        SSAValues result = solverSSA.solver_ssa();
-//        long endTime = System.nanoTime();
-//        long elapsedTimeSec = (endTime - startTime) / 1_000_000_000; // Convert nanoseconds to sec
-//        System.out.println("Elapsed Time: " + elapsedTimeSec+ " seconds");
-//        System.out.println("pi");
-//        System.out.println(result.pi);
-//        System.out.println(result.pi.getNumElements());
-//        System.out.println("arvRates");
-//        System.out.println(result.arvRates);
-//        System.out.println("depRates");
-//        System.out.println(result.depRates);
-//        System.out.println("SSq");
-//        System.out.println(result.SSq);
-//        System.out.println("tranSync");
-//        System.out.println(result.tranSync);
-//        System.out.println("tranSysState");
-//        System.out.println(result.tranSysState);
-
     }
 
     public SSAValues solver_ssa(EventCache eventCache) {
@@ -568,9 +515,9 @@ public class SolverSSA extends NetworkSolver {
                 } else if (samples_collected % 100 == 0) {
                     System.out.printf("\b\b\b\b\b\b\b %6d", samples_collected);
                 }
-            }
-            if (samples_collected == options.samples) {
-                System.out.println("\n");
+                if (samples_collected == options.samples) {
+                    System.out.println("\n");
+                }
             }
         }
 

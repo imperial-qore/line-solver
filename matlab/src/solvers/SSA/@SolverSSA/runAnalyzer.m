@@ -18,26 +18,19 @@ Solver.resetRandomGeneratorSeed(options.seed);
 switch options.method
     case 'taussa'
         options.lang = 'java';
+    case 'default'
+        switch options.lang
+            case 'java'
+                options.verbose = VerboseLevel.SILENT;
+                options.method = 'para';
+            case 'matlab'
+                options.method = 'serial';
+        end
 end
 sn = getStruct(self);
 
 switch options.lang
     case 'java'
-        jlineSSASupported = true;
-        M = sn.nstations;
-        R = sn.nclasses;
-        for i=1:M
-            for r=1:R
-                if ~(sn.procid(i,r) == ProcessType.ID_EXP || sn.procid(i,r) == ProcessType.ID_ERLANG || sn.procid(i,r) == ProcessType.ID_MAP || sn.procid(i,r) == ProcessType.ID_COXIAN || sn.procid(i,r) == ProcessType.ID_DISABLED || sn.procid(i,r) == ProcessType.ID_IMMEDIATE)
-%                    jlineSSASupported = false;
-                end
-            end
-        end
-
-        if ~jlineSSASupported
-            line_error(mfilename,'This model contains features not supported by the Java solver.');
-        end
-
         switch options.method
             case {'default','serial','para','parallel'}
                 jmodel = LINE2JLINE(self.model);
