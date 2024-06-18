@@ -60,7 +60,11 @@ public class SolverSSA extends NetworkSolver {
         NetworkStruct sn = this.sn;
         SolverOptions options = this.options;
 
-//        this.resetRandomGeneratorSeed(options.seed);
+        if (Maths.randomMatlabStyle()) {
+            Maths.setMatlabRandomSeed(options.seed);
+        }
+
+
 
         // generate local state spaces
 
@@ -236,6 +240,11 @@ public class SolverSSA extends NetworkSolver {
         Map<Integer, Integer> enabled_sync = new HashMap<>();
         Map<Integer, Matrix> stateCell_1 = new HashMap<>();
         while (samples_collected < options.samples && cur_time <= options.timespan[1]) {
+            if (samples_collected == 1) {
+                if (options.method.equals("para") || options.method.equals ("parallel")) {
+                    System.out.printf("SSA samples: %6d\n", samples_collected);
+                }
+            }
             int ctr = 1;
             Map<Integer, Integer> node_a_sf = new HashMap<>();
             Map<Integer, Integer> node_p_sf = new HashMap<>();
@@ -503,22 +512,21 @@ public class SolverSSA extends NetworkSolver {
                     stateCell.entrySet().stream().collect(toMap(Map.Entry::getKey, e -> e.getValue().clone()));
             stateCell = newStateCell.get(enabled_sync.get(firing_ctr));
 
-            if (options.verbose == VerboseLevel.STD || options.verbose == VerboseLevel.DEBUG) {
-                if (samples_collected == 100) {
-                    System.out.printf("\b\nSSA samples: %6d", samples_collected);
-                } else if (options.verbose == VerboseLevel.DEBUG) {
-                    if (samples_collected == 0) {
-                        System.out.printf("\b\nSSA samples: %6d\n", samples_collected);
-                    } else {
-                        System.out.printf("\b\b\b\b\b\b\b%6d\n", samples_collected);
-                    }
-                } else if (samples_collected % 100 == 0) {
-                    System.out.printf("\b\b\b\b\b\b\b %6d", samples_collected);
-                }
-                if (samples_collected == options.samples) {
-                    System.out.println("\n");
-                }
+
+            if (!options.method.equals("para") && !options.method.equals ("parallel") &&
+                    (options.verbose == VerboseLevel.STD || options.verbose == VerboseLevel.DEBUG)) {
+            if (samples_collected == 2) {
+                System.out.printf("\b\n SSA samples: %6d ", samples_collected);
+            } else if (options.verbose == VerboseLevel.DEBUG) {
+                System.out.printf("\b\b\b\b\b\b\b %6d", samples_collected);
+            } else if (samples_collected % 100 == 0) {
+                System.out.printf("\b\b\b\b\b\b\b %6d", samples_collected);
+	            if (samples_collected == options.samples) {
+	                System.out.println("\n");
+	            }
             }
+        }
+
         }
 
         tranState = tranState.transpose();
@@ -595,6 +603,9 @@ public class SolverSSA extends NetworkSolver {
             }
         }
         pi = Matrix.scale_mult(pi, 1/pi.elementSum());
+        if (options.method.equals("para") || options.method.equals ("parallel")) {
+            System.out.printf("SSA samples: %6d\n", samples_collected);
+        }
         return new SSAValues(pi, SSq, arvRates, depRates, tranSysState, tranSync, sn);
     }
 
@@ -722,11 +733,14 @@ public class SolverSSA extends NetworkSolver {
 
         this.options.samples = (int) ceil(this.options.samples / (double) numThreads);
 
-
+        boolean matlabRand = Maths.randomMatlabStyle();
         for (int t = 0; t < numThreads; t++) {
             final int threadIndex = t;
             threadPool.submit(() -> {
 
+                if (matlabRand) {
+                    Maths.setMatlabRandomSeed(options.seed);
+                }
 
                 Matrix probSysState = new Matrix(0,0);
                 Matrix SSq = new Matrix(0,0);

@@ -297,7 +297,7 @@ public class FJ {
      * artificial classes and their corresponding original classes, a mapping of the artificial classes and their FJ
      * systems, and the fanout of each artificial class
      */
-    public static FJApproxReturn fjt(Network model, Matrix forkLambda){
+    public static FJApproxReturn mmt(Network model, Matrix forkLambda){
         NetworkStruct sn = model.getStruct(true);
         HashMap<Integer, Integer> fjclassmap = new HashMap<>(); // s = fjclassmap(r) for auxiliary class r gives the index s of the original class
         int fjclassmapSize = 0;

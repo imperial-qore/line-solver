@@ -50,7 +50,7 @@ switch options.lang
                     switch options.config.fork_join
                         case {'heidelberger-trivedi', 'ht'}
                             [nonfjmodel, fjclassmap, fjforkmap, fj_auxiliary_delays] = solver_mva_fj_network_transform(self.model);
-                        case {'fjt', 'default'}
+                        case {'mmt', 'default'}
                             [nonfjmodel, fjclassmap, fjforkmap, fanout] = self.model.approxForkJoins(forkLambda);
                             [outer_forks, parent_forks] = sort_forks(sn, fjforkmap, fjclassmap, nonfjmodel);
                     end
@@ -161,7 +161,7 @@ switch options.lang
                 sn = self.getStruct;
                 for f=find(sn.nodetype == NodeType.ID_FORK)'
                     switch options.config.fork_join
-                        case {'fjt', 'default'}
+                        case {'mmt', 'default'}
                             TNfork = zeros(1,sn.nclasses);
                             for c=1:sn.nchains
                                 inchain = find(sn.chains(c,:));
@@ -262,7 +262,7 @@ switch options.lang
                         end
                         % Re-set the throughputs for the original classes
                         TN(nonfjstruct.nodeToStation(find(sn.nodetype == NodeType.ID_JOIN)), nonzeros(fjclassmap)) = TN_orig;
-                    case {'fjt', 'default'}
+                    case {'mmt', 'default'}
                         TN_orig = TN([nonfjstruct.nodeToStation(find(sn.nodetype == NodeType.ID_JOIN)), nonfjstruct.nodeToStation(find(sn.nodetype == NodeType.ID_SOURCE))], nonzeros(fjclassmap));
                         % merge back artificial classes into their original classes
                         for r=1:length(fjclassmap)

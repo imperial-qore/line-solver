@@ -81,7 +81,7 @@ public class MVARunner {
 							approxReturn = FJ.ht(this.solver.model);
 							break;
 						case "fjt": case "default":
-							approxReturn = FJ.fjt(this.solver.model, forkLambda);
+							approxReturn = FJ.mmt(this.solver.model, forkLambda);
 							FJ.FJsortForksReturn sortForksReturn = FJ.sortForks(sn, approxReturn.nonfjmodel.getStruct(false),
 									approxReturn.fjforkmap, approxReturn.fjclassmap, approxReturn.nonfjmodel);
 							outerForks = sortForksReturn.outerForks;

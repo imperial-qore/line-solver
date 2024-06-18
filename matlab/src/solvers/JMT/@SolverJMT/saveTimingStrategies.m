@@ -12,9 +12,9 @@ strategyNode.setAttribute('name', 'timingStrategies');
 sn = self.getStruct;
 numOfModes = sn.nodeparam{ind}.nmodes;
 for m=1:numOfModes
-    
+
     timimgStrategyNode = simDoc.createElement('subParameter');
-    
+
     if sn.nodeparam{ind}.firingid(m) == TimingStrategy.ID_IMMEDIATE
         timimgStrategyNode.setAttribute('classPath', 'jmt.engine.NetStrategies.ServiceStrategies.ZeroServiceTimeStrategy');
         timimgStrategyNode.setAttribute('name', 'ZeroServiceTimeStrategy');
@@ -28,7 +28,7 @@ for m=1:numOfModes
         distrParNode = simDoc.createElement('subParameter');
         distrParNode.setAttribute('classPath', 'jmt.engine.random.PhaseTypePar');
         distrParNode.setAttribute('name', 'distrPar');
-        
+
         subParNodeAlpha = simDoc.createElement('subParameter');
         subParNodeAlpha.setAttribute('array', 'true');
         subParNodeAlpha.setAttribute('classPath', 'java.lang.Object');
@@ -49,7 +49,7 @@ for m=1:numOfModes
             subParNodeAlphaElem.appendChild(subParValue);
             subParNodeAlphaVec.appendChild(subParNodeAlphaElem);
         end
-        
+
         subParNodeT = simDoc.createElement('subParameter');
         subParNodeT.setAttribute('array', 'true');
         subParNodeT.setAttribute('classPath', 'java.lang.Object');
@@ -75,7 +75,7 @@ for m=1:numOfModes
             end
             subParNodeT.appendChild(subParNodeTvec);
         end
-        
+
         subParNodeAlpha.appendChild(subParNodeAlphaVec);
         distrParNode.appendChild(subParNodeAlpha);
         distrParNode.appendChild(subParNodeT);
@@ -90,14 +90,14 @@ for m=1:numOfModes
         distrParNode = simDoc.createElement('subParameter');
         distrParNode.setAttribute('classPath', 'jmt.engine.random.MAPPar');
         distrParNode.setAttribute('name', 'distrPar');
-        
+
         MAP = sn.nodeparam{ind}.firingproc{m};
-        
+
         subParNodeD0 = simDoc.createElement('subParameter');
         subParNodeD0.setAttribute('array', 'true');
         subParNodeD0.setAttribute('classPath', 'java.lang.Object');
         subParNodeD0.setAttribute('name', 'D0');
-        
+
         D0 = MAP{1};
         for k=1:nphases
             subParNodeD0vec = simDoc.createElement('subParameter');
@@ -116,7 +116,7 @@ for m=1:numOfModes
             subParNodeD0.appendChild(subParNodeD0vec);
         end
         distrParNode.appendChild(subParNodeD0);
-        
+
         subParNodeD1 = simDoc.createElement('subParameter');
         subParNodeD1.setAttribute('array', 'true');
         subParNodeD1.setAttribute('classPath', 'java.lang.Object');
@@ -144,7 +144,7 @@ for m=1:numOfModes
     else
         timimgStrategyNode.setAttribute('classPath', 'jmt.engine.NetStrategies.ServiceStrategies.ServiceTimeStrategy');
         timimgStrategyNode.setAttribute('name', 'timingStrategy');
-        
+
         distributionNode = simDoc.createElement('subParameter');
         switch sn.nodeparam{ind}.firingprocid(m)
             case ProcessType.ID_DET
@@ -196,11 +196,11 @@ for m=1:numOfModes
                 distributionNode.setAttribute('name', ProcessType.toText(ProcessType.fromId(sn.nodeparam{ind}.firingprocid(m))));
         end
         timimgStrategyNode.appendChild(distributionNode);
-        
+
         distrParNode = simDoc.createElement('subParameter');
         distrParNode.setAttribute('classPath', javaParClass);
         distrParNode.setAttribute('name', 'distrPar');
-        
+
         switch sn.nodeparam{ind}.firingprocid(m)
             case ProcessType.ID_DET
                 subParNodeAlpha = simDoc.createElement('subParameter');
@@ -289,7 +289,7 @@ for m=1:numOfModes
                 distrParNode.appendChild(subParNodeAlpha);
             case ProcessType.ID_GAMMA
                 param_mean = sn.nodeparam{ind}.firingproc{1}(1);
-                param_scv = sn.nodeparam{ind}.firingproc{1}(2);                
+                param_scv = sn.nodeparam{ind}.firingproc{1}(2);
                 subParNodeAlpha = simDoc.createElement('subParameter');
                 subParNodeAlpha.setAttribute('classPath', 'java.lang.Double');
                 subParNodeAlpha.setAttribute('name', 'alpha');
@@ -305,7 +305,24 @@ for m=1:numOfModes
                 subParNodeAlpha.appendChild(subParValue);
                 distrParNode.appendChild(subParNodeAlpha);
             case ProcessType.ID_PARETO
-                line_error(mfilename,sprintf('Unsupported firing distribution for mode %d',m));
+                param_mean = sn.nodeparam{ind}.firingproc{1}(1);
+                param_scv = sn.nodeparam{ind}.firingproc{1}(2);
+                shape = sqrt(1+1/param_scv)+1;
+                scale = param_mean *  (shape - 1) / shape;
+                subParNodeAlpha = simDoc.createElement('subParameter');
+                subParNodeAlpha.setAttribute('classPath', 'java.lang.Double');
+                subParNodeAlpha.setAttribute('name', 'alpha'); % shape
+                subParValue = simDoc.createElement('value');
+                subParValue.appendChild(simDoc.createTextNode(sprintf('%.12f',shape)));
+                subParNodeAlpha.appendChild(subParValue);
+                distrParNode.appendChild(subParNodeAlpha);
+                subParNodeAlpha = simDoc.createElement('subParameter');
+                subParNodeAlpha.setAttribute('classPath', 'java.lang.Double');
+                subParNodeAlpha.setAttribute('name', 'k'); % scale
+                subParValue = simDoc.createElement('value');
+                subParValue.appendChild(simDoc.createTextNode(sprintf('%.12f',scale)));
+                subParNodeAlpha.appendChild(subParValue);
+                distrParNode.appendChild(subParNodeAlpha);
             case ProcessType.ID_WEIBULL
                 line_error(mfilename,sprintf('Unsupported firing distribution for mode %d',m));
             case ProcessType.ID_LOGNORMAL
@@ -314,7 +331,7 @@ for m=1:numOfModes
                 param_scv = sn.nodeparam{ind}.firingproc{1}(2);
                 c = sqrt(param_scv);
                 shape = log(param_mean  / sqrt(c*c + 1)); % mu
-                scale = sqrt(log(c*c + 1)); % sigma                           
+                scale = sqrt(log(c*c + 1)); % sigma
                 subParNodeAlpha = simDoc.createElement('subParameter');
                 subParNodeAlpha.setAttribute('classPath', 'java.lang.Double');
                 subParNodeAlpha.setAttribute('name', 'mu'); % shape

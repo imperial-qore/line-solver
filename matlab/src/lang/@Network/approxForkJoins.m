@@ -88,7 +88,7 @@ for f=forkIndexes
             fjforkmap(oclass{end}.index) = f;
             s = fjclassmap(oclass{end}.index); % auxiliary class index
             if model.nodes{f}.output.tasksPerLink > 1
-                line_warning(mfilename, 'There are no synchronisation delays implemented in FJT for multiple tasks per link.');
+                line_warning(mfilename, 'There are no synchronisation delays implemented in mmt for multiple tasks per link.');
             end
             fanout(oclass{end}.index) = origfanout(f,r)*model.nodes{f}.output.tasksPerLink;
             if sn.nodevisits{fc}(f,r) == 0
