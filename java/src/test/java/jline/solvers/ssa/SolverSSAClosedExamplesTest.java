@@ -26,7 +26,6 @@ public class SolverSSAClosedExamplesTest {
     @BeforeEach
     public void setUp() {
         Maths.setRandomNumbersMatlab(true);
-        Maths.setMatlabRandomSeed(1);
     }
 
     @AfterEach
@@ -44,7 +43,9 @@ public class SolverSSAClosedExamplesTest {
         List<Double> Tval = Arrays.asList(2.1593, 0.6665);
 
         Network sn = ClosedModel.ex1();
-        SolverSSA solver = new SolverSSA(sn);
+        SolverOptions options = new SolverOptions();
+        options.seed = 1;
+        SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
 
 
@@ -66,7 +67,9 @@ public class SolverSSAClosedExamplesTest {
         List<Double> Tval = Arrays.asList(1.3668, 0.94854, 0.13986, 0.95021);
 
         Network sn = ClosedModel.ex2_line();
-        SolverSSA solver = new SolverSSA(sn);
+        SolverOptions options = new SolverOptions();
+        options.seed = 1;
+        SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
 
         assertTrue(closeEnough(QLen, avgTable.getQLen(), allowedDeviation));
@@ -89,7 +92,9 @@ public class SolverSSAClosedExamplesTest {
         List<Double> Tval = Arrays.asList(1.7437, 1.147, 0.73372, 0.16448, 1.1021, 0.76921);
 
         Network sn = ClosedModel.ex3_line();
-        SolverSSA solver = new SolverSSA(sn);
+        SolverOptions options = new SolverOptions();
+        options.seed = 1;
+        SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
 
         assertTrue(closeEnough(QLen, avgTable.getQLen(), allowedDeviation));
@@ -111,7 +116,9 @@ public class SolverSSAClosedExamplesTest {
         List<Double> Tval = Arrays.asList(0.96691, 0.49397, 1.3524, 0.67856, 1.0047, 0.37418, 0.98498, 0.68033, 0.36219);
 
         Network sn = ClosedModel.ex4_line();
-        SolverSSA solver = new SolverSSA(sn);
+        SolverOptions options = new SolverOptions();
+        options.seed = 1;
+        SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
 
         // Needed as we only consider non-zero rows
@@ -155,7 +162,9 @@ public class SolverSSAClosedExamplesTest {
         List<Double> Tval = Arrays.asList(0.45312, 0.53967, 0.46303, 0.53638);
 
         Network sn = ClosedModel.ex7_line_ps();
-        SolverSSA solver = new SolverSSA(sn);
+        SolverOptions options = new SolverOptions();
+        options.seed = 1;
+        SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
 
         // Needed as we only consider non-zero rows
@@ -186,6 +195,7 @@ public class SolverSSAClosedExamplesTest {
         assertTrue(closeEnough(ResidT, aResidT, allowedDeviation));
         assertTrue(closeEnough(ArvR, aArvR, allowedDeviation));
         assertTrue(closeEnough(Tval, aTput, allowedDeviation));
+
 
     }
 
@@ -199,7 +209,9 @@ public class SolverSSAClosedExamplesTest {
         List<Double> Tval = Arrays.asList(0.46169, 0.54902, 0.46105, 0.53819);
 
         Network sn = ClosedModel.ex7_line_fcfs();
-        SolverSSA solver = new SolverSSA(sn);
+        SolverOptions options = new SolverOptions();
+        options.seed = 1;
+        SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
 
         // Needed as we only consider non-zero rows
@@ -230,6 +242,7 @@ public class SolverSSAClosedExamplesTest {
         assertTrue(closeEnough(ResidT, aResidT, allowedDeviation));
         assertTrue(closeEnough(ArvR, aArvR, allowedDeviation));
         assertTrue(closeEnough(Tval, aTput, allowedDeviation));
+
 
     }
 
@@ -243,7 +256,9 @@ public class SolverSSAClosedExamplesTest {
         List<Double> Tval = Arrays.asList(2.0002, 1.648, 1.8991, 1.6499);
 
         Network sn = ClosedModel.ex8_line();
-        SolverSSA solver = new SolverSSA(sn);
+        SolverOptions options = new SolverOptions();
+        options.seed = 1;
+        SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
 
         // Needed as we only consider non-zero rows
@@ -274,6 +289,7 @@ public class SolverSSAClosedExamplesTest {
         assertTrue(closeEnough(ResidT, aResidT, allowedDeviation));
         assertTrue(closeEnough(ArvR, aArvR, allowedDeviation));
         assertTrue(closeEnough(Tval, aTput, allowedDeviation));
+
 
     }
 
@@ -287,9 +303,10 @@ public class SolverSSAClosedExamplesTest {
         List<Double> Tval = Arrays.asList(0.17004, 0.16877, 0.1574, 0.15922, 0.16718, 0.1659);
 
         Network sn = ClosedModel.ex9_line();
-        SolverOptions solverOptions = new SolverOptions();
-        solverOptions.samples = 5000;
-        SolverSSA solver = new SolverSSA(sn, solverOptions);
+        SolverOptions options = new SolverOptions();
+        options.samples = 5000;
+        options.seed = 1;
+        SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
 
         // Needed as we only consider non-zero rows
@@ -320,6 +337,7 @@ public class SolverSSAClosedExamplesTest {
         assertTrue(closeEnough(ResidT, aResidT, allowedDeviation));
         assertTrue(closeEnough(ArvR, aArvR, allowedDeviation));
         assertTrue(closeEnough(Tval, aTput, allowedDeviation));
+
 
     }
 

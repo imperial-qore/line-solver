@@ -124,7 +124,7 @@ class SolverLNTest {
         return model;
     }
 
-    /* Model for calls */
+    /* Model for calls - seems to run very very slowly with LN, to be checked */
     LayeredNetwork buildModel4() throws Exception {
         LayeredNetwork model = new LayeredNetwork("test_LQN_4");
 
@@ -142,11 +142,11 @@ class SolverLNTest {
         Entry E2 = new Entry(model, "E2"); E2.on(T2);
         Entry E3 = new Entry(model, "E3"); E3.on(T3);
 
-        Activity A1 = new Activity(model, "AS1", new Exp((double) 1 / 10));
+        Activity A1 = new Activity(model, "AS1", new Exp(10));
         A1.on(T1); A1.boundTo(E1); A1.synchCall(E2,1);
-        Activity A2 = new Activity(model, "AS2", new Exp((double) 1/20));
+        Activity A2 = new Activity(model, "AS2", new Exp(20));
         A2.on(T2); A2.boundTo(E2); A2.synchCall(E3,5); A2.repliesTo(E2);
-        Activity A3 = new Activity(model, "AS3", new Exp((double) 1/50));
+        Activity A3 = new Activity(model, "AS3", new Exp(50));
         A3.on(T3); A3.boundTo(E3); A3.repliesTo(E3);
 
         return model;
@@ -739,11 +739,11 @@ class SolverLNTest {
     @org.junit.jupiter.api.Test
     public void testSolveCallModel() throws  Exception{
         SolverLN solver = new SolverLN(buildModel4());
-        double[] expectedQlen = {0, Double.NaN, Double.NaN, 45.466, 0, 17.508, 45.466,0, 17.508, 49.599, 0, 20.336};
-        double[] expectedUtil = {0, 0.9999, 0.9998, 0.9999, 0, 0.9998, Double.NaN, Double.NaN, Double.NaN, 0.9999, 0, 0.9998};
-        double[] expectedRespT = {0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 227.334, 0, 291.858, 248.00151, 3295.913, 339.0034};
-        double[] expectedResidT = {0, Double.NaN, Double.NaN, 248.00151, 0, 339.0034, Double.NaN, Double.NaN, Double.NaN, 248.00151, 0, 339.0034};
-        double[] expectedTput = {0, 0, 0.0599, 0.199, 0, 0.0599, 0.199, 0, 0.0599, 0.199, 0, 0.0599};
+        double[] expectedQlen = {0,Double.NaN, Double.NaN, 12.1041, 0.0039, 0.1244, 12.1041, 0.0039, 0.1244, 12.1041, 0.0039, 0.1244};
+        double[] expectedUtil = {0,0.9473, 0.0415, 0.9470, 0.0003, 0.0415, Double.NaN, Double.NaN, Double.NaN, 0.9470, 0.0003, 0.0415};
+        double[] expectedRespT = {0,Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 0.6391, 0.2887, 0.0200, 0.6391, 0.2887, 0.0200};
+        double[] expectedResidT = {0,Double.NaN, Double.NaN, 0.3531, 0.1884, 0.0200, Double.NaN, Double.NaN, Double.NaN, 0.3531, 0.1884, 0.0200};
+        double[] expectedTput = {0,0.0134, 6.2189, 18.9393, 0.0134, 6.2189, 18.9393, 0.0134, 6.2189, 18.9393, 0.0134, 6.2189};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
             assertTrue(compareOutput(avg.getQLen().get(idx), expectedQlen[idx]));

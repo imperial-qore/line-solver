@@ -1,9 +1,14 @@
 package jline.solvers.ssa;
 
-import jline.solvers.ssa.SolverSSA;
 import jline.examples.ClosedModel;
 import jline.lang.Network;
+import jline.lang.constant.VerboseLevel;
+import jline.lang.state.ThreadLocalRandom;
+import jline.solvers.NetworkAvgTable;
+import jline.solvers.Solver;
 import jline.solvers.SolverOptions;
+import jline.util.Maths;
+import org.apache.commons.math3.random.MersenneTwister;
 
 public class SolverSSAClosedExamplesBenchmark {
 
@@ -24,8 +29,13 @@ public class SolverSSAClosedExamplesBenchmark {
     }
 
     private static void timeSolver(Network network, String modelName) {
-        SolverSSA solver = new SolverSSA(network);
-        solver.getAvgTable();
+        SolverOptions options = new SolverOptions();
+        options.method= "para";
+        options.verbose = VerboseLevel.DEBUG;
+        options.seed = 23000;
+        Maths.setRandomNumbersMatlab(true);
+        SolverSSA solver = new SolverSSA(network, options);
+        solver.getAvgTable().print();
         System.out.println("Model: " + modelName);
         System.out.println("Runtime: " + solver.result.runtime);
     }

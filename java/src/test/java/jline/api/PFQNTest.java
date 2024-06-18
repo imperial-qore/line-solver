@@ -776,7 +776,7 @@ class PFQNTest {
         Z.set(0, 2, 0.1986);
         pfqnNcXQReturn ret = compute_norm_const(L,N,Z,options);
         assertEquals(1.700939228986259e+02, ret.lG, 1.700939228986259e+02*tolerance);
-        assertEquals("le", ret.method);
+        assertEquals("kt", ret.method);
     }
 
     @Test

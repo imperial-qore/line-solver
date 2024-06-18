@@ -24,7 +24,6 @@ public class SolverSSAOpenExamplesTest {
     @BeforeEach
     public void setUp() {
         Maths.setRandomNumbersMatlab(true);
-        Maths.setMatlabRandomSeed(1);
     }
 
     @AfterEach
@@ -46,6 +45,7 @@ public class SolverSSAOpenExamplesTest {
         SolverOptions options = new SolverOptions();
         options.keep = true;
         options.cutoff = 10;
+        options.seed = 1;
 
 
         SolverSSA solver = new SolverSSA(sn, options);
@@ -79,6 +79,7 @@ public class SolverSSAOpenExamplesTest {
         assertTrue(closeEnough(ResidT, aResidT, allowedDeviation));
         assertTrue(closeEnough(ArvR, aArvR, allowedDeviation));
         assertTrue(closeEnough(Tval, aTput, allowedDeviation));
+
     }
 
     @Test
@@ -95,6 +96,8 @@ public class SolverSSAOpenExamplesTest {
         SolverOptions options = new SolverOptions();
         options.keep = true;
         options.cutoff = 7;
+        options.seed = 1;
+
         SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
 
@@ -127,6 +130,7 @@ public class SolverSSAOpenExamplesTest {
         assertTrue(closeEnough(ResidT, aResidT, allowedDeviation));
         assertTrue(closeEnough(ArvR, aArvR, allowedDeviation));
         assertTrue(closeEnough(Tval, aTput, allowedDeviation));
+
     }
 
     @Test
@@ -141,6 +145,8 @@ public class SolverSSAOpenExamplesTest {
         Network sn = OpenModel.ex6();
         SolverOptions options = new SolverOptions();
         options.cutoff = 1;
+        options.seed = 1;
+
         SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
 
@@ -172,5 +178,6 @@ public class SolverSSAOpenExamplesTest {
         assertTrue(closeEnough(ResidT, aResidT, allowedDeviation));
         assertTrue(closeEnough(ArvR, aArvR, allowedDeviation));
         assertTrue(closeEnough(Tval, aTput, allowedDeviation));
+
     }
 }

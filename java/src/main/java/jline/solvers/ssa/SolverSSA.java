@@ -5,15 +5,12 @@ import jline.lang.constant.*;
 import jline.lang.nodes.StatefulNode;
 import jline.lang.nodes.Station;
 import jline.lang.state.EventCache;
-import jline.lang.state.EventCacheKey;
 import jline.lang.state.EventResult;
 import jline.lang.state.State;
-import jline.examples.ClosedModel;
 import jline.lib.KPCToolbox;
 import jline.solvers.*;
 import jline.util.Maths;
 import jline.util.Matrix;
-import jline.util.Pair;
 import jline.util.UniqueRowResult;
 
 import javax.xml.parsers.ParserConfigurationException;
@@ -24,13 +21,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import static java.lang.Double.POSITIVE_INFINITY;
 import static java.lang.Math.ceil;
 import static java.util.stream.Collectors.toMap;
 
 public class SolverSSA extends NetworkSolver {
 
-    private final int DEFAULT_THREADS = (int) Math.ceil(Runtime.getRuntime().availableProcessors() / 2);
+    private final int DEFAULT_THREADS = (int) Math.ceil(Runtime.getRuntime().availableProcessors() / 2.0);
     private ExecutorService threadPool;
     private int numThreads = DEFAULT_THREADS;
     private EventCache eventCache;
@@ -57,7 +53,7 @@ public class SolverSSA extends NetworkSolver {
     }
 
     public SSAValues solver_ssa(EventCache eventCache) {
-        NetworkStruct sn = this.sn;
+        NetworkStruct sn = this.getStruct();
         SolverOptions options = this.options;
 
         if (Maths.randomMatlabStyle()) {
@@ -152,7 +148,7 @@ public class SolverSSA extends NetworkSolver {
         Map<Integer, Matrix> arvRatesSamples = new HashMap<>();
         Map<Integer, Matrix> depRatesSamples = new HashMap<>();
         for (int r = 0; r < R; r++) {
-            Matrix m = new Matrix((int) options.samples, nstateful);
+            Matrix m = new Matrix(options.samples, nstateful);
             m.zero();
             arvRatesSamples.put(r, m);
             depRatesSamples.put(r, m.clone());
@@ -242,7 +238,8 @@ public class SolverSSA extends NetworkSolver {
         while (samples_collected < options.samples && cur_time <= options.timespan[1]) {
             if (samples_collected == 1) {
                 if (options.method.equals("para") || options.method.equals ("parallel")) {
-                    System.out.printf("SSA samples: %6d\n", samples_collected);
+                    //System.out.printf("SSA samples: %6d\n", samples_collected);
+                    //System.out.println("Running SSA with " + this.DEFAULT_THREADS + " threads...\n");
                 }
             }
             int ctr = 1;
@@ -300,7 +297,7 @@ public class SolverSSA extends NetworkSolver {
                         continue;
                     }
 
-                    boolean update_cond = true;
+                    //boolean update_cond = true;
                     if (rate_a.get(act).get(ia) > 0) {
                         if (node_p.get(act) != local) {
                             if (node_p.get(act).equals(node_a.get(act))) {
@@ -512,20 +509,22 @@ public class SolverSSA extends NetworkSolver {
                     stateCell.entrySet().stream().collect(toMap(Map.Entry::getKey, e -> e.getValue().clone()));
             stateCell = newStateCell.get(enabled_sync.get(firing_ctr));
 
-
             if (!options.method.equals("para") && !options.method.equals ("parallel") &&
                     (options.verbose == VerboseLevel.STD || options.verbose == VerboseLevel.DEBUG)) {
-            if (samples_collected == 2) {
-                System.out.printf("\b\n SSA samples: %6d ", samples_collected);
-            } else if (options.verbose == VerboseLevel.DEBUG) {
-                System.out.printf("\b\b\b\b\b\b\b %6d", samples_collected);
-            } else if (samples_collected % 100 == 0) {
-                System.out.printf("\b\b\b\b\b\b\b %6d", samples_collected);
-	            if (samples_collected == options.samples) {
-	                System.out.println("\n");
-	            }
+                if (samples_collected == 2) {
+                    System.out.printf("\b\n SSA samples: %6d ", samples_collected);
+                    System.out.flush();
+                } else if (options.verbose == VerboseLevel.DEBUG) {
+                    System.out.printf("\b\b\b\b\b\b\b %6d", samples_collected);
+                    System.out.flush();
+                } else if (samples_collected % 100 == 0) {
+                    System.out.printf("\b\b\b\b\b\b\b %6d", samples_collected);
+                    System.out.flush();
+                }
+                if (samples_collected == options.samples) {
+                    //System.out.println("\n");
+                }
             }
-        }
 
         }
 
@@ -603,9 +602,9 @@ public class SolverSSA extends NetworkSolver {
             }
         }
         pi = Matrix.scale_mult(pi, 1/pi.elementSum());
-        if (options.method.equals("para") || options.method.equals ("parallel")) {
-            System.out.printf("SSA samples: %6d\n", samples_collected);
-        }
+        //if (options.method.equals("para") || options.method.equals ("parallel")) {
+        //    System.out.printf("SSA samples: %6d\n", samples_collected);
+        //}
         return new SSAValues(pi, SSq, arvRates, depRates, tranSysState, tranSync, sn);
     }
 
@@ -626,7 +625,6 @@ public class SolverSSA extends NetworkSolver {
         }
 //        this.resetRandomGeneratorSeed(options.seed);
 
-        NetworkStruct sn = getStruct();
 
         SolverSSAResult result = solver_ssa_analyzer();
         Matrix QN = result.QN;
@@ -635,13 +633,12 @@ public class SolverSSA extends NetworkSolver {
         Matrix TN = result.TN;
         Matrix CN = result.CN;
         Matrix XN = result.XN;
-        Map<Integer, Matrix> tranSysState = result.tranSysState;
-        Matrix tranSync = result.tranSync;
-        sn = result.sn;
-
+        //Map<Integer, Matrix> tranSysState = result.tranSysState;
+        //Matrix tranSync = result.tranSync;
+        NetworkStruct sn = result.sn;
 
         for (int isf=0; isf < sn.nstateful; isf++) {
-            int ind = (int) sn.statefulToNode.get(isf);
+            //int ind = (int) sn.statefulToNode.get(isf);
             if (sn.nodetypes.get((int) sn.statefulToNode.get(isf)) == NodeType.Cache) {
                 // TODO: Cache nodetype case
             }
@@ -997,7 +994,7 @@ public class SolverSSA extends NetworkSolver {
                         }
                     } else {
                         // lld/cd cases
-                        int ind = (int) sn.stationToNode.get(i);
+                        // int ind = (int) sn.stationToNode.get(i);
                         for (int col = 0; col < K; col++) {
                             UN.set(i, col, Double.NaN);
                         }
@@ -1032,9 +1029,6 @@ public class SolverSSA extends NetworkSolver {
         UN.apply(Double.NaN, 0, "equal");
         XN.apply(Double.NaN, 0, "equal");
         TN.apply(Double.NaN, 0, "equal");
-
-
-
 
         return new SolverSSAResult(QN, UN, RN, TN, CN, XN, tranSysState, tranSync, sn);
     }
