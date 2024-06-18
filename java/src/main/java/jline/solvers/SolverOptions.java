@@ -33,6 +33,7 @@ public class SolverOptions {
     public String compress;
     public int space_max;
     public boolean interlocking;
+    public boolean eventcache;
   }
 
   public static class ODESolvers {
@@ -65,7 +66,6 @@ public class SolverOptions {
   public boolean stiff;
   public double[] timespan;
   public VerboseLevel verbose;
-  public boolean eventcache;
 
   public SolverOptions() {
 
@@ -73,6 +73,7 @@ public class SolverOptions {
     this.cache = true;
     this.cutoff = POSITIVE_INFINITY;
     this.config = new Config();
+    this.config.eventcache = true;
     this.config.tau_leaping = null;
     this.config.pstar = new ArrayList<>();
     this.config.fork_join = "default";
@@ -107,7 +108,6 @@ public class SolverOptions {
     this.timespan[0] = POSITIVE_INFINITY;
     this.timespan[1] = POSITIVE_INFINITY;
     this.verbose = GlobalConstants.getInstance().getVerbose();
-    this.eventcache = true;
   }
 
   public SolverOptions(SolverType solverType) {
@@ -156,6 +156,7 @@ public class SolverOptions {
         this.timespan[0] = 0;
         this.timespan[1] = POSITIVE_INFINITY;
         this.verbose = VerboseLevel.STD;
+        this.config.eventcache = true;
         break;
       case JMT:
         //TODO add configs

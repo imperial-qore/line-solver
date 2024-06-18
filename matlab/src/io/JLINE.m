@@ -642,12 +642,12 @@ classdef JLINE
                             for j= outlinks_i
                                 routing_matrix.addConnection(nodes.get(i-1), nodes.get(j-1), classes.get(k-1), 1/length(outlinks_i));
                             end
-%                         case RoutingStrategy.RROBIN
-%                             nodes.get(i-1).setRouting(classes.get(k-1),jline.lang.constant.RoutingStrategy.RROBIN);
-%                             outlinks_i=find(connections(i,:))';
-%                             for j= outlinks_i
-%                                 routing_matrix.addConnection(nodes.get(i-1), nodes.get(j-1), classes.get(k-1), 1/length(outlinks_i));
-%                             end
+                            %                         case RoutingStrategy.RROBIN
+                            %                             nodes.get(i-1).setRouting(classes.get(k-1),jline.lang.constant.RoutingStrategy.RROBIN);
+                            %                             outlinks_i=find(connections(i,:))';
+                            %                             for j= outlinks_i
+                            %                                 routing_matrix.addConnection(nodes.get(i-1), nodes.get(j-1), classes.get(k-1), 1/length(outlinks_i));
+                            %                             end
                         case RoutingStrategy.PROB
                             if length(output_strat) >= 3
                                 probabilities = output_strat{3};
@@ -1376,10 +1376,60 @@ classdef JLINE
             bool = SolverFeatureSet.supports(featSupported, featUsed);
         end
 
-        function [ssa] = SolverSSA(network_object)
+        function [ssa] = SolverSSA(network_object, options)
             solverOptions = jline.solvers.SolverOptions(jline.lang.constant.SolverType.SSA);
-            ssa = jline.solvers.ssa.SolverSSA(network_object,solverOptions);
-            %ssa.disableResTime = true;
+            if nargin>1
+                fn = fieldnames(options);
+                fn2 = fieldnames(solverOptions);
+                for f = 1:length(fn)
+                    found = 0;
+                    for j = 1:length(fn2)
+                        if strcmp(fn{f}, fn2{j})
+                            found = 1;
+                            switch fn{f}
+                                case 'seed'
+                                    solverOptions.seed = options.seed;
+                                case 'method'
+                                    solverOptions.method = options.method;
+                                case 'config'
+                                    solverOptions.config.highvar = options.config.highvar;
+                                    solverOptions.config.multiserver = options.config.multiserver;
+                                    solverOptions.config.np_priority = options.config.np_priority;
+                                    solverOptions.config.fork_join = options.config.fork_join;
+                                case 'verbose'
+                                    switch options.(fn{f})
+                                        case 1
+                                            solverOptions.verbose = solverOptions.verbose.SILENT;
+                                        case 2
+                                            solverOptions.verbose = solverOptions.verbose.STD;
+                                        case 3
+                                            solverOptions.verbose = solverOptions.verbose.DEBUG;
+                                    end
+                                case 'init_sol'
+                                    solverOptions.(fn{f}) = JLINE.matrix_to_jlinematrix(options.init_sol);
+                                case 'cutoff'
+                                    if length(options.cutoff) == 1
+                                        solverOptions.(fn{f}) = options.cutoff;
+                                    else
+                                        line_error(mfilename,'Matrix cutoff assignments not yet supported in JLINE.');
+                                        %solverOptions.(fn{f}) = JLINE.matrix_to_jlinematrix(options.cutoff);
+                                    end
+                                case 'odesolvers'
+                                otherwise
+                                    solverOptions.(fn{f}) = options.(fn{f});
+                            end
+
+                            break;
+                        end
+                    end
+                    if ~found
+                        line_printf('Could not find option %s in the JLINE options.\n', fn{f});
+                    end
+                end
+            end
+            jline.util.Maths.setRandomNumbersMatlab(true);
+            jline.util.Maths.setMatlabRandomSeed(solverOptions.seed);
+            ssa = jline.solvers.ssa.SolverSSA(network_object, solverOptions);
         end
 
         function [mam] = SolverMAM(network_object)
@@ -1419,6 +1469,10 @@ classdef JLINE
                     if strcmp(fn{f}, fn2{j})
                         found = 1;
                         switch fn{f}
+                            case 'seed'
+                                solverOptions.seed = options.seed;
+                            case 'method'
+                                solverOptions.method = options.method;
                             case 'config'
                                 solverOptions.config.highvar = options.config.highvar;
                                 solverOptions.config.multiserver = options.config.multiserver;

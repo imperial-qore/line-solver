@@ -39,7 +39,7 @@ switch options.lang
         end
 
         switch options.method
-            case 'default'
+            case {'default','serial','para','parallel'}
                 jmodel = LINE2JLINE(self.model);
                 jsolver = JLINE.SolverSSA(jmodel);
                 jsolver.options.samples = options.samples;

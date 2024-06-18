@@ -25,22 +25,20 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static java.lang.Double.POSITIVE_INFINITY;
+import static java.lang.Math.ceil;
 import static java.util.stream.Collectors.toMap;
 
 public class SolverSSA extends NetworkSolver {
 
-    private final int DEFAULT_THREADS = 4;
+        private final int DEFAULT_THREADS = (int) Math.ceil(Runtime.getRuntime().availableProcessors() / 2);
     private boolean cached_results = false;
     private ExecutorService threadPool;
     private int numThreads = DEFAULT_THREADS;
     private EventCache eventCache;
 
-    private SSAValues cached_values;
-
-
     public SolverSSA(Network model) {
         // If no options provided, use default options
-        this(model, new SolverOptions(SolverType.SSA));
+        this(model, new SSAOptions());
         this.result = new SolverSSAResult();
     }
 
@@ -112,15 +110,8 @@ public class SolverSSA extends NetworkSolver {
     }
 
     public SSAValues solver_ssa(EventCache eventCache) {
-        if (cached_results) {
-            System.out.println("Using cached values");
-            return cached_values;
-        }
         NetworkStruct sn = this.sn;
         SolverOptions options = this.options;
-
-
-
 
 //        this.resetRandomGeneratorSeed(options.seed);
 
@@ -782,7 +773,7 @@ public class SolverSSA extends NetworkSolver {
         Map<Integer, Matrix> XNs = new ConcurrentHashMap<>();
 
 
-        this.options.samples = (int) Math.ceil(this.options.samples / (double) numThreads);
+        this.options.samples = (int) ceil(this.options.samples / (double) numThreads);
 
 
         for (int t = 0; t < numThreads; t++) {
@@ -798,7 +789,7 @@ public class SolverSSA extends NetworkSolver {
                 switch (this.options.method) {
                     case "para":
                     case "parallel":
-                        eventCache = new EventCache(true, this.options.eventcache);
+                        eventCache = new EventCache(true, this.options.config.eventcache);
                         SSAValues result = solver_ssa(eventCache);
                         probSysState = result.pi;
                         SSq = result.SSq;
@@ -987,7 +978,7 @@ public class SolverSSA extends NetworkSolver {
         CN.fill(Double.NaN);
 
         this.options.samples++;
-        eventCache = new EventCache(false, this.options.eventcache);
+        eventCache = new EventCache(false, this.options.config.eventcache);
         SSAValues result = solver_ssa(eventCache);
         Matrix probSysState = result.pi;
         Matrix StateSpaceAggr = result.SSq;

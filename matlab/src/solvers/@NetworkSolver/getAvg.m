@@ -24,6 +24,8 @@ if ~isempty(self.model.obj)
                 self.obj = JLINE.SolverFluid(self.model.obj);
             case 'SolverMVA'
                 self.obj = JLINE.SolverMVA(self.model.obj);
+            case 'SolverNC'
+                self.obj = JLINE.SolverNC(self.model.obj);
             case 'SolverSSA'
                 self.obj = JLINE.SolverSSA(self.model.obj);
         end
