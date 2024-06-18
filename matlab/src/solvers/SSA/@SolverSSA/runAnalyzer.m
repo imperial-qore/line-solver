@@ -41,11 +41,10 @@ switch options.lang
         switch options.method
             case {'default','serial','para','parallel'}
                 jmodel = LINE2JLINE(self.model);
-                jsolver = JLINE.SolverSSA(jmodel);
-                jsolver.options.samples = options.samples;
-                jsolver.options.seed = options.seed;
+                joptions = jline.solvers.SolverOptions(jline.lang.constant.SolverType.SSA);
+                joptions.samples = options.samples;
+                joptions.seed = options.seed;
                 tic;
-                jsolver.getAvg();
                 jsolver = JLINE.SolverSSA(jmodel, options);
                 [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(jsolver.getAvgTable);           
                 CN = JLINE.jlinematrix_to_matrix(jsolver.getAvgSysRespT());

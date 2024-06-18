@@ -1398,11 +1398,11 @@ classdef JLINE
                                     solverOptions.config.fork_join = options.config.fork_join;
                                 case 'verbose'
                                     switch options.(fn{f})
-                                        case 1
+                                        case {VerboseLevel.SILENT}
                                             solverOptions.verbose = solverOptions.verbose.SILENT;
-                                        case 2
+                                        case {VerboseLevel.STD}
                                             solverOptions.verbose = solverOptions.verbose.STD;
-                                        case 3
+                                        case {VerboseLevel.DEBUG}
                                             solverOptions.verbose = solverOptions.verbose.DEBUG;
                                     end
                                 case 'init_sol'
@@ -1429,6 +1429,7 @@ classdef JLINE
             end
             jline.util.Maths.setRandomNumbersMatlab(true);
             jline.util.Maths.setMatlabRandomSeed(solverOptions.seed);
+            %solverOptions.verbose = solverOptions.verbose.SILENT;
             ssa = jline.solvers.ssa.SolverSSA(network_object, solverOptions);
         end
 
