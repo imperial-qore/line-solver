@@ -250,6 +250,8 @@ classdef Solver < handle
                                 varargin(1) = [];
                             otherwise
                                 switch varargin{1}
+                                    case 'config.eventcache'
+                                        options.config.highvar = varargin{2};
                                     case 'config.highvar'
                                         options.config.highvar = varargin{2};
                                     case 'config.multiserver'

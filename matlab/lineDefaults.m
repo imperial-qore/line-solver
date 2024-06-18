@@ -89,5 +89,6 @@ switch solverName
     case 'SSA'
         options.timespan = [0,Inf];
         options.verbose = true;
+        options.config.eventcache = true;
 end
 end

@@ -1391,11 +1391,8 @@ classdef JLINE
                                     solverOptions.seed = options.seed;
                                 case 'method'
                                     solverOptions.method = options.method;
-                                case 'config'
-                                    solverOptions.config.highvar = options.config.highvar;
-                                    solverOptions.config.multiserver = options.config.multiserver;
-                                    solverOptions.config.np_priority = options.config.np_priority;
-                                    solverOptions.config.fork_join = options.config.fork_join;
+                                case 'config' % SSA specific
+                                    solverOptions.config.eventcache = options.config.eventcache;
                                 case 'verbose'
                                     switch options.(fn{f})
                                         case {VerboseLevel.SILENT}
@@ -1428,7 +1425,6 @@ classdef JLINE
                 end
             end
             jline.util.Maths.setRandomNumbersMatlab(true);
-            jline.util.Maths.setMatlabRandomSeed(solverOptions.seed);
             ssa = jline.solvers.ssa.SolverSSA(network_object, solverOptions);
         end
 
