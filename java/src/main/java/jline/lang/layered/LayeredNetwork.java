@@ -277,12 +277,15 @@ public class LayeredNetwork extends Ensemble {
                     Element preElement = doc.createElement(curActPrec.preType);
                     actPrecElement.appendChild(preElement);
                     if (curActPrec.preType.equals(PRE_AND) && !curActPrec.preParams.isEmpty()) {
-                        preElement.setAttribute("quorum", Double.toString(curActPrec.preParams.get(1)));
+                        preElement.setAttribute("quorum", Double.toString(curActPrec.preParams.get(0)));
                     }
                     for (int pra = 0; pra < curActPrec.preActs.size(); pra++) {
                         Element preActElement = doc.createElement("activity");
                         preElement.appendChild(preActElement);
                         preActElement.setAttribute("name", nodeHashMap.get(curActPrec.preActs.get(pra)));
+//                        if (curActPrec.preType.equals(PRE_AND) && !curActPrec.preParams.isEmpty()) {
+//                                preActElement.setAttribute("quorum", Integer.toString((int) curActPrec.preParams.get(0)));
+//                        }
                     }
 
                     Element postElement = doc.createElement(curActPrec.postType);
@@ -583,7 +586,7 @@ public class LayeredNetwork extends Ensemble {
                     lqn.callpair.set(cidx, 2, target_eidx);
                     lqn.callnames.put(cidx, lqn.names.get(aidx) + "->" + lqn.names.get(target_eidx));
                     lqn.callhashnames.put(cidx, lqn.hashnames.get(aidx) + "->" + lqn.hashnames.get(target_eidx));
-                    lqn.callproc.put(cidx, new Geometric(1 / tasks.get(t).activities.get(a).syncCallMeans.get(s)));
+                    lqn.callproc.put(cidx, new Geometric(1 / tasks.get(t).activities.get(a).asyncCallMeans.get(s)));
                     lqn.callsof.get(aidx).add(cidx);
                     lqn.iscaller.set(tidx, target_tidx, 1);//1 -> true
                     lqn.iscaller.set(tidx, target_eidx, 1);
@@ -607,7 +610,7 @@ public class LayeredNetwork extends Ensemble {
                         double preParam = 1;
                         if (pretype.equals(PRE_AND)) {
                             Matrix quorum = tasks.get(t).precedences.get(ap).preParams;
-                            if (!quorum.isEmpty()) {
+                            if (!quorum.isEmpty() && quorum.get(0) != 0) {
                                 preParam = quorum.get(0) / preacts.size();
                             }
                         }

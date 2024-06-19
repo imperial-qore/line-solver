@@ -733,8 +733,18 @@ public class SolverLN extends EnsembleSolver {
                     String.format("%.4f", RN.get(a + lqn.ashift)), String.format("%.4f", WN.get(a + lqn.ashift)),
                     String.format("%.4f", TN.get(a + lqn.ashift)));
         }
+        List<Double> Qval = QN.toList1D();
+        List<Double> Uval = UN.toList1D();
+        List<Double> Rval = RN.toList1D();
+        List<Double> Residval = WN.toList1D();
+        List<Double> Tval = TN.toList1D();
+        Qval.remove(0);
+        Uval.remove(0);
+        Rval.remove(0);
+        Residval.remove(0);
+        Tval.remove(0);
         LayeredNetworkAvgTable AvgTable = new LayeredNetworkAvgTable(
-                QN.toList1D(), UN.toList1D(), RN.toList1D(), WN.toList1D(), TN.toList1D()
+                Qval, Uval, Rval, Residval, Tval
         );
         AvgTable.setNodeNames(nodeNames);
         AvgTable.setNodeTypes(nodeTypes);
@@ -1032,12 +1042,7 @@ public class SolverLN extends EnsembleSolver {
                     if (lqn.calltype.get(cidx) == CallType.ASYNC) {
                         if (lqn.parent.get(0, (int) lqn.callpair.get(cidx, 2)) == receiver_index) {
                             if (sourceStation == null) {
-                                // FLAG
-                                // OLD
-                                model.getAttribute().setClientIdx(model.getNumberOfNodes() + 1);
-                                // NEW
                                 model.getAttribute().setSourceIdx(model.getNumberOfNodes() + 1);
-                                // END FLAG
                                 sourceStation = new Source(model, "Source");
                                 sinkStation = new Sink(model, "Sink");
                             }
@@ -1047,8 +1052,8 @@ public class SolverLN extends EnsembleSolver {
                                 serverStation.get(m).setService(cidxclass.get(cidx), new Immediate());
                             }
                             openClassesAssignedLine++;
-                            openClasses.set(openClassesAssignedLine, 1, cidxauxclass.get(cidx).getIndex());
-                            openClasses.set(openClassesAssignedLine, 2, lqn.callproc.get(cidx).getMean());
+                            openClasses.set(openClassesAssignedLine, 1, cidxclass.get(cidx).getIndex());
+                            openClasses.set(openClassesAssignedLine, 2, callmean.get(cidx));
                             openClasses.set(openClassesAssignedLine, 3, cidx);
                             model.getAttribute().addCalls(new Integer[]{cidxclass.get(cidx).getIndex(), cidx, (int) lqn.callpair.get(cidx, 1), (int) lqn.callpair.get(cidx, 2)});
                             //cidxclass.get(cidx).setCompletes(false);//todo check cidx or aidx
@@ -1106,7 +1111,7 @@ public class SolverLN extends EnsembleSolver {
         RoutingMatrix P = new RoutingMatrix(model, model.getJobClass(), model.getNodes());
         if (sourceStation != null) {
             for (int o = 1; o <= openClassesAssignedLine; o++) {
-                int oidx = (int) openClasses.get(o, 1);
+                int oidx = (int) openClasses.get(o, 1) - 1;
                 double p = 1 / openClasses.get(o, 2);
                 for (int m = 1; m <= nreplicas; m++) {
                     P.addConnection(model.getClasses().get(oidx), model.getClasses().get(oidx), sourceStation, serverStation.get(m), 1.0 / (double) nreplicas);
@@ -1119,12 +1124,12 @@ public class SolverLN extends EnsembleSolver {
                 if (!cell_arvproc_classes_updmap.containsKey(receiver_index)) {
                     cell_arvproc_classes_updmap.put(receiver_index, new ArrayList<>());
                 }
-                cell_arvproc_classes_updmap.get(receiver_index).add(new Integer[]{receiver_index, cidx, model.getNodeIndex(sourceStation) + 1, oidx});
+                cell_arvproc_classes_updmap.get(receiver_index).add(new Integer[]{receiver_index, cidx, model.getNodeIndex(sourceStation) + 1, oidx + 1});
                 for (int m = 1; m <= nreplicas; m++) {
                     if (!cell_call_classes_updmap.containsKey(receiver_index)) {
                         cell_call_classes_updmap.put(receiver_index, new ArrayList<>());
                     }
-                    cell_call_classes_updmap.get(receiver_index).add(new Integer[]{receiver_index, cidx, model.getNodeIndex(serverStation.get(m)) + 1, oidx});
+                    cell_call_classes_updmap.get(receiver_index).add(new Integer[]{receiver_index, cidx, model.getNodeIndex(serverStation.get(m)) + 1, oidx + 1});
                 }
             }
         }

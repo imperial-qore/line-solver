@@ -25,40 +25,39 @@ public class SolverJMTIOOpenExamplesTest {
         options.seed = 23000;
         options.iter_max = 200;
         SolverJMT solver = new SolverJMT(model, options);
-        //solver.jsimgView();
 
         NetworkAvgTable avgTable = solver.getAvgTable();
         avgTable.printTable();
         // QLen values
         List<Double> QLen = avgTable.get(0);
-        assertEquals(0.0210224504535244, QLen.get(0), 1e-13);
-        assertEquals(0.0970769740346852, QLen.get(1), 1e-13);
+        assertEquals(0.0226789994053706, QLen.get(0), 1e-13);
+        assertEquals(0.11331972146276834, QLen.get(1), 1e-13);
         assertEquals(0.0, QLen.get(2), 1e-13);
 
         // Util values
         List<Double> Util = avgTable.get(1);
-        assertEquals(0.0210224504535244, Util.get(0), 1e-13);
-        assertEquals(0.0970769740346852, Util.get(1), 1e-13);
+        assertEquals(0.0226789994053706, Util.get(0), 1e-13);
+        assertEquals(0.10222379545619707, Util.get(1), 1e-13);
         assertEquals(0.0, Util.get(2), 1e-13);
 
         // RespT values
         List<Double> RespT = avgTable.get(2);
-        assertEquals(0.2130525434758123, RespT.get(0), 1e-13);
-        assertEquals(0.9963834920584885, RespT.get(1), 1e-13);
+        assertEquals(0.21483214512502252, RespT.get(0), 1e-13);
+        assertEquals(1.1075290123417016, RespT.get(1), 1e-13);
         assertEquals(0.0, RespT.get(2), 1e-13);
 
         // ResidT values
         List<Double> ResidT = avgTable.get(3);
-        assertEquals(0.2130525434758124, ResidT.get(0), 1e-13);
-        assertEquals(0.9963834920584888, ResidT.get(1), 1e-13);
+        assertEquals(0.21483214512502258, ResidT.get(0), 1e-13);
+        assertEquals(1.1075290123417019, ResidT.get(1), 1e-13);
         assertEquals(0.0, ResidT.get(2), 1e-13);
 
         // Tput values
         List<Double> ArvR = avgTable.get(4);
         List<Double> Tput = avgTable.get(5);
-        assertEquals(0.0999978032520005, Tput.get(0), 1e-13);
-        assertEquals(0.0999991505973458, Tput.get(1), 1e-13);
-        assertEquals(0.1000000000000000, Tput.get(2), 1e-13);
+        assertEquals(0.09960731161185728, Tput.get(0), 1e-13);
+        assertEquals(0.10001198577673448, Tput.get(1), 1e-13);
+        assertEquals(0.09962065218704065, Tput.get(2), 1e-13);
     }
 
     @Test

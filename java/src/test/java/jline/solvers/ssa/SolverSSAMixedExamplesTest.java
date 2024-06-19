@@ -53,7 +53,7 @@ public class SolverSSAMixedExamplesTest {
         options.seed = 1;
         SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
-        avgTable.print();
+
         // Needed as we only consider non-zero rows
         List<Double> aQLen = avgTable.getQLen();
         List<Double> aUtil = avgTable.getUtil();
@@ -76,12 +76,12 @@ public class SolverSSAMixedExamplesTest {
             }
         }
 
-        assertTrue(closeEnough(QLen, avgTable.getQLen(), allowedDeviation));
-        assertTrue(closeEnough(Util, avgTable.getUtil(), allowedDeviation));
-        assertTrue(closeEnough(RespT, avgTable.getRespT(), allowedDeviation));
-        assertTrue(closeEnough(ResidT, avgTable.getResidT(), allowedDeviation));
-        assertTrue(closeEnough(ArvR, avgTable.getArvR(), allowedDeviation));
-        assertTrue(closeEnough(Tval, avgTable.getTput(), allowedDeviation));
+        assertTrue(closeEnough(QLen, aQLen, allowedDeviation));
+        assertTrue(closeEnough(Util, aUtil, allowedDeviation));
+        assertTrue(closeEnough(RespT, aRespT, allowedDeviation));
+        assertTrue(closeEnough(ResidT, aResidT, allowedDeviation));
+        assertTrue(closeEnough(ArvR, aArvR, allowedDeviation));
+        assertTrue(closeEnough(Tval, aTput, allowedDeviation));
 
     }
 
@@ -102,7 +102,7 @@ public class SolverSSAMixedExamplesTest {
         options.seed = 1;
         SolverSSA solver = new SolverSSA(sn, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
-        avgTable.print();
+
         // Needed as we only consider non-zero rows
         List<Double> aQLen = avgTable.getQLen();
         List<Double> aUtil = avgTable.getUtil();

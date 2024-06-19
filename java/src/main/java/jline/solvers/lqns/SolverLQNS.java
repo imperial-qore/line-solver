@@ -16,6 +16,7 @@ import javax.xml.parsers.*;
 
 import jline.util.Matrix;
 import org.w3c.dom.*;
+import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
 import static jline.io.SysUtils.lineTempName;
@@ -457,7 +458,7 @@ public class SolverLQNS extends Solver {
 
     public static void main(String[] args) throws Exception {
         GlobalConstants.getInstance().setVerbose(VerboseLevel.DEBUG);
-        LayeredNetwork lqnmodel = LayeredModel.test0();
+        LayeredNetwork lqnmodel = jline.examples.LayeredModel.testAndForkJoin();
         SolverLQNS s = new SolverLQNS(lqnmodel);
         LayeredNetworkAvgTable AvgTable = s.getAvgTable();
         AvgTable.printTable();
