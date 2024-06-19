@@ -15,7 +15,6 @@ import org.apache.commons.math3.distribution.MultivariateNormalDistribution;
 import org.apache.commons.math3.util.CombinatoricsUtils;
 
 import java.io.*;
-import java.net.URISyntaxException;
 import java.util.*;
 
 import static java.lang.Math.abs;
@@ -1746,10 +1745,6 @@ public class PFQN {
 		return f;
 	}
 
-	public static pfqnNcReturn pfqn_kt(Matrix L, Matrix N, Matrix Z) {
-		System.err.println("Warning: pfqn_kt not yet available in JLINE, running pfqn_le instead.");
-		return pfqn_le(L, N, Z);
-	}
 	/**
 	 * Logistic expansion method to compute the normalizing constant
 	 * @param L - demands at all stations
@@ -2160,6 +2155,188 @@ public class PFQN {
 		}
 
 		return new pfqnNcSanitizeReturn(lambda_new, L_new, N_new, Z_new, lGremaind);
+	}
+
+	public static pfqnAMVAReturn pfqn_aql(Matrix L, Matrix N, Matrix Z) {
+		return pfqn_aql(L, N, Z, 1e-7, 1000);
+	}
+
+	public static pfqnAMVAReturn pfqn_aql(Matrix L, Matrix N, Matrix Z, int maxiter) {
+		return pfqn_aql(L, N, Z, 1e-7, maxiter);
+	}
+
+	public static pfqnAMVAReturn pfqn_aql(Matrix L, Matrix N, Matrix Z, double tol, int maxiter) {
+		int M = L.getNumRows();
+		int K = L.getNumCols();
+
+		if (Z == null) {
+			Z = new Matrix(1, K);
+		}
+
+		Matrix QN0 = new Matrix(M, K);
+			double value = N.sumRows(0) / M;
+			for (int i = 0; i < M; i++) {
+				for (int j = 0; j < K; j++) {
+					QN0.set(i, j, value);
+				}
+			}
+
+
+
+		List<Matrix> Q = new ArrayList<>(K + 1);
+		List<Matrix> R = new ArrayList<>(K + 1);
+		List<Matrix> X = new ArrayList<>(K + 1);
+		for (int i = 0; i <= K; i++) {
+			Q.add(new Matrix(M, 1));
+			R.add(new Matrix(M, K));
+			X.add(new Matrix(1, K));
+		}
+		Matrix gamma = new Matrix(M, K);
+
+		for (int t = 0; t <= K; t++) {
+			//Matrix n = oner(N, t);
+			for (int k = 0; k < M; k++) {
+				Q.get(t).set(k, 0, QN0.get(k, 0));
+			}
+		}
+
+		int it = 0;
+		while (true) {
+			List<Matrix> Q_olditer = new ArrayList<>();
+			for (Matrix q : Q) {
+				Q_olditer.add(q.clone());
+			}
+			it++;
+
+			for (int t = 0; t <= K; t++) {
+				Matrix n;
+				if (t>0) {
+					n = oner(N, t-1);
+				}
+				else {
+					n = N;
+				}
+				for (int k = 0; k < M; k++) {
+					for (int s = 0; s < K; s++) {
+						double RValue = L.get(k, s) * (1 + (n.elementSum() - 1) * (Q.get(t).get(k, 0) / n.elementSum() - gamma.get(k, s)));
+						R.get(t).set(k, s, RValue);
+					}
+				}
+
+				for (int s = 0; s < K; s++) {
+					double sumR = R.get(t).sumCols(s);
+					double XValue = n.get(0, s) / (Z.get(0, s) + sumR);
+					X.get(t).set(0, s, XValue);
+				}
+
+				for (int k = 0; k < M; k++) {
+					double QValue = 0;
+					for (int s = 0; s < K; s++) {
+						QValue += X.get(t).get(0, s) * R.get(t).get(k, s);
+					}
+					Q.get(t).set(k, 0, QValue);
+				}
+			}
+
+			for (int k = 0; k < M; k++) {
+				for (int s = 0; s < K; s++) {
+					double gammaValue = (Q.get(0).get(k, 0) / N.elementSum()) - (Q.get(s + 1).get(k, 0) / (N.elementSum() - 1));
+					gamma.set(k, s, gammaValue);
+				}
+			}
+
+			if (Matrix.maxAbsDiff(Q_olditer.get(0), Q.get(0)) < tol || it == maxiter) {
+				break;
+			}
+		}
+
+		Matrix XN = X.get(0);
+		Matrix RN = R.get(0);
+		Matrix UN = new Matrix(M, K);
+		Matrix QN = new Matrix(M, K);
+		Matrix AN = new Matrix(M, K);
+
+		for (int k = 0; k < M; k++) {
+			for (int s = 0; s < K; s++) {
+				double UNValue = XN.get(0, s) * L.get(k, s);
+				UN.set(k, s, UNValue);
+				double QNValue = UNValue * (1 + Q.get(s + 1).get(k, 0));
+				QN.set(k, s, QNValue);
+				AN.set(k, s, Q.get(s + 1).get(k, 0));
+			}
+		}
+
+		Matrix C = new Matrix(1, K);
+		for (int r=0; r<K; r++) {
+			C.set(0,r,N.get(0,r)/XN.get(0,r));
+		}
+
+		return new pfqnAMVAReturn(QN, UN, RN, C, XN, it);
+	}
+
+	public static pfqnNcReturn pfqn_kt(Matrix L, Matrix N, Matrix Z) {
+		pfqnNcReturn result = new pfqnNcReturn(0.0,0.0);
+
+		double Ntot = N.sumRows(0);
+
+		if (L.isEmpty() || N.isEmpty() || Ntot<=GlobalConstants.Zero) {
+			result.G = 1.0;
+			return result;
+		}
+
+		int M = L.getNumRows();
+		int R = L.getNumCols();
+
+		if (Z.isEmpty()) {
+			Z = new Matrix(1, R);
+		}
+
+		double[] beta = new double[R];
+		for (int r = 0; r < R; r++) {
+			beta[r] = N.get(0, r) / Ntot;
+		}
+
+		pfqnAMVAReturn XQ = pfqn_aql(L, N, Z);
+		Matrix X = XQ.X;
+		//Matrix Q = XQ.Q;
+
+		Matrix delta = Matrix.eye(R);
+		Matrix C = new Matrix(R, R);
+
+		for (int i = 0; i < R; i++) {
+			for (int j = 0; j < R; j++) {
+				double SK = 0;
+				for (int k = 0; k < M; k++) {
+					double Uk = 0.0;
+					for (int r = 0; r < R; r++) {
+						Uk += L.get(k, r)*X.get(0, r);
+					}
+					SK += X.get(0, i) * X.get(0, j) * L.get(k, i) * L.get(k, j)
+							/ Math.pow(1 - Uk, 2);
+				}
+				C.set(i, j, delta.get(i, j) * beta[i] + (1 / Ntot) * SK);
+			}
+		}
+
+		double Den = 1;
+		for (int k = 0; k < M; k++) {
+			double Uk = 0.0;
+			for (int r = 0; r < R; r++) {
+				Uk += L.get(k, r)*X.get(0, r);
+			}
+			Den *= Math.max(1e-6, 1 - Uk);
+		}
+
+		double lG = Math.log(Math.pow(2 * Math.PI, -R / 2.0) / Math.sqrt(Math.pow(Ntot, R) * C.det()))
+				- Math.log(Den);
+		for (int r = 0; r < R; r++) {
+			lG += (-Ntot * beta[r]*Math.log(X.get(0,r)));
+		}
+
+		result.lG = lG;
+		result.G = Math.exp(lG);
+
+		return result;
 	}
 
 	/**
@@ -3465,7 +3642,7 @@ public class PFQN {
 	}
 
 	/** Multiserver version of Krzesinski's Linearizer */
-	public static pfqnLinearizerMSReturn pfqn_linearizerms(Matrix L, Matrix N, Matrix Z, Matrix nservers){
+	public static pfqnAMVAMSReturn pfqn_linearizerms(Matrix L, Matrix N, Matrix Z, Matrix nservers){
 		int M = L.getNumRows();
 		Matrix type = new Matrix(M, 1);
 		type.fill(SchedStrategy.toID(SchedStrategy.PS));
@@ -3473,12 +3650,12 @@ public class PFQN {
 	}
 
 	/** Multiserver version of Krzesinski's Linearizer */
-	public static pfqnLinearizerMSReturn pfqn_linearizerms(Matrix L, Matrix N, Matrix Z, Matrix nservers, Matrix type){
+	public static pfqnAMVAMSReturn pfqn_linearizerms(Matrix L, Matrix N, Matrix Z, Matrix nservers, Matrix type){
 		return pfqn_linearizerms(L, N, Z, nservers, type, GlobalConstants.FineTol);
 	}
 
 	/** Multiserver version of Krzesinski's Linearizer */
-	public static pfqnLinearizerMSReturn pfqn_linearizerms(Matrix L, Matrix N, Matrix Z, Matrix nservers, Matrix type, double tol){
+	public static pfqnAMVAMSReturn pfqn_linearizerms(Matrix L, Matrix N, Matrix Z, Matrix nservers, Matrix type, double tol){
 		return pfqn_linearizerms(L, N, Z, nservers, type, tol, 1000);
 	}
 
@@ -3495,7 +3672,7 @@ public class PFQN {
 	 * @param maxiter - maximum number of iterations
 	 * @return - the performance measures of the network.
 	 */
-	public static pfqnLinearizerMSReturn pfqn_linearizerms(Matrix L, Matrix N, Matrix Z, Matrix nservers, Matrix type, double tol, int maxiter){
+	public static pfqnAMVAMSReturn pfqn_linearizerms(Matrix L, Matrix N, Matrix Z, Matrix nservers, Matrix type, double tol, int maxiter){
 		int M = L.getNumRows();
 		int R = L.getNumCols();
 
@@ -3625,7 +3802,7 @@ public class PFQN {
 		for(int i = 0; i < R; i++){
 			C.set(0, i, N.get(i) / X.get(i) - Z.get(i));
 		}
-		return new pfqnLinearizerMSReturn(newQ, U, W, C, X, totiter);
+		return new pfqnAMVAMSReturn(newQ, U, W, C, X, totiter);
 	}
 
 	protected static pfqnLinearizerMSCoreReturn linearizerms_core(Matrix L, int M, int R, Matrix N_1, Matrix Z, Matrix nservers,
@@ -3885,14 +4062,14 @@ public class PFQN {
 	/**
 	 * Linearizer approximate mean value analysis algorithm
 	 */
-	public static pfqnLinearizerReturn pfqn_linearizer(Matrix L, Matrix N, Matrix Z, SchedStrategy[] type){
+	public static pfqnAMVAReturn pfqn_linearizer(Matrix L, Matrix N, Matrix Z, SchedStrategy[] type){
 		return pfqn_linearizer(L, N, Z, type, 1.0e-8);
 	}
 
 	/**
 	 * Linearizer approximate mean value analysis algorithm
 	 */
-	public static pfqnLinearizerReturn pfqn_linearizer(Matrix L, Matrix N, Matrix Z, SchedStrategy[] type, double tol){
+	public static pfqnAMVAReturn pfqn_linearizer(Matrix L, Matrix N, Matrix Z, SchedStrategy[] type, double tol){
 		return pfqn_linearizer(L, N, Z, type, tol, 1000);
 	}
 
@@ -3906,13 +4083,13 @@ public class PFQN {
 	 * @param maxiter - maximum number of iterations
 	 * @return - the performance measures for the given network
 	 */
-	public static pfqnLinearizerReturn pfqn_linearizer(Matrix L, Matrix N, Matrix Z, SchedStrategy[] type, double tol, int maxiter){
+	public static pfqnAMVAReturn pfqn_linearizer(Matrix L, Matrix N, Matrix Z, SchedStrategy[] type, double tol, int maxiter){
 		return pfqn_gflinearizer(L, N, Z, type, tol, maxiter, 1);
 	}
 
 	/* General-form linearizer algorithm */
-	public static pfqnLinearizerReturn pfqn_gflinearizer(Matrix L, Matrix N, Matrix Z, SchedStrategy[] type, double tol,
-                                                         int maxiter, double alpha){
+	public static pfqnAMVAReturn pfqn_gflinearizer(Matrix L, Matrix N, Matrix Z, SchedStrategy[] type, double tol,
+												   int maxiter, double alpha){
 		Matrix alphaM = new Matrix(1, N.getNumCols());
 		alphaM.fill(alpha);
 		return pfqn_egflinearizer(L, N, Z, type, tol, maxiter, alphaM);
@@ -3929,8 +4106,8 @@ public class PFQN {
 	 * @param alpha - matrix of alphas. There is one alpha for each class
 	 * @return - the performance measures for the given network
 	 */
-	public static pfqnLinearizerReturn pfqn_egflinearizer(Matrix L, Matrix N, Matrix Z, SchedStrategy[] type, double tol,
-                                                          int maxiter, Matrix alpha){
+	public static pfqnAMVAReturn pfqn_egflinearizer(Matrix L, Matrix N, Matrix Z, SchedStrategy[] type, double tol,
+													int maxiter, Matrix alpha){
 		int M = L.getNumRows();
 		int R = L.getNumCols();
 
@@ -3967,7 +4144,7 @@ public class PFQN {
 				}
 			}
 			int totiter = 0;
-			return new pfqnLinearizerReturn(Q, U, W, C, X, totiter);
+			return new pfqnAMVAReturn(Q, U, W, C, X, totiter);
 		}
 		// Initialise
 		Matrix[] Q = new Matrix[M];
@@ -4049,7 +4226,7 @@ public class PFQN {
 		for(int i = 0; i < R; i++){
 			C.set(0, i, N.get(i) / X.get(i) - Z.get(i));
 		}
-		return new pfqnLinearizerReturn(newQ, U, W, C, X, totiter);
+		return new pfqnAMVAReturn(newQ, U, W, C, X, totiter);
 	}
 
 	protected static pfqnLinearizerCoreReturn egflinearizer_core(Matrix L, int M, int R, Matrix N_1, Matrix Z, Matrix Q,
@@ -4152,8 +4329,8 @@ public class PFQN {
 	 * @param method - solution method
 	 * @return - the performance metrics for this network
 	 */
-	public static pfqnLinearizerReturn pfqn_linearizermx(Matrix lambda, Matrix L, Matrix N, Matrix Z, Matrix nservers,
-                                                         SchedStrategy[] type, double tol, int maxiter, String method){
+	public static pfqnAMVAReturn pfqn_linearizermx(Matrix lambda, Matrix L, Matrix N, Matrix Z, Matrix nservers,
+												   SchedStrategy[] type, double tol, int maxiter, String method){
 		for(int i = 0; i < lambda.getNumCols(); i++){
 			if(lambda.get(i) > 0 && N.get(i) > 0 && Double.isFinite(N.get(i))){
 				throw new RuntimeException("pfqn_mvamx: Arrival rate cannot be specified on closed classes.");
@@ -4237,7 +4414,7 @@ public class PFQN {
 		int totiter;
 
 		if(nservers.elementMax() == 1){
-			pfqnLinearizerReturn res = null;
+			pfqnAMVAReturn res = null;
 			if(method.equals("lin")){
 				res = pfqn_linearizer(Dc, Nclosed, Zclosed, type, tol, maxiter);
 			} else if(method.equals("gflin")){
@@ -4265,7 +4442,7 @@ public class PFQN {
 			for(int i = 0; i < type.length; i++){
 				typeMatrix.set(i, SchedStrategy.toID(type[i]));
 			}
-			pfqnLinearizerMSReturn res = pfqn_linearizerms(Dc, Nclosed, Zclosed, nservers,
+			pfqnAMVAMSReturn res = pfqn_linearizerms(Dc, Nclosed, Zclosed, nservers,
 					typeMatrix, tol, maxiter);
 			QNc = res.Q;
 			UNc = res.U;
@@ -4308,7 +4485,7 @@ public class PFQN {
 		for(int r : openClasses){
 			CN.set(r, WN.sumCols(r));
 		}
-		return new pfqnLinearizerReturn(QN, UN, WN, CN, XN, totiter);
+		return new pfqnAMVAReturn(QN, UN, WN, CN, XN, totiter);
 	}
 		public static pfqnRdReturn pfqn_rd(Matrix L, Matrix N, Matrix Z, Matrix mu, SolverOptions options) {
 			int M = L.getNumRows();
@@ -4690,7 +4867,7 @@ public class PFQN {
         }
     }
 
-    public static class pfqnLinearizerMSReturn {
+    public static class pfqnAMVAMSReturn {
         public Matrix Q;
         public Matrix U;
         public Matrix R;
@@ -4698,7 +4875,7 @@ public class PFQN {
         public Matrix X;
         public int totiter;
 
-        public pfqnLinearizerMSReturn(Matrix Q, Matrix U, Matrix R, Matrix C, Matrix X, int totiter) {
+        public pfqnAMVAMSReturn(Matrix Q, Matrix U, Matrix R, Matrix C, Matrix X, int totiter) {
             this.Q = Q;
             this.U = U;
             this.R = R;
@@ -4754,7 +4931,7 @@ public class PFQN {
         }
     }
 
-    public static class pfqnLinearizerReturn{
+    public static class pfqnAMVAReturn {
         public Matrix Q;
         public Matrix U;
         public Matrix W;
@@ -4762,7 +4939,7 @@ public class PFQN {
         public Matrix X;
         public int totiter;
 
-        public pfqnLinearizerReturn(Matrix Q, Matrix U, Matrix W, Matrix C, Matrix X, int totiter) {
+        public pfqnAMVAReturn(Matrix Q, Matrix U, Matrix W, Matrix C, Matrix X, int totiter) {
             this.Q = Q;
             this.U = U;
             this.W = W;

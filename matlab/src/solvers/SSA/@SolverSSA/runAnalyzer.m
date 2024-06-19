@@ -34,6 +34,8 @@ switch options.lang
         switch options.method
             case {'default','serial','para','parallel'}
                 jmodel = LINE2JLINE(self.model);
+                M = jmodel.getNumberOfStatefulNodes;
+                R = jmodel.getNumberOfClasses;                
                 joptions = jline.solvers.SolverOptions(jline.lang.constant.SolverType.SSA);
                 joptions.samples = options.samples;
                 joptions.seed = options.seed;
@@ -42,7 +44,13 @@ switch options.lang
                 [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(jsolver.getAvgTable);           
                 CN = JLINE.jlinematrix_to_matrix(jsolver.getAvgSysRespT());
                 XN = JLINE.jlinematrix_to_matrix(jsolver.getAvgSysTput());
-                runtime = toc;
+                runtime = jsolver.result.runtime;
+                QN = reshape(QN',R,M)';
+                UN = reshape(UN',R,M)';
+                RN = reshape(RN',R,M)';
+                TN = reshape(TN',R,M)';
+                WN = reshape(WN',R,M)';
+                AN = reshape(AN',R,M)';
                 self.setAvgResults(QN,UN,RN,TN,AN,WN,CN,XN,runtime);
             case 'taussa'
                 line_error(mfilename, 'taussa method is temporarily disabled.');

@@ -213,7 +213,7 @@ public class AMVAHandler implements MVASolverHandler {
                             idx++;
                         }
 
-                        pfqnLinearizerReturn res = pfqn_linearizermx(lambda, L, N, Z, nservers, schdi, options.tol, options.iter_max, options.method);
+                        pfqnAMVAReturn res = pfqn_linearizermx(lambda, L, N, Z, nservers, schdi, options.tol, options.iter_max, options.method);
 
                         int iRes = 0;
                         for(int i : queueIdx){
@@ -242,7 +242,7 @@ public class AMVAHandler implements MVASolverHandler {
                                     schdi[idx] = sn.sched.get(sn.stations.get((int)sn.nodeToStation.get(i)));
                                     idx++;
                                 }
-                                pfqnLinearizerReturn res = pfqn_linearizermx(lambda, L, N, Z, nservers, schdi, options.tol, options.iter_max, null);
+                                pfqnAMVAReturn res = pfqn_linearizermx(lambda, L, N, Z, nservers, schdi, options.tol, options.iter_max, null);
                                 int iRes = 0;
                                 for(int i : queueIdx){
                                     for(int j = 0; j < C; j++){

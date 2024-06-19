@@ -138,6 +138,20 @@ public class Matrix implements Serializable {
 	 * Decrease by one an element of an integer vector.
 	 *
 	 * @param N integer vector
+	 * @param s dimension to decrease
+	 * @return Decreased vector
+	 */
+	public static Matrix oner(Matrix N, Integer s) {
+		Matrix res = N.clone();
+		if (s >= 0)
+			res.set(s, res.get(s) - 1);
+		return res;
+	}
+
+	/**
+	 * Decrease by one an element of an integer vector.
+	 *
+	 * @param N integer vector
 	 * @param r dimension to decrease
 	 * @return Decreased vector
 	 */
@@ -2175,6 +2189,18 @@ public class Matrix implements Serializable {
 		return result;
 	}
 
+	public static double maxAbsDiff(Matrix a, Matrix b) {
+		double maxDiff = 0;
+		for (int i = 0; i < a.getNumRows(); i++) {
+			for (int j = 0; j < a.getNumCols(); j++) {
+				double diff = Math.abs((a.get(i, j) - b.get(i, j)) / b.get(i, j));
+				if (diff > maxDiff) {
+					maxDiff = diff;
+				}
+			}
+		}
+		return maxDiff;
+	}
 
 
 }

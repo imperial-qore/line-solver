@@ -2,6 +2,7 @@ package jline.solvers.ln;
 import jline.lang.*;
 import jline.lang.constant.CallType;
 import jline.lang.constant.SchedStrategy;
+import jline.lang.constant.VerboseLevel;
 import jline.lang.distributions.Exp;
 import jline.lang.distributions.Immediate;
 import jline.lang.nodes.ClassSwitch;
@@ -9,6 +10,7 @@ import jline.lang.nodes.Delay;
 import jline.lang.nodes.Queue;
 import jline.lang.layered.*;
 import jline.solvers.LayeredNetworkAvgTable;
+import jline.solvers.SolverOptions;
 import jline.solvers.mva.SolverMVA;
 import jline.util.Matrix;
 
@@ -229,7 +231,9 @@ class SolverLNTest {
 
     @org.junit.jupiter.api.Test
     public void testSingleLayerResult() throws Exception {
-        SolverLN solverLN = new SolverLN(buildModel1());
+        SolverOptions options = new LNOptions();
+        options.verbose = VerboseLevel.SILENT;
+        SolverLN solverLN = new SolverLN(buildModel1(), options);
         Network network = solverLN.getEnsemble().get(0);
         SolverMVA layersolver = new SolverMVA(network);
         layersolver.runAnalyzer();
@@ -262,7 +266,9 @@ class SolverLNTest {
 
     @org.junit.jupiter.api.Test
     public void testMultipleLayerAndMatrix() throws Exception {
-        SolverLN solverLN = new SolverLN(buildModel2());
+        SolverOptions options = new LNOptions();
+        options.verbose = VerboseLevel.SILENT;
+        SolverLN solverLN = new SolverLN(buildModel2(), options);
 
         //Layer 1
         Network network1 = solverLN.getEnsemble().get(0);
@@ -603,7 +609,9 @@ class SolverLNTest {
     public void testLayerStruct() throws  Exception{
         // this test is to test the network's job classes, stations and connections
 
-        SolverLN solverLN = new SolverLN(buildModel3());
+        SolverOptions options = new LNOptions();
+        options.verbose = VerboseLevel.SILENT;
+        SolverLN solverLN = new SolverLN(buildModel3(), options);
 
         Network network1 = solverLN.getEnsemble().get(0);
 
@@ -738,7 +746,9 @@ class SolverLNTest {
 
     @org.junit.jupiter.api.Test
     public void testSolveCallModel() throws  Exception{
-        SolverLN solver = new SolverLN(buildModel4());
+        SolverOptions options = new LNOptions();
+        options.verbose = VerboseLevel.SILENT;
+        SolverLN solver = new SolverLN(buildModel4(), options);
         double[] expectedQlen = {Double.NaN, Double.NaN, 12.1041, 0.0039, 0.1244, 12.1041, 0.0039, 0.1244, 12.1041, 0.0039, 0.1244};
         double[] expectedUtil = {0.9473, 0.0415, 0.9470, 0.0003, 0.0415, Double.NaN, Double.NaN, Double.NaN, 0.9470, 0.0003, 0.0415};
         double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 0.6391, 0.2887, 0.0200, 0.6391, 0.2887, 0.0200};
@@ -756,7 +766,9 @@ class SolverLNTest {
 
     @org.junit.jupiter.api.Test
     public void testSolveLoopModel() throws  Exception{
-        SolverLN solver = new SolverLN(buildModel5());
+        SolverOptions options = new LNOptions();
+        options.verbose = VerboseLevel.SILENT;
+        SolverLN solver = new SolverLN(buildModel5(), options);
         double[] expectedQlen = {Double.NaN, 1, 1, 0.1587, 0.5238, 0.3174};
         double[] expectedUtil = {1, 1, Double.NaN, 0.1587, 0.5238, 0.3174};
         double[] expectedRespT = {Double.NaN, Double.NaN, 12.6, 2, 3, 4};
@@ -773,7 +785,9 @@ class SolverLNTest {
     }
     @org.junit.jupiter.api.Test
     public void testSolveOrForkOrJoinModel() throws  Exception{
-        SolverLN solver = new SolverLN(buildModel6());
+        SolverOptions options = new LNOptions();
+        options.verbose = VerboseLevel.SILENT;
+        SolverLN solver = new SolverLN(buildModel6(), options);
         double[] expectedQlen = {Double.NaN, 1, 1, 0.16529, 0.07438, 0.09917, 0.1652, 0.4958};
         double[] expectedUtil = {0.1, 0.1, Double.NaN, 0.01652, 0.00743, 0.00991, 0.01652, 0.04958};
         double[] expectedRespT = {Double.NaN, Double.NaN, 12.1, 2, 3, 4, 5, 6};

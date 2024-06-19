@@ -775,7 +775,8 @@ class PFQNTest {
         Z.set(0, 1, 0.333);
         Z.set(0, 2, 0.1986);
         pfqnNcXQReturn ret = compute_norm_const(L,N,Z,options);
-        assertEquals(1.700939228986259e+02, ret.lG, 1.700939228986259e+02*tolerance);
+        // this has a slight perturbation compared to matlab that gives 164.8623063443114
+        assertEquals(164.86216529289987, ret.lG, 164.86216529289987*tolerance);
         assertEquals("kt", ret.method);
     }
 
@@ -2557,7 +2558,7 @@ class PFQNTest {
         type.set(1,0, SchedStrategy.toID(SchedStrategy.FCFS));
         double tol = 1e-04;
         int maxiter = 100;
-        pfqnLinearizerMSReturn ret = pfqn_linearizerms(L, N, Z, nservers, type, tol, maxiter);
+        pfqnAMVAMSReturn ret = pfqn_linearizerms(L, N, Z, nservers, type, tol, maxiter);
 
         assertEquals(2.080508946707209, ret.Q.get(0,0), tolerance);
         assertEquals(1.799386597325419, ret.Q.get(0,1), tolerance);
@@ -2712,7 +2713,7 @@ class PFQNTest {
         type[0] = SchedStrategy.FCFS;
         double tol = 1.0e-04;
         int maxiter = 100;
-        pfqnLinearizerReturn ret = pfqn_linearizer(L, N, Z, type, tol, maxiter);
+        pfqnAMVAReturn ret = pfqn_linearizer(L, N, Z, type, tol, maxiter);
         assertEquals(7.782194880076756, ret.Q.get(0,0), tolerance);
         assertEquals(0.998012303965460, ret.U.get(0,0), tolerance);
         assertEquals(3.508962446775345, ret.W.get(0,0), tolerance);
@@ -2736,7 +2737,7 @@ class PFQNTest {
         type[0] = SchedStrategy.PS;
         double tol = 1.0e-04;
         int maxiter = 100;
-        pfqnLinearizerReturn ret = pfqn_linearizer(L, N, Z, type, tol, maxiter);
+        pfqnAMVAReturn ret = pfqn_linearizer(L, N, Z, type, tol, maxiter);
         assertEquals(0.846623318708752, ret.Q.get(0,0), tolerance);
         assertEquals(0.381067955453777, ret.Q.get(0,1), tolerance);
         assertEquals(0.508723625989556, ret.U.get(0,0), tolerance);

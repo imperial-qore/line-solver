@@ -710,28 +710,30 @@ public class SolverLN extends EnsembleSolver {
         String Entry = "Entry";
         String Activity = "Activity";
         String format = "%-" + maxnamelength + "s%-16s%-16s%-16s%-16s%-16s%-16s\n";
-        System.out.println("-------------------------------------------------------------------------------------------------------");
-        System.out.format(format, Node, NodeType, Qlen, Util, RespT, ResidT, Tput);
-        System.out.println("-------------------------------------------------------------------------------------------------------");
-        for (int h = 1; h <= lqn.nhosts; h++) {
-            System.out.format(format, lqn.names.get(h), Processor, String.format("%.4f", QN.get(h)), String.format("%.4f", UN.get(h)),
-                    String.format("%.4f", RN.get(h)), String.format("%.4f", WN.get(h)),
-                    String.format("%.4f", TN.get(h)));
-        }
-        for (int t = 1; t <= lqn.ntasks; t++) {
-            System.out.format(format, lqn.names.get(t + lqn.tshift), Task, String.format("%.4f", QN.get(t + lqn.tshift)), String.format("%.4f", UN.get(t + lqn.tshift)),
-                    String.format("%.4f", RN.get(t + lqn.tshift)), String.format("%.4f", WN.get(t + lqn.tshift)),
-                    String.format("%.4f", TN.get(t + lqn.tshift)));
-        }
-        for (int e = 1; e <= lqn.nentries; e++) {
-            System.out.format(format, lqn.names.get(e + lqn.eshift), Entry, String.format("%.4f", QN.get(e + lqn.eshift)), String.format("%.4f", UN.get(e + lqn.eshift)),
-                    String.format("%.4f", RN.get(e + lqn.eshift)), String.format("%.4f", WN.get(e + lqn.eshift)),
-                    String.format("%.4f", TN.get(e + lqn.eshift)));
-        }
-        for (int a = 1; a <= lqn.nacts; a++) {
-            System.out.format(format, lqn.names.get(a + lqn.ashift), Activity, String.format("%.4f", QN.get(a + lqn.ashift)), String.format("%.4f", UN.get(a + lqn.ashift)),
-                    String.format("%.4f", RN.get(a + lqn.ashift)), String.format("%.4f", WN.get(a + lqn.ashift)),
-                    String.format("%.4f", TN.get(a + lqn.ashift)));
+        if (this.options.verbose != VerboseLevel.SILENT) {
+            System.out.println("-------------------------------------------------------------------------------------------------------");
+            System.out.format(format, Node, NodeType, Qlen, Util, RespT, ResidT, Tput);
+            System.out.println("-------------------------------------------------------------------------------------------------------");
+            for (int h = 1; h <= lqn.nhosts; h++) {
+                System.out.format(format, lqn.names.get(h), Processor, String.format("%.4f", QN.get(h)), String.format("%.4f", UN.get(h)),
+                        String.format("%.4f", RN.get(h)), String.format("%.4f", WN.get(h)),
+                        String.format("%.4f", TN.get(h)));
+            }
+            for (int t = 1; t <= lqn.ntasks; t++) {
+                System.out.format(format, lqn.names.get(t + lqn.tshift), Task, String.format("%.4f", QN.get(t + lqn.tshift)), String.format("%.4f", UN.get(t + lqn.tshift)),
+                        String.format("%.4f", RN.get(t + lqn.tshift)), String.format("%.4f", WN.get(t + lqn.tshift)),
+                        String.format("%.4f", TN.get(t + lqn.tshift)));
+            }
+            for (int e = 1; e <= lqn.nentries; e++) {
+                System.out.format(format, lqn.names.get(e + lqn.eshift), Entry, String.format("%.4f", QN.get(e + lqn.eshift)), String.format("%.4f", UN.get(e + lqn.eshift)),
+                        String.format("%.4f", RN.get(e + lqn.eshift)), String.format("%.4f", WN.get(e + lqn.eshift)),
+                        String.format("%.4f", TN.get(e + lqn.eshift)));
+            }
+            for (int a = 1; a <= lqn.nacts; a++) {
+                System.out.format(format, lqn.names.get(a + lqn.ashift), Activity, String.format("%.4f", QN.get(a + lqn.ashift)), String.format("%.4f", UN.get(a + lqn.ashift)),
+                        String.format("%.4f", RN.get(a + lqn.ashift)), String.format("%.4f", WN.get(a + lqn.ashift)),
+                        String.format("%.4f", TN.get(a + lqn.ashift)));
+            }
         }
         List<Double> Qval = QN.toList1D();
         List<Double> Uval = UN.toList1D();

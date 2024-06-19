@@ -512,7 +512,7 @@ public class SolverSSA extends NetworkSolver {
             if (!options.method.equals("para") && !options.method.equals ("parallel") &&
                     (options.verbose == VerboseLevel.STD || options.verbose == VerboseLevel.DEBUG)) {
                 if (samples_collected == 2) {
-                    System.out.printf("\b\n SSA samples: %6d ", samples_collected);
+                    System.out.printf("SSA samples: %6d ", samples_collected);
                     System.out.flush();
                 } else if (options.verbose == VerboseLevel.DEBUG) {
                     System.out.printf("\b\b\b\b\b\b\b %6d", samples_collected);
@@ -522,10 +522,9 @@ public class SolverSSA extends NetworkSolver {
                     System.out.flush();
                 }
                 if (samples_collected == options.samples) {
-                    //System.out.println("\n");
+                    System.out.println();
                 }
             }
-
         }
 
         tranState = tranState.transpose();
@@ -643,7 +642,7 @@ public class SolverSSA extends NetworkSolver {
                 // TODO: Cache nodetype case
             }
         }
-        long runtime = java.lang.System.currentTimeMillis() - T0;
+        long runtime = (java.lang.System.currentTimeMillis() - T0) / 1000;
         int M = sn.nstations;
         int R = sn.nclasses;
         Map<Station, Map<JobClass, SolverHandles.Metric>> T = getAvgTputHandles();
