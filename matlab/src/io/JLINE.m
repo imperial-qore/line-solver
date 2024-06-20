@@ -1564,7 +1564,7 @@ classdef JLINE
         end
 
         function [nc] = SolverNC(network_object, options)
-            solverOptions = jline.solvers.SolverOptions(jline.lang.constant.SolverType.MVA);
+            solverOptions = jline.solvers.SolverOptions(jline.lang.constant.SolverType.NC);
             fn = fieldnames(options);
             fn2 = fieldnames(solverOptions);
             for f = 1:length(fn)

@@ -317,7 +317,7 @@ public class PFQN {
 		Matrix Qnnzdem = ret.Q;
 		method = ret.method;
 
-		if (Xnnzdem.isEmpty()) {
+		if (X == null || Xnnzdem.isEmpty()) {
 			X = new Matrix(0, 0);
 			Q = new Matrix(0, 0);
 		}
@@ -994,6 +994,8 @@ public class PFQN {
 					pfqnNcReturn ret = pfqn_ca(L,N,Z.sumCols());
 					lG = ret.lG;
 					method = "ca";
+				} else {
+					throw new RuntimeException("pfqn_recal not yet implemented in JLine");
 				}
 				break;
 			}
@@ -4488,7 +4490,8 @@ public class PFQN {
 		return new pfqnAMVAReturn(QN, UN, WN, CN, XN, totiter);
 	}
 		public static pfqnRdReturn pfqn_rd(Matrix L, Matrix N, Matrix Z, Matrix mu, SolverOptions options) {
-			int M = L.getNumRows();
+		String method = options.method;
+		int M = L.getNumRows();
 			int R = L.getNumCols();
 			Matrix lambda = new Matrix(1, R);
 			lambda.zero();
@@ -4614,7 +4617,9 @@ public class PFQN {
 			}
 			if (isInf) {
 				options.method = "default";
-				return new pfqnRdReturn(pfqn_nc(lambda, L, N, Z, options).lG);
+				double lG = pfqn_nc(lambda, L, N, Z, options).lG;
+				options.method = method;
+				return new pfqnRdReturn(lG);
 			}
 			double Cgamma = 0;
 			List<Double> sld = new ArrayList<>();
@@ -4639,6 +4644,7 @@ public class PFQN {
 			}
 			options.method = "default";
 			double lGN = pfqn_nc(lambda, y, N, Z, options).lG;
+			options.method = method;
 			lGN += Math.log(Cgamma);
 			return new pfqnRdReturn(lGN, Cgamma);
 		}

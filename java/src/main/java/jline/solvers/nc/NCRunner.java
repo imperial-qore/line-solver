@@ -156,7 +156,7 @@ public class NCRunner {
         }
         solver.model.refreshChains(true);
       } else {
-        if ((!(sn.lldscaling == null) && !(sn.cdscaling == null)) && (!sn.lldscaling.isEmpty() || !sn.cdscaling.isEmpty())) {
+        if ((!(sn.lldscaling == null) && !sn.lldscaling.isEmpty()) || (!(sn.cdscaling == null) && !sn.cdscaling.isEmpty())) {
           analyzer = new SolverNCLDAnalyzer();
           analyzer.analyze(this.sn, this.options, ret);
         } else {
