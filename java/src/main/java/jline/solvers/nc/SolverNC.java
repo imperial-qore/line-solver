@@ -85,19 +85,19 @@ public class SolverNC extends NetworkSolver {
 
     int M = sn.nstations;
     int R = sn.nclasses;
-    if(!this.result.TN.isEmpty()){
-      this.result.AN = new Matrix(M,R,M*R);
-      for(int i=0;i<M;i++){
-        for(int j=0;j<M;j++){
-          for(int k=0;k<R;k++){
-            for(int r=0;r<R;r++){
-              this.result.AN.set(i,k,this.result.AN.get(i,k)+this.result.TN.get(j,r)*sn.rt.get(j*R+r,i*R+k));
+    if (!this.result.TN.isEmpty()) {
+      this.result.AN = new Matrix(M, R, M * R);
+      for (int i = 0; i < M; i++) {
+        for (int j = 0; j < M; j++) {
+          for (int k = 0; k < R; k++) {
+            for (int r = 0; r < R; r++) {
+              this.result.AN.set(i, k, this.result.AN.get(i, k) + this.result.TN.get(j, r) * sn.rt.get(j * R + r, i * R + k));
             }
           }
         }
       }
     } else {
-      this.result.AN = new Matrix(0,0,0);
+      this.result.AN = new Matrix(0, 0, 0);
     }
   }
 
@@ -133,7 +133,7 @@ public class SolverNC extends NetworkSolver {
     ((SolverNCResult) this.result).solver = this.name;
     ((SolverNCResult) this.result).prob.marginal = Pnir;
     long endTimeMillis = System.currentTimeMillis();
-    double runtime = (endTimeMillis-startTimeMillis) / 1000.0;
+    double runtime = (endTimeMillis - startTimeMillis) / 1000.0;
     this.result.runtime = runtime;
 
     return Pnir.get(ist);
@@ -153,7 +153,7 @@ public class SolverNC extends NetworkSolver {
     Matrix ST = rates.clone();
     for (int i = 0; i < ST.getNumRows(); i++) {
       for (int j = 0; j < ST.getNumCols(); j++) {
-        ST.set(i, j, 1.0/ST.get(i, j));
+        ST.set(i, j, 1.0 / ST.get(i, j));
       }
     }
     ST.removeNaN();
@@ -172,11 +172,11 @@ public class SolverNC extends NetworkSolver {
       Matrix tmp = new Matrix(1, (int) Nchain.elementSum());
       if (Double.isInfinite(S.get(i))) {
         for (int j = 0; j < tmp.length(); j++) {
-          tmp.set(j, j+1);
+          tmp.set(j, j + 1);
         }
       } else {
         for (int j = 0; j < tmp.length(); j++) {
-          tmp.set(j, Math.min(j+1, S.get(i)));
+          tmp.set(j, Math.min(j + 1, S.get(i)));
         }
       }
       mu = Matrix.concatRows(mu, tmp, null);
@@ -203,7 +203,7 @@ public class SolverNC extends NetworkSolver {
       List<Matrix> kirvec = ret1.kir;
 
       if (nirvec.elementMin() < -1e-6) {
-        lPr.set(M-1, Double.NaN);
+        lPr.set(M - 1, Double.NaN);
       } else {
         //nivec_chain = nirvec * sn.chains'; Assume it to be matrix
         Matrix nivec_chain = nirvec.mult(sn.chains.transpose());
@@ -212,15 +212,15 @@ public class SolverNC extends NetworkSolver {
         Matrix mu_tmp = new Matrix(0, mu.getNumCols());
         for (int i = 0; i < sn.nstations; i++) {
           if (i != ist) {
-            Matrix Lchain_row_i = Matrix.extractRows(Lchain, i, i+1, null);
-            Matrix mu_row_i = Matrix.extractRows(mu, i, i+1, null);
+            Matrix Lchain_row_i = Matrix.extractRows(Lchain, i, i + 1, null);
+            Matrix mu_row_i = Matrix.extractRows(mu, i, i + 1, null);
             Lchain_tmp = Matrix.concatRows(Lchain_tmp, Lchain_row_i, null);
             mu_tmp = Matrix.concatRows(mu_tmp, mu_row_i, null);
           }
         }
         Matrix Nchain_tmp = Nchain.clone();
         for (int i = 0; i < Nchain_tmp.length(); i++) {
-          Nchain_tmp.set(i, Nchain_tmp.get(i)-nivec_chain.get(i));
+          Nchain_tmp.set(i, Nchain_tmp.get(i) - nivec_chain.get(i));
         }
         Matrix Zchain_tmp = Nchain.clone();
         Zchain_tmp.fill(0.0);
@@ -242,7 +242,7 @@ public class SolverNC extends NetworkSolver {
                           "because the product-form solution requires exponential service times at FCFS nodes.");
                 }
 
-                if (Math.abs(ST.get(ist, r)-Matrix.extractRows(ST,ist,ist+1,null).elementMax())>1e-6) {
+                if (Math.abs(ST.get(ist, r) - Matrix.extractRows(ST, ist, ist + 1, null).elementMax()) > 1e-6) {
                   throw new RuntimeException("solver_nc_marg: Cannot return state probability " +
                           "because the product-form solution requires identical service times at FCFS nodes.");
                 }
@@ -259,14 +259,14 @@ public class SolverNC extends NetworkSolver {
             if (!allZero) {
               Matrix tmp = Matrix.extractRows(nirvec, 0, 1, null);
               for (int i = 0; i < tmp.length(); i++) {
-                tmp.set(i, tmp.get(i)*Math.log(V.get(ist,K-1)));
+                tmp.set(i, tmp.get(i) * Math.log(V.get(ist, K - 1)));
               }
               double sum_kirvec = 0.0;
               for (int i = 0; i < kirvec.size(); i++) {
                 sum_kirvec += kirvec.get(i).elementSum();
               }
               Matrix mu_row_ist = new Matrix(1, (int) sum_kirvec);
-              Matrix.extract(mu, ist, ist+1, 0, (int) sum_kirvec, mu_row_ist, 0, 0);
+              Matrix.extract(mu, ist, ist + 1, 0, (int) sum_kirvec, mu_row_ist, 0, 0);
               for (int i = 0; i < mu_row_ist.length(); i++) {
                 mu_row_ist.set(i, Math.log(mu_row_ist.get(i)));
               }
@@ -292,7 +292,7 @@ public class SolverNC extends NetworkSolver {
                 Matrix PHr_tmp = PHr.get(0);
                 for (int i = 0; i < PHr_tmp.getNumRows(); i++) {
                   for (int j = 0; j < PHr_tmp.getNumCols(); j++) {
-                    PHr_tmp.set(i, j, -1.0*PHr_tmp.get(i, j));
+                    PHr_tmp.set(i, j, -1.0 * PHr_tmp.get(i, j));
                   }
                 }
                 PHr_tmp = PHr_tmp.inv();
@@ -301,7 +301,7 @@ public class SolverNC extends NetworkSolver {
                 Matrix kir_tmp = Ar.clone();
                 for (int i = 0; i < kir_tmp.getNumRows(); i++) {
                   for (int j = 0; j < kir_tmp.getNumCols(); j++) {
-                    kir_tmp.set(i, j, kir.get(i, j) * Math.log(V.get(ist, r)*kir_tmp.get(i, j)));
+                    kir_tmp.set(i, j, kir.get(i, j) * Math.log(V.get(ist, r) * kir_tmp.get(i, j)));
                   }
                 }
 
@@ -314,7 +314,7 @@ public class SolverNC extends NetworkSolver {
               sum_kirvec += kirvec.get(i).elementSum();
             }
             Matrix mu_row_ist = new Matrix(1, (int) sum_kirvec);
-            Matrix.extract(mu, ist, ist+1, 0, (int) sum_kirvec, mu_row_ist, 0, 0);
+            Matrix.extract(mu, ist, ist + 1, 0, (int) sum_kirvec, mu_row_ist, 0, 0);
             for (int i = 0; i < mu_row_ist.getNumCols(); i++) {
               mu_row_ist.set(i, Math.log(mu_row_ist.get(i)));
             }
@@ -331,7 +331,7 @@ public class SolverNC extends NetworkSolver {
                 Matrix PHr_tmp = PHr.get(0);
                 for (int i = 0; i < PHr_tmp.getNumRows(); i++) {
                   for (int j = 0; j < PHr_tmp.getNumCols(); j++) {
-                    PHr_tmp.set(i, j, -1.0*PHr_tmp.get(i, j));
+                    PHr_tmp.set(i, j, -1.0 * PHr_tmp.get(i, j));
                   }
                 }
                 PHr_tmp = PHr_tmp.inv();
@@ -340,7 +340,7 @@ public class SolverNC extends NetworkSolver {
                 Matrix kir_tmp = Ar.clone();
                 for (int i = 0; i < kir_tmp.getNumRows(); i++) {
                   for (int j = 0; j < kir_tmp.getNumCols(); j++) {
-                    kir_tmp.set(i, j, kir.get(i, j) * Math.log(V.get(ist, r)*kir_tmp.get(i, j)));
+                    kir_tmp.set(i, j, kir.get(i, j) * Math.log(V.get(ist, r) * kir_tmp.get(i, j)));
                   }
                 }
 
@@ -353,7 +353,7 @@ public class SolverNC extends NetworkSolver {
       }
     }
     long endTimeMillis = System.currentTimeMillis();
-    double runtime = (endTimeMillis-startTimeMillis) / 1000.0;
+    double runtime = (endTimeMillis - startTimeMillis) / 1000.0;
     lPr.removeNaN();
     return new SolverNCMargReturn(lPr, G, runtime);
   }
@@ -365,7 +365,7 @@ public class SolverNC extends NetworkSolver {
     Matrix ST = rates.clone();
     for (int i = 0; i < ST.getNumRows(); i++) {
       for (int j = 0; j < ST.getNumCols(); j++) {
-        ST.set(i, j, 1.0/ST.get(i, j));
+        ST.set(i, j, 1.0 / ST.get(i, j));
       }
     }
     ST.removeNaN();
@@ -384,17 +384,17 @@ public class SolverNC extends NetworkSolver {
       Matrix tmp = new Matrix(1, (int) Nchain.elementSum());
       if (Double.isInfinite(S.get(i))) {
         for (int j = 0; j < tmp.length(); j++) {
-          tmp.set(j, j+1);
+          tmp.set(j, j + 1);
         }
       } else {
         for (int j = 0; j < tmp.length(); j++) {
-          tmp.set(j, Math.min(j+1, S.get(i)));
+          tmp.set(j, Math.min(j + 1, S.get(i)));
         }
       }
       mu_chain = Matrix.concatRows(mu_chain, tmp, null);
 
-      Matrix tmp1 = Matrix.extractRows(STchain, i, i+1, null)
-              .elementMult(Matrix.extractRows(Vchain, i, i+1, null), null);
+      Matrix tmp1 = Matrix.extractRows(STchain, i, i + 1, null)
+              .elementMult(Matrix.extractRows(Vchain, i, i + 1, null), null);
       Lchain = Matrix.concatRows(Lchain, tmp1, null);
     }
 
@@ -409,11 +409,11 @@ public class SolverNC extends NetworkSolver {
               null, null, null, null, null);
       Matrix nivec = ret1.nir;
       Matrix nivec_chain = nivec.mult(sn.chains.transpose());
-      Matrix Lchain_i = Matrix.extractRows(Lchain, i, i+1, null);
-      Matrix ST_i = Matrix.extractRows(ST, i, i+1, null);
-      Matrix alpha_i = Matrix.extractRows(alpha, i, i+1, null);
-      Matrix STchain_i = Matrix.extractRows(STchain, i, i+1, null);
-      Matrix mu_chain_i = Matrix.extractRows(mu_chain, i, i+1, null);
+      Matrix Lchain_i = Matrix.extractRows(Lchain, i, i + 1, null);
+      Matrix ST_i = Matrix.extractRows(ST, i, i + 1, null);
+      Matrix alpha_i = Matrix.extractRows(alpha, i, i + 1, null);
+      Matrix STchain_i = Matrix.extractRows(STchain, i, i + 1, null);
+      Matrix mu_chain_i = Matrix.extractRows(mu_chain, i, i + 1, null);
       Matrix Zvec_chain = nivec_chain.clone();
       Zvec_chain.fill(0.0);
       Matrix Zvec = nivec.clone();
@@ -426,7 +426,7 @@ public class SolverNC extends NetworkSolver {
     }
     double Pr = Math.exp(lPr - lG);
     long endTimeMillis = System.currentTimeMillis();
-    double runtime = (endTimeMillis-startTimeMillis) / 1000.0;
+    double runtime = (endTimeMillis - startTimeMillis) / 1000.0;
     double G = Math.exp(lG);
     return new SolverNCJointReturn(Pr, G, lG, runtime);
   }
@@ -450,7 +450,7 @@ public class SolverNC extends NetworkSolver {
     Matrix ST = rates.clone();
     for (int i = 0; i < ST.getNumRows(); i++) {
       for (int j = 0; j < ST.getNumCols(); j++) {
-        ST.set(i, j, 1.0/ST.get(i, j));
+        ST.set(i, j, 1.0 / ST.get(i, j));
       }
     }
     ST.removeNaN();
@@ -493,7 +493,7 @@ public class SolverNC extends NetworkSolver {
     int it = 0;
     Matrix tmp_eta = new Matrix(1, M);
     for (int i = 0; i < M; i++) {
-      tmp_eta.set(i, Math.abs(1-eta.get(i)/eta_1.get(i)));
+      tmp_eta.set(i, Math.abs(1 - eta.get(i) / eta_1.get(i)));
     }
 
     Matrix lambda = null;
@@ -534,7 +534,7 @@ public class SolverNC extends NetworkSolver {
             }
           }
           for (int i = 0; i < M; i++) {
-            if (isOpenChain && Math.abs(i-sn.refstat.get((int) inchain.get(0))) < 1e-6) {
+            if (isOpenChain && Math.abs(i - sn.refstat.get((int) inchain.get(0))) < 1e-6) {
               lambda.set(c, 1 / STchain.get(i, c));
             }
           }
@@ -577,7 +577,7 @@ public class SolverNC extends NetworkSolver {
           }
           for (int j = 0; j < C; j++) {
             Lms.set(i, j, Lchain.get(i, j) / nservers.get(i));
-            Zms.set(i, j, Lchain.get(i, j) * (nservers.get(i)-1) / nservers.get(i));
+            Zms.set(i, j, Lchain.get(i, j) * (nservers.get(i) - 1) / nservers.get(i));
           }
         }
       }
@@ -586,11 +586,11 @@ public class SolverNC extends NetworkSolver {
       for (int i = 0; i < C; i++) {
         Z_new.set(i, Z.sumCols(i) + Zms.sumCols(i));
       }
-      Matrix Z_tmp_append_0 = new Matrix(1, Z_new.getNumCols()+1);
+      Matrix Z_tmp_append_0 = new Matrix(1, Z_new.getNumCols() + 1);
       Z_tmp_append_0.set(Z_new.getNumCols(), 0.0);
       Matrix.extract(Z_new, 0, 1, 0, Z_new.length(), Z_tmp_append_0, 0, 0);
 
-      PFQN.pfqnNcXQReturn ret = pfqn_nc(lambda,Lms,Nchain,Z_new, options);
+      PFQN.pfqnNcXQReturn ret = pfqn_nc(lambda, Lms, Nchain, Z_new, options);
       lG = ret.lG;
       Matrix Xchain = ret.X;
       Matrix Qchain = ret.Q;
@@ -605,45 +605,45 @@ public class SolverNC extends NetworkSolver {
         Xchain = lambda.clone();
         Qchain = new Matrix(M, C);
         Qchain.fill(0.0);
-        for (int r: closedChains) {
+        for (int r : closedChains) {
           Matrix Nchain_tmp = Nchain.clone();
           Nchain_tmp.set(r, Nchain_tmp.get(r) - 1);
-          Matrix Nchain_tmp_append_1 = new Matrix(1, Nchain.getNumCols()+1);
+          Matrix Nchain_tmp_append_1 = new Matrix(1, Nchain.getNumCols() + 1);
           Nchain_tmp_append_1.set(Nchain.getNumCols(), 1.0);
           Matrix.extract(Nchain_tmp, 0, 1, 0, Nchain_tmp.length(), Nchain_tmp_append_1, 0, 0);
-          Xchain.set(r, Math.exp(pfqn_nc(lambda,Lms,Nchain_tmp,Z_new, options).lG - lG));
+          Xchain.set(r, Math.exp(pfqn_nc(lambda, Lms, Nchain_tmp, Z_new, options).lG - lG));
           for (int i = 0; i < M; i++) {
             if (Lchain.get(i, r) > 1e-6) {
               if (Double.isInfinite(nservers.get(i))) {
                 Qchain.set(i, r, Lchain.get(i, r) * Xchain.get(r));
               } else {
-                Matrix lambda_tmp = new Matrix(1, lambda.length()+1);
+                Matrix lambda_tmp = new Matrix(1, lambda.length() + 1);
                 lambda_tmp.fill(0.0);
                 Matrix.extract(lambda, 0, 1, 0, lambda.length(), lambda_tmp, 0, 0);
 
-                Matrix L_tmp = new Matrix(0, Lms.getNumCols()+1);
+                Matrix L_tmp = new Matrix(0, Lms.getNumCols() + 1);
                 for (int row = 0; row < Lms.getNumRows(); row++) {
                   if (row != i) {
-                    Matrix L_tmp_row = new Matrix(1, Lms.getNumCols()+1);
+                    Matrix L_tmp_row = new Matrix(1, Lms.getNumCols() + 1);
                     L_tmp_row.set(Lms.getNumCols(), 0.0);
-                    Matrix.extract(Lms, row, row+1, 0, Lms.getNumCols(), L_tmp_row, 0, 0);
+                    Matrix.extract(Lms, row, row + 1, 0, Lms.getNumCols(), L_tmp_row, 0, 0);
                     L_tmp = Matrix.concatRows(L_tmp, L_tmp_row, null);
                   }
                 }
-                Matrix L_tmp_row = new Matrix(1, Lms.getNumCols()+1);
+                Matrix L_tmp_row = new Matrix(1, Lms.getNumCols() + 1);
                 L_tmp_row.set(Lms.getNumCols(), 1.0);
-                Matrix.extract(Lms, i, i+1, 0, Lms.getNumCols(), L_tmp_row, 0, 0);
+                Matrix.extract(Lms, i, i + 1, 0, Lms.getNumCols(), L_tmp_row, 0, 0);
                 L_tmp = Matrix.concatRows(L_tmp, L_tmp_row, null);
 
-                double res = pfqn_nc(lambda_tmp,L_tmp,Nchain_tmp_append_1,Z_tmp_append_0, options).lG;
-                Qchain.set(i, r, Zms.get(i, r)*Xchain.get(r)+Lms.get(i,r)*Math.exp(res - lG));
+                double res = pfqn_nc(lambda_tmp, L_tmp, Nchain_tmp_append_1, Z_tmp_append_0, options).lG;
+                Qchain.set(i, r, Zms.get(i, r) * Xchain.get(r) + Lms.get(i, r) * Math.exp(res - lG));
               }
             }
           }
           Qchain.removeNaN();
         }
 
-        for (int r: openChains) {
+        for (int r : openChains) {
           for (int i = 0; i < M; i++) {
             Matrix lambda_open = new Matrix(1, openChains.size());
             Matrix Lchain_i_open = new Matrix(1, openChains.size());
@@ -655,9 +655,9 @@ public class SolverNC extends NetworkSolver {
             for (int j = 0; j < closedChains.size(); j++) {
               Qchain_i_closed.set(j, Qchain.get(i, closedChains.get(j)));
             }
-            Qchain.set(i, r, lambda.get(r)*Lchain.get(i, r)/
-                    (1-lambda_open.mult(Lchain_i_open.transpose()).get(0)/nservers.get(i))
-                    *(1+Qchain_i_closed.elementSum()));
+            Qchain.set(i, r, lambda.get(r) * Lchain.get(i, r) /
+                    (1 - lambda_open.mult(Lchain_i_open.transpose()).get(0) / nservers.get(i))
+                    * (1 + Qchain_i_closed.elementSum()));
           }
         }
       } else {
@@ -689,7 +689,7 @@ public class SolverNC extends NetworkSolver {
       Matrix Rchain = new Matrix(Qchain.getNumRows(), Qchain.getNumCols());
       for (int i = 0; i < Rchain.getNumRows(); i++) {
         for (int j = 0; j < Rchain.getNumCols(); j++) {
-          Rchain.set(i, j, Qchain.get(i, j)/Xchain.get(j)/Vchain.get(i, j));
+          Rchain.set(i, j, Qchain.get(i, j) / Xchain.get(j) / Vchain.get(i, j));
         }
       }
 
@@ -715,14 +715,14 @@ public class SolverNC extends NetworkSolver {
       X = ret1.X;
       STeff = ST.clone();
       //TODO: Depend on npfqn_nonexp_approx
-      NPFQN.npfqnNonexpApproxReturn NPFQNret = NPFQN.npfqn_nonexp_approx(options.config.highvar == null ? "interp": options.config.highvar,sn,ST0,V,SCV,T,U,gamma,nservers);
+      NPFQN.npfqnNonexpApproxReturn NPFQNret = NPFQN.npfqn_nonexp_approx(options.config.highvar == null ? "interp" : options.config.highvar, sn, ST0, V, SCV, T, U, gamma, nservers);
       ST = NPFQNret.ST;
       gamma = NPFQNret.gamma;
       eta = NPFQNret.eta;
       //npfqn_nonexp_approx(options.config.highVar,sn,ST0,V,SCV,T,U,gamma,nservers);
 
       for (int i = 0; i < M; i++) {
-        tmp_eta.set(i, Math.abs(1-eta.get(i)/eta_1.get(i)));
+        tmp_eta.set(i, Math.abs(1 - eta.get(i) / eta_1.get(i)));
       }
     }
     Q.abs();
@@ -978,7 +978,7 @@ public class SolverNC extends NetworkSolver {
                     double dlGa = lGhat_fnci.get(r) - lGhatir.get(r);
                     double dlG_i = lGr_i.get(r) - lGhatir.get(r);
                     CQchain_r.set(i, (Math.exp(dlGa) - 1) + c * (Math.exp(dlG_i) - 1));
-                    ldDemand.set(i, r, Math.log(L.get(i, r)) + lGhatir.get(r) - Math.log(mu.get(i, 1)) - lGr.get(r));
+                    ldDemand.set(i, r, Math.log(L.get(i, r)) + lGhatir.get(r) - Math.log(mu.get(i, 0)) - lGr.get(r));
                     Qchain.set(i, r, Math.exp(ldDemand.get(i, r)) * Xchain.get(r) * (1 + CQchain_r.get(i)));
                   }
                 }
@@ -1030,37 +1030,45 @@ public class SolverNC extends NetworkSolver {
     R.abs();
     U = snDeaggragatedChains.U;
     U.abs();
-    List<Integer> openClasses = new ArrayList<>();
+    X = snDeaggragatedChains.X;
+    X.abs();
     for (int i=0; i<M; i++) {
+      List<Integer> openClasses = new ArrayList<>();
       for (int j=0; j<NK.getNumElements(); j++) {
-          if (Double.isInfinite(NK.get(j))) {
-            openClasses.add(j);
+        if (Double.isInfinite(NK.get(j))) {
+          openClasses.add(j);
+        }
+      }
+      if (sn.nservers.get(i) > 1 && sn.nservers.get(i) < Double.POSITIVE_INFINITY) {
+        for (int r = 0; r < K; r++) {
+          Matrix c = Matrix.extractColumn(sn.chains, r, null).find();
+          if ((!openClasses.contains(r) && snDeaggragatedChains.X.get(r) > 0)) {
+            U.set(i, r, X.get(r) * sn.visits.get(c).get(i, r) / sn.visits.get(c).get((int) sn.refstat.get(r), r) * ST.get(i, r) / sn.nservers.get(i));
+          } else if (openClasses.contains(r) && lambda.get(r) > 0) {
+            U.set(i, r, lambda.get(r) * sn.visits.get(c).get(i, r) / sn.visits.get(c).get((int) sn.refstat.get(r), r) * ST.get(i, r) / sn.nservers.get(i));
           }
         }
-      if (sn.nservers.get(i) > 1 && sn.nservers.get(i) < Double.POSITIVE_INFINITY) {
-        for (int r=0; r<K; r++) {
-          Matrix c = Matrix.extractColumn(sn.chains, r, null).find();
-          if ((!openClasses.contains(r) && snDeaggragatedChains.X.get(r) > 0) || (openClasses.contains(r) && snProductForm.lambda.get(r) > 0)) {
-              U.set(i, r, snDeaggragatedChains.X.get(r) * ST.get(i, r) / sn.nservers.get(i));
-              for (int j = 0; j < c.getNumElements(); j++) {
-                U.set(i, r, U.get(i, r) * sn.visits.get(j).get(i, r) / sn.visits.get(j).get((int) sn.refstat.get(r), r));
-              }
-            }
+      } else if (Double.isInfinite(sn.nservers.get(i))) {
+        for (int r = 0; r < K; r++) {
+          int c = (int) Matrix.extractColumn(sn.chains, r, null).find().get(0);
+          if ((!openClasses.contains(r) && snDeaggragatedChains.X.get(r) > 0)) {
+            U.set(i, r, X.get(r) * sn.visits.get(c).get(i, r) / sn.visits.get(c).get((int) sn.refstat.get(r), r) * ST.get(i, r));
+          } else if (openClasses.contains(r) && lambda.get(r) > 0) {
+            U.set(i, r, lambda.get(r) * sn.visits.get(c).get(i, r) / sn.visits.get(c).get((int) sn.refstat.get(r), r) * ST.get(i, r));
           }
-        } else {
-
+        }
+      } else {
         for (int j=0; j<U.getNumCols(); j++) {
-          U.set(i, j, U.get(i, j) / Matrix.extractRows(U, i, i+1, null).elementMax());
+          U.set(i, j, U.get(i, j) / Matrix.extractRows(lldscaling, i, i+1, null).elementMax());
         }
         if (Matrix.extractRows(U, i, i+1, null).elementSum() > 1) {
           Matrix Uinotnan = Matrix.extractRows(U, i, i+1, null);
           Uinotnan.removeNaN();
           for (int j=0; j<U.getNumCols(); j++) {
-            U.set(i, j, U.get(i, j) / U.elementSum());
+            U.set(i, j, U.get(i, j) / Uinotnan.elementSum());
           }
         }
-      }
-        // Continue from line 213
+      } // Continue from line 213
     }
     X = snDeaggragatedChains.X;
     X.apply(Double.POSITIVE_INFINITY, 0, "equal");
@@ -1075,113 +1083,114 @@ public class SolverNC extends NetworkSolver {
   }
 
   /**
-   * Returns the feature set supported by the NC solver
-   * @return - the feature set supported by the NC solver
-   */
-  public static FeatureSet getFeatureSet(){
-    FeatureSet s = new FeatureSet();
-    // TODO: update with the features supported by JLINE. These are the features supported by LINE.
-    String[] features = {"Sink", "Source",
-        "ClassSwitch", "Delay", "Queue",
-        "APH", "Coxian", "Erlang", "Det", "Exp", "HyperExp",
-        "StatelessClassSwitcher", "InfiniteServer",
-        "SharedServer", "Buffer", "Dispatcher",
-        "Server", "Sink", "RandomSource", "ServiceTunnel",
-        "SchedStrategy_INF", "SchedStrategy_PS", "SchedStrategy_SIRO",
-        "RoutingStrategy_PROB", "RoutingStrategy_RAND",
-        "SchedStrategy_FCFS", "ClosedClass", "ClosedClass",
-        "Cache", "CacheClassSwitcher", "OpenClass"};
-    s.setTrue(features);
-    return s;
-  }
-
-  /**
-   * Checks whether the given model is supported by the NC solver
-   * @param model - the network model
-   * @return - true if the model is supported, false otherwise
-   */
-  public static boolean supports(Network model){
-    FeatureSet featUsed = model.getUsedLangFeatures();
-    FeatureSet featSupported = SolverNC.getFeatureSet();
-    return FeatureSet.supports(featSupported, featUsed);
-  }
-
-public static class SolverNCMargReturn {
-    public Matrix lPr;
-    public double G;
-    public double runtime;
-    public SolverNCMargReturn(Matrix lPr, double G, double runtime) {
-      this.lPr = lPr;
-      this.G = G;
-      this.runtime = runtime;
+     * Returns the feature set supported by the NC solver
+     * @return - the feature set supported by the NC solver
+     */
+    public static FeatureSet getFeatureSet () {
+      FeatureSet s = new FeatureSet();
+      // TODO: update with the features supported by JLINE. These are the features supported by LINE.
+      String[] features = {"Sink", "Source",
+              "ClassSwitch", "Delay", "Queue",
+              "APH", "Coxian", "Erlang", "Det", "Exp", "HyperExp",
+              "StatelessClassSwitcher", "InfiniteServer",
+              "SharedServer", "Buffer", "Dispatcher",
+              "Server", "RandomSource", "ServiceTunnel",
+              "SchedStrategy_INF", "SchedStrategy_PS", "SchedStrategy_SIRO",
+              "RoutingStrategy_PROB", "RoutingStrategy_RAND",
+              "SchedStrategy_FCFS", "ClosedClass", "ClosedClass",
+              "Cache", "CacheClassSwitcher", "OpenClass"};
+      s.setTrue(features);
+      return s;
     }
-  }
 
-  public static class SolverNCJointReturn {
-    public double Pr;
-    public double G;
-    public double lG;
-    public double runtime;
-    public SolverNCJointReturn(double Pr, double G, double lG, double runtime) {
-      this.Pr = Pr;
-      this.G = G;
-      this.lG = lG;
-      this.runtime = runtime;
+    /**
+     * Checks whether the given model is supported by the NC solver
+     * @param model - the network model
+     * @return - true if the model is supported, false otherwise
+     */
+    public static boolean supports (Network model){
+      FeatureSet featUsed = model.getUsedLangFeatures();
+      FeatureSet featSupported = SolverNC.getFeatureSet();
+      return FeatureSet.supports(featSupported, featUsed);
     }
-  }
 
-  public static class SolverNCReturn {
-    public Matrix Q;
-    public Matrix U;
-    public Matrix R;
-    public Matrix T;
-    public int C;
-    public Matrix X;
-    public double lG;
-    public Matrix STeff;
-    public int it;
-    public String method;
+    public static class SolverNCMargReturn {
+      public Matrix lPr;
+      public double G;
+      public double runtime;
 
-    public SolverNCReturn(Matrix Q, Matrix U, Matrix R, Matrix T, int C,
-                          Matrix X, double lG, Matrix STeff, int it, String method) {
-      this.Q = Q;
-      this.U = U;
-      this.R = R;
-      this.T = T;
-      this.C = C;
-      this.X = X;
-      this.lG = lG;
-      this.STeff = STeff;
-      this.it = it;
-      this.method = method;
+      public SolverNCMargReturn(Matrix lPr, double G, double runtime) {
+        this.lPr = lPr;
+        this.G = G;
+        this.runtime = runtime;
+      }
     }
-  }
 
-  public static class SolverNCLDReturn {
-    public Matrix Q;
-    public Matrix U;
-    public Matrix R;
-    public Matrix T;
-    public int C;
-    public Matrix X;
-    public double lG;
-    public double runtime;
-    public int it;
-    public String method;
+    public static class SolverNCJointReturn {
+      public double Pr;
+      public double G;
+      public double lG;
+      public double runtime;
 
-    public SolverNCLDReturn(Matrix Q, Matrix U, Matrix R, Matrix T, int C,
-                            Matrix X, double lG, double runtime, int it, String method) {
-      this.Q = Q;
-      this.U = U;
-      this.R = R;
-      this.T = T;
-      this.C = C;
-      this.X = X;
-      this.lG = lG;
-      this.runtime = runtime;
-      this.it = it;
-      this.method = method;
+      public SolverNCJointReturn(double Pr, double G, double lG, double runtime) {
+        this.Pr = Pr;
+        this.G = G;
+        this.lG = lG;
+        this.runtime = runtime;
+      }
     }
-  }
 
+    public static class SolverNCReturn {
+      public Matrix Q;
+      public Matrix U;
+      public Matrix R;
+      public Matrix T;
+      public int C;
+      public Matrix X;
+      public double lG;
+      public Matrix STeff;
+      public int it;
+      public String method;
+
+      public SolverNCReturn(Matrix Q, Matrix U, Matrix R, Matrix T, int C,
+                            Matrix X, double lG, Matrix STeff, int it, String method) {
+        this.Q = Q;
+        this.U = U;
+        this.R = R;
+        this.T = T;
+        this.C = C;
+        this.X = X;
+        this.lG = lG;
+        this.STeff = STeff;
+        this.it = it;
+        this.method = method;
+      }
+    }
+
+    public static class SolverNCLDReturn {
+      public Matrix Q;
+      public Matrix U;
+      public Matrix R;
+      public Matrix T;
+      public int C;
+      public Matrix X;
+      public double lG;
+      public double runtime;
+      public int it;
+      public String method;
+
+      public SolverNCLDReturn(Matrix Q, Matrix U, Matrix R, Matrix T, int C,
+                              Matrix X, double lG, double runtime, int it, String method) {
+        this.Q = Q;
+        this.U = U;
+        this.R = R;
+        this.T = T;
+        this.C = C;
+        this.X = X;
+        this.lG = lG;
+        this.runtime = runtime;
+        this.it = it;
+        this.method = method;
+      }
+    }
 }

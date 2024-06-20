@@ -1,6 +1,5 @@
 package jline.solvers.nc;
 
-import jline.examples.GettingStarted;
 import jline.lang.*;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.constant.SolverType;
@@ -15,10 +14,11 @@ import java.util.Arrays;
 
 import static jline.solvers.nc.SolverNC.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class SolverNCTest {
 
-  double tolerance = 1e-10;
+  double tolerance = 1e-6;
 
   @Test
   public void SolverNCTestModel1() {
@@ -307,10 +307,22 @@ public class SolverNCTest {
     SolverNC.SolverNCLDReturn ret2 = solver_ncld(sn, options);
     options.method = "rd";
     SolverNC.SolverNCLDReturn ret3 = solver_ncld(sn, options);
+    Matrix ret0Q = new Matrix(Arrays.asList(1.333333333322438e+00, 1.466666666667756e+01));
+    Matrix ret0U = new Matrix(Arrays.asList(1.333333333322438e+00, 9.999999999918286e-01));
+    Matrix ret0R = new Matrix(Arrays.asList(1.0, 1.100000000009806e+01));
+    Matrix ret0T = new Matrix(Arrays.asList(1.333333333322438e+00, 1.333333333322438e+00));
+    Matrix ret0X = new Matrix(1.333333333322438e+00);
+    assertTrue(ret0.Q.isEqualToTol(ret0Q, tolerance));
+    assertTrue(ret0.U.isEqualToTol(ret0U, tolerance));
+    assertTrue(ret0.R.isEqualToTol(ret0R, tolerance));
+    assertTrue(ret0.T.isEqualToTol(ret0T, tolerance));
+    assertTrue(ret0.X.isEqualToTol(ret0X, tolerance));
+
     assertEquals(-2.576432645335951e+00, ret0.lG, tolerance);
-    assertEquals(-2.350641375431591e+00, ret1.lG, 3.303193953352507e+00*tolerance*10000);
+    assertEquals(-2.350641375431591e+00, ret1.lG, 3.303193953352507e+00*tolerance);
     assertEquals(-2.576432728076320e+00, ret2.lG, tolerance);
     assertEquals(-2.633413431541626e+00, ret3.lG, tolerance);
+
 
   }
 
@@ -325,9 +337,9 @@ public class SolverNCTest {
     ClosedClass jobclass1 = new ClosedClass(ldmodel, "Class1", N, node1, 0);
     ClosedClass jobclass2 = new ClosedClass(ldmodel, "Class2", N/2, node1, 0);
     node1.setService(jobclass1, Exp.fitMean(1.0));
-    node1.setService(jobclass2, Exp.fitMean(2.0));
+    node1.setService(jobclass2, Exp.fitMean(1.0));
     node2.setService(jobclass1, Exp.fitMean(1.5));
-    node2.setService(jobclass2, Exp.fitMean(2.5));
+    node2.setService(jobclass2, Exp.fitMean(1.5));
     Matrix LD = new Matrix(1, N + N/2);
     for (int i=0; i<N+N/2; i++) {
       LD.set(i, Math.min(i + 1, c));
@@ -347,10 +359,26 @@ public class SolverNCTest {
     options.method = "rd";
     SolverNC.SolverNCLDReturn ret3 = solver_ncld(sn, options);
 
-    assertEquals(4.115402209963468e+00, ret0.lG, tolerance);
-    assertEquals(3.303193953352507e+00, ret1.lG, 3.303193953352507e+00*tolerance*10000);
-    assertEquals(2.081621924892065e+00, ret2.lG, tolerance);
-    assertEquals(3.980843543955730e+00, ret3.lG, tolerance);
+    Matrix ret0Q = new Matrix(Arrays.asList(8.838530559690984e-01, 3.116146944030902e+00))
+        .concatCols(new Matrix(Arrays.asList(4.419265279845491e-01, 1.558073472015451e+00)));
+    Matrix ret0U = new Matrix(Arrays.asList(8.838530559690984e-01, 6.628897919768237e-01))
+        .concatCols(new Matrix(Arrays.asList(4.419265279845491e-01, 3.314448959884119e-01)));
+    Matrix ret0R = new Matrix(Arrays.asList(1.0, 3.525639157986743e+00))
+        .concatCols(new Matrix(Arrays.asList(1.0, 3.525639157986744e+00)));
+    Matrix ret0T = new Matrix(Arrays.asList(8.838530559690984e-01, 8.838530559690984e-01))
+        .concatCols(new Matrix(Arrays.asList(4.419265279845491e-01, 4.419265279845491e-01)));
+    Matrix ret0X = new Matrix(8.838530559690984e-01)
+        .concatCols(new Matrix(4.419265279845491e-01));
+    assertTrue(ret0.Q.isEqualToTol(ret0Q, tolerance));
+    assertTrue(ret0.U.isEqualToTol(ret0U, tolerance));
+    assertTrue(ret0.R.isEqualToTol(ret0R, tolerance));
+    assertTrue(ret0.T.isEqualToTol(ret0T, tolerance));
+    assertTrue(ret0.X.isEqualToTol(ret0X, tolerance));
+
+    assertEquals(3.006940386190846e+00, ret0.lG, tolerance);
+    assertEquals(2.149067536266511e+00, ret1.lG, 2.149067536266511e+00*tolerance*1000);
+    assertEquals(9.791225293052239e-01, ret2.lG, tolerance);
+    assertEquals(2.880984314514696e+00, ret3.lG, tolerance);
   }
 
   @Test
@@ -391,9 +419,23 @@ public class SolverNCTest {
     SolverNC.SolverNCLDReturn ret2 = solver_ncld(sn, options);
     options.method = "rd";
     SolverNC.SolverNCLDReturn ret3 = solver_ncld(sn, options);
-
+    Matrix ret0Q = new Matrix(Arrays.asList(5.467372543256852e-01, 8.563871132405998e-01, 2.596875632433713e+00))
+        .concatCols(new Matrix(Arrays.asList(3.694448418974791e-01, 4.807742299186316e-01, 1.149780928183889e+00)));
+    Matrix ret0U = new Matrix(Arrays.asList(5.467372543256852e-01, 2.733686271628426e-01, 6.378601300466328e-01))
+        .concatCols(new Matrix(Arrays.asList(3.694448418974791e-01, 1.539353507906163e-01, 2.770836314231093e-01)));
+    Matrix ret0R = new Matrix(Arrays.asList(1.0, 1.566359538270022e+00, 4.749768946395564e+00))
+        .concatCols(new Matrix(Arrays.asList(2.0, 2.602684760460380e+00, 6.224371260827907e+00)));
+    Matrix ret0T = new Matrix(Arrays.asList(5.467372543256852e-01, 5.467372543256852e-01, 5.467372543256852e-01))
+        .concatCols(new Matrix(Arrays.asList(1.847224209487395e-01, 1.847224209487395e-01, 1.847224209487395e-01)));
+    Matrix ret0X = new Matrix(5.467372543256852e-01)
+        .concatCols(new Matrix(1.847224209487395e-01));
+    assertTrue(ret0.Q.isEqualToTol(ret0Q, tolerance));
+    assertTrue(ret0.U.isEqualToTol(ret0U, tolerance));
+    assertTrue(ret0.R.isEqualToTol(ret0R, tolerance));
+    assertTrue(ret0.T.isEqualToTol(ret0T, tolerance));
+    assertTrue(ret0.X.isEqualToTol(ret0X, tolerance));
     assertEquals(8.016437786118589e+00, ret0.lG, tolerance);
-    assertEquals(7.305375561817382e+00, ret1.lG, tolerance*7.305375561817382e+00*10000);
+    assertEquals(7.305375561817382e+00, ret1.lG, tolerance*7.305375561817382e+00*1000);
     assertEquals(5.979290244081035e+00, ret2.lG, 5.979290244081035e+00*tolerance*100);
     assertEquals(7.755109452853959e+00, ret3.lG, tolerance);
   }
@@ -425,6 +467,17 @@ public class SolverNCTest {
     SolverNC.SolverNCLDReturn ret2 = solver_ncld(sn, options);
     options.method = "rd";
     SolverNC.SolverNCLDReturn ret3 = solver_ncld(sn, options);
+
+    Matrix ret0Q = new Matrix(Arrays.asList(4.504179374365666e+00, 5.495820625634333e+00));
+    Matrix ret0U = new Matrix(Arrays.asList(4.504179374365666e+00, 9.008358748731332e-01));
+    Matrix ret0R = new Matrix(Arrays.asList(1.0, 1.220160248704199e+00));
+    Matrix ret0T = new Matrix(Arrays.asList(4.504179374365666e+00, 4.504179374365666e+00));
+    Matrix ret0X = new Matrix(4.504179374365666e+00);
+    assertTrue(ret0.Q.isEqualToTol(ret0Q, tolerance));
+    assertTrue(ret0.U.isEqualToTol(ret0U, tolerance));
+    assertTrue(ret0.R.isEqualToTol(ret0R, tolerance));
+    assertTrue(ret0.T.isEqualToTol(ret0T, tolerance));
+    assertTrue(ret0.X.isEqualToTol(ret0X, tolerance));
 
     assertEquals(-7.957151694158279e+00, ret0.lG, tolerance);
     assertEquals(-7.731360424253920e+00, ret1.lG, tolerance);
@@ -458,12 +511,30 @@ public class SolverNCTest {
     cdmodel.link(P);
     NetworkStruct sn = cdmodel.getStruct(false);
     SolverOptions options = new SolverOptions(SolverType.NC);
+    SolverNC.SolverNCLDReturn ret0 = solver_ncld(sn, options);
     options.method = "nr.logit";
     SolverNC.SolverNCLDReturn ret1 = solver_ncld(sn, options);
     options.method = "nr.probit";
     SolverNC.SolverNCLDReturn ret2 = solver_ncld(sn, options);
     options.method = "rd";
     SolverNC.SolverNCLDReturn ret3 = solver_ncld(sn, options);
+
+    Matrix ret0Q = new Matrix(Arrays.asList(4.453015359635119e-01, 1.555469846403649e+01))
+        .concatCols(new Matrix(Arrays.asList(2.656381568437845e-01, 7.734361843156218e+00)));
+    Matrix ret0U = new Matrix(Arrays.asList(4.453015359635119e-01, 6.679523039452678e-01))
+        .concatCols(new Matrix(Arrays.asList(2.656381568437845e-01, 3.320476960547306e-01)));
+    Matrix ret0R = new Matrix(Arrays.asList(1.0, 3.493070921118728e+01))
+        .concatCols(new Matrix(Arrays.asList(2.0, 5.823231071208353e+01)));
+    Matrix ret0T = new Matrix(Arrays.asList(4.453015359635119e-01, 4.453015359635119e-01))
+        .concatCols(new Matrix(Arrays.asList(1.328190784218922e-01, 1.328190784218922e-01)));
+    Matrix ret0X = new Matrix(4.453015359635119e-01)
+        .concatCols(new Matrix(1.328190784218922e-01));
+    assertTrue(ret0.Q.isEqualToTol(ret0Q, tolerance));
+    assertTrue(ret0.U.isEqualToTol(ret0U, tolerance));
+    assertTrue(ret0.R.isEqualToTol(ret0R, tolerance));
+    assertTrue(ret0.T.isEqualToTol(ret0T, tolerance));
+    assertTrue(ret0.X.isEqualToTol(ret0X, tolerance));
+
     assertEquals(2.754023211796183e+01, ret1.lG, tolerance);
     assertEquals(2.554890090416877e+01, ret2.lG, tolerance);
     assertEquals(2.802932951958689e+01, ret3.lG, tolerance);

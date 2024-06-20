@@ -1580,6 +1580,24 @@ public class Matrix implements Serializable {
 	}
 
 	/**
+	 * Checks if two matrices are equal within a tolerance
+	 * @param m - the other matrix
+	 * @param tol - the tolerance
+	 * @return - true if the current matrix and the other matrix are equal, false otherwise
+	 */
+	public boolean isEqualToTol(Matrix m, double tol){
+		if(this.getNumRows() != m.getNumRows() || this.getNumCols() != m.getNumCols())
+			return false;
+		for(int i = 0; i < this.getNumRows(); i++){
+			for(int j = 0; j < this.getNumCols(); j++){
+				if(Math.abs(this.get(i, j) - m.get(i, j)) > tol)
+					return false;
+			}
+		}
+		return true;
+	}
+
+	/**
 	 * Checks if the current matrix has a non-zero element
 	 * @return - true if there is a non-zero element in the matrix, false otherwise
 	 */

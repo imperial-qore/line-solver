@@ -53,6 +53,7 @@ public class SolverSSA extends NetworkSolver {
     }
 
     public SSAValues solver_ssa(EventCache eventCache) {
+
         NetworkStruct sn = this.getStruct();
         SolverOptions options = this.options;
 
@@ -147,8 +148,9 @@ public class SolverSSA extends NetworkSolver {
 
         Map<Integer, Matrix> arvRatesSamples = new HashMap<>();
         Map<Integer, Matrix> depRatesSamples = new HashMap<>();
-        for (int r = 0; r < R; r++) {
-            Matrix m = new Matrix(options.samples, nstateful);
+        // Swap map entries with rows of contained matrices compared with matlab
+        for (int r = 0; r < options.samples; r++) {
+            Matrix m = new Matrix(R, nstateful);
             m.zero();
             arvRatesSamples.put(r, m);
             depRatesSamples.put(r, m.clone());
@@ -192,11 +194,20 @@ public class SolverSSA extends NetworkSolver {
             }
         }
 
-        Matrix tranSync = new Matrix(samples_collected, 1);
+        Matrix tranSync = new Matrix(options.samples - 1, 1);
         tranSync.zero();
         Matrix z = new Matrix(1,1);
         z.zero();
         Matrix tranState = Matrix.concatColumns(z, state, null).transpose();
+
+        Matrix tranState_s = new Matrix(tranState.getNumRows(),options.samples - 1);
+        for (int row = 0; row < tranState.getNumRows(); row++) {
+            for (int col = 0; col < tranState.getNumCols(); col++) {
+                tranState_s.set(row, col, tranState.get(row, col));
+            }
+        }
+        tranState = tranState_s.clone();
+
         samples_collected = 1;
 
         Matrix SSq = new Matrix(0, 0);
@@ -208,6 +219,16 @@ public class SolverSSA extends NetworkSolver {
                 SSq = Matrix.concatRows(SSq, col, null);
             }
         }
+
+        Matrix SSq_s = new Matrix(SSq.getNumRows(), options.samples - 1);
+        // copy all o SSq into SSq_new
+        for (int row = 0; row < SSq.getNumRows(); row++) {
+            for (int col = 0; col < SSq.getNumCols(); col++) {
+                SSq_s.set(row, col, SSq.get(row, col));
+            }
+        }
+        SSq = SSq_s.clone();
+
         int local = sn.nnodes;
 
         Map<Integer, Integer> node_a = new HashMap<>();
@@ -352,8 +373,8 @@ public class SolverSSA extends NetworkSolver {
                                         node_a_sf.put(act, (int) sn.nodeToStateful.get(node_a.get(act)));
                                         node_p_sf.put(act, (int) sn.nodeToStateful.get(node_p.get(act)));
 
-                                        Matrix original_departure = depRatesSamples.get(class_a.get(act));
-                                        Matrix original_arrival = arvRatesSamples.get(class_p.get(act));
+//                                        Matrix original_departure = depRatesSamples.get(class_a.get(act));
+//                                        Matrix original_arrival = arvRatesSamples.get(class_p.get(act));
 
                                         double added_value = outprob_a.get(act) * outprob_p.get(act) * rate_a.get(act).get(ia)
                                                 * prob_sync_p.get(act);
@@ -361,13 +382,13 @@ public class SolverSSA extends NetworkSolver {
                                         int a_sf_act = node_a_sf.get(act);
                                         int p_sf_act = node_p_sf.get(act);
 
-                                        double dep_value = original_departure.get(samples_collected - 1, a_sf_act)
+                                        double dep_value = depRatesSamples.get(samples_collected - 1).get(class_a.get(act), a_sf_act)
                                                 + added_value;
-                                        double arv_val = original_arrival.get(samples_collected - 1, p_sf_act)
+                                        double arv_val = arvRatesSamples.get(samples_collected - 1).get(class_p.get(act), p_sf_act)
                                                 + added_value;
 
-                                        original_departure.set(samples_collected - 1, a_sf_act, dep_value);
-                                        original_arrival.set(samples_collected - 1, p_sf_act, arv_val);
+                                        depRatesSamples.get(samples_collected - 1).set(class_a.get(act), a_sf_act, dep_value);
+                                        arvRatesSamples.get(samples_collected - 1).set(class_p.get(act), p_sf_act, arv_val);
 
                                     }
                                     if (node_p.get(act) < local && csmask.get(class_a.get(act), class_p.get(act)) != 1
@@ -454,21 +475,21 @@ public class SolverSSA extends NetworkSolver {
             dt_m.set(0,0,dt);
             Matrix newTranState = Matrix.concatColumns(dt_m, state, null);
             // add new column to tranState if needed
-            if (samples_collected - 1 >= tranState.getNumCols()) {
-                Matrix tranState_new_col = new Matrix(tranState.getNumRows(), 1);
-                tranState_new_col.zero();
-                tranState = Matrix.concatColumns(tranState, tranState_new_col, null);
-            }
+//            if (samples_collected - 1 >= tranState.getNumCols()) {
+//                Matrix tranState_new_col = new Matrix(tranState.getNumRows(), 1);
+//                tranState_new_col.zero();
+//                tranState = Matrix.concatColumns(tranState, tranState_new_col, null);
+//            }
             for (int row = 0; row < state.getNumElements() + 1; row++) {
                 tranState.set(row, samples_collected - 1, newTranState.get(row));
             }
 
             // add new row to tranSync if needed
-            if (samples_collected - 1 >= tranSync.getNumRows()) {
-                Matrix tranSync_new_row = new Matrix(1, tranSync.getNumCols());
-                tranSync_new_row.zero();
-                tranSync = Matrix.concatRows(tranSync, tranSync_new_row, null);
-            }
+//            if (samples_collected - 1 >= tranSync.getNumRows()) {
+//                Matrix tranSync_new_row = new Matrix(1, tranSync.getNumCols());
+//                tranSync_new_row.zero();
+//                tranSync = Matrix.concatRows(tranSync, tranSync_new_row, null);
+//            }
             // TODO: is this +1 needed? added to make value in tranSync align with LINE always
             tranSync.set(samples_collected - 1, 0, enabled_sync.get(firing_ctr) + 1);
 
@@ -494,11 +515,11 @@ public class SolverSSA extends NetworkSolver {
             }
             // assign nir_col to samples_collected column of SSq
             // add new column to SSq
-            if (samples_collected - 1 >= SSq.getNumCols()) {
-                Matrix SSq_new_col = new Matrix(SSq.getNumRows(), 1);
-                SSq_new_col.zero();
-                SSq = Matrix.concatColumns(SSq, SSq_new_col, null);
-            }
+//            if (samples_collected - 1 >= SSq.getNumCols()) {
+//                Matrix SSq_new_col = new Matrix(SSq.getNumRows(), 1);
+//                SSq_new_col.zero();
+//                SSq = Matrix.concatColumns(SSq, SSq_new_col, null);
+//            }
             for (int row = 0; row < nir_col.getNumRows(); row++) {
                 int col = samples_collected - 1;
                 SSq.set(row, col, nir_col.get(row));
@@ -543,7 +564,9 @@ public class SolverSSA extends NetworkSolver {
 
 
 
-        tranSysState.put(0, Matrix.extractColumn(tranState, 0, null).cumsumViaCol());
+        Matrix tranStateTimes = Matrix.extractColumn(tranState, 0, null);
+        Matrix timesCumSum = tranStateTimes.cumsumViaCol();
+        tranSysState.put(0, timesCumSum);
         for (int j = 0; j < statesz.getNumElements(); j++) {
             int start_index = 0;
             for (int i = 0; i <= j - 1; i++) {
@@ -591,9 +614,9 @@ public class SolverSSA extends NetworkSolver {
                 int isf = (int) sn.nodeToStateful.get(ind);
                 for (int s = 0; s < u.getNumRows(); s++) {
                     for (int r = 0; r < R; r++) {
-                        arvRates.get(r).set(s, isf, arvRatesSamples.get(r).get((int) ui.get(s), isf));
+                        arvRates.get(r).set(s, isf, arvRatesSamples.get((int) ui.get(s)).get(r, isf));
                         arvRates.put(r, arvRates.get(r));
-                        depRates.get(r).set(s, isf, depRatesSamples.get(r).get((int) ui.get(s), isf));
+                        depRates.get(r).set(s, isf, depRatesSamples.get((int) ui.get(s)).get(r, isf));
                         depRates.put(r, depRates.get(r));
 
                     }
@@ -624,6 +647,7 @@ public class SolverSSA extends NetworkSolver {
         }
 //        this.resetRandomGeneratorSeed(options.seed);
 
+        NetworkStruct sn = getStruct();
 
         SolverSSAResult result = solver_ssa_analyzer();
         Matrix QN = result.QN;
@@ -632,17 +656,18 @@ public class SolverSSA extends NetworkSolver {
         Matrix TN = result.TN;
         Matrix CN = result.CN;
         Matrix XN = result.XN;
-        //Map<Integer, Matrix> tranSysState = result.tranSysState;
-        //Matrix tranSync = result.tranSync;
-        NetworkStruct sn = result.sn;
+        Map<Integer, Matrix> tranSysState = result.tranSysState;
+        Matrix tranSync = result.tranSync;
+        sn = result.sn;
+
 
         for (int isf=0; isf < sn.nstateful; isf++) {
-            //int ind = (int) sn.statefulToNode.get(isf);
+            int ind = (int) sn.statefulToNode.get(isf);
             if (sn.nodetypes.get((int) sn.statefulToNode.get(isf)) == NodeType.Cache) {
                 // TODO: Cache nodetype case
             }
         }
-        long runtime = (java.lang.System.currentTimeMillis() - T0) / 1000;
+        double runtime = (java.lang.System.currentTimeMillis() - T0) / 1000.0;
         int M = sn.nstations;
         int R = sn.nclasses;
         Map<Station, Map<JobClass, SolverHandles.Metric>> T = getAvgTputHandles();
@@ -716,9 +741,6 @@ public class SolverSSA extends NetworkSolver {
         Matrix S = sn.nservers;
         Matrix NK = sn.njobs.transpose();
 
-
-
-
         Map<Integer, Matrix> QNs = new ConcurrentHashMap<>();
         Map<Integer, Matrix> UNs = new ConcurrentHashMap<>();
         Map<Integer, Matrix> RNs = new ConcurrentHashMap<>();
@@ -727,7 +749,8 @@ public class SolverSSA extends NetworkSolver {
         Map<Integer, Matrix> XNs = new ConcurrentHashMap<>();
 
 
-        this.options.samples = (int) ceil(this.options.samples / (double) numThreads);
+        this.options.samples = (int) Math.ceil(this.options.samples / (double) numThreads);
+        eventCache = new EventCache(true, this.options.config.eventcache);
 
         boolean matlabRand = Maths.randomMatlabStyle();
         for (int t = 0; t < numThreads; t++) {
@@ -746,7 +769,6 @@ public class SolverSSA extends NetworkSolver {
                 switch (this.options.method) {
                     case "para":
                     case "parallel":
-                        eventCache = new EventCache(true, this.options.config.eventcache);
                         SSAValues result = solver_ssa(eventCache);
                         probSysState = result.pi;
                         SSq = result.SSq;
@@ -766,8 +788,6 @@ public class SolverSSA extends NetworkSolver {
                 TN.fill(Double.NaN);
                 Matrix CN = new Matrix(1, K);
                 CN.fill(Double.NaN);
-
-
 
                 for (int k = 0; k < K; k++) {
                     double refsf = sn.stationToStateful.get((int) sn.refstat.get(k));

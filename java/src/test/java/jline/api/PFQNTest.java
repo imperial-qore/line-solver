@@ -3216,6 +3216,21 @@ class PFQNTest {
         SolverOptions options = new SolverOptions();
         int M = 2;
         Matrix L = new Matrix(M, 1);
+        L.set(0, 0, 2.0/3);
+        L.set(1, 0, 1.0);
+        int N = 16;
+        Matrix s = new Matrix(M, 1);
+        s.set(0, 0, 2);
+        s.set(1, 0, 7);
+        double ret = pfqn_xia(L, N, s, options);
+        assertEquals(-1.388036013064284e+01, ret, 1.388036013064284e+01*tolerance);
+    }
+
+    @Test
+    void pfqn_xiaTest2() {
+        SolverOptions options = new SolverOptions();
+        int M = 2;
+        Matrix L = new Matrix(M, 1);
         L.set(0, 0, 0.957166948242946);
         L.set(1, 0, 0.485375648722841);
         int N = 20;
@@ -3227,7 +3242,7 @@ class PFQNTest {
     }
 
     @Test
-    void pfqn_xiaTest2() {
+    void pfqn_xiaTest3() {
         SolverOptions options = new SolverOptions();
         int M = 2;
         Matrix L = new Matrix(M, 1);
@@ -3240,5 +3255,45 @@ class PFQNTest {
         double ret = pfqn_xia(L, N, s, options);
         assertEquals(-3.526261643805476e+01, ret);
     }
+
+    @Test
+    void pfqn_xiaTest4() {
+        SolverOptions options = new SolverOptions();
+        int M = 2;
+        Matrix L = new Matrix(M, 1);
+        options.method = "default";
+        L.set(0,  0, 1);
+        L.set(1, 0, 1);
+        int N = 10;
+        Matrix s = new Matrix(M, 1);
+        s.set(0, 0, 9);
+        s.set(1, 0, 6);
+        double ret = pfqn_xia(L, N, s, options);
+        assertEquals(-7.693931048584036e+00, ret, tolerance);
+    }
+
+    @Test
+    void pfqn_xiaTest5() {
+        SolverOptions options = new SolverOptions();
+        int M = 5;
+        Matrix L = new Matrix(M, 1);
+        L.set(0, 0, 4.558698649282487e-01);
+        L.set(1, 0, 8.735829134799155e-01);
+        L.set(2, 0, 9.840857496827355e-01);
+        L.set(3, 0, 1.715601804914666e-01);
+        L.set(4, 0, 4.720657011407460e-01);
+
+        int N = 24;
+        Matrix s = new Matrix(M, 1);
+        s.set(0, 0, 8);
+        s.set(1, 0, 9);
+        s.set(2, 0, 10);
+        s.set(3, 0, 14);
+        s.set(4, 0, 6);
+
+        double ret = pfqn_xia(L, N, s, options);
+        assertEquals(-2.503976330415958e+01, ret, tolerance*2.503976330415958e+01);
+    }
+
 
 }

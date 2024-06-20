@@ -12,6 +12,8 @@ sn = getStruct(self); % this gets modified later on so pass by copy
 self.runAnalyzerChecks(options);
 Solver.resetRandomGeneratorSeed(options.seed);
 
+%options.lang = 'java';
+
 hasOpenClasses = any(sn.nodetype==NodeType.ID_SOURCE);
 switch options.lang
     case {'java'}
@@ -24,6 +26,7 @@ switch options.lang
             case {'matrix'}
                 jsolver = JLINE.SolverFluid(jmodel,'matrix');
             otherwise
+                jsolver = JLINE.SolverFluid(jmodel,'default');
                 line_warning(mfilename,'This solver does not support the specified method. Setting to default.\n');
                 options.method  = 'default';
 

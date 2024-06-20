@@ -1109,26 +1109,26 @@ public class PFQN {
 			alphanum.zero();
 			Matrix alphaden = alphanum.clone();
 			for (int n = 1; n < N; n++) {
-				alphanum.set(n, 0, alpha.get(0, n));
+				alphanum.set(n, 0, alpha.get(i, n));
 				alphaden.set(n, 0, alpha.get(i, n - 1));
-				for (int k = 1; k < n - 1; k++) {
-					alphanum.set(n, k, alphanum.get(n, k - 1) * alpha.get(i, n - k + 1));
-					alphaden.set(n, k, alphaden.get(n, k - 1) * alpha.get(i, n - k));
+				for (int k = 1; k < n; k++) {
+					alphanum.set(n, k, alphanum.get(n, k - 1) * alpha.get(i, n - k));
+					alphaden.set(n, k, alphaden.get(n, k - 1) * alpha.get(i, n - k - 1));
 				}
 			}
 			for (int n = 1; n < N; n++) {
 				double rho = 0;
 				double muden = 1;
-				for (int k = 1; k < n - 1; k++) {
+				for (int k = 0; k < n; k++) {
 					muden *= mu.get(i, k);
-					rho += (alphanum.get(n, k) * alphaden.get(n, k)) / muden;
+					rho += (alphanum.get(n, k) - alphaden.get(n, k)) / muden;
 				}
 				mu.set(i, n, (alphanum.get(n, n - 1) * alpha.get(i, 0) / muden) / (1 - rho));
 			}
 		}
 		for (int i=0; i<M; i++) {
 			for (int j=0; j<N; j++) {
-				if (Double.isNaN(mu.get(i, j))) {
+				if (Double.isNaN(mu.get(i, j)) || Math.abs(mu.get(i, j)) > 1e15) {
 					mu.set(i, j, Double.POSITIVE_INFINITY);
 				}
 			}

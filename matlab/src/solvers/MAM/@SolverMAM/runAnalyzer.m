@@ -15,6 +15,8 @@ end
 self.runAnalyzerChecks(options);
 Solver.resetRandomGeneratorSeed(options.seed);
 
+%options.lang = 'java';
+
 switch options.lang
     case 'java'
         jmodel = LINE2JLINE(self.model);

@@ -11,16 +11,17 @@ public class SolverSSAOpenExamplesBenchmark {
         SolverOptions options1 = new SolverOptions();
         options1.keep = true;
         options1.cutoff = 10;
+        options1.samples = 100000;
         timeSolver(OpenModel.ex1_line_v(), "Open Example 1, FCFS", options1);
 
-        SolverOptions options3 = new SolverOptions();
-        options3.keep = true;
-        options3.cutoff = 7;
-        timeSolver(OpenModel.ex3_line(), "Open Example 3, PS", options3);
-
-        SolverOptions options6 = new SolverOptions();
-        options6.cutoff = 1;
-        timeSolver(OpenModel.ex6(), "Open Example 6, FCFS and PS", options6);
+//        SolverOptions options3 = new SolverOptions();
+//        options3.keep = true;
+//        options3.cutoff = 7;
+//        timeSolver(OpenModel.ex3_line(), "Open Example 3, PS", options3);
+//
+//        SolverOptions options6 = new SolverOptions();
+//        options6.cutoff = 1;
+//        timeSolver(OpenModel.ex6(), "Open Example 6, FCFS and PS", options6);
     }
 
     private static void timeSolver(Network network, String modelName, SolverOptions options) {
