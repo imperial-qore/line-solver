@@ -88,5 +88,6 @@ if __name__ == "__main__":
 ```
 To extra a particular value you may use LINE's table get function (tget), for example: 
 ```
-    print(tget(avgTable,'Queue')['RespT'].values[0])
+    print(tget(table,"Queue"))
+    print(tget(table,"RespT","Queue"))
 ```
