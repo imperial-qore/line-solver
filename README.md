@@ -86,3 +86,7 @@ if __name__ == "__main__":
     
     avgTable = SolverJMT(model,'seed',23000).getAvgTable()
 ```
+To extra a particular value you may write, for example: 
+```
+print(tget(avgTable,"Queue")['RespT'].values[0])
+```
