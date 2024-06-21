@@ -88,5 +88,5 @@ if __name__ == "__main__":
 ```
 To extra a particular value you may write, for example: 
 ```
-print(tget(avgTable,"Queue")['RespT'].values[0])
+print(tget(avgTable,'Queue')['RespT'].values[0])
 ```
