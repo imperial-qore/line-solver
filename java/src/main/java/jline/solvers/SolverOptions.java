@@ -159,7 +159,10 @@ public class SolverOptions {
         this.config.eventcache = true;
         break;
       case JMT:
-        //TODO add configs
+        //TODO add more configs
+        this.iter_max = 1000;
+        this.seed = 23000;
+        this.samples = 20000;
         break;
       default: // Global options unless overridden by a solver
     }

@@ -226,6 +226,17 @@ public class Network extends Model implements Serializable {
         return null;
     }
 
+    public Node getNodeByIndex(int idx) {
+        int nodesPassed = 0;
+        for (Node nodeIter : this.nodes) {
+                if (nodesPassed == idx) {
+                    return nodeIter;
+                }
+            nodesPassed++;
+        }
+        return null;
+    }
+
     public Node getNodeByStatefulIndex(int idx) {
         int nodesPassed = 0;
         for (Node nodeIter : this.nodes) {
