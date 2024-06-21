@@ -308,6 +308,10 @@ classdef JLINE
                 java_dist = jline.lang.distributions.Coxian(jline_mu, jline_phi);
             elseif isa(line_dist, 'Det')
                 java_dist = jline.lang.distributions.Det(line_dist.getParam(1).paramValue);
+            elseif isa(line_dist, 'DiscreteSampler')
+                popularity_p = JLINE.matrix_to_jlinematrix(line_dist.getParam(1).paramValue); 
+                popularity_val = JLINE.matrix_to_jlinematrix(line_dist.getParam(2).paramValue);                
+                java_dist = jline.lang.distributions.DiscreteSampler(popularity_p, popularity_val);
             elseif isa(line_dist, 'Erlang')
                 java_dist = jline.lang.distributions.Erlang(line_dist.getParam(1).paramValue, line_dist.getParam(2).paramValue);
             elseif isa(line_dist, 'Gamma')
@@ -331,6 +335,8 @@ classdef JLINE
                 java_dist = jline.lang.distributions.Uniform(line_dist.getParam(1).paramValue, line_dist.getParam(2).paramValue);
             elseif isa(line_dist, 'Weibull')
                 java_dist = jline.lang.distributions.Weibull(line_dist.getParam(1).paramValue, line_dist.getParam(2).paramValue);
+            elseif isa(line_dist, 'Zipf')
+                java_dist = jline.lang.distributions.DiscreteSampler(line_dist.getParam(3).paramValue, line_dist.getParam(2).paramValue);
             elseif isa(line_dist, 'Immediate')
                 java_dist = jline.lang.distributions.Immediate();
             elseif isempty(line_dist) || isa(line_dist, 'Disabled')
@@ -626,7 +632,7 @@ classdef JLINE
             nodes = network_object.getNodes();
             classes = network_object.getClasses();
             n_classes = classes.size();
-            routing_matrix = jline.lang.RoutingMatrix(network_object, classes, nodes);
+            routing_matrix = network_object.initRoutingMatrix();
             line_nodes = line_network.getNodes;
             % [ ] Update to consider different weights/routing for classes
             for i = 1:m
@@ -654,7 +660,7 @@ classdef JLINE
                                 for j = 1:length(probabilities)
                                     dest_idx = probabilities{j}{1}.index;
                                     if (connections(i, dest_idx) ~= 0)
-                                        routing_matrix.addConnection(nodes.get(i-1), nodes.get(dest_idx-1), classes.get(k-1), probabilities{j}{2});
+                                        routing_matrix.set(classes.get(k-1), classes.get(k-1), nodes.get(i-1), nodes.get(dest_idx-1), probabilities{j}{2});
                                     end
                                 end
                             end
@@ -762,6 +768,14 @@ classdef JLINE
                     JLINE.set_csMatrix(network_nodes{n}, java_nodes{n});
                 elseif isa(network_nodes{n},"Join")
                     java_nodes{n}.initJoinJobClasses();
+                elseif isa(network_nodes{n},"Cache")
+                    for r = 1 : length(network_nodes{n}.server.inputJobClasses)
+                        if ~isempty(network_nodes{n}.server.inputJobClasses{r})
+                            java_nodes{n}.setRead(java_classes{network_nodes{n}.server.inputJobClasses{r}{1}.index}, JLINE.from_line_distribution(network_nodes{n}.popularity{r}));
+                            java_nodes{n}.setHitClass(java_classes{network_nodes{n}.server.inputJobClasses{r}{1}.index}, java_classes{network_nodes{n}.server.hitClass(r)});
+                            java_nodes{n}.setMissClass(java_classes{network_nodes{n}.server.inputJobClasses{r}{1}.index}, java_classes{network_nodes{n}.server.missClass(r)});
+                        end
+                    end
                 end
             end
 

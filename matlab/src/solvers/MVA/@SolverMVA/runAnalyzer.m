@@ -10,12 +10,14 @@ self.runAnalyzerChecks(options);
 Solver.resetRandomGeneratorSeed(options.seed);
 
 iter = 0;
-%options.lang = 'java';
+%options.lang='java';
 
 switch options.lang
     case 'java'
+        sn = getStruct(self); % doesn't need initial state
         jmodel = LINE2JLINE(self.model);
-        M = jmodel.getNumberOfStatefulNodes;
+        %M = jmodel.getNumberOfStatefulNodes;
+        M = jmodel.getNumberOfStations;
         R = jmodel.getNumberOfClasses;
         jsolver = JLINE.SolverMVA(jmodel, options);
         [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(jsolver.getAvgTable);
@@ -30,6 +32,14 @@ switch options.lang
         AN = reshape(AN',R,M)';
         lG = NaN;
         lastiter = NaN;
+        for ind = 1:sn.nnodes
+            if sn.nodetype(ind) == NodeType.Cache                
+                self.model.nodes{ind}.setResultHitProb(JLINE.jlinematrix_to_matrix(jmodel.getNodeByIndex(ind-1).getHitRatio()));
+                self.model.nodes{ind}.setResultMissProb(JLINE.jlinematrix_to_matrix(jmodel.getNodeByIndex(ind-1).getMissRatio()));
+            end
+        end
+        %self.model.refreshChains();
+        self.model.refreshStruct(true);
         self.setAvgResults(QN,UN,RN,TN,AN,WN,CN,XN,runtime,options.method,lastiter);
         self.result.Prob.logNormConstAggr = lG;
         return
@@ -46,7 +56,7 @@ switch options.lang
         while (forkLoop && forkIter < options.iter_max)
             if self.model.hasFork
                 forkIter = forkIter + 1;
-                if forkIter == 1
+                if forkIter == 1                    
                     switch options.config.fork_join
                         case {'heidelberger-trivedi', 'ht'}
                             [nonfjmodel, fjclassmap, fjforkmap, fj_auxiliary_delays] = solver_mva_fj_network_transform(self.model);
