@@ -86,7 +86,7 @@ if __name__ == "__main__":
     
     avgTable = SolverJMT(model,'seed',23000).getAvgTable()
 ```
-To extra a particular value you may write, for example: 
+To extra a particular value you may use LINE's table get function (tget), for example: 
 ```
-print(tget(avgTable,'Queue')['RespT'].values[0])
+    print(tget(avgTable,'Queue')['RespT'].values[0])
 ```
