@@ -14,13 +14,13 @@ import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.solvers.NetworkAvgTable;
 
-public class SolverQNAMAMOpenExamplesTest {
+public class SolverMNAOpenExamplesTest {
     public static void main(String[] args) {
 
         Network model1 = model3();
 
         SolverOptions options = new SolverOptions(SolverType.MAM);
-        options.method = "qnamam";
+        options.method = "mna";
 
         NetworkSolver solver1 = new SolverMAM(model1, options);
         NetworkAvgTable t1 = solver1.getAvgTable();

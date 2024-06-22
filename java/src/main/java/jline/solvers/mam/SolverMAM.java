@@ -13,8 +13,6 @@ import jline.solvers.NetworkSolver;
 import jline.solvers.Solver;
 import jline.solvers.SolverOptions;
 import jline.solvers.SolverResult;
-import jline.solvers.fluid.SolverFluid;
-import jline.solvers.fluid.SolverFluidResult;
 import jline.util.Matrix;
 
 import java.util.*;
@@ -96,7 +94,7 @@ public class SolverMAM extends NetworkSolver {
         } else if (options.method.equals("poisson")) {
             options.config.space_max = 1;
             result = (SolverMAMResult) solver_mam_basic(sn);
-        }else if(options.method.equals("qnamam")){
+        }else if(options.method.equals("mna")){
             boolean closed = false;
             boolean open = false;
             for(int i=0;i<sn.nclasses;i++){
@@ -112,9 +110,9 @@ public class SolverMAM extends NetworkSolver {
                 }
             }
             if(closed&&!open){
-                result = (SolverMAMResult) solver_qna_mam_closed(sn);
+                result = (SolverMAMResult) solver_mna_closed(sn);
             }else if (open &&!closed) {
-                result = (SolverMAMResult) solver_qna_mam(sn);
+                result = (SolverMAMResult) solver_mna(sn);
             }else {
                 throw new RuntimeException("Unsupport model for QNAMAM");
             }
@@ -141,7 +139,7 @@ public class SolverMAM extends NetworkSolver {
         return  result;
     }
 
-    public SolverResult solver_qna_mam(NetworkStruct sn){
+    public SolverResult solver_mna(NetworkStruct sn){
         SolverOptions.Config config = options.config;
         config.space_max = 1;
 
@@ -1118,7 +1116,7 @@ public class SolverMAM extends NetworkSolver {
         result.XN = XN;
         return result;
     }
-    public SolverMAMResult solver_qna_mam_closed(NetworkStruct sn){
+    public SolverMAMResult solver_mna_closed(NetworkStruct sn){
         SolverOptions.Config config = options.config;
         config.space_max = 1;
 

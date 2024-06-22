@@ -20,7 +20,8 @@ Solver.resetRandomGeneratorSeed(options.seed);
 switch options.lang
     case 'java'
         jmodel = LINE2JLINE(self.model);
-        M = jmodel.getNumberOfStatefulNodes;
+        %M = jmodel.getNumberOfStatefulNodes;
+        M = jmodel.getNumberOfStations;
         R = jmodel.getNumberOfClasses;
         jsolver = JLINE.SolverMAM(jmodel);
         [QN,UN,RN,~,TN] = JLINE.arrayListToResults(jsolver.getAvgTable);

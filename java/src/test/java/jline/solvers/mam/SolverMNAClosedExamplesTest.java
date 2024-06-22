@@ -6,7 +6,6 @@ import jline.lang.RoutingMatrix;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.constant.SolverType;
 import jline.lang.distributions.APH;
-import jline.lang.distributions.Exp;
 import jline.lang.nodes.Delay;
 import jline.lang.nodes.Queue;
 import jline.solvers.NetworkSolver;
@@ -15,13 +14,13 @@ import jline.solvers.NetworkAvgTable;
 
 import java.util.Arrays;
 
-public class SolverQNAMAMClosedExamplesTest {
+public class SolverMNAClosedExamplesTest {
     public static void main(String[] args) {
         Network model1 = example_closedModel_2();
 
 
         SolverOptions options = new SolverOptions(SolverType.MAM);
-        options.method = "qnamam";
+        options.method = "mna";
 
         NetworkSolver solver1 = new SolverMAM(model1, options);
         NetworkAvgTable t1 = solver1.getAvgTable();

@@ -84,5 +84,10 @@ if __name__ == "__main__":
    
     model.link(Network.serialRouting(source, queue, sink))
     
-    avgTable = SolverJMT(model,'seed',23000).getAvgTable()
+    avgTable = SolverJMT(model,"seed",23000).getAvgTable()
+```
+To extra a particular value you may use LINE's table get function (tget), for example: 
+```
+    print(tget(table,"Queue"))
+    print(tget(table,"RespT","Queue"))
 ```

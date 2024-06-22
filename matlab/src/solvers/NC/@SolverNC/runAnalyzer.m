@@ -16,8 +16,8 @@ wasDefault = false;
 switch options.lang
     case 'java'
         jmodel = LINE2JLINE(self.model);
-        M = jmodel.getNumberOfStatefulNodes;
-        R = jmodel.getNumberOfClasses;
+        %M = jmodel.getNumberOfStatefulNodes;
+        M = jmodel.getNumberOfStations;
         jsolver = JLINE.SolverNC(jmodel, options);
         [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(jsolver.getAvgTable);
         runtime = jsolver.result.runtime;
@@ -31,6 +31,14 @@ switch options.lang
         AN = reshape(AN',R,M)';
         lG = NaN;
         lastiter = NaN;
+        for ind = 1:sn.nnodes
+            if sn.nodetype(ind) == NodeType.Cache
+                self.model.nodes{ind}.setResultHitProb(JLINE.jlinematrix_to_matrix(jmodel.getNodeByIndex(ind-1).getHitRatio()));
+                self.model.nodes{ind}.setResultMissProb(JLINE.jlinematrix_to_matrix(jmodel.getNodeByIndex(ind-1).getMissRatio()));
+            end
+        end
+        %self.model.refreshChains();
+        self.model.refreshStruct(true);
         self.setAvgResults(QN,UN,RN,TN,AN,WN,CN,XN,runtime,options.method,lastiter);
         self.result.Prob.logNormConstAggr = lG;
         return

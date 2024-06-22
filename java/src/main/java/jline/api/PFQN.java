@@ -1058,16 +1058,16 @@ public class PFQN {
 				method = "exact";
 				break;
 			}
-			case "nr.logit": case "nrl": {
-				lG = pfqn_nrl(L, N, Z, mu, options);
+			case "rd": {
+				lG = pfqn_rd(L, N, Z, mu, options).lGN;
 				break;
 			}
 			case "nr.probit": case "nrp": {
 				lG = pfqn_nrp(L, N, Z, mu, options);
 				break;
 			}
-			case "rd": {
-				lG = pfqn_rd(L, N, Z, mu, options).lGN;
+			case "nr.logit": case "nrl": {
+				lG = pfqn_nrl(L, N, Z, mu, options);
 				break;
 			}
 			default:

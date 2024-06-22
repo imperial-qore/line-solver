@@ -62,20 +62,48 @@ public class Matrix implements Serializable {
 		}
 	}
 
-	public Matrix(String matlabString) {
-		matlabString = matlabString.replaceAll("[\\[\\]\\s]", "");
-		String[] rows = matlabString.split(";");
-		int numRows = rows.length;
-		int numCols = rows[0].split(",").length;
+	public Matrix(String matrixString) {
+			// Parse matrix from string
+			// Remove spaces
+			matrixString = matrixString.replaceAll("\\s", "");
 
-		data = new DMatrixSparseCSC(numRows, numCols);
-		for (int i = 0; i < numRows; i++) {
-			String[] elements = rows[i].split(",");
-			for (int j = 0; j < elements.length; j++) {
-				this.set(i, j, Double.parseDouble(elements[j]));
+			// Determine if the string is in NumPy (Python) style based on the presence of "[["
+			boolean isNumPyStyle = matrixString.startsWith("[[");
+
+			if (isNumPyStyle) {
+				// NumPy style: [[1,2],[3,4]]
+				matrixString = matrixString.substring(1, matrixString.length() - 1); // Remove outer square brackets
+				String[] rows = matrixString.split("\\],\\[");
+
+				int numRows = rows.length;
+				int numCols = rows[0].split(",").length;
+
+				data = new DMatrixSparseCSC(numRows, numCols);
+				for (int i = 0; i < numRows; i++) {
+					String row = rows[i].replaceAll("\\[|\\]", ""); // Remove inner square brackets
+					String[] elements = row.split(",");
+					for (int j = 0; j < elements.length; j++) {
+						this.set(i, j, Double.parseDouble(elements[j]));
+					}
+				}
+			} else {
+				// MATLAB style: [1,2;3,4]
+				matrixString = matrixString.replaceAll("\\[|\\]", "");
+				String[] rows = matrixString.split(";");
+
+				int numRows = rows.length;
+				int numCols = rows[0].split(",").length;
+
+				data = new DMatrixSparseCSC(numRows, numCols);
+				for (int i = 0; i < numRows; i++) {
+					String[] elements = rows[i].split(",");
+					for (int j = 0; j < elements.length; j++) {
+						this.set(i, j, Double.parseDouble(elements[j]));
+					}
+				}
 			}
 		}
-	}
+
 
 	public static Matrix allbut(Matrix y, int xset) {
 		int index = -1;

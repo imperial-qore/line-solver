@@ -18,7 +18,8 @@ hasOpenClasses = any(sn.nodetype==NodeType.ID_SOURCE);
 switch options.lang
     case {'java'}
         jmodel = LINE2JLINE(self.model);
-        M = jmodel.getNumberOfStatefulNodes;
+        %M = jmodel.getNumberOfStatefulNodes;
+        M = jmodel.getNumberOfStations;
         R = jmodel.getNumberOfClasses;
         switch options.method
             case {'default','closing'}

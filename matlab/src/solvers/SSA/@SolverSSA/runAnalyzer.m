@@ -34,7 +34,8 @@ switch options.lang
         switch options.method
             case {'default','serial','para','parallel'}
                 jmodel = LINE2JLINE(self.model);
-                M = jmodel.getNumberOfStatefulNodes;
+                %M = jmodel.getNumberOfStatefulNodes;
+                M = jmodel.getNumberOfStations;
                 R = jmodel.getNumberOfClasses;                
                 joptions = jline.solvers.SolverOptions(jline.lang.constant.SolverType.SSA);
                 joptions.samples = options.samples;
