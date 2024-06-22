@@ -4,7 +4,6 @@
 package jline.examples;
 
 import jline.lang.*;
-import jline.lang.constant.GlobalConstants;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.constant.SolverType;
 import jline.lang.constant.VerboseLevel;
@@ -19,9 +18,6 @@ import jline.solvers.fluid.SolverFluid;
 import jline.util.Maths;
 import jline.util.Matrix;
 
-import java.util.Arrays;
-import java.util.Collections;
-
 /**
  * Examples of models evolving in a random environment
  */
@@ -29,7 +25,7 @@ public class RandomEnvironment {
 
   // For System-Testing and Performance Evaluation
   // Corresponds to example_randomEnvironment_1.m in LINE
-  public static SolverEnv ex1() {
+  public static SolverEnv example_randomEnvironment_1() {
 
     int N = 1;
     int M = 2;
@@ -95,7 +91,7 @@ public class RandomEnvironment {
 
   // For System-Testing and Performance Evaluation
   // Corresponds to example_randomEnvironment_2.m in LINE
-  public static SolverEnv ex2() {
+  public static SolverEnv example_randomEnvironment_2() {
 
     int N = 30;
     int M = 3;
@@ -183,7 +179,7 @@ public class RandomEnvironment {
 
   // For System-Testing and Performance Evaluation
   // Corresponds to example_randomEnvironment_3.m in LINE
-  public static SolverEnv ex3() {
+  public static SolverEnv example_randomEnvironment_3() {
 
     int N = 2;
     int M = 2;
@@ -243,141 +239,6 @@ public class RandomEnvironment {
     return new SolverEnv(envModel, solvers, envOptions);
   }
 
-  // For demonstration of State-Dependent Random Environments
-  public static SolverEnv ex4() {
-
-    int E = 2;
-    Env envModel = new Env("MyEnv", E);
-    String[] envName = {"Stage1", "Stage2"};
-    String[] envType = {"FAST", "SLOW"};
-
-    // Model in Stage 1
-    Network modelStage1 = new Network("model");
-    Queue queue1Stage1 = new Queue(modelStage1, "Queue1", SchedStrategy.PS);
-    Queue queue2Stage1 = new Queue(modelStage1, "Queue2", SchedStrategy.PS);
-    ClosedClass class1Stage1 = new ClosedClass(modelStage1, "Class1", 8, queue1Stage1, 0);
-    queue1Stage1.setService(class1Stage1, new Exp(100));
-    queue2Stage1.setService(class1Stage1, new Exp(10));
-    modelStage1.link(modelStage1.serialRouting(queue1Stage1, queue2Stage1));
-    envModel.addStage(0, envName[0], envType[0], modelStage1);
-
-    // Model in Stage 2
-    Network modelStage2 = new Network("model");
-    Queue queue1Stage2 = new Queue(modelStage2, "Queue1", SchedStrategy.FCFS);
-    Queue queue2Stage2 = new Queue(modelStage2, "Queue2", SchedStrategy.FCFS);
-    ClosedClass class1Stage2 = new ClosedClass(modelStage2, "Class1", 8, queue1Stage2, 0);
-    queue1Stage2.setService(class1Stage2, new Exp(1));
-    queue2Stage2.setService(class1Stage2, new Exp(10));
-    modelStage2.link(modelStage2.serialRouting(queue1Stage2, queue2Stage2));
-    envModel.addStage(1, envName[1], envType[1], modelStage2);
-
-    Matrix envRates = new Matrix(2, 2);
-    envRates.set(0, 1, 100);
-    envRates.set(1, 0, 0.01);
-
-    Env.ResetEnvRatesFunction resetEnvRatesFunction =
-        (originalDist, QExit, UExit, TExit) -> {
-          double lambda = originalDist.getRate();
-          lambda *= UExit.sumRows(0); // Time-averaged utilisation at Queue1
-          return new Exp(Math.max(lambda, GlobalConstants.Zero));
-        };
-
-    for (int e = 0; e < E; e++) {
-      for (int h = 0; h < E; h++) {
-        if (envRates.get(e, h) > 0) {
-          envModel.addTransition(e, h, new Exp(envRates.get(e, h)));
-        }
-      }
-    }
-    envModel.resetEnvRatesFun[0][1] = resetEnvRatesFunction;
-
-    SolverOptions options = new SolverOptions(SolverType.ENV);
-    options.iter_tol = 0.01;
-    options.timespan[0] = 0;
-    options.method = "statedep";
-
-    SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
-    fluidOptions.method = "matrix";
-    fluidOptions.stiff = false;
-    fluidOptions.setODEMaxStep(0.1);
-    fluidOptions.verbose = VerboseLevel.SILENT;
-
-    NetworkSolver[] solvers = new NetworkSolver[E];
-    for (int e = 0; e < E; e++) {
-      solvers[e] = new SolverFluid(envModel.getModel(e));
-      solvers[e].options = fluidOptions;
-    }
-
-    return new SolverEnv(envModel, solvers, options);
-  }
-
-  // For demonstration of p-Norm Smoothing combined with SolverEnv
-  public static SolverEnv ex5() {
-
-    int E = 2;
-    Env envModel = new Env("MyEnv", E);
-    String[] envName = {"Stage1", "Stage2"};
-    String[] envType = {"SLOW", "FAST"};
-
-    // Model in Stage 1
-    Network modelStage1 = new Network("model");
-    Delay delayStage1 = new Delay(modelStage1, "Delay");
-    Queue queueStage1 = new Queue(modelStage1, "Queue", SchedStrategy.PS);
-    ClosedClass class1Stage1 = new ClosedClass(modelStage1, "Class1", 8, delayStage1, 0);
-    delayStage1.setService(class1Stage1, new Exp(1));
-    queueStage1.setService(class1Stage1, new Exp(8));
-    modelStage1.link(modelStage1.serialRouting(delayStage1, queueStage1));
-    envModel.addStage(0, envName[0], envType[0], modelStage1);
-
-    // Model in Stage 2
-    Network modelStage2 = new Network("model");
-    Delay delayStage2 = new Delay(modelStage2, "Delay");
-    Queue queueStage2 = new Queue(modelStage2, "Queue", SchedStrategy.PS);
-    ClosedClass class1Stage2 = new ClosedClass(modelStage2, "Class1", 8, delayStage2, 0);
-    delayStage2.setService(class1Stage2, new Exp(4));
-    queueStage2.setService(class1Stage2, new Exp(8));
-    modelStage2.link(modelStage2.serialRouting(delayStage2, queueStage2));
-    envModel.addStage(1, envName[1], envType[1], modelStage2);
-
-    Matrix envRates = new Matrix(2, 2);
-    envRates.set(0, 1, 0.001); // Replace with 1000 to test Figure 6.11 results
-    envRates.set(1, 0, 0.001); // Replace with 1000 to test Figure 6.11 results
-
-    for (int e = 0; e < E; e++) {
-      for (int h = 0; h < E; h++) {
-        if (envRates.get(e, h) > 0) {
-          envModel.addTransition(e, h, new Exp(envRates.get(e, h)));
-        }
-      }
-    }
-
-    SolverOptions options = new SolverOptions(SolverType.ENV);
-    options.iter_tol = 0.01;
-    options.timespan[0] = 0;
-
-    SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
-    fluidOptions.method = "matrix";
-    fluidOptions.stiff = false;
-    fluidOptions.setODEMaxStep(0.1);
-    fluidOptions.verbose = VerboseLevel.SILENT;
-
-    NetworkSolver[] solvers = new NetworkSolver[E];
-    for (int e = 0; e < E; e++) {
-      solvers[e] = new SolverFluid(envModel.getModel(e));
-      solvers[e].options = fluidOptions;
-      // Activating p-Norm Smoothing by providing each solver with an initial set of pStar values.
-      // Going forwards, the pStar values are refreshed within SolverEnv's 'analyze' method
-//      PStarSearcher searcher = new PStarSearcher();
-//      Matrix targetQueueLengths = searcher.generateTargetQueueLengths(solvers[e].model);
-//      PointValuePair pStarValues = searcher.findPStarValues(solvers[e].model, targetQueueLengths);
-//      for (int i = 0; i < solvers[e].model.getNumberOfNodes(); i++) {
-//        solvers[e].options.config.pstar.add(i, pStarValues.getPoint()[i]);
-//      }
-    }
-
-    return new SolverEnv(envModel, solvers, options);
-  }
-
   private static Network exGenModel(Matrix rate, int N) {
 
     Network model = new Network("qn1");
@@ -389,8 +250,7 @@ public class RandomEnvironment {
     delay.setService(cClass, new Exp(rate.get(0, 0)));
     queue.setService(cClass, new Exp(rate.get(1, 0)));
 
-    RoutingMatrix routingMatrix =
-        new RoutingMatrix(model, Collections.singletonList(cClass), Arrays.asList(delay, queue));
+    RoutingMatrix routingMatrix = model.initRoutingMatrix();
     int numNodes = model.getNumberOfNodes();
     Matrix circulantMatrix = Maths.circul(numNodes);
     for (int row = 0; row < numNodes; row++) {

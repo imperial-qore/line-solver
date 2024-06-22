@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 public class SolverJMTIOOpenExamplesTest {
     @Test
     public void test_example_openModel_1() throws ParserConfigurationException {
-        Network model = OpenModel.ex1_line();
+        Network model = OpenModel.example_openModel_1();
 
         SolverOptions options = Solver.defaultOptions();
         options.keep = false;
@@ -62,7 +62,7 @@ public class SolverJMTIOOpenExamplesTest {
 
     @Test
     public void test_example_openModel_3() throws ParserConfigurationException {
-        Network model = OpenModel.ex3_line();
+        Network model = OpenModel.example_openModel_3();
 
         SolverOptions options = Solver.defaultOptions();
         options.keep = true;

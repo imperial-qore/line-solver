@@ -13,7 +13,7 @@ public class SolverEnvExamplesTest {
   @Test
   public void exampleRandomEnvironment1ReturnsCorrectResult() {
 
-    SolverEnv envSolver = RandomEnvironment.ex1();
+    SolverEnv envSolver = RandomEnvironment.example_randomEnvironment_1();
     envSolver.getAvg();
     SolverResult result = envSolver.result;
 
@@ -42,7 +42,7 @@ public class SolverEnvExamplesTest {
   @Test
   public void exampleRandomEnvironment2ReturnsCorrectResult() {
 
-    SolverEnv envSolver = RandomEnvironment.ex2();
+    SolverEnv envSolver = RandomEnvironment.example_randomEnvironment_2();
     envSolver.getAvg();
     SolverResult result = envSolver.result;
 
@@ -71,7 +71,7 @@ public class SolverEnvExamplesTest {
   @Test
   public void exampleRandomEnvironment3ReturnsCorrectResult() {
 
-    SolverEnv envSolver = RandomEnvironment.ex3();
+    SolverEnv envSolver = RandomEnvironment.example_randomEnvironment_3();
     envSolver.getAvg();
     SolverResult result = envSolver.result;
 

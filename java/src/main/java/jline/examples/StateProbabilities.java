@@ -35,9 +35,7 @@ public class StateProbabilities {
         node3.setService(jobclass2, Exp.fitMean(0.333333)); // (Queue2,Class2)
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2),
-                Arrays.asList(node1, node2, node3));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Delay,Class1) -> (Queue1,Class1)
         routingMatrix.set(jobclass1, jobclass1, node2, node3, 1.000000); // (Queue1,Class1) -> (Queue2,Class1)
@@ -80,9 +78,7 @@ public class StateProbabilities {
         node3.setService(jobclass4, Exp.fitMean(0.500000)); // (Queue2,Class4)
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2, jobclass3, jobclass4),
-                Arrays.asList(node1, node2, node3, node4));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Delay,Class1) -> (Queue1,Class1)
         routingMatrix.set(jobclass1, jobclass1, node2, node3, 1.000000); // (Queue1,Class1) -> (Queue2,Class1)
@@ -136,9 +132,7 @@ public class StateProbabilities {
         node3.setService(jobclass4, Exp.fitMean(0.500000)); // (Queue2,Class4)
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2, jobclass3, jobclass4),
-                Arrays.asList(node1, node2, node3, node4));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Delay,Class1) -> (Queue1,Class1)
         routingMatrix.set(jobclass1, jobclass1, node2, node3, 1.000000); // (Queue1,Class1) -> (Queue2,Class1)
@@ -191,9 +185,7 @@ public class StateProbabilities {
         node3.setService(jobclass4, Exp.fitMean(0.500000)); // (Queue3,Class4)
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2, jobclass3, jobclass4),
-                Arrays.asList(node1, node2, node3, node4));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Queue1,Class1) -> (Queue2,Class1)
         routingMatrix.set(jobclass1, jobclass1, node2, node3, 1.000000); // (Queue2,Class1) -> (Queue3,Class1)
@@ -237,9 +229,7 @@ public class StateProbabilities {
         node3.setService(jobclass2, Exp.fitMean(0.333333)); // (Queue2,Class2)
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2),
-                Arrays.asList(node1, node2, node3));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000);
         routingMatrix.set(jobclass1, jobclass1, node3, node1, 1.000000);

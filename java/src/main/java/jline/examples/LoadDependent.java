@@ -25,6 +25,7 @@ public class LoadDependent {
         Network model = new Network("model");
         Delay node1 = new Delay(model, "Delay");
         Queue node2 = new Queue(model, "Queue1", SchedStrategy.FCFS);
+
         ClosedClass jobclass1 = new ClosedClass(model, "Class1", N, node1, 0);
         node1.setService(jobclass1, Exp.fitMean(1.000000));
         node2.setService(jobclass1, Exp.fitMean(1.500000));
@@ -33,6 +34,7 @@ public class LoadDependent {
             alpha.set(0, i, Maths.min(i+1, c));
         }
         node2.setLoadDependence(alpha);
+
         RoutingMatrix routingMatrix = model.initRoutingMatrix();
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.0);
         routingMatrix.set(jobclass1, jobclass1, node2, node1, 1.0);
@@ -46,6 +48,7 @@ public class LoadDependent {
         Network model = new Network("model");
         Delay node1 = new Delay(model, "Delay");
         Queue node2 = new Queue(model, "Queue1", SchedStrategy.PS);
+
         ClosedClass jobclass1 = new ClosedClass(model, "Class1", N, node1, 0);
         ClosedClass jobclass2 = new ClosedClass(model, "Class2", N/2, node1, 0);
         node1.setService(jobclass1, Exp.fitMean(1.000000));
@@ -57,6 +60,7 @@ public class LoadDependent {
             alpha.set(0, i, Maths.min(i+1, c));
         }
         node2.setLoadDependence(alpha);
+
         RoutingMatrix routingMatrix = model.initRoutingMatrix();
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.0);
         routingMatrix.set(jobclass1, jobclass1, node2, node1, 1.0);
@@ -73,6 +77,7 @@ public class LoadDependent {
         Delay node1 = new Delay(model, "Delay");
         Queue node2 = new Queue(model, "Queue1", SchedStrategy.PS);
         Queue node3 = new Queue(model, "Queue2", SchedStrategy.PS);
+
         ClosedClass jobclass1 = new ClosedClass(model, "Class1", N, node1, 0);
         ClosedClass jobclass2 = new ClosedClass(model, "Class2", N/2, node1, 0);
         node1.setService(jobclass1, Exp.fitMean(1.000000));
@@ -93,6 +98,7 @@ public class LoadDependent {
             alpha.set(0, i, Maths.min(i+1, c));
         }
         node3.setLoadDependence(alpha);
+
         RoutingMatrix routingMatrix = model.initRoutingMatrix();
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.0);
         routingMatrix.set(jobclass1, jobclass1, node2, node3, 1.0);

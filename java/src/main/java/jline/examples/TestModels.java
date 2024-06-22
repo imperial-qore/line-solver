@@ -1,10 +1,17 @@
 package jline.examples;
 
 import jline.lang.*;
+import jline.lang.constant.GlobalConstants;
 import jline.lang.constant.SchedStrategy;
+import jline.lang.constant.SolverType;
+import jline.lang.constant.VerboseLevel;
 import jline.lang.distributions.*;
 import jline.lang.layered.*;
 import jline.lang.nodes.*;
+import jline.solvers.NetworkSolver;
+import jline.solvers.SolverOptions;
+import jline.solvers.env.SolverEnv;
+import jline.solvers.fluid.SolverFluid;
 import jline.util.Matrix;
 
 import java.util.Arrays;
@@ -40,9 +47,7 @@ public class TestModels {
         node2.setService(jobclass2, Exp.fitMean(1.000000)); // (Queue1,Class2)
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2),
-                Arrays.asList(node1, node2, node3, node4));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 0.100000); // (Delay,Class1) -> (Queue1,Class1)
         routingMatrix.set(jobclass1, jobclass1, node1, node3, 0.900000); // (Delay,Class1) -> (CS_Delay_to_Delay,Class1)
@@ -84,9 +89,7 @@ public class TestModels {
         node2.setService(jobclass3, Exp.fitMean(0.333333)); // (Queue1,Class3)
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2, jobclass3),
-                Arrays.asList(node1, node2, node3, node4));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 0.100000); // (Delay,Class1) -> (Queue1,Class1)
         routingMatrix.set(jobclass1, jobclass1, node1, node3, 0.900000); // (Delay,Class1) -> (CS_Delay_to_Delay,Class1)
@@ -140,9 +143,7 @@ public class TestModels {
         node3.setService(jobclass4, Exp.fitMean(1.000000)); // (Queue2,Class4)
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2, jobclass3, jobclass4),
-                Arrays.asList(node1, node2, node3, node4));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node4, 1.000000); // (Delay,Class1) -> (CS_Delay_to_Queue1,Class1)
         routingMatrix.set(jobclass1, jobclass1, node2, node1, 1.000000); // (Queue1,Class1) -> (Delay,Class1)
@@ -192,9 +193,7 @@ public class TestModels {
         node4.setService(jobclass2, Exp.fitMean(9.000000)); // (Queue2,Class2)
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2),
-                Arrays.asList(node1, node2, node3, node4));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Delay1,Class1) -> (Delay2,Class1)
         routingMatrix.set(jobclass1, jobclass1, node2, node3, 1.000000); // (Delay2,Class1) -> (Queue1,Class1)
@@ -223,6 +222,7 @@ public class TestModels {
         node1.setService(jobclass1, Exp.fitMean(1.000000)); // (Delay,Class1)
         node2.setService(jobclass1, Exp.fitMean(1.500000)); // (Queue1,Class1)
         node3.setService(jobclass1, Exp.fitMean(2.000000)); // (Queue2, Class2)
+
         // Block 3: topology
         RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
@@ -250,10 +250,9 @@ public class TestModels {
         node1.setService(jobclass1, new Erlang(1, 5)); // (Delay,Class1)
         node2.setService(jobclass1, new Erlang(2, 5)); // (Queue1,Class1)
         node3.setService(jobclass1, new Erlang(0.5, 2)); // (Queue2, Class2)
+
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Collections.singletonList(jobclass1),
-                Arrays.asList(node1, node2, node3));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node1, 0.500000); // (Delay,Class1) -> (Delay,Class1)
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 0.300000); // (Delay,Class1) -> (Queue1,Class1)
@@ -281,9 +280,7 @@ public class TestModels {
         node3.setService(jobclass1, Exp.fitMean(5.000000)); // (Queue 2,Class1)
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1),
-                Arrays.asList(node1, node2, node3));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Delay 1,Class1) -> (Queue 1,Class1)
         routingMatrix.set(jobclass1, jobclass1, node2, node3, 1.000000); // (Queue 1,Class1) -> (Queue 2,Class1)
@@ -365,14 +362,15 @@ public class TestModels {
         Sink sink = new Sink(model, "Sink");
 
 
-        RoutingMatrix routingMatrix = new RoutingMatrix(model, Collections.singletonList(openClass),
-                Arrays.asList(source, queue1, queue2, queue3, sink));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+
         routingMatrix.set(source, queue1);
         routingMatrix.set(queue1, sink);
         routingMatrix.set(source, queue2);
         routingMatrix.set(queue2, sink);
         routingMatrix.set(source, queue3);
         routingMatrix.set(queue3, sink);
+
         model.link(routingMatrix);
 
 
@@ -497,12 +495,13 @@ public class TestModels {
         Node1.setService(closedClass1, new Exp(1));
         Node2.setService(closedClass1, new Exp(0.6666667));
 
-        RoutingMatrix routingMatrix = new RoutingMatrix(model, Collections.singletonList(closedClass1),
-                Arrays.asList(Node1, Node2));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+
         routingMatrix.set(Node1, Node1, 0.7);
         routingMatrix.set(closedClass1, Node1, Node2, 0.3);
         routingMatrix.set(closedClass1, Node2, Node1, 1.0);
         routingMatrix.set(closedClass1, Node2, Node2, 0.0);
+
         model.link(routingMatrix);
         return model;
     }
@@ -525,8 +524,8 @@ public class TestModels {
         lower.setService(openClass, new Exp(8));
         post.setService(openClass, new Exp(15));
 
-        RoutingMatrix routingMatrix = new RoutingMatrix(model, Collections.singletonList(openClass),
-                Arrays.asList(source, fork, upper, lower, join, post, sink));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+
         routingMatrix.set(openClass, source, fork, 1);
         routingMatrix.set(openClass, fork, upper, 0.5);
         routingMatrix.set(openClass, fork, lower, 0.5);
@@ -534,6 +533,7 @@ public class TestModels {
         routingMatrix.set(openClass, lower, join, 1);
         routingMatrix.set(openClass, join, post, 1);
         routingMatrix.set(openClass, post, sink, 1);
+
         model.link(routingMatrix);
         return model;
     }
@@ -575,14 +575,15 @@ public class TestModels {
         Sink sink = new Sink(model, "Sink");
 
 
-        RoutingMatrix routingMatrix = new RoutingMatrix(model, Arrays.asList(openClass, oClass2),
-                Arrays.asList(source, queue1, queue2, queue3, sink));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+
         routingMatrix.set(source, queue1);
         routingMatrix.set(queue1, sink);
         routingMatrix.set(source, queue2);
         routingMatrix.set(queue2, sink);
         routingMatrix.set(source, queue3);
         routingMatrix.set(queue3, sink);
+
         model.link(routingMatrix);
 
         return model;
@@ -613,10 +614,9 @@ public class TestModels {
         delay.setService(closedClass2, APH.fitMeanAndSCV(8.0000, 16.0000));
         queue.setService(closedClass1, new Exp(0.1));
         queue.setService(closedClass2, new Exp(0.1));
+
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(closedClass1, closedClass2),
-                Arrays.asList(delay, queue));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(closedClass1, closedClass1, delay, queue, 1.000000); // (Delay,Class1) -> (Queue1,Class1)
         routingMatrix.set(closedClass1, closedClass1, queue, delay, 1.000000); // (Queue1,Class1) -> (Delay,Class1)
@@ -683,10 +683,8 @@ public class TestModels {
 
 
         // Block 3: topology
-        RoutingMatrix P = new RoutingMatrix(model,
-                Collections.singletonList(jobclass1),
-                Arrays.asList(node1, node2, node3, node4, node5, node6, node7, node8, node9, node10, node11, node12,
-                        switchNodes.get(0), switchNodes.get(1), switchNodes.get(2), switchNodes.get(3), switchNodes.get(4), switchNodes.get(5), switchNodes.get(6), switchNodes.get(7), switchNodes.get(8), switchNodes.get(9)));
+        RoutingMatrix P = model.initRoutingMatrix();
+
         P.set(jobclass1, jobclass1, node1, node7, 1);
         P.set(jobclass1, jobclass1, node2, node9, 5.000000e-01);
         P.set(jobclass1, jobclass1, node2, switchNodes.get(0), 5.000000e-01);
@@ -729,9 +727,7 @@ public class TestModels {
 
         queue.setService(closedClass, new Exp(1));
         queue.setService(closedClass2, new Exp(1));
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(closedClass, closedClass2),
-                Arrays.asList(delay, queue));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
         routingMatrix.set(closedClass, closedClass, delay, delay, 0.3);
         routingMatrix.set(closedClass, closedClass, delay, queue, 0.1);
         routingMatrix.set(closedClass, closedClass, queue, delay, 0.2);
@@ -766,9 +762,7 @@ public class TestModels {
         node2.setService(jobclass2, new Exp(1));
 
         node3.setArrival(jobclass2, new Exp(0.1));
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2),
-                Arrays.asList(node1, node2, node3, node4));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
         routingMatrix.set(jobclass1, jobclass1, node1, node1, 0.0);
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.0);
         routingMatrix.set(jobclass1, jobclass1, node1, node3, 0.0);
@@ -1010,31 +1004,20 @@ public class TestModels {
         T1.on(P1);
         T1.setThinkTime(new Exp(100));
 
-        Task T2 = new Task(model, "T2", 1, SchedStrategy.FCFS);
-        T2.on(P2);
+        Task T2 = new Task(model, "T2", 1, SchedStrategy.FCFS).on(P2);
         T2.setThinkTime(new Immediate());
 
-        Entry E1 = new Entry(model, "E1");
-        E1.on(T1);
+        Entry E1 = new Entry(model, "E1").on(T1);
 
-        Entry E2 = new Entry(model, "E2");
-        E2.on(T2);
+        Entry E2 = new Entry(model, "E2").on(T2);
 
-        Activity A1 = new Activity(model, "A1", new Exp( 1.6));
-        A1.on(T1);
-        A1.boundTo(E1);
+        Activity A1 = new Activity(model, "A1", new Exp( 1.6)).on(T1).boundTo(E1);
 
-        Activity A2 = new Activity(model, "A2", new Immediate());
-        A2.on(T1);
-        A2.synchCall(E2);
+        Activity A2 = new Activity(model, "A2", new Immediate()).on(T1).synchCall(E2);
 
-        Activity A3 = new Activity(model, "A3", new Exp(5));
-        A3.on(T2);
-        A3.boundTo(E2);
+        Activity A3 = new Activity(model, "A3", new Exp(5)).on(T2).boundTo(E2);
 
-        Activity A4 = new Activity(model, "A4", new Exp(1));
-        A4.on(T2);
-        A4.repliesTo(E2);
+        Activity A4 = new Activity(model, "A4", new Exp(1)).on(T2).repliesTo(E2);
 
         T1.addPrecedence(ActivityPrecedence.Sequence("A1", "A2"));
         T2.addPrecedence(ActivityPrecedence.Sequence("A3", "A4"));
@@ -1053,22 +1036,11 @@ public class TestModels {
         Entry E1 = new Entry(model, "E1");
         E1.on(T1);
 
-        Activity A1 = new Activity(model, "A1", new Exp((double) 1/2));
-        A1.on(T1);
-        A1.boundTo(E1);
-
-        Activity A2 = new Activity(model, "A2", new Exp((double)1/3));
-        A2.on(T1);
-
-        Activity A3 = new Activity(model, "A3", new Exp((double)1/4));
-        A3.on(T1);
-
-        Activity A4 = new Activity(model, "A4", new Exp((double)1/5));
-        A4.on(T1);
-
-        Activity A5 = new Activity(model, "A5", new Exp((double)1/6));
-        A5.on(T1);
-
+        Activity A1 = new Activity(model, "A1", new Exp((double) 1/2)).on(T1).boundTo(E1);
+        Activity A2 = new Activity(model, "A2", new Exp((double)1/3)).on(T1);
+        Activity A3 = new Activity(model, "A3", new Exp((double)1/4)).on(T1);
+        Activity A4 = new Activity(model, "A4", new Exp((double)1/5)).on(T1);
+        Activity A5 = new Activity(model, "A5", new Exp((double)1/6)).on(T1);
 
         T1.addPrecedence(ActivityPrecedence.AndFork("A1", Arrays.asList("A2", "A3", "A4"), new Matrix(0, 0)));
         T1.addPrecedence(ActivityPrecedence.AndJoin(Arrays.asList("A2", "A3", "A4"), "A5", new Matrix(1)));
@@ -1087,21 +1059,11 @@ public class TestModels {
         Entry E1 = new Entry(model, "E1");
         E1.on(T1);
 
-        Activity A1 = new Activity(model, "A1", new Exp((double) 1/2));
-        A1.on(T1);
-        A1.boundTo(E1);
-
-        Activity A2 = new Activity(model, "A2", new Exp((double)1/3));
-        A2.on(T1);
-
-        Activity A3 = new Activity(model, "A3", new Exp((double)1/4));
-        A3.on(T1);
-
-        Activity A4 = new Activity(model, "A4", new Exp((double)1/5));
-        A4.on(T1);
-
-        Activity A5 = new Activity(model, "A5", new Exp((double)1/6));
-        A5.on(T1);
+        Activity A1 = new Activity(model, "A1", new Exp((double) 1/2)).on(T1).boundTo(E1);
+        Activity A2 = new Activity(model, "A2", new Exp((double)1/3)).on(T1);
+        Activity A3 = new Activity(model, "A3", new Exp((double)1/4)).on(T1);
+        Activity A4 = new Activity(model, "A4", new Exp((double)1/5)).on(T1);
+        Activity A5 = new Activity(model, "A5", new Exp((double)1/6)).on(T1);
 
         Matrix params = new Matrix(1, 3);
         params.set(0,0,0.3);
@@ -1126,21 +1088,15 @@ public class TestModels {
 //        T2.on(P2);
 //        T2.setThinkTime(new Immediate());
 
-        Entry E1 = new Entry(model, "E1");
-        E1.on(T1);
+        Entry E1 = new Entry(model, "E1").on(T1);
 
 //        Entry E2 = new Entry(model, "E2");
 //        E2.on(T2);
 
-        Activity A1 = new Activity(model, "A1", new Exp( (double)1/2));
-        A1.on(T1);
-        A1.boundTo(E1);
+        Activity A1 = new Activity(model, "A1", new Exp( (double)1/2)).on(T1).boundTo(E1);
+        Activity A2 = new Activity(model, "A2", new Exp((double) 1/3)).on(T1);
+        Activity A3 = new Activity(model, "A3", new Exp((double) 1/4)).on(T1);
 
-        Activity A2 = new Activity(model, "A2", new Exp((double) 1/3));
-        A2.on(T1);
-
-        Activity A3 = new Activity(model, "A3", new Exp((double) 1/4));
-        A3.on(T1);
 //        A3.synchCall(E2);
 
 //        Activity B1 = new Activity(model, "B1", new Exp( 1/2));
@@ -1163,75 +1119,30 @@ public class TestModels {
         Processor P2 = new Processor(model, "P2", 10, SchedStrategy.INF);
         Processor P3 = new Processor(model, "P3", 5, SchedStrategy.PS);
 
-        Task T1 = new Task(model, "T1", 1, SchedStrategy.REF);
-        T1.on(P1);
-        T1.setThinkTime(new Immediate());
+        Task T1 = new Task(model, "T1", 1, SchedStrategy.REF).on(P1).setThinkTime(new Immediate());
+        Task T2 = new Task(model, "T2", 1, SchedStrategy.INF).on(P2).setThinkTime(new Immediate());
+        Task T3 = new Task(model, "T3", 20, SchedStrategy.INF).on(P3).setThinkTime(new Exp((double) 1 / 10));
 
-        Task T2 = new Task(model, "T2", 1, SchedStrategy.INF);
-        T2.on(P2);
-        T2.setThinkTime(new Immediate());
+        Entry E1 = new Entry(model, "E1").on(T1);
+        Entry E2 = new Entry(model, "E2").on(T2);
+        Entry E3 = new Entry(model, "E3").on(T3);
 
-        Task T3 = new Task(model, "T3", 20, SchedStrategy.INF);
-        T3.on(P3);
-        T3.setThinkTime(new Exp((double) 1 / 10));
+        Activity A1 = new Activity(model, "A1", new Exp( 1)).on(T1).boundTo(E1);
+        Activity A2 = new Activity(model, "A2", new Exp(1/2)).on(T1);
+        Activity A3 = new Activity(model, "A3", new Exp(1/3)).on(T1).synchCall(E2);
 
-        Entry E1 = new Entry(model, "E1");
-        E1.on(T1);
+        Activity B1 = new Activity(model, "B1", new Exp( 10)).on(T2).boundTo(E2);
+        Activity B2 = new Activity(model, "B2", new Exp(5)).on(T2);
+        Activity B3 = new Activity(model, "B3", new Exp(10/3)).on(T2);
+        Activity B4 = new Activity(model, "B4", new Exp(10/4)).on(T2);
+        Activity B5 = new Activity(model, "B5", new Exp(2)).on(T2);
+        Activity B6 = new Activity(model, "B6", new Exp(10/6)).on(T2).synchCall(E3).repliesTo(E2);
 
-        Entry E2 = new Entry(model, "E2");
-        E2.on(T2);
-
-        Entry E3 = new Entry(model, "E3");
-        E3.on(T3);
-
-        Activity A1 = new Activity(model, "A1", new Exp( 1));
-        A1.on(T1);
-        A1.boundTo(E1);
-
-        Activity A2 = new Activity(model, "A2", new Exp(1/2));
-        A2.on(T1);
-
-        Activity A3 = new Activity(model, "A3", new Exp(1/3));
-        A3.on(T1);
-        A3.synchCall(E2);
-
-        Activity B1 = new Activity(model, "B1", new Exp( 10));
-        B1.on(T2);
-        B1.boundTo(E2);
-
-        Activity B2 = new Activity(model, "B2", new Exp(5));
-        B2.on(T2);
-
-        Activity B3 = new Activity(model, "B3", new Exp(10/3));
-        B3.on(T2);
-
-        Activity B4 = new Activity(model, "B4", new Exp(10/4));
-        B4.on(T2);
-
-        Activity B5 = new Activity(model, "B5", new Exp(2));
-        B5.on(T2);
-
-        Activity B6 = new Activity(model, "B6", new Exp(10/6));
-        B6.on(T2);
-        B6.synchCall(E3);
-        B6.repliesTo(E2);
-
-        Activity C1 = new Activity(model, "C1", new Exp( 10));
-        C1.on(T3);
-        C1.boundTo(E3);
-
-        Activity C2 = new Activity(model, "C2", new Exp(5));
-        C2.on(T3);
-
-        Activity C3 = new Activity(model, "C3", new Exp(10/3));
-        C3.on(T3);
-
-        Activity C4 = new Activity(model, "C4", new Exp(10/4));
-        C4.on(T3);
-
-        Activity C5 = new Activity(model, "C5", new Exp(2));
-        C5.on(T3);
-        C5.repliesTo(E3);
+        Activity C1 = new Activity(model, "C1", new Exp( 10)).on(T3).boundTo(E3);
+        Activity C2 = new Activity(model, "C2", new Exp(5)).on(T3);
+        Activity C3 = new Activity(model, "C3", new Exp(10/3)).on(T3);
+        Activity C4 = new Activity(model, "C4", new Exp(10/4)).on(T3);
+        Activity C5 = new Activity(model, "C5", new Exp(2)).on(T3).repliesTo(E3);
 
         T1.addPrecedence(ActivityPrecedence.Loop("A1", Arrays.asList("A2", "A3"), new Matrix(3)));
         T2.addPrecedence(ActivityPrecedence.Sequence("B4", "B5"));
@@ -1257,57 +1168,48 @@ public class TestModels {
         Processor P8 = new Processor(model, "UsageScenario_userType2_7_Processor", 1, SchedStrategy.PS);
         Processor P9 = new Processor(model, "RequestHandler_HandlerIF_quickadd_345_Processor", 1, SchedStrategy.PS);
 
-        Task T1 = new Task(model, "FrontEnd_CPU_Task", 1, SchedStrategy.FCFS); T1.on(P1);
-        T1.setThinkTime(new Exp(1/5.0));
-        Task T2 = new Task(model, "USAGE_DELAY_Task", 1, SchedStrategy.FCFS); T2.on(P2);
-        T2.setThinkTime(new Exp(1/5.0));
-        Task T3 = new Task(model, "UsageScenario_userType1_1_Task", 10, SchedStrategy.REF); T3.on(P3);
-        T3.setThinkTime(new Exp(0.1));
-        Task T4 = new Task(model, "RequestHandler_HandlerIF_main_345_Task", 1, SchedStrategy.FCFS); T4.on(P4);
-        T4.setThinkTime(new Exp(1.0/2));
-        Task T5 = new Task(model, "RequestHandler_HandlerIF_login_345_Task", 1, SchedStrategy.FCFS); T5.on(P5);
-        T5.setThinkTime(new Exp(1));
-        Task T6 = new Task(model, "RequestHandler_HandlerIF_checkLogin_345_Task", 1, SchedStrategy.FCFS); T6.on(P6);
-        T6.setThinkTime(new Exp(1.0/2));
-        Task T7 = new Task(model, "RequestHandler_HandlerIF_logout_345_Task", 1, SchedStrategy.FCFS); T7.on(P7);
-        T7.setThinkTime(new Exp(1.0/5));
-        Task T8 = new Task(model, "UsageScenario_userType2_7_Task", 10, SchedStrategy.REF); T8.on(P8);
-        T8.setThinkTime(new Exp(0.0714286));
-        Task T9 = new Task(model, "RequestHandler_HandlerIF_quickadd_345_Task", 1, SchedStrategy.FCFS); T9.on(P9);
-        T9.setThinkTime(new Exp(1.0/10));
+        Task T1 = new Task(model, "FrontEnd_CPU_Task", 1, SchedStrategy.FCFS).on(P1).setThinkTime(new Exp(1/5.0));
+        Task T2 = new Task(model, "USAGE_DELAY_Task", 1, SchedStrategy.FCFS).on(P2).setThinkTime(new Exp(1/5.0));
+        Task T3 = new Task(model, "UsageScenario_userType1_1_Task", 10, SchedStrategy.REF).on(P3).setThinkTime(new Exp(0.1));
+        Task T4 = new Task(model, "RequestHandler_HandlerIF_main_345_Task", 1, SchedStrategy.FCFS).on(P4).setThinkTime(new Exp(1.0/2));
+        Task T5 = new Task(model, "RequestHandler_HandlerIF_login_345_Task", 1, SchedStrategy.FCFS).on(P5).setThinkTime(new Exp(1));
+        Task T6 = new Task(model, "RequestHandler_HandlerIF_checkLogin_345_Task", 1, SchedStrategy.FCFS).on(P6).setThinkTime(new Exp(1.0/2));
+        Task T7 = new Task(model, "RequestHandler_HandlerIF_logout_345_Task", 1, SchedStrategy.FCFS).on(P7).setThinkTime(new Exp(1.0/5));
+        Task T8 = new Task(model, "UsageScenario_userType2_7_Task", 10, SchedStrategy.REF).on(P8).setThinkTime(new Exp(0.0714286));
+        Task T9 = new Task(model, "RequestHandler_HandlerIF_quickadd_345_Task", 1, SchedStrategy.FCFS).on(P9).setThinkTime(new Exp(1.0/10));
 
-        Entry E1 = new Entry(model, "FrontEnd_CPU_Entry"); E1.on(T1);
-        Entry E2 = new Entry(model, "InternalAction_main__Iu1-wMhoEeKON4DtRoKCMw_34_50_Entry"); E2.on(T1);
-        Entry E3 = new Entry(model, "InternalAction_login__YgxRGw26EeSPwb7XgvxhWQ_34_50_Entry"); E3.on(T1);
-        Entry E4 = new Entry(model, "InternalAction_CheckLogin__vHMZsMhoEeKON4DtRoKCMw_34_50_Entry"); E4.on(T1);
-        Entry E5 = new Entry(model, "InternalAction_logout__j-2E4MhrEeKON4DtRoKCMw_34_50_Entry"); E5.on(T1);
-        Entry E6 = new Entry(model, "InternalAction_addcart__5JEHQMhoEeKON4DtRoKCMw_34_50_Entry"); E6.on(T1);
-        Entry E7 = new Entry(model, "USAGE_DELAY0_Entry"); E7.on(T2);
-        Entry E8 = new Entry(model, "UsageScenario_userType1_1_Entry"); E8.on(T3);
-        Entry E9 = new Entry(model, "RequestHandler_HandlerIF_main_345_Entry"); E9.on(T4);
-        Entry E10 = new Entry(model, "RequestHandler_HandlerIF_login_345_Entry"); E10.on(T5);
-        Entry E11 = new Entry(model, "RequestHandler_HandlerIF_checkLogin_345_Entry"); E11.on(T6);
-        Entry E12 = new Entry(model, "RequestHandler_HandlerIF_logout_345_Entry"); E12.on(T7);
-        Entry E13 = new Entry(model, "UsageScenario_userType2_7_Entry"); E13.on(T8);
-        Entry E14 = new Entry(model, "RequestHandler_HandlerIF_quickadd_345_Entry"); E14.on(T9);
+        Entry E1 = new Entry(model, "FrontEnd_CPU_Entry").on(T1);
+        Entry E2 = new Entry(model, "InternalAction_main__Iu1-wMhoEeKON4DtRoKCMw_34_50_Entry").on(T1);
+        Entry E3 = new Entry(model, "InternalAction_login__YgxRGw26EeSPwb7XgvxhWQ_34_50_Entry").on(T1);
+        Entry E4 = new Entry(model, "InternalAction_CheckLogin__vHMZsMhoEeKON4DtRoKCMw_34_50_Entry").on(T1);
+        Entry E5 = new Entry(model, "InternalAction_logout__j-2E4MhrEeKON4DtRoKCMw_34_50_Entry").on(T1);
+        Entry E6 = new Entry(model, "InternalAction_addcart__5JEHQMhoEeKON4DtRoKCMw_34_50_Entry").on(T1);
+        Entry E7 = new Entry(model, "USAGE_DELAY0_Entry").on(T2);
+        Entry E8 = new Entry(model, "UsageScenario_userType1_1_Entry").on(T3);
+        Entry E9 = new Entry(model, "RequestHandler_HandlerIF_main_345_Entry").on(T4);
+        Entry E10 = new Entry(model, "RequestHandler_HandlerIF_login_345_Entry").on(T5);
+        Entry E11 = new Entry(model, "RequestHandler_HandlerIF_checkLogin_345_Entry").on(T6);
+        Entry E12 = new Entry(model, "RequestHandler_HandlerIF_logout_345_Entry").on(T7);
+        Entry E13 = new Entry(model, "UsageScenario_userType2_7_Entry").on(T8);
+        Entry E14 = new Entry(model, "RequestHandler_HandlerIF_quickadd_345_Entry").on(T9);
 
-        Activity A1 = new Activity(model, "FrontEnd_CPU_Activity", new Exp(1.0)); A1.on(T1); A1.boundTo(E1); A1.repliesTo(E1);
-        Activity A2 = new Activity(model, "InternalAction_main__Iu1-wMhoEeKON4DtRoKCMw_34_50_Activity", new Exp(100)); A2.on(T1); A2.boundTo(E2); A2.repliesTo(E2);
-        Activity A3 = new Activity(model, "InternalAction_login__YgxRGw26EeSPwb7XgvxhWQ_34_50_Activity", new Exp(100)); A3.on(T1); A3.boundTo(E3); A3.repliesTo(E3);
-        Activity A4 = new Activity(model, "InternalAction_CheckLogin__vHMZsMhoEeKON4DtRoKCMw_34_50_Activity", new Exp(100)); A4.on(T1); A4.boundTo(E4); A4.repliesTo(E4);
-        Activity A5 = new Activity(model, "InternalAction_logout__j-2E4MhrEeKON4DtRoKCMw_34_50_Activity", new Exp(100)); A5.on(T1); A5.boundTo(E5); A5.repliesTo(E5);
-        Activity A6 = new Activity(model, "InternalAction_addcart__5JEHQMhoEeKON4DtRoKCMw_34_50_Activity", new Exp(100)); A6.on(T1); A6.boundTo(E6); A6.repliesTo(E6);
-        Activity A7 = new Activity(model, "USAGE_DELAY0_Activity", new Exp(1.0/5)); A7.on(T2); A7.boundTo(E7); A7.repliesTo(E7);
-        Activity A8 = new Activity(model, "Start2", new Exp(1.0/3)); A8.on(T3); A8.boundTo(E8);
-        Activity A9 = new Activity(model, "EntryLevelSystemCallcall1main1", new Exp(1.0/2)); A9.on(T3); A9.synchCall(E9,1);
-        Activity A10 = new Activity(model, "EntryLevelSystemCallcall1login", new Exp(1.0/5)); A10.on(T3); A10.synchCall(E10,1);
+        Activity A1 = new Activity(model, "FrontEnd_CPU_Activity", new Exp(1.0)).on(T1).boundTo(E1).repliesTo(E1);
+        Activity A2 = new Activity(model, "InternalAction_main__Iu1-wMhoEeKON4DtRoKCMw_34_50_Activity", new Exp(100)).on(T1).boundTo(E2).repliesTo(E2);
+        Activity A3 = new Activity(model, "InternalAction_login__YgxRGw26EeSPwb7XgvxhWQ_34_50_Activity", new Exp(100)).on(T1).boundTo(E3).repliesTo(E3);
+        Activity A4 = new Activity(model, "InternalAction_CheckLogin__vHMZsMhoEeKON4DtRoKCMw_34_50_Activity", new Exp(100)).on(T1).boundTo(E4).repliesTo(E4);
+        Activity A5 = new Activity(model, "InternalAction_logout__j-2E4MhrEeKON4DtRoKCMw_34_50_Activity", new Exp(100)).on(T1).boundTo(E5).repliesTo(E5);
+        Activity A6 = new Activity(model, "InternalAction_addcart__5JEHQMhoEeKON4DtRoKCMw_34_50_Activity", new Exp(100)).on(T1).boundTo(E6).repliesTo(E6);
+        Activity A7 = new Activity(model, "USAGE_DELAY0_Activity", new Exp(1.0/5)).on(T2).boundTo(E7).repliesTo(E7);
+        Activity A8 = new Activity(model, "Start2", new Exp(1.0/3)).on(T3).boundTo(E8);
+        Activity A9 = new Activity(model, "EntryLevelSystemCallcall1main1", new Exp(1.0/2)).on(T3).synchCall(E9,1);
+        Activity A10 = new Activity(model, "EntryLevelSystemCallcall1login", new Exp(1.0/5)).on(T3).synchCall(E10,1);
         Activity A11 = new Activity(model, "EntryLevelSystemCallcall1checkLogin1", new Exp(1.0/5)); A11.on(T3); A11.synchCall(E11,1);
         Activity A12 = new Activity(model, "EntryLevelSystemCallcall1checkLogin2", new Exp(1.0/5)); A12.on(T3); A12.synchCall(E11,1);
         Activity A13 = new Activity(model, "EntryLevelSystemCallcall1logout", new Exp(1.0/5)); A13.on(T3); A13.synchCall(E12,1);
         Activity A14 = new Activity(model, "EntryLevelSystemCallcall1main2", new Exp(1.0/5)); A14.on(T3); A14.synchCall(E9,1);
         Activity A15 = new Activity(model, "Stop6", new Exp(1.0/5)); A15.on(T3);
-        Activity A16 = new Activity(model, "StartAction_start__EkLVIMhoEeKON4DtRoKCMw_34_5", new Exp(1.0/5)); A16.on(T4); A16.boundTo(E9);
-        Activity A17 = new Activity(model, "InternalAction_main__Iu1-wMhoEeKON4DtRoKCMw_34_50", new Exp(1.0/5)); A17.on(T4); A17.synchCall(E2,1);
+        Activity A16 = new Activity(model, "StartAction_start__EkLVIMhoEeKON4DtRoKCMw_34_5", new Exp(1.0/5)).on(T4).boundTo(E9);
+        Activity A17 = new Activity(model, "InternalAction_main__Iu1-wMhoEeKON4DtRoKCMw_34_50", new Exp(1.0/5)); A17.on(T4).synchCall(E2,1);
         Activity A18 = new Activity(model, "StopAction_stop__EkL8MMhoEeKON4DtRoKCMw_34_5", new Exp(1.0/5)); A18.on(T4); A18.repliesTo(E9);
         Activity A19 = new Activity(model, "StartAction_aName__XJKk8g26EeSPwb7XgvxhWQ_34_5", new Exp(1.0/5)); A19.on(T5); A19.boundTo(E10);
         Activity A20 = new Activity(model, "InternalAction_login__YgxRGw26EeSPwb7XgvxhWQ_34_50", new Exp(1.0/5)); A20.on(T5); A20.synchCall(E3,1);
@@ -1368,6 +1270,330 @@ public class TestModels {
 //            layersolver.getAvgTable();
 //        }
 //        solver.getEnsembleAvg();
+        return model;
+    }
+
+    public static Network test_mixedModel_1() {
+        Network model = new Network("myModel");
+
+        // Block 1: nodes
+        Queue node1 = new Queue(model, "Queue1", SchedStrategy.FCFS);
+        Queue node2 = new Queue(model, "Queue2", SchedStrategy.FCFS);
+        Queue node3 = new Queue(model, "Queue3", SchedStrategy.FCFS);
+        Queue node4 = new Queue(model, "Queue4", SchedStrategy.FCFS);
+        Source node5 = new Source(model, "Source");
+        Sink node6 = new Sink(model, "Sink");
+
+        // Block 2: classes
+        ClosedClass jobclass1 = new ClosedClass(model, "ClosedClass", 100, node1, 0);
+        OpenClass jobclass2 = new OpenClass(model, "OpenClass", 0);
+
+        node1.setService(jobclass1, Exp.fitMean(1.000000)); // (Queue1,ClosedClass)
+        node1.setService(jobclass2, Exp.fitMean(1.000000)); // (Queue1,OpenClass)
+        node2.setService(jobclass1, Exp.fitMean(0.500000)); // (Queue2,ClosedClass)
+        node2.setService(jobclass2, Exp.fitMean(0.707107)); // (Queue2,OpenClass)
+        node3.setService(jobclass1, Exp.fitMean(0.333333)); // (Queue3,ClosedClass)
+        node3.setService(jobclass2, Exp.fitMean(0.577350)); // (Queue3,OpenClass)
+        node4.setService(jobclass1, Exp.fitMean(0.250000)); // (Queue4,ClosedClass)
+        node4.setService(jobclass2, Exp.fitMean(0.500000)); // (Queue4,OpenClass)
+        node5.setArrival(jobclass1, Disabled.getInstance()); // (Source,ClosedClass)
+        node5.setArrival(jobclass2, APH.fitMeanAndSCV(3.000000,64.000000)); // (Source,OpenClass)
+
+        // Block 3: topology
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+
+        routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Queue1,ClosedClass) -> (Queue2,ClosedClass)
+        routingMatrix.set(jobclass1, jobclass1, node2, node3, 1.000000); // (Queue2,ClosedClass) -> (Queue3,ClosedClass)
+        routingMatrix.set(jobclass1, jobclass1, node3, node4, 1.000000); // (Queue3,ClosedClass) -> (Queue4,ClosedClass)
+        routingMatrix.set(jobclass1, jobclass1, node4, node1, 1.000000); // (Queue4,ClosedClass) -> (Queue1,ClosedClass)
+        routingMatrix.set(jobclass2, jobclass2, node1, node2, 1.000000); // (Queue1,OpenClass) -> (Queue2,OpenClass)
+        routingMatrix.set(jobclass2, jobclass2, node2, node3, 1.000000); // (Queue2,OpenClass) -> (Queue3,OpenClass)
+        routingMatrix.set(jobclass2, jobclass2, node3, node6, 1.000000); // (Queue3,OpenClass) -> (Sink,OpenClass)
+        routingMatrix.set(jobclass2, jobclass2, node4, node1, 1.000000); // (Queue4,OpenClass) -> (Queue1,OpenClass)
+        routingMatrix.set(jobclass2, jobclass2, node5, node1, 1.000000); // (Source,OpenClass) -> (Queue1,OpenClass)
+
+        model.link(routingMatrix);
+
+        return model;
+    }
+
+    // For demonstration of State-Dependent Random Environments
+    public static SolverEnv test_randomEnvironment_4() {
+
+      int E = 2;
+      Env envModel = new Env("MyEnv", E);
+      String[] envName = {"Stage1", "Stage2"};
+      String[] envType = {"FAST", "SLOW"};
+
+      // Model in Stage 1
+      Network modelStage1 = new Network("model");
+      Queue queue1Stage1 = new Queue(modelStage1, "Queue1", SchedStrategy.PS);
+      Queue queue2Stage1 = new Queue(modelStage1, "Queue2", SchedStrategy.PS);
+      ClosedClass class1Stage1 = new ClosedClass(modelStage1, "Class1", 8, queue1Stage1, 0);
+      queue1Stage1.setService(class1Stage1, new Exp(100));
+      queue2Stage1.setService(class1Stage1, new Exp(10));
+      modelStage1.link(modelStage1.serialRouting(queue1Stage1, queue2Stage1));
+      envModel.addStage(0, envName[0], envType[0], modelStage1);
+
+      // Model in Stage 2
+      Network modelStage2 = new Network("model");
+      Queue queue1Stage2 = new Queue(modelStage2, "Queue1", SchedStrategy.FCFS);
+      Queue queue2Stage2 = new Queue(modelStage2, "Queue2", SchedStrategy.FCFS);
+      ClosedClass class1Stage2 = new ClosedClass(modelStage2, "Class1", 8, queue1Stage2, 0);
+      queue1Stage2.setService(class1Stage2, new Exp(1));
+      queue2Stage2.setService(class1Stage2, new Exp(10));
+      modelStage2.link(modelStage2.serialRouting(queue1Stage2, queue2Stage2));
+      envModel.addStage(1, envName[1], envType[1], modelStage2);
+
+      Matrix envRates = new Matrix(2, 2);
+      envRates.set(0, 1, 100);
+      envRates.set(1, 0, 0.01);
+
+      Env.ResetEnvRatesFunction resetEnvRatesFunction =
+          (originalDist, QExit, UExit, TExit) -> {
+            double lambda = originalDist.getRate();
+            lambda *= UExit.sumRows(0); // Time-averaged utilisation at Queue1
+            return new Exp(Math.max(lambda, GlobalConstants.Zero));
+          };
+
+      for (int e = 0; e < E; e++) {
+        for (int h = 0; h < E; h++) {
+          if (envRates.get(e, h) > 0) {
+            envModel.addTransition(e, h, new Exp(envRates.get(e, h)));
+          }
+        }
+      }
+      envModel.resetEnvRatesFun[0][1] = resetEnvRatesFunction;
+
+      SolverOptions options = new SolverOptions(SolverType.ENV);
+      options.iter_tol = 0.01;
+      options.timespan[0] = 0;
+      options.method = "statedep";
+
+      SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
+      fluidOptions.method = "matrix";
+      fluidOptions.stiff = false;
+      fluidOptions.setODEMaxStep(0.1);
+      fluidOptions.verbose = VerboseLevel.SILENT;
+
+      NetworkSolver[] solvers = new NetworkSolver[E];
+      for (int e = 0; e < E; e++) {
+        solvers[e] = new SolverFluid(envModel.getModel(e));
+        solvers[e].options = fluidOptions;
+      }
+
+      return new SolverEnv(envModel, solvers, options);
+    }
+
+    // For demonstration of p-Norm Smoothing combined with SolverEnv
+    public static SolverEnv test_randomEnvironment_5() {
+
+      int E = 2;
+      Env envModel = new Env("MyEnv", E);
+      String[] envName = {"Stage1", "Stage2"};
+      String[] envType = {"SLOW", "FAST"};
+
+      // Model in Stage 1
+      Network modelStage1 = new Network("model");
+      Delay delayStage1 = new Delay(modelStage1, "Delay");
+      Queue queueStage1 = new Queue(modelStage1, "Queue", SchedStrategy.PS);
+      ClosedClass class1Stage1 = new ClosedClass(modelStage1, "Class1", 8, delayStage1, 0);
+      delayStage1.setService(class1Stage1, new Exp(1));
+      queueStage1.setService(class1Stage1, new Exp(8));
+      modelStage1.link(modelStage1.serialRouting(delayStage1, queueStage1));
+      envModel.addStage(0, envName[0], envType[0], modelStage1);
+
+      // Model in Stage 2
+      Network modelStage2 = new Network("model");
+      Delay delayStage2 = new Delay(modelStage2, "Delay");
+      Queue queueStage2 = new Queue(modelStage2, "Queue", SchedStrategy.PS);
+      ClosedClass class1Stage2 = new ClosedClass(modelStage2, "Class1", 8, delayStage2, 0);
+      delayStage2.setService(class1Stage2, new Exp(4));
+      queueStage2.setService(class1Stage2, new Exp(8));
+      modelStage2.link(modelStage2.serialRouting(delayStage2, queueStage2));
+      envModel.addStage(1, envName[1], envType[1], modelStage2);
+
+      Matrix envRates = new Matrix(2, 2);
+      envRates.set(0, 1, 0.001); // Replace with 1000 to test Figure 6.11 results
+      envRates.set(1, 0, 0.001); // Replace with 1000 to test Figure 6.11 results
+
+      for (int e = 0; e < E; e++) {
+        for (int h = 0; h < E; h++) {
+          if (envRates.get(e, h) > 0) {
+            envModel.addTransition(e, h, new Exp(envRates.get(e, h)));
+          }
+        }
+      }
+
+      SolverOptions options = new SolverOptions(SolverType.ENV);
+      options.iter_tol = 0.01;
+      options.timespan[0] = 0;
+
+      SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
+      fluidOptions.method = "matrix";
+      fluidOptions.stiff = false;
+      fluidOptions.setODEMaxStep(0.1);
+      fluidOptions.verbose = VerboseLevel.SILENT;
+
+      NetworkSolver[] solvers = new NetworkSolver[E];
+      for (int e = 0; e < E; e++) {
+        solvers[e] = new SolverFluid(envModel.getModel(e));
+        solvers[e].options = fluidOptions;
+        // Activating p-Norm Smoothing by providing each solver with an initial set of pStar values.
+        // Going forwards, the pStar values are refreshed within SolverEnv's 'analyze' method
+  //      PStarSearcher searcher = new PStarSearcher();
+  //      Matrix targetQueueLengths = searcher.generateTargetQueueLengths(solvers[e].model);
+  //      PointValuePair pStarValues = searcher.findPStarValues(solvers[e].model, targetQueueLengths);
+  //      for (int i = 0; i < solvers[e].model.getNumberOfNodes(); i++) {
+  //        solvers[e].options.config.pstar.add(i, pStarValues.getPoint()[i]);
+  //      }
+      }
+
+      return new SolverEnv(envModel, solvers, options);
+    }
+
+    // node 3 arrival time matches matlab, ex3_line kept as used in other tests
+    public static Network test_openModel_1(){
+        Network model = new Network("myModel");
+
+        // Block 1: nodes
+        Delay node1 = new Delay(model, "Delay");
+        Queue node2 = new Queue(model, "Queue1", SchedStrategy.FCFS);
+        Source node3 = new Source(model, "Source");
+        Sink node4 = new Sink(model, "Sink");
+
+        // Block 2: classes
+        OpenClass jobclass1 = new OpenClass(model, "Class1", 0);
+
+        node1.setService(jobclass1, new HyperExp(0.5, 3.0, 10.0));
+        node2.setService(jobclass1, new Exp(1));
+        //node2.setService(jobclass1, new Replayer("/home/gcasale/Dropbox/code/line-solver.git/python/gettingstarted/example_trace.txt"));
+        node3.setArrival(jobclass1, new Exp(0.1));
+
+        // Block 3: topology
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+
+        routingMatrix.set(jobclass1, jobclass1, node1, node2, 1);
+        routingMatrix.set(jobclass1, jobclass1, node2, node4, 1);
+        routingMatrix.set(jobclass1, jobclass1, node3, node1, 1);
+
+        model.link(routingMatrix);
+
+        return model;
+    }
+
+    public static Network test_openModel_1b() {
+        Network model = new Network("myModel");
+
+        // Block 1: nodes
+        Source node1 = new Source(model, "Source 1");
+        Queue node2 = new Queue(model, "Queue 1", SchedStrategy.PS);
+        ClassSwitch node3 = new ClassSwitch(model, "ClassSwitch 1"); // Dummy node, class switching is embedded in the routing matrix P
+        Sink node4 = new Sink(model, "Sink 1");
+        Queue node5 = new Queue(model, "Queue 2", SchedStrategy.PS);
+
+        // Block 2: classes
+        OpenClass jobclass1 = new OpenClass(model, "Class A", 0);
+        OpenClass jobclass2 = new OpenClass(model, "Class B", 0);
+        OpenClass jobclass3 = new OpenClass(model, "Class C", 0);
+
+        node1.setArrival(jobclass1, Exp.fitMean(0.500000)); // (Source 1,Class A)
+        node1.setArrival(jobclass2, Exp.fitMean(1.000000)); // (Source 1,Class B)
+        node1.setArrival(jobclass3, Disabled.getInstance()); // (Source 1,Class C)
+        node2.setService(jobclass1, Exp.fitMean(0.200000)); // (Queue 1,Class A)
+        node2.setService(jobclass2, Exp.fitMean(0.300000)); // (Queue 1,Class B)
+        node2.setService(jobclass3, Exp.fitMean(0.333333)); // (Queue 1,Class C)
+        node5.setService(jobclass1, Exp.fitMean(1.000000)); // (Queue 2,Class A)
+        node5.setService(jobclass2, Exp.fitMean(1.000000)); // (Queue 2,Class B)
+        node5.setService(jobclass3, Exp.fitMean(0.150000)); // (Queue 2,Class C)
+
+        // Block 3: topology
+        ClassSwitchMatrix C = node3.initClassSwitchMatrix();
+        C.setTo(Matrix.eye(C.length()));
+        node3.setClassSwitchingMatrix(C);
+
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+
+        routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Source 1,Class A) -> (Queue 1,Class A)
+        routingMatrix.set(jobclass1, jobclass1, node2, node3, 1.000000); // (Queue 1,Class A) -> (ClassSwitch 1,Class A)
+        routingMatrix.set(jobclass1, jobclass1, node5, node4, 1.000000); // (Queue 2,Class A) -> (Sink 1,Class A)
+        routingMatrix.set(jobclass1, jobclass3, node3, node5, 1.000000); // (ClassSwitch 1,Class A) -> (Queue 2,Class C)
+        routingMatrix.set(jobclass2, jobclass2, node1, node2, 1.000000); // (Source 1,Class B) -> (Queue 1,Class B)
+        routingMatrix.set(jobclass2, jobclass2, node2, node3, 1.000000); // (Queue 1,Class B) -> (ClassSwitch 1,Class B)
+        routingMatrix.set(jobclass2, jobclass2, node5, node4, 1.000000); // (Queue 2,Class B) -> (Sink 1,Class B)
+        routingMatrix.set(jobclass2, jobclass3, node3, node5, 1.000000); // (ClassSwitch 1,Class B) -> (Queue 2,Class C)
+        routingMatrix.set(jobclass3, jobclass3, node1, node2, 1.000000); // (Source 1,Class C) -> (Queue 1,Class C)
+        routingMatrix.set(jobclass3, jobclass3, node2, node3, 1.000000); // (Queue 1,Class C) -> (ClassSwitch 1,Class C)
+        routingMatrix.set(jobclass3, jobclass3, node3, node5, 1.000000); // (ClassSwitch 1,Class C) -> (Queue 2,Class C)
+        routingMatrix.set(jobclass3, jobclass3, node5, node4, 1.000000); // (Queue 2,Class C) -> (Sink 1,Class C)
+
+        model.link(routingMatrix);
+
+        return model;
+    }
+
+    public static Network example_openModel_6() {
+        Network model = new Network("myModel");
+
+        // Block 1: nodes
+        Source node1 = new Source(model, "Source");
+        Queue node2 = new Queue(model, "Queue1", SchedStrategy.FCFS);
+        Queue node3 = new Queue(model, "Queue2", SchedStrategy.FCFS);
+        Queue node4 = new Queue(model, "Queue3", SchedStrategy.PS);
+        Queue node5 = new Queue(model, "Queue4", SchedStrategy.FCFS);
+        Sink node6 = new Sink(model, "Sink");
+
+        // Block 2: classes
+        OpenClass jobclass1 = new OpenClass(model, "Class1", 0);
+        OpenClass jobclass2 = new OpenClass(model, "Class2", 0);
+        OpenClass jobclass3 = new OpenClass(model, "Class3", 0);
+
+        node1.setArrival(jobclass1, Exp.fitMean(5.000000)); // (Source,Class1)
+        node1.setArrival(jobclass2, Exp.fitMean(8.000000)); // (Source,Class2)
+        node1.setArrival(jobclass3, Exp.fitMean(7.000000)); // (Source,Class3)
+        node2.setService(jobclass1, Exp.fitMean(0.300000)); // (Queue1,Class1)
+        node2.setService(jobclass2, Exp.fitMean(0.500000)); // (Queue1,Class2)
+        node2.setService(jobclass3, Exp.fitMean(0.600000)); // (Queue1,Class3)
+        node3.setService(jobclass1, Exp.fitMean(1.100000)); // (Queue2,Class1)
+        node3.setService(jobclass2, Exp.fitMean(1.300000)); // (Queue2,Class2)
+        node3.setService(jobclass3, Exp.fitMean(1.500000)); // (Queue2,Class3)
+        node4.setService(jobclass1, Exp.fitMean(2.000000)); // (Queue3,Class1)
+        node4.setService(jobclass2, Exp.fitMean(2.100000)); // (Queue3,Class2)
+        node4.setService(jobclass3, Exp.fitMean(1.900000)); // (Queue3,Class3)
+        node5.setService(jobclass1, Exp.fitMean(1.500000)); // (Queue4,Class1)
+        node5.setService(jobclass2, Exp.fitMean(0.900000)); // (Queue4,Class2)
+        node5.setService(jobclass3, Exp.fitMean(2.300000)); // (Queue4,Class3)
+
+        // Block 3: topology
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+
+        routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Source,Class1) -> (Queue1,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node2, node3, 0.250000); // (Queue1,Class1) -> (Queue2,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node2, node4, 0.250000); // (Queue1,Class1) -> (Queue3,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node2, node5, 0.250000); // (Queue1,Class1) -> (Queue4,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node2, node6, 0.250000); // (Queue1,Class1) -> (Sink,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node3, node2, 1.000000); // (Queue2,Class1) -> (Queue1,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node4, node2, 1.000000); // (Queue3,Class1) -> (Queue1,Class1)
+        routingMatrix.set(jobclass1, jobclass1, node5, node2, 1.000000); // (Queue4,Class1) -> (Queue1,Class1)
+        routingMatrix.set(jobclass2, jobclass2, node1, node2, 1.000000); // (Source,Class2) -> (Queue1,Class2)
+        routingMatrix.set(jobclass2, jobclass2, node2, node3, 0.250000); // (Queue1,Class2) -> (Queue2,Class2)
+        routingMatrix.set(jobclass2, jobclass2, node2, node4, 0.250000); // (Queue1,Class2) -> (Queue3,Class2)
+        routingMatrix.set(jobclass2, jobclass2, node2, node5, 0.250000); // (Queue1,Class2) -> (Queue4,Class2)
+        routingMatrix.set(jobclass2, jobclass2, node2, node6, 0.250000); // (Queue1,Class2) -> (Sink,Class2)
+        routingMatrix.set(jobclass2, jobclass2, node3, node2, 1.000000); // (Queue2,Class2) -> (Queue1,Class2)
+        routingMatrix.set(jobclass2, jobclass2, node4, node2, 1.000000); // (Queue3,Class2) -> (Queue1,Class2)
+        routingMatrix.set(jobclass2, jobclass2, node5, node2, 1.000000); // (Queue4,Class2) -> (Queue1,Class2)
+        routingMatrix.set(jobclass3, jobclass3, node1, node2, 1.000000); // (Source,Class3) -> (Queue1,Class3)
+        routingMatrix.set(jobclass3, jobclass3, node2, node3, 0.250000); // (Queue1,Class3) -> (Queue2,Class3)
+        routingMatrix.set(jobclass3, jobclass3, node2, node4, 0.250000); // (Queue1,Class3) -> (Queue3,Class3)
+        routingMatrix.set(jobclass3, jobclass3, node2, node5, 0.250000); // (Queue1,Class3) -> (Queue4,Class3)
+        routingMatrix.set(jobclass3, jobclass3, node2, node6, 0.250000); // (Queue1,Class3) -> (Sink,Class3)
+        routingMatrix.set(jobclass3, jobclass3, node3, node2, 1.000000); // (Queue2,Class3) -> (Queue1,Class3)
+        routingMatrix.set(jobclass3, jobclass3, node4, node2, 1.000000); // (Queue3,Class3) -> (Queue1,Class3)
+        routingMatrix.set(jobclass3, jobclass3, node5, node2, 1.000000); // (Queue4,Class3) -> (Queue1,Class3)
+
+        model.link(routingMatrix);
+
         return model;
     }
 }

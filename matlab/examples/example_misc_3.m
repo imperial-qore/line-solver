@@ -34,9 +34,6 @@ node{2}.setProbRouting(jobclass{2}, node{1}, 1.0)
 node{3}.setProbRouting(jobclass{1}, node{1}, 1.0)
 node{3}.setProbRouting(jobclass{2}, node{1}, 1.0)
 
-M = model.getNumberOfStations();
-K = model.getNumberOfClasses();
-
 % This part illustrates the execution of different solvers
 
 solver={};

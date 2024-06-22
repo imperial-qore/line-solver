@@ -211,8 +211,7 @@ public class ForkJoinModel {
         queue2.setService(jobclass2, new Exp(2.0));
         delay.setService(jobclass2, new Exp(0.2));
 
-        RoutingMatrix routingMatrix = new RoutingMatrix(model, Arrays.asList(jobclass1, jobclass2),
-                Arrays.asList(delay, queue1, queue2, fork, join));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, delay, fork, 1);
         routingMatrix.set(jobclass1, jobclass1, fork, queue1, 1);
@@ -307,8 +306,7 @@ public class ForkJoinModel {
         queue3.setService(jobclass1, new Exp(2.0));
         queue4.setService(jobclass1, new Exp(2.0));
 
-        RoutingMatrix routingMatrix = new RoutingMatrix(model, Collections.singletonList(jobclass1),
-                Arrays.asList(delay, queue1, queue2, fork, join, queue3, queue4, fork2, join2));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, delay, fork, 1);
         routingMatrix.set(jobclass1, jobclass1, fork, queue1, 1);

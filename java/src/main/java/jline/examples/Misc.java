@@ -43,9 +43,7 @@ public class Misc {
         model.addLink(node3, node1);
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2),
-                Arrays.asList(node1, node2, node3));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         node1.setProbRouting(jobclass1, node2, 0.300000); // (Delay,Class1) -> (Queue1,Class1)
         node1.setProbRouting(jobclass1, node3, 0.700000); // (Delay,Class1) -> (Queue2,Class1)

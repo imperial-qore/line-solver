@@ -274,7 +274,7 @@ public class AfterEventTest {
 
     @Test
     public void returnsCorrectSpaceRateProb14() {
-        NetworkStruct sn = OpenModel.ex1_line().getStruct(false);
+        NetworkStruct sn = OpenModel.example_openModel_1().getStruct(false);
         Matrix inspace = new Matrix(1, 2);
         inspace.fromArray2D(new double[][]{{Double.POSITIVE_INFINITY, 1.0}});
 

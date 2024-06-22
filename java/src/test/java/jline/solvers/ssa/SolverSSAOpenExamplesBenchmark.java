@@ -1,7 +1,6 @@
 package jline.solvers.ssa;
 
-import jline.examples.ClosedModel;
-import jline.examples.OpenModel;
+import jline.examples.TestModels;
 import jline.lang.Network;
 import jline.solvers.SolverOptions;
 
@@ -12,7 +11,7 @@ public class SolverSSAOpenExamplesBenchmark {
         options1.keep = true;
         options1.cutoff = 10;
         options1.samples = 100000;
-        timeSolver(OpenModel.ex1_line_v(), "Open Example 1, FCFS", options1);
+        timeSolver(TestModels.test_openModel_1(), "Open Example 1, FCFS", options1);
 
 //        SolverOptions options3 = new SolverOptions();
 //        options3.keep = true;

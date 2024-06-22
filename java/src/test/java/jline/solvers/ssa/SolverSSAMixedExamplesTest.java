@@ -1,11 +1,8 @@
 package jline.solvers.ssa;
 
-import jline.examples.ClosedModel;
 import jline.examples.MixedModel;
-import jline.examples.OpenModel;
 import jline.lang.Network;
 import jline.lang.constant.GlobalConstants;
-import jline.lang.constant.SolverType;
 import jline.solvers.NetworkAvgTable;
 import jline.solvers.SolverOptions;
 import jline.util.Maths;
@@ -13,7 +10,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -46,7 +42,7 @@ public class SolverSSAMixedExamplesTest {
         List<Double> ArvR = Arrays.asList(2.2094, 0.1, 2.1181, 0.08683, 0.0);
         List<Double> Tval = Arrays.asList(2.1181, 0.08683, 2.2094, 0.10236, 0.1);
 
-        Network sn = MixedModel.ex1_line();
+        Network sn = MixedModel.example_mixedModel_1();
         SolverOptions options = new SolverOptions();
         options.keep = true;
         options.cutoff = 3;
@@ -95,7 +91,7 @@ public class SolverSSAMixedExamplesTest {
         List<Double> ArvR = Arrays.asList(0.67299, 0.27014, 0.71856, 0.2558, 0.67181, 0.25967, 0.71395, 0.26175, 0.0);
         List<Double> Tval = Arrays.asList(0.71856, 0.2558, 0.67181, 0.25967, 0.71395, 0.26175, 0.67299, 0.24784, 0.27014);
 
-        Network sn = MixedModel.ex2();
+        Network sn = MixedModel.example_mixedModel_2();
         SolverOptions options = new SolverOptions();
         options.keep = false;
         options.cutoff = 3;
@@ -143,7 +139,7 @@ public class SolverSSAMixedExamplesTest {
         List<Double> ArvR = Arrays.asList(0.42893, 0.3, 0.43541, 0.28574, 0.44469, 0.27006, 0.39506, 0.28181, 0.0);
         List<Double> Tval = Arrays.asList(0.43541, 0.28574, 0.44469, 0.27006, 0.39506, 0.28181, 0.42893, 0.29868, 0.3);
 
-        Network sn = MixedModel.ex3();
+        Network sn = MixedModel.example_mixedModel_3();
         SolverOptions options = new SolverOptions();
         options.keep = false;
         options.cutoff = 3;
@@ -191,7 +187,7 @@ public class SolverSSAMixedExamplesTest {
         List<Double> ArvR = Arrays.asList(0.98494, 0.028814, 0.97135, 0.028633, 0.96799, 0.028024, 0.98421, 0.0);
         List<Double> Tval = Arrays.asList(0.97135, 0.028633, 0.96799, 0.028024, 0.98421, 0.028476, 0.98494, 0.028814);
 
-        Network sn = MixedModel.ex5();
+        Network sn = MixedModel.example_mixedModel_5();
         SolverOptions options = new SolverOptions();
         options.keep = false;
         options.cutoff = 3;

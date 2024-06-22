@@ -163,7 +163,7 @@ public class SolverJMTIOTest {
 
     @Test
     public void test_example_mixedModel_1() throws ParserConfigurationException {
-        Network model = MixedModel.ex1_line();
+        Network model = MixedModel.example_mixedModel_1();
 
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;

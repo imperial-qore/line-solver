@@ -1,8 +1,7 @@
 package jline.solvers.ssa;
 
-import jline.examples.ClosedModel;
-import jline.examples.MixedModel;
 import jline.examples.OpenModel;
+import jline.examples.TestModels;
 import jline.lang.Network;
 import jline.lang.constant.GlobalConstants;
 import jline.solvers.NetworkAvgTable;
@@ -41,7 +40,7 @@ public class SolverSSAOpenExamplesTest {
         List<Double> ArvR = Arrays.asList(0.1, 0.10338, 0.0);
         List<Double> Tval = Arrays.asList(0.10338, 0.10312, 0.1);
 
-        Network sn = OpenModel.ex1_line_v();
+        Network sn = TestModels.test_openModel_1();
         SolverOptions options = new SolverOptions();
         options.keep = true;
         options.cutoff = 10;
@@ -92,7 +91,7 @@ public class SolverSSAOpenExamplesTest {
         List<Double> ArvR = Arrays.asList(0.0, 0.0, 1.9801, 0.99938, 2.9103);
         List<Double> Tval = Arrays.asList(1.9801, 0.99938, 1.8942, 1.016, 2.9253);
 
-        Network sn = OpenModel.ex3_line();
+        Network sn = OpenModel.example_openModel_3();
         SolverOptions options = new SolverOptions();
         options.keep = true;
         options.cutoff = 7;
@@ -142,7 +141,7 @@ public class SolverSSAOpenExamplesTest {
         List<Double> ArvR = Arrays.asList(0.0, 0.0, 0.0, 0.55253, 0.34159, 0.40949, 0.11747, 0.074017, 0.086579, 0.11747, 0.074017, 0.086579, 0.11747, 0.074017, 0.086579);
         List<Double> Tval = Arrays.asList(0.2, 0.125, 0.14286, 0.46988, 0.29607, 0.34632, 0.12738, 0.073688, 0.10229, 0.095963, 0.069604, 0.072595, 0.12919, 0.073301, 0.09175);
 
-        Network sn = OpenModel.ex6();
+        Network sn = TestModels.example_openModel_6();
         SolverOptions options = new SolverOptions();
         options.cutoff = 1;
         options.seed = 1;
