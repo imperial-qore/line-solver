@@ -15,14 +15,11 @@ import jline.solvers.mva.SolverMVA;
 import jline.util.Matrix;
 import jline.solvers.NetworkAvgTable;
 
-import java.util.Arrays;
-import java.util.Collections;
-
 /**
  * Examples of models with load-dependent stations
  */
 public class LoadDependent {
-    public static Network ex1(){
+    public static Network example_loadDependent_1(){
         int N = 16; // number of jobs
         int c = 2; // number of servers
         Network model = new Network("model");
@@ -36,16 +33,14 @@ public class LoadDependent {
             alpha.set(0, i, Maths.min(i+1, c));
         }
         node2.setLoadDependence(alpha);
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Collections.singletonList(jobclass1),
-                Arrays.asList(node1, node2));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.0);
         routingMatrix.set(jobclass1, jobclass1, node2, node1, 1.0);
         model.link(routingMatrix);
         return model;
     }
 
-    public static Network ex2(){
+    public static Network example_loadDependent_2(){
         int N = 4; // number of jobs
         int c = 2; // number of servers
         Network model = new Network("model");
@@ -62,9 +57,7 @@ public class LoadDependent {
             alpha.set(0, i, Maths.min(i+1, c));
         }
         node2.setLoadDependence(alpha);
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2),
-                Arrays.asList(node1, node2));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.0);
         routingMatrix.set(jobclass1, jobclass1, node2, node1, 1.0);
         routingMatrix.set(jobclass2, jobclass2, node1, node2, 1.0);
@@ -73,7 +66,7 @@ public class LoadDependent {
         return model;
     }
 
-    public static Network ex3(){
+    public static Network example_loadDependent_3(){
         int N = 4; // number of jobs
         int c = 3; // number of servers
         Network model = new Network("model");
@@ -100,9 +93,7 @@ public class LoadDependent {
             alpha.set(0, i, Maths.min(i+1, c));
         }
         node3.setLoadDependence(alpha);
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2),
-                Arrays.asList(node1, node2, node3));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.0);
         routingMatrix.set(jobclass1, jobclass1, node2, node3, 1.0);
         routingMatrix.set(jobclass1, jobclass1, node3, node1, 1.0);
@@ -114,8 +105,20 @@ public class LoadDependent {
         return model;
     }
 
+    public static Network example_loadDependent_4() {
+        Network model = new Network("model");
+        // TODO
+        return model;
+    }
+
+    public static Network example_loadDependent_5() {
+        Network model = new Network("model");
+        // TODO
+        return model;
+    }
+
     public static void main(String[] args) {
-        Network model = ex2();
+        Network model = example_loadDependent_2();
         SolverOptions options = new SolverOptions(SolverType.MVA);
         options.method = "default";
         NetworkSolver solver = new SolverMVA(model, options);
