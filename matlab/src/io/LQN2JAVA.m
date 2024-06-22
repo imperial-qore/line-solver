@@ -41,9 +41,9 @@ fprintf(fid,'\n');
 for t=1:sn.ntasks
     tidx = sn.tshift+t;
     if isinf(sn.mult(tidx))
-        fprintf(fid, '\tTask T%d = new Task(model, "%s", Integer.MAX_VALUE, %s); T%d.on(P%d);\n', t, sn.names{tidx}, strrep(SchedStrategy.toFeature(sn.sched{tidx}),'_','.'), t,sn.parent(tidx));
+        fprintf(fid, '\tTask T%d = new Task(model, "%s", Integer.MAX_VALUE, %s).on(P%d);\n', t, sn.names{tidx}, strrep(SchedStrategy.toFeature(sn.sched{tidx}),'_','.'), sn.parent(tidx));
     else
-        fprintf(fid, '\tTask T%d = new Task(model, "%s", %d, %s); T%d.on(P%d);\n', t, sn.names{tidx}, sn.mult(tidx), strrep(SchedStrategy.toFeature(sn.sched{tidx}),'_','.'), t,sn.parent(tidx));
+        fprintf(fid, '\tTask T%d = new Task(model, "%s", %d, %s).on(P%d);\n', t, sn.names{tidx}, sn.mult(tidx), strrep(SchedStrategy.toFeature(sn.sched{tidx}),'_','.'), sn.parent(tidx));
     end
     if sn.repl(tidx)~=1
         fprintf(fid, '\tT%d.setReplication(%d);\n', t, sn.repl(tidx));
@@ -65,7 +65,7 @@ fprintf(fid,'\n');
 %% entries
 for e=1:sn.nentries
     eidx = sn.eshift+e;
-    fprintf(fid, '\tEntry E%d = new Entry(model, "%s"); E%d.on(T%d);\n', e, sn.names{eidx},e,sn.parent(eidx)-sn.tshift);
+    fprintf(fid, '\tEntry E%d = new Entry(model, "%s").on(T%d);\n', e, sn.names{eidx},sn.parent(eidx)-sn.tshift);
 end
 fprintf(fid,'\n');
 %% activities
@@ -102,11 +102,11 @@ for a=1:sn.nacts
     end
     switch sn.hostdem{aidx}.name
         case 'Immediate'
-            fprintf(fid, '\tActivity A%d = new Activity(model, "%s", new Immediate()); A%d.on(T%d);', a, sn.names{aidx}, a, onTask);
+            fprintf(fid, '\tActivity A%d = new Activity(model, "%s", new Immediate()).on(T%d);', a, sn.names{aidx}, onTask);
         case 'Exp'
-            fprintf(fid, '\tActivity A%d = new Activity(model, "%s", new Exp(%g)); A%d.on(T%d);', a, sn.names{aidx},1/sn.hostdem{aidx}.getMean, a, onTask);
+            fprintf(fid, '\tActivity A%d = new Activity(model, "%s", new Exp(%g)).on(T%d);', a, sn.names{aidx},1/sn.hostdem{aidx}.getMean, onTask);
         case {'Erlang','HyperExp','Coxian','APH'}
-            fprintf(fid, '\tActivity A%d = new Activity(model, "%s", %s.fitMeanAndSCV(%g,%g)); A%d.on(T%d);', a, sn.names{aidx},sn.hostdem{aidx}.name,sn.hostdem{aidx}.getMean,sn.hostdem{aidx}.getSCV, a, onTask);
+            fprintf(fid, '\tActivity A%d = new Activity(model, "%s", %s.fitMeanAndSCV(%g,%g)).on(T%d);', a, sn.names{aidx},sn.hostdem{aidx}.name,sn.hostdem{aidx}.getMean,sn.hostdem{aidx}.getSCV, onTask);
         otherwise
             line_error(mfilename,sprintf('LQN2SCRIPT does not support the %d distribution yet.',sn.hostdem{aidx}.name));
     end

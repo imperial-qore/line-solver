@@ -217,7 +217,7 @@ while max(max(abs(TN-TN_1))) > tol && it <= options.iter_max %#ok<max>
                                             end
                                         else
                                             if sn.isfunction(ist)
-                                                [Qret{1:K}] = qbd_setupdelayoff(ist, sn, aggrLambda);                                               
+                                                [Qret{1:K}] = qbd_setupdelayoff(ist, sn, aggrLambda);
                                             else
                                                 [pdistr{1:K}] = MMAPPH1FCFS(D, {pie{ist}{:}}, {D0{ist,:}}, 'ncDistr', maxLevel);
                                             
