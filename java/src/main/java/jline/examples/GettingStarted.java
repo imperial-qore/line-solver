@@ -1,16 +1,14 @@
 package jline.examples;
 
-import jline.lang.constant.RoutingStrategy;
-import jline.lang.constant.SolverType;
-import jline.lang.constant.VerboseLevel;
+import jline.lang.constant.*;
 import jline.lang.nodes.*;
 import jline.lang.processes.Replayer;
 import jline.solvers.*;
 import jline.solvers.ctmc.SolverCTMC;
 import jline.lang.nodes.Delay;
 import jline.lang.*;
-import jline.lang.constant.SchedStrategy;
 import jline.lang.distributions.*;
+import jline.solvers.fluid.SolverFluid;
 import jline.solvers.jmt.JMTOptions;
 import jline.solvers.jmt.SolverJMT;
 import jline.solvers.mva.SolverMVA;
@@ -38,7 +36,7 @@ import static jline.solvers.jmt.JMTOptions.*;
  */
 public class GettingStarted {
 
-    public static void getting_started_1() {
+    public static Network getting_started_1() {
         Network model = new Network("M/M/1");
         // Block 1: nodes
         Source source = new Source(model, "Source");
@@ -56,9 +54,11 @@ public class GettingStarted {
         //model.jsimgView();
         avgTable.tget(queue, jobclass).print();
         avgTable.tget("Queue", "Class1").print();
+
+        return model;
     }
 
-    public static void getting_started_2() {
+    public static Network getting_started_2() {
         Network model = new Network("M/G/1");
         Source source = new Source(model, "Source");
         Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
@@ -82,9 +82,11 @@ public class GettingStarted {
         model.link(P);
         NetworkAvgTable avgTable = new SolverJMT(model, "seed", 23000).getAvgTable();
         avgTable.print();
+
+        return model;
     }
 
-    public static void getting_started_3() {
+    public static Network getting_started_3() {
         Network model = new Network("MRP");
         Delay delay = new Delay(model, "WorkingState");
         Queue queue = new Queue(model, "RepairQueue", SchedStrategy.FCFS);
@@ -102,9 +104,10 @@ public class GettingStarted {
 //        }
 //        Matrix infGen = solver.getGenerator();
 //        infGen.print();
+        return model;
     }
 
-    public static void getting_started_4() {
+    public static Network getting_started_4() {
         Network model = new Network("RRLB");
         Source source = new Source(model, "Source");
         Router lb = new Router(model, "LB");
@@ -126,9 +129,10 @@ public class GettingStarted {
         model.reset();
         lb.setRouting(jobclass, RoutingStrategy.RROBIN);
         new SolverJMT(model, "seed", 23000).getAvgTable().print();
+        return model;
     }
 
-    public static void getting_started_5() {
+    public static Network getting_started_5() {
         Network model = new Network("RL");
         Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
         ClosedClass jobClass1 = new ClosedClass(model, "Class1", 1, queue);
@@ -147,10 +151,71 @@ public class GettingStarted {
         jobClass1.setCompletes(false);
         jobClass2.setCompletes(false);
         new SolverNC(model).getAvgSysTable().print();
+        return model;
     }
 
+    public static Network getting_started_6() {
+            Network model = new Network("Model");
 
-    public static void getting_started_8() {
+            // Block 1: nodes
+            Delay clientDelay = new Delay(model, "Client");
+            Cache cacheNode = new Cache(model, "Cache", 1000, 50, ReplacementStrategy.LRU);
+            Delay cacheDelay = new Delay(model, "CacheDelay");
+
+            // Block 2: classes
+            ClosedClass clientClass = new ClosedClass(model, "ClientClass", 1, clientDelay, 0);
+            ClosedClass hitClass = new ClosedClass(model, "HitClass", 0, clientDelay, 0);
+            ClosedClass missClass = new ClosedClass(model, "MissClass", 0, clientDelay, 0);
+
+            clientDelay.setService(clientClass, new Immediate()); // (Client,ClientClass)
+            cacheDelay.setService(hitClass, Exp.fitMean(0.200000)); // (CacheDelay,HitClass)
+            cacheDelay.setService(missClass, Exp.fitMean(1.000000)); // (CacheDelay,MissClass)
+
+            cacheNode.setRead(clientClass, new Zipf(1.4,1000));
+            cacheNode.setHitClass(clientClass, hitClass);
+            cacheNode.setMissClass(clientClass, missClass);
+
+            // Block 3: topology
+            RoutingMatrix routingMatrix = model.initRoutingMatrix();
+
+            routingMatrix.set(clientClass, clientClass, clientDelay, cacheNode, 1.000000); // (Client,ClientClass) -> (Cache,ClientClass)
+
+            routingMatrix.set(hitClass, hitClass, cacheNode, cacheDelay, 1.000000); // (Client,HitClass) -> (Cache,HitClass)
+            routingMatrix.set(missClass, missClass, cacheNode, cacheDelay, 1.000000); // (Cache,MissClass) -> (CacheDelay,MissClass)
+
+            routingMatrix.set(hitClass, clientClass, cacheDelay, clientDelay, 1.000000); // (Cache,HitClass) -> (CacheDelay,HitClass)
+            routingMatrix.set(missClass, clientClass, cacheDelay, clientDelay, 1.000000); // (Client,MissClass) -> (Cache,MissClass)
+
+            model.link(routingMatrix);
+            //TODO
+            //new SolverSSA(model,"samples",2e4,"seed",1,"verbose",true).getAvgTable().print();
+            return model;
+        }
+
+    public static Network getting_started_7() {
+        Network model = new Network("Model");
+
+        // Block 1: nodes
+        Delay node1 = new Delay(model, "Delay");
+        Queue node2 = new Queue(model, "Queue1", SchedStrategy.PS);
+
+        // Block 2: classes
+        ClosedClass jobclass1 = new ClosedClass(model, "Class1", 5, node1, 0);
+
+        node1.setService(jobclass1, Exp.fitMean(1.000000)); // (Delay,Class1)
+        node2.setService(jobclass1, Exp.fitMean(2.000000)); // (Queue1,Class1)
+
+        // Block 3: topology
+        model.link(Network.serialRouting(node1,node2));
+
+        //TODO
+        //RDfluid = new SolverFluid(model).getCdfRespT();
+        //RDsim = new SolverJMT(model,"seed",23000,"samples",1e4).getCdfRespT();
+
+        return model;
+    }
+
+    public static Network getting_started_8() {
         Network model = new Network("LoadBalCQN");
 
         // Block 1: nodes
@@ -191,9 +256,18 @@ public class GettingStarted {
         Cobyla.findMinimum(objFun, 1, 0, p, 0.5, 1.0e-8, 0, 10000);
 
         System.out.println("Optimal p: " + p[0]);
+        return model;
+    }
+
+    public static void getting_started_9() {
+        // TODO
+    }
+
+    public static void getting_started_10() {
+        // TODO
     }
 
     public static void main(String[] args) throws IllegalAccessException, ParserConfigurationException {
-        getting_started_1();
+        getting_started_6();
     }
 }

@@ -127,7 +127,7 @@ for i=1:sn.nstations
                             if SCVik == 1
                                 meanik = map_mean(PH{i}{k});
                                 if meanik < GlobalConstants.CoarseTol
-                                    fprintf(fid,'\t\tnode%d.setArrival(jobclass%d, Immediate()); // (%s,%s)\n',sn.stationToNode(i),k,sn.nodenames{sn.stationToNode(i)},sn.classnames{k});
+                                    fprintf(fid,'\t\tnode%d.setArrival(jobclass%d, Immediate.getInstance()); // (%s,%s)\n',sn.stationToNode(i),k,sn.nodenames{sn.stationToNode(i)},sn.classnames{k});
                                 else
                                     fprintf(fid,'\t\tnode%d.setArrival(jobclass%d, Exp.fitMean(%f)); // (%s,%s)\n',sn.stationToNode(i),k,map_mean(PH{i}{k}),sn.nodenames{sn.stationToNode(i)},sn.classnames{k});
                                 end
@@ -138,7 +138,7 @@ for i=1:sn.nstations
                             if SCVik == 1
                                 meanik = map_mean(PH{i}{k});
                                 if meanik < GlobalConstants.CoarseTol
-                                    fprintf(fid,'\t\tnode%d.setService(jobclass%d, Immediate()); // (%s,%s)\n',sn.stationToNode(i),k,sn.nodenames{sn.stationToNode(i)},sn.classnames{k});
+                                    fprintf(fid,'\t\tnode%d.setService(jobclass%d, Immediate.getInstance()); // (%s,%s)\n',sn.stationToNode(i),k,sn.nodenames{sn.stationToNode(i)},sn.classnames{k});
                                 else
                                     fprintf(fid,'\t\tnode%d.setService(jobclass%d, Exp.fitMean(%f)); // (%s,%s)\n',sn.stationToNode(i),k,map_mean(PH{i}{k}),sn.nodenames{sn.stationToNode(i)},sn.classnames{k});
                                 end
