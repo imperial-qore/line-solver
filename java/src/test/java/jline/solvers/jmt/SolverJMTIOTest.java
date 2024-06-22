@@ -23,7 +23,7 @@ public class SolverJMTIOTest {
 
     @Test
     public void test_view() throws ParserConfigurationException {
-        Network model = ClosedModel.ex1();
+        Network model = ClosedModel.example_closedModel_1();
 
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;

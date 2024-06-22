@@ -2,6 +2,7 @@ package jline.lang.state;
 
 import jline.examples.ClosedModel;
 import jline.examples.OpenModel;
+import jline.examples.TestModels;
 import jline.lang.NetworkStruct;
 import jline.lang.constant.EventType;
 import jline.util.Matrix;
@@ -16,7 +17,7 @@ public class AfterEventTest {
 
     @Test
     public void returnsCorrectSpaceRateProb1() {
-        NetworkStruct sn = ClosedModel.ex4_line().getStruct(false);
+        NetworkStruct sn = ClosedModel.example_closedModel_4().getStruct(false);
         Matrix inspace = new Matrix(1, 7);
         inspace.fromArray2D(new int[][]{{0, 0, 1, 1, 0, 1, 1}});
 
@@ -36,7 +37,7 @@ public class AfterEventTest {
 
     @Test
     public void returnsCorrectSpaceRateProb2() {
-        NetworkStruct sn = ClosedModel.ex4().getStruct(false);
+        NetworkStruct sn = TestModels.test_closedModel_4().getStruct(false);
         Matrix inspace = new Matrix(1, 4);
         inspace.fromArray2D(new int[][]{{4, 8, 3, 2}});
 
@@ -56,7 +57,7 @@ public class AfterEventTest {
 
     @Test
     public void returnsCorrectSpaceRateProb3() {
-        NetworkStruct sn = ClosedModel.ex2_line().getStruct(false);
+        NetworkStruct sn = ClosedModel.example_closedModel_2().getStruct(false);
         Matrix inspace = new Matrix(1, 3);
         inspace.fromArray2D(new int[][]{{1, 0, 0}});
 
@@ -76,7 +77,7 @@ public class AfterEventTest {
 
     @Test
     public void returnsCorrectSpaceRateProb4() {
-        NetworkStruct sn = ClosedModel.ex4_line().getStruct(false);
+        NetworkStruct sn = ClosedModel.example_closedModel_4().getStruct(false);
         Matrix inspace = new Matrix(1, 7);
         inspace.fromArray2D(new int[][]{{4, 2, 1, 1, 1, 1, 1}});
 
@@ -98,7 +99,7 @@ public class AfterEventTest {
 
     @Test
     public void returnsCorrectSpaceRateProb5() {
-        NetworkStruct sn = ClosedModel.ex4().getStruct(false);
+        NetworkStruct sn = TestModels.test_closedModel_4().getStruct(false);
         Matrix inspace = new Matrix(1, 7);
         inspace.fromArray2D(new int[][]{{4, 2, 1, 1, 1, 1, 1}});
 
@@ -118,7 +119,7 @@ public class AfterEventTest {
 
     @Test
     public void returnsCorrectSpaceRateProb6() {
-        NetworkStruct sn = ClosedModel.ex4().getStruct(false);
+        NetworkStruct sn = TestModels.test_closedModel_4().getStruct(false);
         Matrix inspace = new Matrix(1, 7);
         inspace.fromArray2D(new int[][]{{0, 2, 1, 1, 0, 1, 1}});
 
@@ -139,7 +140,7 @@ public class AfterEventTest {
 
     @Test
     public void returnsCorrectSpaceRateProb7() {
-        NetworkStruct sn = ClosedModel.ex4().getStruct(false);
+        NetworkStruct sn = TestModels.test_closedModel_4().getStruct(false);
         Matrix inspace = new Matrix(1, 7);
         inspace.fromArray2D(new int[][]{{0, 0, 0, 1, 0, 0, 1}});
 
@@ -159,7 +160,7 @@ public class AfterEventTest {
 
     @Test
     public void returnsCorrectSpaceRateProb8() {
-        NetworkStruct sn = ClosedModel.ex4().getStruct(false);
+        NetworkStruct sn = TestModels.test_closedModel_4().getStruct(false);
         Matrix inspace = new Matrix(1, 7);
         inspace.fromArray2D(new int[][]{{0, 0, 0, 1, 0, 0, 1}});
 
@@ -178,7 +179,7 @@ public class AfterEventTest {
 
     @Test
     public void returnsCorrectSpaceRateProb9() {
-        NetworkStruct sn = ClosedModel.ex4().getStruct(false);
+        NetworkStruct sn = TestModels.test_closedModel_4().getStruct(false);
         Matrix inspace = new Matrix(1, 7);
         inspace.fromArray2D(new int[][]{{0, 0, 1, 1, 0, 1, 1}});
 
@@ -197,7 +198,7 @@ public class AfterEventTest {
 
     @Test
     public void returnsCorrectSpaceRateProb10() {
-        NetworkStruct sn = ClosedModel.ex2_line().getStruct(false);
+        NetworkStruct sn = ClosedModel.example_closedModel_2().getStruct(false);
         Matrix inspace = new Matrix(1, 4);
         inspace.fromArray2D(new int[][]{{1, 0, 1, 0}});
 
@@ -216,7 +217,7 @@ public class AfterEventTest {
 
     @Test
     public void returnsCorrectSpaceRateProb11() {
-        NetworkStruct sn = ClosedModel.ex2_line().getStruct(false);
+        NetworkStruct sn = ClosedModel.example_closedModel_2().getStruct(false);
         Matrix inspace = new Matrix(1, 3);
         inspace.fromArray2D(new int[][]{{1, 1, 1}});
 
@@ -235,7 +236,7 @@ public class AfterEventTest {
 
     @Test
     public void returnsCorrectSpaceRateProb12() {
-        NetworkStruct sn = ClosedModel.ex4_line().getStruct(false);
+        NetworkStruct sn = ClosedModel.example_closedModel_4().getStruct(false);
         Matrix inspace = new Matrix(1, 7);
         inspace.fromArray2D(new int[][]{{0, 2, 0, 0, 0, 0, 0}});
 
@@ -254,7 +255,7 @@ public class AfterEventTest {
 
     @Test
     public void returnsCorrectSpaceRateProb13() {
-        NetworkStruct sn = ClosedModel.ex2_line().getStruct(false);
+        NetworkStruct sn = ClosedModel.example_closedModel_2().getStruct(false);
         Matrix inspace = new Matrix(1, 4);
         inspace.fromArray2D(new int[][]{{0, 0, 2, 0}});
 

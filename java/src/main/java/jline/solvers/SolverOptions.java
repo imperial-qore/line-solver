@@ -160,9 +160,9 @@ public class SolverOptions {
         break;
       case JMT:
         //TODO add more configs
-        this.iter_max = 1000;
-        this.seed = 23000;
-        this.samples = 20000;
+        //this.iter_max = 1000;
+        //this.seed = 23000;
+        this.samples = 10000;
         break;
       default: // Global options unless overridden by a solver
     }

@@ -1,6 +1,6 @@
 package jline.solvers.env;
 
-import jline.examples.EnvModel;
+import jline.examples.RandomEnvironment;
 import jline.solvers.SolverResult;
 import org.junit.jupiter.api.Test;
 
@@ -13,7 +13,7 @@ public class SolverEnvExamplesTest {
   @Test
   public void exampleRandomEnvironment1ReturnsCorrectResult() {
 
-    SolverEnv envSolver = jline.examples.EnvModel.ex1();
+    SolverEnv envSolver = RandomEnvironment.ex1();
     envSolver.getAvg();
     SolverResult result = envSolver.result;
 
@@ -42,7 +42,7 @@ public class SolverEnvExamplesTest {
   @Test
   public void exampleRandomEnvironment2ReturnsCorrectResult() {
 
-    SolverEnv envSolver = jline.examples.EnvModel.ex2();
+    SolverEnv envSolver = RandomEnvironment.ex2();
     envSolver.getAvg();
     SolverResult result = envSolver.result;
 
@@ -71,7 +71,7 @@ public class SolverEnvExamplesTest {
   @Test
   public void exampleRandomEnvironment3ReturnsCorrectResult() {
 
-    SolverEnv envSolver = jline.examples.EnvModel.ex3();
+    SolverEnv envSolver = RandomEnvironment.ex3();
     envSolver.getAvg();
     SolverResult result = envSolver.result;
 

@@ -21,7 +21,7 @@ import java.util.Collections;
 /**
  * Examples of models with load-dependent stations
  */
-public class LoadDependentModel {
+public class LoadDependent {
     public static Network ex1(){
         int N = 16; // number of jobs
         int c = 2; // number of servers

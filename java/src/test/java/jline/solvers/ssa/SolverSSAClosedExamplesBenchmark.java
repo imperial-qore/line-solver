@@ -3,28 +3,24 @@ package jline.solvers.ssa;
 import jline.examples.ClosedModel;
 import jline.lang.Network;
 import jline.lang.constant.VerboseLevel;
-import jline.lang.state.ThreadLocalRandom;
-import jline.solvers.NetworkAvgTable;
-import jline.solvers.Solver;
 import jline.solvers.SolverOptions;
 import jline.util.Maths;
-import org.apache.commons.math3.random.MersenneTwister;
 
 public class SolverSSAClosedExamplesBenchmark {
 
 
     public static void main(String[] args) {
-        timeSolver(ClosedModel.ex1(), "Closed Example 1, FCFS");
-        timeSolver(ClosedModel.ex2_line(), "Closed Example 2, PS");
-        timeSolver(ClosedModel.ex3_line(), "Closed Example 3, PS");
-        timeSolver(ClosedModel.ex4_line(), "Closed Example 4, FCFS");
-        timeSolver(ClosedModel.ex7_line_ps(), "Closed Example 7, PS");
-        timeSolver(ClosedModel.ex7_line_fcfs(), "Closed Example 7, FCFS");
-        timeSolver(ClosedModel.ex8_line(), "Closed Example 8, FCFS");
+        timeSolver(ClosedModel.example_closedModel_1(), "Closed Example 1, FCFS");
+        timeSolver(ClosedModel.example_closedModel_2(), "Closed Example 2, PS");
+        timeSolver(ClosedModel.example_closedModel_3(), "Closed Example 3, PS");
+        timeSolver(ClosedModel.example_closedModel_4(), "Closed Example 4, FCFS");
+        timeSolver(ClosedModel.example_closedModel_7ps(), "Closed Example 7, PS");
+        timeSolver(ClosedModel.example_closedModel_7fcfs(), "Closed Example 7, FCFS");
+        timeSolver(ClosedModel.example_closedModel_8(), "Closed Example 8, FCFS");
 
         SolverOptions solverOptions = new SolverOptions();
         solverOptions.samples = 5000;
-        timeSolver(ClosedModel.ex9_line(), "Closed Example 9, FCFS", solverOptions);
+        timeSolver(ClosedModel.example_closedModel_9(), "Closed Example 9, FCFS", solverOptions);
 
     }
 

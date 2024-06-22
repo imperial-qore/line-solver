@@ -25,7 +25,7 @@ import java.util.Collections;
 /**
  * Examples of models evolving in a random environment
  */
-public class EnvModel {
+public class RandomEnvironment {
 
   // For System-Testing and Performance Evaluation
   // Corresponds to example_randomEnvironment_1.m in LINE

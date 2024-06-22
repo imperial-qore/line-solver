@@ -1,7 +1,7 @@
 package jline.solvers.cmtc;
 
 import jline.examples.ClosedModel;
-import jline.examples.ExamplesModel;
+import jline.examples.TestModels;
 import jline.lang.Network;
 import jline.solvers.SolverResult;
 import jline.solvers.ctmc.SolverCTMC;
@@ -66,7 +66,7 @@ public class SolverCTMCClosedExamplesTest {
     @Test
     public void ClosedModelEx1ReturnsCorrectResultFromRunAnalyzer() {
 
-        Network model = ClosedModel.ex1();
+        Network model = ClosedModel.example_closedModel_1();
         SolverCTMC solver = new SolverCTMC(model);
         solver.runAnalyzer();
         SolverResult result = solver.result;
@@ -115,7 +115,7 @@ public class SolverCTMCClosedExamplesTest {
     @Test
     public void ClosedModelEx8ReturnsCorrectResultFromRunAnalyzer() {
 
-        Network model = ClosedModel.ex8();
+        Network model = TestModels.test_closedModel_8();
         SolverCTMC solver = new SolverCTMC(model);
         solver.runAnalyzer();
         SolverResult result = solver.result;
@@ -168,7 +168,7 @@ public class SolverCTMCClosedExamplesTest {
     @Test
     public void ErlangEx1ReturnsCorrectResultFromRunAnalyzer() {
 
-        Network model = ExamplesModel.erlangExample1();
+        Network model = TestModels.erlangExample1();
         SolverCTMC solver = new SolverCTMC(model);
         solver.runAnalyzer();
         SolverResult result = solver.result;
@@ -217,7 +217,7 @@ public class SolverCTMCClosedExamplesTest {
     @Test
     public void ErlangEx2ReturnsCorrectResultFromRunAnalyzer() {
 
-        Network model = ExamplesModel.erlangExample2();
+        Network model = TestModels.erlangExample2();
         SolverCTMC solver = new SolverCTMC(model);
         solver.runAnalyzer();
         SolverResult result = solver.result;
@@ -266,7 +266,7 @@ public class SolverCTMCClosedExamplesTest {
     @Test
     public void ErlangEx3ReturnsCorrectResultFromRunAnalyzer() {
 
-        Network model = ExamplesModel.erlangExample3();
+        Network model = TestModels.erlangExample3();
         SolverCTMC solver = new SolverCTMC(model);
         solver.runAnalyzer();
         SolverResult result = solver.result;
@@ -316,7 +316,7 @@ public class SolverCTMCClosedExamplesTest {
     @Test
     public void ClosedModelEx9ReturnsCorrectResultFromRunAnalyzer() {
 
-        Network model = ClosedModel.ex9();
+        Network model = TestModels.test_closedModel_9();
         SolverCTMC solver = new SolverCTMC(model);
         solver.runAnalyzer();
         SolverResult result = solver.result;

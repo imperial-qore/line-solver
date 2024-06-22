@@ -6,23 +6,20 @@ import jline.lang.distributions.Exp;
 import jline.lang.nodes.*;
 import jline.solvers.NetworkSolver;
 import jline.solvers.mva.SolverMVA;
-import jline.util.Matrix;
-
-import java.util.Arrays;
 
 /**
  * Examples of models with class switching
  */
-public class ClassSwitchModel {
+public class ClassSwitching {
 
-    public static Network ex1() {
+    public static Network example_classSwitch_1() {
         Network model = new Network("myModel");
 
         // Block 1: nodes
         Source node1 = new Source(model, "Source 1");
         Queue node2 = new Queue(model, "Queue 1", SchedStrategy.FCFS);
         Sink node3 = new Sink(model, "Sink 1");
-        ClassSwitch node4 = new ClassSwitch(model, "ClassSwitch 1"); // Dummy node, class switching is embedded in the routing matrix P
+        jline.lang.nodes.ClassSwitch node4 = new jline.lang.nodes.ClassSwitch(model, "ClassSwitch 1"); // Dummy node, class switching is embedded in the routing matrix P
 
         // Block 2: classes
         OpenClass jobclass1 = new OpenClass(model, "Class1", 0);
@@ -57,7 +54,7 @@ public class ClassSwitchModel {
     }
 
     public static void main(String[] args) throws Exception {
-        Network model = ex1();
+        Network model = example_classSwitch_1();
 
         NetworkStruct sn = model.getStruct(false);
         sn.rt.print();

@@ -1,6 +1,7 @@
 package jline.lang.state;
 
 import jline.examples.ClosedModel;
+import jline.examples.TestModels;
 import jline.lang.NetworkStruct;
 import jline.util.Matrix;
 import org.junit.jupiter.api.Test;
@@ -14,11 +15,11 @@ public class FromMarginalTest {
         int[][] m = new int[][]{{3}};
         int[][] correct = new int[][]{{3}};
         testFromMarginal(
-                ClosedModel.ex1().getStruct(true),
+                ClosedModel.example_closedModel_1().getStruct(true),
                 0, m, correct);
         correct = new int[][]{{1,1,1}};
         testFromMarginal(
-                ClosedModel.ex1().getStruct(true),
+                ClosedModel.example_closedModel_1().getStruct(true),
                 1, m, correct);
     }
 
@@ -36,18 +37,18 @@ public class FromMarginalTest {
                 {0, 2, 1, 1},
                 {0, 2, 0, 2}
         };
-        testFromMarginal(ClosedModel.ex2().getStruct(true), 0, m1, correct1);
+        testFromMarginal(TestModels.test_closedModel_2().getStruct(true), 0, m1, correct1);
 
         int[][] m2 = new int[][]{{2, 2}};
         int[][] correct2 = new int[][]{{2, 0, 2}, {1, 1, 2}, {0, 2, 2}};
-        testFromMarginal(ClosedModel.ex2().getStruct(true), 1, m2, correct2);
+        testFromMarginal(TestModels.test_closedModel_2().getStruct(true), 1, m2, correct2);
     }
 
     @Test
     public void returnsCorrectStatesClosedModel3() {
         int[][] m = new int[][]{{1, 2, 1}};
         int[][] correct = new int[][]{{1, 0, 2, 1}, {0, 1, 2, 1}};
-        testFromMarginal(ClosedModel.ex3().getStruct(true), 1, m, correct);
+        testFromMarginal(TestModels.test_closedModel_3().getStruct(true), 1, m, correct);
     }
 
     @Test
@@ -75,7 +76,7 @@ public class FromMarginalTest {
                 {1, 1, 0, 1, 0, 1, 1},
                 {1, 1, 0, 0, 1, 1, 1}};
 
-        testFromMarginal(ClosedModel.ex4().getStruct(true), 1, m, correct);
+        testFromMarginal(TestModels.test_closedModel_4().getStruct(true), 1, m, correct);
     }
 
     @Test
@@ -89,7 +90,7 @@ public class FromMarginalTest {
                 {1, 1, 2, 1, 1, 1, 0, 1},
                 {1, 1, 1, 1, 2, 1, 0, 1}
         };
-        testFromMarginal(ClosedModel.ex7_lcfspr().getStruct(true), 1, m, correct);
+        testFromMarginal(ClosedModel.example_closedModel_7lcfspr().getStruct(true), 1, m, correct);
     }
 
 

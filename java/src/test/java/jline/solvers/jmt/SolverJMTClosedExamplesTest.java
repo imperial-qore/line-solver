@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 public class SolverJMTClosedExamplesTest {
     @Test
     public void test_example_closedModel_1() throws ParserConfigurationException, IOException {
-        Network model = ClosedModel.ex1();
+        Network model = ClosedModel.example_closedModel_1();
 
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;
@@ -51,7 +51,7 @@ public class SolverJMTClosedExamplesTest {
 
     @Test
     public void test_example_closedModel_2() {
-        Network model = ClosedModel.ex2_line();
+        Network model = ClosedModel.example_closedModel_2();
 
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;
@@ -99,7 +99,7 @@ public class SolverJMTClosedExamplesTest {
 
     @Test
     public void test_example_closedModel_3() throws ParserConfigurationException, IOException {
-        Network model = ClosedModel.ex3_line();
+        Network model = ClosedModel.example_closedModel_3();
 
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;
@@ -155,7 +155,7 @@ public class SolverJMTClosedExamplesTest {
 
     @Test
     public void test_example_closedModel_4() throws ParserConfigurationException {
-        Network model = ClosedModel.ex4_line();
+        Network model = ClosedModel.example_closedModel_4();
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;
         options.keep = true;
@@ -185,7 +185,7 @@ public class SolverJMTClosedExamplesTest {
 
     @Test
     public void test_example_closedModel_9() throws ParserConfigurationException {
-        Network model = ClosedModel.ex9_line();
+        Network model = ClosedModel.example_closedModel_9();
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;
         options.keep = true;

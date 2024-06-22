@@ -10,12 +10,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.io.*;
-import java.nio.file.FileSystems;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Scanner;
 
 import static jline.solvers.ssa.MatlabRand.*;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -42,7 +38,7 @@ public class SolverSSAClosedExamplesTest {
         List<Double> ArvR = Arrays.asList(2.178, 0.6478);
         List<Double> Tval = Arrays.asList(2.1593, 0.6665);
 
-        Network sn = ClosedModel.ex1();
+        Network sn = ClosedModel.example_closedModel_1();
         SolverOptions options = new SolverOptions();
         options.seed = 1;
         SolverSSA solver = new SolverSSA(sn, options);
@@ -66,7 +62,7 @@ public class SolverSSAClosedExamplesTest {
         List<Double> ArvR = Arrays.asList(1.3882, 0.93199, 0.13668, 0.94854);
         List<Double> Tval = Arrays.asList(1.3668, 0.94854, 0.13986, 0.95021);
 
-        Network sn = ClosedModel.ex2_line();
+        Network sn = ClosedModel.example_closedModel_2();
         SolverOptions options = new SolverOptions();
         options.seed = 1;
         SolverSSA solver = new SolverSSA(sn, options);
@@ -91,7 +87,7 @@ public class SolverSSAClosedExamplesTest {
         List<Double> ArvR = Arrays.asList(1.6581, 1.1778, 0.76921, 0.17437, 1.147, 0.73372);
         List<Double> Tval = Arrays.asList(1.7437, 1.147, 0.73372, 0.16448, 1.1021, 0.76921);
 
-        Network sn = ClosedModel.ex3_line();
+        Network sn = ClosedModel.example_closedModel_3();
         SolverOptions options = new SolverOptions();
         options.seed = 1;
         SolverSSA solver = new SolverSSA(sn, options);
@@ -115,7 +111,7 @@ public class SolverSSAClosedExamplesTest {
         List<Double> ArvR = Arrays.asList(1.0047, 0.37418, 1.3472, 0.68033, 0.97743, 0.48346, 1.0167, 0.67622, 0.33811);
         List<Double> Tval = Arrays.asList(0.96691, 0.49397, 1.3524, 0.67856, 1.0047, 0.37418, 0.98498, 0.68033, 0.36219);
 
-        Network sn = ClosedModel.ex4_line();
+        Network sn = ClosedModel.example_closedModel_4();
         SolverOptions options = new SolverOptions();
         options.seed = 1;
         SolverSSA solver = new SolverSSA(sn, options);
@@ -161,7 +157,7 @@ public class SolverSSAClosedExamplesTest {
         List<Double> ArvR = Arrays.asList(0.46303, 0.53638, 0.45312, 0.53967);
         List<Double> Tval = Arrays.asList(0.45312, 0.53967, 0.46303, 0.53638);
 
-        Network sn = ClosedModel.ex7_line_ps();
+        Network sn = ClosedModel.example_closedModel_7ps();
         SolverOptions options = new SolverOptions();
         options.seed = 1;
         SolverSSA solver = new SolverSSA(sn, options);
@@ -208,7 +204,7 @@ public class SolverSSAClosedExamplesTest {
         List<Double> ArvR = Arrays.asList(0.46105, 0.53819, 0.46169, 0.54902);
         List<Double> Tval = Arrays.asList(0.46169, 0.54902, 0.46105, 0.53819);
 
-        Network sn = ClosedModel.ex7_line_fcfs();
+        Network sn = ClosedModel.example_closedModel_7fcfs();
         SolverOptions options = new SolverOptions();
         options.seed = 1;
         SolverSSA solver = new SolverSSA(sn, options);
@@ -255,7 +251,7 @@ public class SolverSSAClosedExamplesTest {
         List<Double> ArvR = Arrays.asList(1.8991, 1.6499, 2.0002, 1.648);
         List<Double> Tval = Arrays.asList(2.0002, 1.648, 1.8991, 1.6499);
 
-        Network sn = ClosedModel.ex8_line();
+        Network sn = ClosedModel.example_closedModel_8();
         SolverOptions options = new SolverOptions();
         options.seed = 1;
         SolverSSA solver = new SolverSSA(sn, options);
@@ -302,7 +298,7 @@ public class SolverSSAClosedExamplesTest {
         List<Double> ArvR = Arrays.asList(0.16718, 0.1659, 0.17004, 0.16877, 0.1574, 0.15922);
         List<Double> Tval = Arrays.asList(0.17004, 0.16877, 0.1574, 0.15922, 0.16718, 0.1659);
 
-        Network sn = ClosedModel.ex9_line();
+        Network sn = ClosedModel.example_closedModel_9();
         SolverOptions options = new SolverOptions();
         options.samples = 5000;
         options.seed = 1;
