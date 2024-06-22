@@ -16,9 +16,6 @@ node{1}.setService(jobclass{2}, HyperExp(0.5,3.0,10.0));
 node{2}.setService(jobclass{1}, Exp(1));
 node{2}.setService(jobclass{2}, Exp(1));
 
-M = psmodel.getNumberOfStations();
-K = psmodel.getNumberOfClasses();
-
 P = psmodel.initRoutingMatrix;
 P{1} = Network.serialRouting(node);
 P{2} = Network.serialRouting(node);
@@ -39,9 +36,6 @@ node{1}.setService(jobclass{2}, HyperExp(0.5,3.0,10.0));
 node{2}.setService(jobclass{1}, Exp(1));
 node{2}.setService(jobclass{2}, Exp(1));
 
-M = fcfsmodel.getNumberOfStations();
-K = fcfsmodel.getNumberOfClasses();
-
 P = fcfsmodel.initRoutingMatrix;
 P{1} = Network.serialRouting(node);
 P{2} = Network.serialRouting(node);
@@ -61,9 +55,6 @@ node{1}.setService(jobclass{2}, HyperExp(0.5,3.0,10.0));
 
 node{2}.setService(jobclass{1}, Exp(1));
 node{2}.setService(jobclass{2}, Exp(1));
-
-M = lcfsprmodel.getNumberOfStations();
-K = lcfsprmodel.getNumberOfClasses();
 
 P = lcfsprmodel.initRoutingMatrix;
 P{1} = Network.serialRouting(node);
