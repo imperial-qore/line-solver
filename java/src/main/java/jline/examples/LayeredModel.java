@@ -15,8 +15,8 @@ import java.util.Arrays;
  */
 public class LayeredModel {
 
-    public static jline.lang.layered.LayeredNetwork testSimple() throws Exception {
-        jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_simple");
+    public static LayeredNetwork testSimple() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("test_simple");
 
         Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
 
@@ -34,8 +34,8 @@ public class LayeredModel {
         return model;
     }
 
-    public static jline.lang.layered.LayeredNetwork test0() throws Exception {
-        jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_LQN_1");
+    public static LayeredNetwork test0() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("test_LQN_1");
 
         Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
         Processor P2 = new Processor(model, "P2", 1, SchedStrategy.PS);
@@ -67,8 +67,8 @@ public class LayeredModel {
         return model;
     }
 
-    public static jline.lang.layered.LayeredNetwork test1() throws Exception {
-        jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_LQN_1");
+    public static LayeredNetwork test1() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("test_LQN_1");
 
         Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
 
@@ -91,8 +91,8 @@ public class LayeredModel {
         return model;
     }
 
-    public static jline.lang.layered.LayeredNetwork test2() throws Exception {
-        jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_LQN_2");
+    public static LayeredNetwork test2() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("test_LQN_2");
 
         Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
         Processor P2 = new Processor(model, "P2", 1, SchedStrategy.PS);
@@ -136,7 +136,7 @@ public class LayeredModel {
 
         return model;
     }
-    public static jline.lang.layered.LayeredNetwork test35() throws Exception {
+    public static LayeredNetwork test35() throws Exception {
 
         LayeredNetwork model = new LayeredNetwork("myLayeredModel");
 
@@ -156,9 +156,9 @@ public class LayeredModel {
 
         return model;
     }
-    public static jline.lang.layered.LayeredNetwork test3() throws Exception {
+    public static LayeredNetwork test3() throws Exception {
 
-        jline.lang.layered.LayeredNetwork model = new LayeredNetwork("myLayeredModel");
+        LayeredNetwork model = new LayeredNetwork("myLayeredModel");
 
         Processor P1 = new Processor(model, "P1", Integer.MAX_VALUE, SchedStrategy.INF);
         Processor P2 = new Processor(model, "P2", Integer.MAX_VALUE, SchedStrategy.INF);
@@ -177,8 +177,8 @@ public class LayeredModel {
         return model;
     }
 
-    public static jline.lang.layered.LayeredNetwork test4() throws Exception {
-        jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_LQN_4");
+    public static LayeredNetwork test4() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("test_LQN_4");
         Processor P1 = new Processor(model, "P1", 1, SchedStrategy.PS);
         Processor P2 = new Processor(model, "P2", 1, SchedStrategy.PS);
 
@@ -218,8 +218,8 @@ public class LayeredModel {
         return model;
     }
 
-    public static jline.lang.layered.LayeredNetwork testAndForkJoin() throws Exception {
-        jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_and_fork_join");
+    public static LayeredNetwork testAndForkJoin() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("test_and_fork_join");
         Processor P1 = new Processor(model, "P1", 10, SchedStrategy.INF);
 
         Task T1 = new Task(model, "T1", 1, SchedStrategy.REF);
@@ -252,8 +252,8 @@ public class LayeredModel {
         return model;
     }
 
-    public static jline.lang.layered.LayeredNetwork testOrForkJoin() throws Exception {
-        jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_or_fork_join");
+    public static LayeredNetwork testOrForkJoin() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("test_or_fork_join");
         Processor P1 = new Processor(model, "P1", 10, SchedStrategy.FCFS);
 
         Task T1 = new Task(model, "T1", 1, SchedStrategy.REF);
@@ -290,8 +290,8 @@ public class LayeredModel {
     }
 
 
-    public static jline.lang.layered.LayeredNetwork testLoop() throws Exception {
-        jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_loop");
+    public static LayeredNetwork testLoop() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("test_loop");
         Processor P1 = new Processor(model, "P1", 10, SchedStrategy.INF);
 //        Processor P2 = new Processor(model, "P2", 10, SchedStrategy.INF);
 
@@ -334,8 +334,8 @@ public class LayeredModel {
         return model;
     }
 
-    public static jline.lang.layered.LayeredNetwork testAllPrecedences() throws Exception {
-        jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("test_loop_network");
+    public static LayeredNetwork testAllPrecedences() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("test_loop_network");
         Processor P1 = new Processor(model, "P1", 10, SchedStrategy.INF);
         Processor P2 = new Processor(model, "P2", 10, SchedStrategy.INF);
         Processor P3 = new Processor(model, "P3", 5, SchedStrategy.PS);
@@ -421,9 +421,9 @@ public class LayeredModel {
         return model;
     }
 
-    public static jline.lang.layered.LayeredNetwork ex4() throws Exception {
+    public static LayeredNetwork ex4() throws Exception {
 
-        jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("myLayeredModel");
+        LayeredNetwork model = new LayeredNetwork("myLayeredModel");
 
         Processor P1 = new Processor(model, "FrontEnd_CPU_Processor", 1, SchedStrategy.PS);
         Processor P2 = new Processor(model, "USAGE_DELAY_Processor", 1000, SchedStrategy.INF);
@@ -540,9 +540,9 @@ public class LayeredModel {
         return model;
     }
 
-    public static jline.lang.layered.LayeredNetwork  testOfBizFCFS() throws Exception {
+    public static LayeredNetwork  testOfBizFCFS() throws Exception {
 
-        jline.lang.layered.LayeredNetwork model = new jline.lang.layered.LayeredNetwork("myLayeredModel");
+        LayeredNetwork model = new LayeredNetwork("myLayeredModel");
 
         Processor P1 = new Processor(model, "FrontEnd_CPU_Processor", 1, SchedStrategy.PS);
         Processor P2 = new Processor(model, "USAGE_DELAY_Processor", 1, SchedStrategy.PS);
@@ -669,7 +669,7 @@ public class LayeredModel {
     }
 
     public static void main(String[] args) throws Exception{
-        jline.lang.layered.LayeredNetwork model = test35();
+        LayeredNetwork model = test35();
         SolverOptions solverOptions= new SolverOptions(SolverType.LN);
         SolverLN solver = new SolverLN(model, solverOptions);
 

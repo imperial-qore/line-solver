@@ -5,14 +5,9 @@ import jline.lang.Network;
 import jline.lang.OpenClass;
 import jline.lang.RoutingMatrix;
 import jline.lang.constant.SchedStrategy;
-import jline.lang.constant.SolverType;
 import jline.lang.distributions.Exp;
 import jline.lang.distributions.Immediate;
 import jline.lang.nodes.*;
-import jline.solvers.NetworkSolver;
-import jline.solvers.SolverOptions;
-import jline.solvers.mva.SolverMVA;
-import jline.solvers.NetworkAvgTable;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -22,7 +17,7 @@ import java.util.Collections;
  */
 public class ForkJoinModel {
 
-    public static Network ex1(){
+    public static Network example_forkJoin_1(){
         Network model = new Network("model");
 
         Source source = new Source(model,"Source");
@@ -36,8 +31,7 @@ public class ForkJoinModel {
         queue1.setService(jobclass1, new Exp(1.0));
         queue2.setService(jobclass1, new Exp(2.0));
 
-        RoutingMatrix routingMatrix = new RoutingMatrix(model, Collections.singletonList(jobclass1),
-                Arrays.asList(source, queue1, queue2, fork, join, sink));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, source, fork, 1);
         routingMatrix.set(jobclass1, jobclass1, fork, queue1, 1);
@@ -50,42 +44,7 @@ public class ForkJoinModel {
         return model;
     }
 
-    public static Network ex1_line() {
-        Network model = new Network("model");
-
-        // Block 1: nodes
-        Source node1 = new Source(model, "Source");
-        Queue node2 = new Queue(model, "Queue1", SchedStrategy.FCFS);
-        Queue node3 = new Queue(model, "Queue2", SchedStrategy.FCFS);
-        Fork node4 = new Fork(model, "Fork");
-        Join node5 = new Join(model, "Join", node4);
-        Sink node6 = new Sink(model, "Sink");
-
-        // Block 2: classes
-        OpenClass jobclass1 = new OpenClass(model, "class1", 0);
-
-        node1.setArrival(jobclass1, new Exp(0.05)); // (Source,class1)
-        node2.setService(jobclass1, new Exp(1.0)); // (Queue1,class1)
-        node3.setService(jobclass1, new Exp(2.0)); // (Queue2,class1)
-
-        // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1),
-                Arrays.asList(node1, node2, node3, node4, node5, node6));
-
-        routingMatrix.set(jobclass1, jobclass1, node1, node4, 1.000000); // (Source,class1) -> (Fork,class1)
-        routingMatrix.set(jobclass1, jobclass1, node2, node5, 1.000000); // (Queue1,class1) -> (Join,class1)
-        routingMatrix.set(jobclass1, jobclass1, node3, node5, 1.000000); // (Queue2,class1) -> (Join,class1)
-        routingMatrix.set(jobclass1, jobclass1, node4, node2, 1.000000); // (Fork,class1) -> (Queue1,class1)
-        routingMatrix.set(jobclass1, jobclass1, node4, node3, 1.000000); // (Fork,class1) -> (Queue2,class1)
-        routingMatrix.set(jobclass1, jobclass1, node5, node6, 1.000000); // (Join,class1) -> (Sink,class1)
-
-        model.link(routingMatrix);
-
-        return model;
-    }
-
-    public static Network ex2_line(){
+    public static Network example_forkJoin_2(){
         Network model = new Network("model");
 
         // Block 1: nodes
@@ -110,9 +69,7 @@ public class ForkJoinModel {
         node3.setService(jobclass2, new Exp(2.0)); // (Queue2,class2)
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2),
-                Arrays.asList(node1, node2, node3, node4, node5, node6));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node4, 1.000000); // (Source,class1) -> (Fork,class1)
         routingMatrix.set(jobclass1, jobclass1, node2, node5, 1.000000); // (Queue1,class1) -> (Join,class1)
@@ -133,7 +90,7 @@ public class ForkJoinModel {
         return model;
     }
 
-    public static Network ex3_line() {
+    public static Network example_forkJoin_3() {
         Network model = new Network("model");
 
         // Block 1: nodes
@@ -184,7 +141,13 @@ public class ForkJoinModel {
         return model;
     }
 
-    public static Network ex5(){
+    public static Network example_forkJoin_4() {
+        Network model = new Network("model");
+        // TODO
+        return model;
+    }
+
+    public static Network example_forkJoin_5(){
         Network model = new Network("model");
         Delay delay = new Delay(model, "Delay");
         Queue queue1 = new Queue(model, "Queue1", SchedStrategy.PS);
@@ -198,8 +161,7 @@ public class ForkJoinModel {
         queue1.setService(jobclass1, new Exp(1.0));
         queue2.setService(jobclass1, new Exp(1.0));
 
-        RoutingMatrix routingMatrix = new RoutingMatrix(model, Collections.singletonList(jobclass1),
-                Arrays.asList(delay, queue1, queue2, fork, join));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, delay, fork, 1);
         routingMatrix.set(jobclass1, jobclass1, fork, queue1, 1);
@@ -212,7 +174,25 @@ public class ForkJoinModel {
         return model;
     }
 
-    public static Network ex9(){
+    public static Network example_forkJoin_6() {
+        Network model = new Network("model");
+        // TODO
+        return model;
+    }
+
+    public static Network example_forkJoin_7() {
+        Network model = new Network("model");
+        // TODO
+        return model;
+    }
+
+    public static Network example_forkJoin_8() {
+        Network model = new Network("model");
+        // TODO
+        return model;
+    }
+
+    public static Network example_forkJoin_9(){
         Network model = new Network("model");
         Delay delay = new Delay(model, "Delay");
         Queue queue1 = new Queue(model, "Queue1", SchedStrategy.FCFS);
@@ -252,7 +232,7 @@ public class ForkJoinModel {
         return model;
     }
 
-    public static Network ex10(){
+    public static Network example_forkJoin_10(){
         Network model = new Network("model");
         Delay delay = new Delay(model, "Delay");
         Queue queue1 = new Queue(model, "Queue1", SchedStrategy.FCFS);
@@ -268,8 +248,7 @@ public class ForkJoinModel {
         queue3.setService(jobclass1, new Exp(1.0));
         delay.setService(jobclass1, new Exp(0.5));
 
-        RoutingMatrix routingMatrix = new RoutingMatrix(model, Collections.singletonList(jobclass1),
-                Arrays.asList(delay, queue1, queue2, queue3, fork, join));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, delay, fork, 1);
         routingMatrix.set(jobclass1, jobclass1, fork, queue1, 1);
@@ -284,7 +263,31 @@ public class ForkJoinModel {
         return model;
     }
 
-    public static Network ex_nested(){
+    public static Network example_forkJoin_11() {
+        Network model = new Network("model");
+        // TODO
+        return model;
+    }
+
+    public static Network example_forkJoin_12() {
+        Network model = new Network("model");
+        // TODO
+        return model;
+    }
+
+    public static Network example_forkJoin_13() {
+        Network model = new Network("model");
+        // TODO
+        return model;
+    }
+
+    public static Network example_forkJoin_cs() {
+        Network model = new Network("model");
+        // TODO
+        return model;
+    }
+
+    public static Network example_forkJoin_nested(){
         Network model = new Network("model");
         Delay delay = new Delay(model, "Delay1");
         Queue queue1 = new Queue(model, "Queue1", SchedStrategy.FCFS);
@@ -324,13 +327,9 @@ public class ForkJoinModel {
         return model;
     }
 
-    public static void main(String[] args) {
-        Network model = ex1_line();
-        SolverOptions options = new SolverOptions(SolverType.MVA);
-//        options.config.fork_join = "ht";
-        options.iter_max = 100;
-        NetworkSolver solver = new SolverMVA(model, options);
-        NetworkAvgTable t = solver.getAvgTable();
-        t.print(options);
+    public static Network example_forkJoin_series() {
+        Network model = new Network("model");
+        // TODO
+        return model;
     }
 }
