@@ -19,6 +19,9 @@ if __name__ == "__main__":
     solver = SolverJMT(model)
     table = solver.getAvgTable()  # pandas.DataFrame
 
+    print(tget(table,"Queue"))
+    print(tget(table,"RespT","Queue"))
+    print(tget(table,"RespT","Queue","Class1"))
 
 
 
