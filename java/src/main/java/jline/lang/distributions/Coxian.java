@@ -185,7 +185,27 @@ public class Coxian extends MarkovianDistribution{
 		return res;
 	}
 
-    // Fit a Coxian distribution with given mean and squared coefficient of variation (SCV=variance/mean^2)
+	public static Coxian fitMeanAndSCV(double mean, double var, double skew) {
+		Coxian cx = Cox2.fitCentral(mean, var, skew);
+		double scv = var / mean /mean;
+		if (Math.abs(1 - map_scv(cx.getD0(), cx.getD1()) / scv) > 0.01) {
+			cx = Coxian.fitMeanAndSCV(mean, scv);
+		}
+		cx.immediate = mean < GlobalConstants.CoarseTol;
+		return cx;
+	}
+
+	public static Coxian fitCentral(double mean, double var, double skew) {
+		Coxian cx = Cox2.fitCentral(mean, var, skew);
+		double scv = var/mean/mean;
+		if (Math.abs(1-map_scv(cx.getD0(), cx.getD1())/scv) > 0.01) {
+			cx = Coxian.fitMeanAndSCV(mean, scv);
+		}
+		cx.immediate = mean < GlobalConstants.CoarseTol;
+		return cx;
+	}
+
+	// Fit a Coxian distribution with given mean and squared coefficient of variation (SCV=variance/mean^2)
     public static Coxian fitMeanAndSCV(double mean, double SCV) {
 
 		double n;
@@ -198,6 +218,7 @@ public class Coxian extends MarkovianDistribution{
 			mu.add(1 / mean);
 			phi.add(1.0);
 		} else if (SCV > 0.5 + GlobalConstants.CoarseTol && SCV < 1 - GlobalConstants.CoarseTol) {
+			phi.add(0.0);
 			phi.add(0.0);
 			n = 2;
 			mu.add(2 / mean / (1 + Math.sqrt(1 + (2 * (SCV - 1)))));
@@ -227,5 +248,4 @@ public class Coxian extends MarkovianDistribution{
 	public double getTotalPhaseRate(int i) {
 		return totalPhaseRate.get(i);
 	}
-
 }

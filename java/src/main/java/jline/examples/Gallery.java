@@ -2,27 +2,39 @@ package jline.examples;
 
 import jline.lang.*;
 import jline.lang.constant.SchedStrategy;
-import jline.lang.distributions.Exp;
 import jline.lang.nodes.*;
 import jline.solvers.mva.SolverMVA;
 
 import javax.xml.parsers.ParserConfigurationException;
 import java.util.List;
 import java.util.ArrayList;
+import jline.lang.distributions.*;
 
 /**
  * Getting started examples
  */
 public class Gallery {
     public static Network gallery_aphm1() {
-        Network model = new Network("model");
-        // TODO
+        Network model = new Network("APH/M/1");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, APH.fitCentral(1,0.99,1.999));
+        queue.setService(oclass, new Exp(2));
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
     public static Network gallery_coxm1() {
-        Network model = new Network("model");
-        // TODO
+        Network model = new Network("Cox/M/1");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, Coxian.fitCentral(1,0.99,1.999));
+        queue.setService(oclass, new Exp(2));
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
@@ -39,14 +51,31 @@ public class Gallery {
     }
 
     public static Network gallery_dm1() {
-        Network model = new Network("model");
-        // TODO
+        Network model = new Network("Det/M/1");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, new Det(1));
+        queue.setService(oclass, new Exp(2));
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
     public static Network gallery_erldk() {
-        Network model = new Network("model");
-        // TODO
+        return gallery_erldk(2);
+    }
+
+    public static Network gallery_erldk(int k) {
+        Network model = new Network("Erl/Det/k");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, Erlang.fitMeanAndOrder(1.0,5));
+        queue.setService(oclass, new Det(2.0/k));
+        queue.setNumberOfServers(k);
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
@@ -57,14 +86,26 @@ public class Gallery {
     }
 
     public static Network gallery_erlm1() {
-        Network model = new Network("model");
-        // TODO
+        Network model = new Network("Erl/M/1");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, Erlang.fitMeanAndOrder(1.0,5));
+        queue.setService(oclass, new Exp(2));
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
     public static Network gallery_erlm1_ps() {
-        Network model = new Network("model");
-        // TODO
+        Network model = new Network("Erl/M/1");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.PS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, Erlang.fitMeanAndOrder(1.0,5));
+        queue.setService(oclass, new Exp(2));
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
@@ -75,8 +116,14 @@ public class Gallery {
     }
 
     public static Network gallery_gamm1() {
-        Network model = new Network("model");
-        // TODO
+        Network model = new Network("Gam/M/1");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, Gamma.fitMeanAndSCV(1.0,1/5));
+        queue.setService(oclass, new Exp(2));
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
@@ -228,7 +275,7 @@ public class Gallery {
 
     public static Network gallery_mm1_linear(Integer n, Double Umax) {
 
-        Network model = new Network("M/Hyp/1-Linear");
+        Network model = new Network("M/M/1-Linear");
 
         // Block 1: nodes
         List<Node> nodes = new ArrayList<>();
@@ -379,6 +426,7 @@ public class Gallery {
     }
 
     public static void main(String[] args) throws IllegalAccessException, ParserConfigurationException {
-        new SolverMVA(gallery_mm1_tandem()).getAvgTable().tget("RespT", "Queue1","myClass").print();
+        new SolverMVA(gallery_erldk()).getAvgTable().print();
+        //new SolverMVA(gallery_mm1_tandem()).getAvgTable().tget("RespT", "Queue1","myClass").print();
     }
 }
