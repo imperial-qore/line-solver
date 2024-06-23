@@ -2,6 +2,7 @@ package jline.solvers;
 
 import jline.lang.constant.GlobalConstants;
 import jline.lang.constant.VerboseLevel;
+import jline.util.Matrix;
 
 import java.text.DecimalFormat;
 import java.util.ArrayList;
@@ -106,4 +107,5 @@ public class LayeredNetworkAvgTable extends AvgTable {
                     "--------------------------------------------------------------------------------------------");
         }
     }
+
 }

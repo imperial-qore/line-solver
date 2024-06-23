@@ -10,6 +10,7 @@ import java.util.stream.Collectors;
 import jline.lang.constant.GlobalConstants;
 import jline.lang.constant.VerboseLevel;
 import jline.solvers.jmt.SolverJMT;
+import jline.util.Matrix;
 
 import javax.xml.parsers.ParserConfigurationException;
 import java.text.DecimalFormat;
@@ -121,11 +122,15 @@ public class NetworkAvgTable extends AvgTable {
         }
     }
 
-    public NetworkAvgTable tget(Station station, JobClass jobclass) {
+    public AvgTable tget(Station station, JobClass jobclass) {
         return this.tget((String)station.getName(), (String)jobclass.getName());
     }
 
-    public NetworkAvgTable tget(String stationname, String classname) {
+    public AvgTable tget(String metricname, Station station, JobClass jobclass) {
+        return this.tget(metricname, (String)station.getName(), (String)jobclass.getName());
+    }
+
+    public AvgTable tget(String stationname, String classname) {
         int rowIdx = this.stationNames.indexOf(stationname);
         int colIdx = this.classNames.indexOf(classname);
         if (rowIdx < 0 || colIdx <0) {
@@ -158,6 +163,102 @@ public class NetworkAvgTable extends AvgTable {
         filteredAvgTable.setOptions(this.options);
         filteredAvgTable.setStationNames(Collections.singletonList(this.stationNames.get(rowIdx)));
         filteredAvgTable.setClassNames(Collections.singletonList(this.classNames.get(colIdx)));
+        return filteredAvgTable;
+    }
+
+    public AvgTable tget(String metricname, String stationname, String classname) {
+        int rowIdx = this.stationNames.indexOf(stationname);
+        int colIdx = this.classNames.indexOf(classname);
+        if (rowIdx < 0 || colIdx <0) {
+            NetworkAvgTable filteredAvgTable = new NetworkAvgTable(new ArrayList<>(),new ArrayList<>(),new ArrayList<>(),new ArrayList<>(),new ArrayList<>(),new ArrayList<>());
+            filteredAvgTable.setOptions(this.options);
+            filteredAvgTable.setStationNames(new ArrayList<String>());
+            filteredAvgTable.setClassNames(new ArrayList<String>());
+            return filteredAvgTable;
+        }
+        int indexToKeep = rowIdx * this.classNames.size() + colIdx - 1;
+        List<Double> MetricVal;
+        AvgTable filteredAvgTable = null;
+        switch (metricname) {
+            case "QLen":
+                MetricVal = this.getQLen();
+                if (indexToKeep > 0) {
+                    MetricVal.subList(0, indexToKeep).clear();
+                }
+                if (indexToKeep < MetricVal.size()) {
+                    MetricVal.subList(1, MetricVal.size()).clear();
+                }
+                filteredAvgTable = new NetworkAvgQLenTable(MetricVal);
+                filteredAvgTable.setOptions(this.options);
+                ((NetworkAvgQLenTable)filteredAvgTable).setStationNames(Collections.singletonList(this.stationNames.get(rowIdx)));
+                ((NetworkAvgQLenTable)filteredAvgTable).setClassNames(Collections.singletonList(this.classNames.get(colIdx)));
+                break;
+            case "Util":
+                MetricVal = this.getUtil();
+                if (indexToKeep > 0) {
+                    MetricVal.subList(0, indexToKeep).clear();
+                }
+                if (indexToKeep < MetricVal.size()) {
+                    MetricVal.subList(1, MetricVal.size()).clear();
+                }
+                filteredAvgTable = new NetworkAvgUtilTable(MetricVal);
+                filteredAvgTable.setOptions(this.options);
+                ((NetworkAvgUtilTable)filteredAvgTable).setStationNames(Collections.singletonList(this.stationNames.get(rowIdx)));
+                ((NetworkAvgUtilTable)filteredAvgTable).setClassNames(Collections.singletonList(this.classNames.get(colIdx)));
+                break;
+            case "RespT":
+                MetricVal = this.getRespT();
+                if (indexToKeep > 0) {
+                    MetricVal.subList(0, indexToKeep).clear();
+                }
+                if (indexToKeep < MetricVal.size()) {
+                    MetricVal.subList(1, MetricVal.size()).clear();
+                }
+                filteredAvgTable = new NetworkAvgRespTTable(MetricVal);
+                filteredAvgTable.setOptions(this.options);
+                ((NetworkAvgRespTTable)filteredAvgTable).setStationNames(Collections.singletonList(this.stationNames.get(rowIdx)));
+                ((NetworkAvgRespTTable)filteredAvgTable).setClassNames(Collections.singletonList(this.classNames.get(colIdx)));
+                break;
+            case "ResidT":
+                MetricVal = this.getResidT();
+                if (indexToKeep > 0) {
+                    MetricVal.subList(0, indexToKeep).clear();
+                }
+                if (indexToKeep < MetricVal.size()) {
+                    MetricVal.subList(1, MetricVal.size()).clear();
+                }
+                filteredAvgTable = new NetworkAvgResidTTable(MetricVal);
+                filteredAvgTable.setOptions(this.options);
+                ((NetworkAvgResidTTable)filteredAvgTable).setStationNames(Collections.singletonList(this.stationNames.get(rowIdx)));
+                ((NetworkAvgResidTTable)filteredAvgTable).setClassNames(Collections.singletonList(this.classNames.get(colIdx)));
+                break;
+            case "ArvR":
+                MetricVal = this.getArvR();
+                if (indexToKeep > 0) {
+                    MetricVal.subList(0, indexToKeep).clear();
+                }
+                if (indexToKeep < MetricVal.size()) {
+                    MetricVal.subList(1, MetricVal.size()).clear();
+                }
+                filteredAvgTable = new NetworkAvgArvRTable(MetricVal);
+                filteredAvgTable.setOptions(this.options);
+                ((NetworkAvgArvRTable)filteredAvgTable).setStationNames(Collections.singletonList(this.stationNames.get(rowIdx)));
+                ((NetworkAvgArvRTable)filteredAvgTable).setClassNames(Collections.singletonList(this.classNames.get(colIdx)));
+                break;
+            case "Tput":
+                MetricVal = this.getTput();
+                if (indexToKeep > 0) {
+                    MetricVal.subList(0, indexToKeep).clear();
+                }
+                if (indexToKeep < MetricVal.size()) {
+                    MetricVal.subList(1, MetricVal.size()).clear();
+                }
+                filteredAvgTable = new NetworkAvgTputTable(MetricVal);
+                filteredAvgTable.setOptions(this.options);
+                ((NetworkAvgTputTable)filteredAvgTable).setStationNames(Collections.singletonList(this.stationNames.get(rowIdx)));
+                ((NetworkAvgTputTable)filteredAvgTable).setClassNames(Collections.singletonList(this.classNames.get(colIdx)));
+                break;
+        }
         return filteredAvgTable;
     }
 

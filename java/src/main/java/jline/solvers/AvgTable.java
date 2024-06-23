@@ -1,5 +1,7 @@
 package jline.solvers;
 
+import jline.util.Matrix;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -18,4 +20,11 @@ public abstract class AvgTable {
     public List<Double> get(int col) {
         return this.T.get(col);
     }
+
+    public abstract void print();
+
+    public Matrix toMatrix() {
+        return new Matrix(T);
+    }
+
 }

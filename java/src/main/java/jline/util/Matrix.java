@@ -53,6 +53,14 @@ public class Matrix implements Serializable {
 			this.set(i, 0, (double) array.get(i));
 	}
 
+	public Matrix(ArrayList<List<Double>> arrays) {
+		// in this case we concatenate the arrays as columns
+		data = new DMatrixSparseCSC(arrays.get(0).size(), arrays.size(), arrays.get(0).size()*arrays.size());
+		for(int j = 0; j < arrays.size(); j++)
+			for(int i = 0; i < arrays.get(j).size(); i++)
+				this.set(i, j, (double) arrays.get(j).get(i));
+	}
+
 	public Matrix(SimpleMatrix matrix) {
 		data = new DMatrixSparseCSC(matrix.numRows(), matrix.numCols());
 		for (int i = 0; i < matrix.numRows(); i++) {

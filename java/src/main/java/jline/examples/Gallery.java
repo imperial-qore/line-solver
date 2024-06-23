@@ -2,22 +2,13 @@ package jline.examples;
 
 import jline.lang.*;
 import jline.lang.constant.SchedStrategy;
-import jline.lang.constant.SolverType;
-import jline.lang.distributions.APH;
-import jline.lang.distributions.Erlang;
 import jline.lang.distributions.Exp;
 import jline.lang.nodes.*;
-import jline.solvers.NetworkAvgTable;
-import jline.solvers.SolverOptions;
-import jline.solvers.jmt.SolverJMT;
 import jline.solvers.mva.SolverMVA;
 
 import javax.xml.parsers.ParserConfigurationException;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Getting started examples
@@ -388,7 +379,6 @@ public class Gallery {
     }
 
     public static void main(String[] args) throws IllegalAccessException, ParserConfigurationException {
-        //new SolverJMT(gallery_mm1()).getAvgTable().print();
-        new SolverMVA(gallery_mm1()).getAvgQLenTable().tget("Queue1","myClass").print();
+        new SolverMVA(gallery_mm1_tandem()).getAvgTable().tget("RespT", "Queue1","myClass").print();
     }
 }
