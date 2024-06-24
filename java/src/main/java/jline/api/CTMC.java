@@ -265,8 +265,8 @@ public class CTMC {
 		for (int i = 0; i < Q.length(); i++)
 			val[i] = Q.get(i, i);
 
-		Matrix diag_diag_Q = new Matrix(0, 0);
-		Matrix.diagMatrix(diag_diag_Q, val, 0, val.length);
+		Matrix diag_diag_Q = Matrix.diagMatrix(null, val, 0, val.length);
+//		Matrix.diagMatrix(diag_diag_Q, val, 0, val.length);
 
 		Matrix A = Q.sub(1, diag_diag_Q);
 
@@ -295,4 +295,91 @@ public class CTMC {
 		}
 		return Qrev.transpose();
 	}
+
+	/**
+	 * Form a random infinitesimal generator of CTMC
+	 *
+	 * @param length size of random matrix
+	 * @return Infinitesimal generator of CTMC
+	 */
+	public static Matrix ctmc_rand(int length) {
+		Matrix rand_matrix = new Matrix(length, length);
+		rand_matrix.randMatrix(length);
+		return ctmc_makeinfgen(rand_matrix);
+	}
+
+	/**
+	 * Form a random infinitesimal generator of CTMC
+	 *
+	 * @param Q infinitesimal generator of CTMC
+	 * @param pi0 initial state distribution vector
+	 * @param n times of simulations
+	 * @return Infinitesimal generator of CTMC
+	 */
+	public static CtmcSimulationResult ctmc_simulate(Matrix Q, double[] pi0, int n) {
+		int numStates = Q.length();
+		Random random = new Random();
+		if (pi0 == null || pi0.length == 0){
+			pi0 = new double[numStates];
+			double sum = 0.0;
+
+			for (int i = 0; i < numStates; i++){
+				pi0[i] = random.nextDouble();
+				sum += pi0[i];
+			}
+
+			for (int i = 0; i < numStates; i++){
+				pi0[i] /= sum;
+			}
+		}
+		double cumulative = 0.0;
+		double r = random.nextDouble();
+		int st = 0;
+		for (int i = 0; i < pi0.length; i++){
+			cumulative += pi0[i];
+			if (r < cumulative){
+				st = i;
+				break;
+			}
+		}
+
+    	Matrix F = new Matrix(numStates, numStates);
+		for (int i = 0; i < numStates; i++) {
+			double rowSum = 0.0;
+			for (int j = 0; j < numStates; j++) {
+				if (i != j) {
+					rowSum += Q.get(i, j);
+					F.set(i, j, rowSum);
+				}
+			}
+			for (int j = 0; j < numStates; j++) {
+				F.set(i, j, F.get(i, j)/rowSum);
+			}
+		}
+
+		CtmcSimulationResult result = new CtmcSimulationResult();
+		result.states = new int[n];
+		result.sojournTimes = new double[n];
+
+		for (int i = 0; i < n; i++) {
+			result.states[i] = st;
+			ExponentialDistribution expDist = new ExponentialDistribution(-1.0 / Q.get(st, st));
+			result.sojournTimes[i] = expDist.sample();
+
+			r = random.nextDouble();
+			for (int j = 0; j < numStates; j++) {
+				if (r < F.get(st, j)) {
+					st = j;
+					break;
+				}
+			}
+		}
+		return result;
+	}
+
+	public static class CtmcSimulationResult{
+		public int [] states;
+		public double[] sojournTimes;
+	}
+
 }

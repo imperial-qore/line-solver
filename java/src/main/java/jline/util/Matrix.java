@@ -1232,7 +1232,7 @@ public class Matrix implements Serializable {
 	public double elementMin() {
 		return CommonOps_DSCC.elementMin(this.data);
 	}
-	public double elementMax() {
+		public double elementMax() {
 		return CommonOps_DSCC.elementMax(this.data);
 	}
 
@@ -2256,5 +2256,32 @@ public class Matrix implements Serializable {
 		return maxDiff;
 	}
 
+
+	public void randMatrix(int length) {
+		Random random = new Random();
+		for (int i = 0; i < length; i++){
+			for (int j = 0; j < length; j++){
+        		this.set(i, j, random.nextDouble());
+			}
+		}
+	}
+
+	public Matrix getRowsFrom(int row) {
+		if (this.getNumRows() < 0 || row >= this.getNumRows()) {
+			throw new IllegalArgumentException("The number of rows is out of range");
+		}
+		int newNumRows = this.getNumRows() - row;
+		DMatrixSparseCSC newData = new DMatrixSparseCSC(newNumRows, data.getNumCols());
+		for (int r = row; r < data.getNumRows(); r++) {
+			int start = data.col_idx[r];
+			int end = data.col_idx[r+1];
+			for (int i = start; i < end; i++) {
+				int c = data.nz_rows[i];
+				double value = data.nz_values[i];
+				newData.set(r - row, c, value);
+			}
+		}
+		return new Matrix(newData);
+	}
 
 }
