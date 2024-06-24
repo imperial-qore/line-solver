@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='line_solver',
-    version='2.0.34',
+    version='2.0.34.1',
     author='Giuliano Casale',
     author_email='g.casale@imperial.ac.uk',
     description='Queueing theory algorithms in Python',

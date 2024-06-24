@@ -144,8 +144,8 @@ classdef Network < Model
             bool = any(isinf(getNumberOfJobs(self)));
         end
 
-        function bool = hasClassSwitch(self)
-            % BOOL = HASCLASSSWITCH()
+        function bool = hasClassSwitching(self)
+            % BOOL = HASCLASSSWITCHING()
 
             bool = any(cellfun(@(c) isa(c,'ClassSwitch'), self.nodes));
         end

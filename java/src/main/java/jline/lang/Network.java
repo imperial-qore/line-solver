@@ -230,9 +230,9 @@ public class Network extends Model implements Serializable {
     public Node getNodeByIndex(int idx) {
         int nodesPassed = 0;
         for (Node nodeIter : this.nodes) {
-                if (nodesPassed == idx) {
-                    return nodeIter;
-                }
+            if (nodesPassed == idx) {
+                return nodeIter;
+            }
             nodesPassed++;
         }
         return null;
@@ -332,7 +332,7 @@ public class Network extends Model implements Serializable {
 
         for (int i = 1; i < nodes.size(); i++) {
             //System.out.format("Loading connection %s->%s\n", nodes[i-1].getName(), nodes[i].getName());
-            outMatrix.addConnection(nodes.get(i-1), nodes.get(i), 1.0);
+            outMatrix.addConnection(nodes.get(i - 1), nodes.get(i), 1.0);
         }
 
         if (!(nodes.get(nodes.size() - 1) instanceof Sink)) {
@@ -741,6 +741,7 @@ public class Network extends Model implements Serializable {
     public NetworkStruct getStruct() {
         return this.getStruct(true);
     }
+
     public NetworkStruct getStruct(boolean wantInitialState) {
         if (!this.hasStruct)
             refreshStruct(true);
@@ -2658,7 +2659,7 @@ public class Network extends Model implements Serializable {
                         Distribution serviceDistrib = serviceProcess.getDistribution();
                         param.fileName = new ArrayList<String>(Collections.nCopies(R, null));
                         if (serviceDistrib instanceof Replayer) {
-                            param.fileName.set(r,((Replayer) serviceDistrib).getFileName());
+                            param.fileName.set(r, ((Replayer) serviceDistrib).getFileName());
                         }
                     }
                     break;
@@ -3021,11 +3022,11 @@ public class Network extends Model implements Serializable {
 
     public RoutingMatrix initRoutingMatrix() {
         RoutingMatrix rt = new RoutingMatrix(this, jobClasses, nodes);
-        for (JobClass j:jobClasses) {
+        for (JobClass j : jobClasses) {
             if (j instanceof SelfLoopingClass) {
-                for (Node i:nodes) {
+                for (Node i : nodes) {
                     //rt.set(j, j, ((SelfLoopingClass) j).getRefstat(), ((SelfLoopingClass) j).getRefstat(), 1.0);
-                    rt.set(j, j, i,i, 1.0);
+                    rt.set(j, j, i, i, 1.0);
                 }
             }
         }
@@ -3281,6 +3282,90 @@ public class Network extends Model implements Serializable {
     public void jsimgView() {
         SolverJMT jmt = new SolverJMT(this);
         jmt.jsimgView();
+    }
+
+    public boolean hasFCFS() {
+        return SN.snHasFCFS(getStruct());
+    }
+
+    public boolean hasHomogeneousScheduling(SchedStrategy strategy) {
+        return SN.snHasHomogeneousScheduling(getStruct(), strategy);
+    }
+
+    public boolean hasDPS() {
+        return SN.snHasDPS(getStruct());
+    }
+
+    public boolean hasGPS() {
+        return SN.snHasGPS(getStruct());
+    }
+
+    public boolean hasINF() {
+        return SN.snHasINF(getStruct());
+    }
+
+    public boolean hasPS() {
+        return SN.snHasPS(getStruct());
+    }
+
+    public boolean hasRAND() {
+        return SN.snHasRAND(getStruct());
+    }
+
+    public boolean hasHOL() {
+        return SN.snHasHOL(getStruct());
+    }
+
+    public boolean hasLCFS() {
+        return SN.snHasLCFS(getStruct());
+    }
+
+    public boolean hasSEPT() {
+        return SN.snHasSEPT(getStruct());
+    }
+
+    public boolean hasLEPT() {
+        return SN.snHasLEPT(getStruct());
+    }
+
+    public boolean hasSJF() {
+        return SN.snHasSJF(getStruct());
+    }
+
+    public boolean hasLJF() {
+        return SN.snHasLJF(getStruct());
+    }
+
+    public boolean hasMultiClassFCFS() {
+        return SN.snHasMultiClassFCFS(getStruct());
+    }
+
+    public boolean hasMultiClassHeterFCFS() {
+        return SN.snHasMultiClassHeterFCFS(getStruct());
+    }
+
+    public boolean hasMultiServer() {
+        return SN.snHasMultiServer(getStruct());
+    }
+
+    public boolean hasSingleChain() {
+        return SN.snHasSingleChain(getStruct());
+    }
+
+    public boolean hasMultiChain() {
+        return SN.snHasMultiChain(getStruct());
+    }
+
+    public boolean hasSingleClass() {
+        return SN.snHasSingleClass(getStruct());
+    }
+
+    public boolean hasMultiClass() {
+        return SN.snHasMultiClass(getStruct());
+    }
+
+    public boolean hasClassSwitching() {
+        return SN.snHasClassSwitching(getStruct());
     }
 
 }

@@ -422,7 +422,11 @@ public class RoutingMatrix implements Serializable {
     }
 
     public void set(JobClass jobclass, RoutingMatrix rt) {
-         this.set(jobclass, jobclass, rt.get(jobclass,jobclass));
+        this.set(jobclass, jobclass, rt.get(jobclass,jobclass));
+    }
+
+    public void set(JobClass jobclass1, JobClass jobclass2, RoutingMatrix rt) {
+        this.set(jobclass1, jobclass2, rt.get(jobclass1,jobclass2));
     }
 
     public void set(Node srcNode, Node destNode) {

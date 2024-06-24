@@ -130,8 +130,8 @@ classdef Node < NetworkElement
             end
         end
 
-        function bool = hasClassSwitch(self)
-            % BOOL = HASCLASSSWITCH()
+        function bool = hasClassSwitching(self)
+            % BOOL = HASCLASSSWITCHING()
 
             bool = isa(self.server,'ClassSwitcher');
         end

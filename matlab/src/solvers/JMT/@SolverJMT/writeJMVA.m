@@ -8,7 +8,7 @@ function outputFileName = writeJMVA(sn, outputFileName, options)
 %    line_error(mfilename,'JMVA requires the model to have a product-form solution.');
 %end
 
-%if self.model.hasClassSwitch
+%if self.model.hasClassSwitching
 %    line_error(mfilename,'JMVA does not support class switching.');
 %end
 

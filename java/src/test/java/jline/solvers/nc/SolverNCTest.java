@@ -32,9 +32,7 @@ public class SolverNCTest {
     node1.setService(jobclass1, Exp.fitMean(1.000000));
     node2.setService(jobclass1, Exp.fitMean(1.500000));
 
-    RoutingMatrix routingMatrix = new RoutingMatrix(model,
-            Arrays.asList(jobclass1),
-            Arrays.asList(node1, node2));
+    RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
     routingMatrix.addConnection(jobclass1, jobclass1, node1, node1, 0.700000); // (Delay,Class1) -> (Delay,Class1)
     routingMatrix.addConnection(jobclass1, jobclass1, node1, node2, 0.300000); // (Delay,Class1) -> (Queue1,Class1)
@@ -98,9 +96,7 @@ public class SolverNCTest {
     alpha.set(9, 5);
     node2.setLoadDependence(alpha);
 
-    RoutingMatrix routingMatrix = new RoutingMatrix(model,
-            Arrays.asList(jobclass1),
-            Arrays.asList(node1, node2));
+    RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
     routingMatrix.addConnection(jobclass1, jobclass1, node1, node2, 1.000000);
     routingMatrix.addConnection(jobclass1, jobclass1, node2, node1, 1.000000);
@@ -159,9 +155,7 @@ public class SolverNCTest {
     node4.setService(jobclass1, new Exp(4.0));
     node4.setService(jobclass2, new Exp(Math.sqrt(4.0)));
 
-    RoutingMatrix routingMatrix = new RoutingMatrix(model,
-            Arrays.asList(jobclass1, jobclass2),
-            Arrays.asList(node1, node2, node3, node4));
+    RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
     routingMatrix.addConnection(jobclass1, jobclass1, node1, node2, 1.000000);
     routingMatrix.addConnection(jobclass1, jobclass1, node2, node3, 1.000000);
@@ -228,9 +222,7 @@ public class SolverNCTest {
     node4.setService(jobclass1, new Exp(4.0));
     node4.setService(jobclass2, new Exp(Math.sqrt(4.0)));
 
-    RoutingMatrix routingMatrix = new RoutingMatrix(model,
-            Arrays.asList(jobclass1, jobclass2),
-            Arrays.asList(node1, node2, node3, node4));
+    RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
     routingMatrix.addConnection(jobclass1, jobclass1, node1, node2, 1.000000);
     routingMatrix.addConnection(jobclass1, jobclass1, node2, node3, 1.000000);
@@ -346,8 +338,8 @@ public class SolverNCTest {
     }
     node2.setLoadDependence(LD);
     RoutingMatrix P = ldmodel.initRoutingMatrix();
-    P.set(jobclass1, jobclass1, ldmodel.serialRouting(node1, node2));
-    P.set(jobclass2, jobclass2, ldmodel.serialRouting(node1, node2));
+    P.set(jobclass1, ldmodel.serialRouting(node1, node2));
+    P.set(jobclass2, ldmodel.serialRouting(node1, node2));
     ldmodel.link(P);
     NetworkStruct sn = ldmodel.getStruct(false);
     SolverOptions options = new SolverOptions(SolverType.NC);
@@ -407,8 +399,8 @@ public class SolverNCTest {
     node3.setLoadDependence(LD.clone());
 
     RoutingMatrix P = ldmodel.initRoutingMatrix();
-    P.set(jobclass1, jobclass1, ldmodel.serialRouting(node1, node2, node3));
-    P.set(jobclass2, jobclass2, ldmodel.serialRouting(node1, node2, node3));
+    P.set(jobclass1, ldmodel.serialRouting(node1, node2, node3));
+    P.set(jobclass2, ldmodel.serialRouting(node1, node2, node3));
     ldmodel.link(P);
     NetworkStruct sn = ldmodel.getStruct(true);
     SolverOptions options = new SolverOptions(SolverType.NC);
@@ -456,7 +448,7 @@ public class SolverNCTest {
     }
     node2.setLoadDependence(LD);
     RoutingMatrix P = ldmodel.initRoutingMatrix();
-    P.set(jobclass1, jobclass1, ldmodel.serialRouting(node1, node2));
+    P.set(jobclass1, ldmodel.serialRouting(node1, node2));
     ldmodel.link(P);
     NetworkStruct sn = ldmodel.getStruct(false);
     SolverOptions options = new SolverOptions(SolverType.NC);
@@ -506,8 +498,8 @@ public class SolverNCTest {
       LD.set(i, Math.min(i + 1, c));
     }
     RoutingMatrix P = cdmodel.initRoutingMatrix();
-    P.set(jobclass1, jobclass1, cdmodel.serialRouting(node1, node2));
-    P.set(jobclass2, jobclass2, cdmodel.serialRouting(node1, node2));
+    P.set(jobclass1, cdmodel.serialRouting(node1, node2));
+    P.set(jobclass2, cdmodel.serialRouting(node1, node2));
     cdmodel.link(P);
     NetworkStruct sn = cdmodel.getStruct(false);
     SolverOptions options = new SolverOptions(SolverType.NC);
