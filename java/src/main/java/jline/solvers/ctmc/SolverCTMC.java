@@ -152,7 +152,7 @@ public class SolverCTMC extends NetworkSolver {
   public static SupportResult supports(Network model) {
     FeatureSet featUsed = model.getUsedLangFeatures();
     FeatureSet featSupported = SolverCTMC.getFeatureSet();
-    boolean bool = SolverFeatureSet.supports(featSupported, featUsed);
+    boolean bool = FeatureSet.supports(featSupported, featUsed);
     return new SupportResult(bool, featSupported, featUsed);
   }
 
