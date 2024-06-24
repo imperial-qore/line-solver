@@ -1,8 +1,10 @@
 package jline.api;
 
+import java.util.Random;
 import java.util.Set;
 
 import jline.util.Matrix;
+import org.apache.commons.math3.distribution.ExponentialDistribution;
 
 /**
 * APIs for Continuous-Time Markov Chains (CTMCs).
