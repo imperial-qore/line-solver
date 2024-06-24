@@ -740,10 +740,10 @@ classdef Network < Model
             bool = snHasPS(self.getStruct);
         end
 
-        function bool = hasRAND(self)
-            % BOOL = HASRAND()
+        function bool = hasSIRO(self)
+            % BOOL = HASSIRO()
 
-            bool = snHasRAND(self.getStruct);
+            bool = snHasSIRO(self.getStruct);
         end
 
         function bool = hasHOL(self)

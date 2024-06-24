@@ -3308,8 +3308,8 @@ public class Network extends Model implements Serializable {
         return SN.snHasPS(getStruct());
     }
 
-    public boolean hasRAND() {
-        return SN.snHasRAND(getStruct());
+    public boolean hasSIRO() {
+        return SN.snHasSIRO(getStruct());
     }
 
     public boolean hasHOL() {
