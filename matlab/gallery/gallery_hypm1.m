@@ -1,5 +1,5 @@
 function model = gallery_hypm1
-model = Network('Hyp/M/1');
+model = Network('H2/M/1');
 %% Block 1: nodes
 source = Source(model, 'mySource');
 queue = Queue(model, 'myQueue', SchedStrategy.FCFS);
