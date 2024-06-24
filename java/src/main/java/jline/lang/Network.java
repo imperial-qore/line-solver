@@ -2,6 +2,7 @@ package jline.lang;
 
 import jline.api.DTMC;
 import jline.api.SN;
+import jline.lang.processes.MAP;
 import jline.lang.processes.Replayer;
 import jline.util.Maths;
 import jline.lang.constant.*;
@@ -737,6 +738,9 @@ public class Network extends Model implements Serializable {
         this.sn = sn;
     }
 
+    public NetworkStruct getStruct() {
+        return this.getStruct(true);
+    }
     public NetworkStruct getStruct(boolean wantInitialState) {
         if (!this.hasStruct)
             refreshStruct(true);
@@ -1544,6 +1548,8 @@ public class Network extends Model implements Serializable {
             return ProcessType.REPLAYER;
         } else if (distr instanceof Binomial) {
             return ProcessType.BINOMIAL;
+        } else if (distr instanceof MAP) {
+            return ProcessType.MAP;
         } else if (distr instanceof Immediate) {
             return ProcessType.IMMEDIATE;
         } else {

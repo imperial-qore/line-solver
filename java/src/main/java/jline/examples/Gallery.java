@@ -3,6 +3,8 @@ package jline.examples;
 import jline.lang.*;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.nodes.*;
+import jline.lang.processes.MAP;
+import jline.solvers.jmt.SolverJMT;
 import jline.solvers.mva.SolverMVA;
 
 import javax.xml.parsers.ParserConfigurationException;
@@ -164,8 +166,14 @@ public class Gallery {
     }
 
     public static Network gallery_hypm1() {
-        Network model = new Network("model");
-        // TODO
+        Network model = new Network("H2/M/1");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, HyperExp.fitMeanAndSCV(1,64));
+        queue.setService(oclass, new Exp(2));
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
@@ -176,8 +184,18 @@ public class Gallery {
     }
 
     public static Network gallery_mapm1() {
-        Network model = new Network("model");
-        // TODO
+        return gallery_mapm1(MAP.rand(2));
+    }
+
+    public static Network gallery_mapm1(MAP map) {
+        Network model = new Network("MAP/M/1");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, map);
+        queue.setService(oclass, new Exp(2));
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
@@ -426,7 +444,10 @@ public class Gallery {
     }
 
     public static void main(String[] args) throws IllegalAccessException, ParserConfigurationException {
-        new SolverMVA(gallery_erldk()).getAvgTable().print();
+        Network model = gallery_mapm1();
+        NetworkStruct sn = model.getStruct(false);
+        new SolverJMT(model).getAvgTable().print();
+        model.jsimgView();
         //new SolverMVA(gallery_mm1_tandem()).getAvgTable().tget("RespT", "Queue1","myClass").print();
     }
 }

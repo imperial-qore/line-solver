@@ -1,14 +1,13 @@
 package jline.lib;
 
 import jline.api.CTMC;
+import jline.api.MAM;
 import jline.util.Matrix;
 import org.apache.commons.math3.linear.EigenDecomposition;
 import org.apache.commons.math3.linear.MatrixUtils;
 import org.apache.commons.math3.linear.RealMatrix;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Random;
+import java.util.*;
 
 public class KPCToolbox {
 
@@ -742,4 +741,29 @@ public class KPCToolbox {
         return map2_fit(E1,E2,E3,g2).MAP;
     }
 
+    public Map<Integer, Matrix> map_rand() {
+        return KPCToolbox.map_rand(2);
+    }
+    public static Map<Integer, Matrix> map_rand(int K) {
+        Random random = new Random();
+        // Randomize D0
+        ArrayList<List<Double>> D0 = new ArrayList<>();
+        for (int i = 0; i < K; i++) {
+            List<Double> row = new ArrayList<>();
+            for (int j = 0; j < K; j++) {
+                row.add(random.nextDouble());
+            }
+            D0.add(row);
+        }
+        // Randomize D1
+        ArrayList<List<Double>> D1 = new ArrayList<>();
+        for (int i = 0; i < K; i++) {
+            List<Double> row = new ArrayList<>();
+            for (int j = 0; j < K; j++) {
+                row.add(random.nextDouble());
+            }
+            D1.add(row);
+        }
+        return map_normalize(new Matrix(D0), new Matrix(D1));
+    }
 }

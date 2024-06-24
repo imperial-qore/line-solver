@@ -1,6 +1,7 @@
 package jline.lang.processes;
 
 
+import jline.lib.KPCToolbox;
 import jline.util.Matrix;
 import jline.lang.distributions.MarkovianDistribution;
 import jline.lang.distributions.CumulativeDistribution;
@@ -8,6 +9,7 @@ import jline.lang.distributions.CumulativeDistribution;
 import java.io.Serializable;
 import java.util.*;
 
+import static jline.lang.constant.SolverType.MAM;
 import static jline.lib.KPCToolbox.*;
 
 /**
@@ -18,6 +20,10 @@ public class MAP extends MarkovianDistribution implements Serializable {
     List<Double> totalDepartureRate;
     List<Double> totalPhaseRate;
     private final int nPhases;
+
+    public MAP(Map<Integer, Matrix> map) {
+        this(map.get(0), map.get(1));
+    }
 
     public MAP(Matrix D0, Matrix D1) {
         super("MAP", 2);
@@ -169,12 +175,21 @@ public class MAP extends MarkovianDistribution implements Serializable {
         Map<Integer, Matrix> res = new HashMap<Integer, Matrix>();
         Matrix D0 = this.getD0();
         Matrix D1 = this.getD1();
-        res.put(0,D0);
-        res.put(1,D1);
+        res.put(0, D0);
+        res.put(1, D1);
         return res;
     }
 
     public double evalLST(double s) {
         throw new RuntimeException("Not Implemented!"); // TODO: not implemented
+    }
+
+    public static MAP rand() {
+        return MAP.rand(2);
+    }
+
+    public static MAP rand(int order) {
+        Map<Integer, Matrix> map = KPCToolbox.map_rand(order);
+        return new MAP(map);
     }
 }
