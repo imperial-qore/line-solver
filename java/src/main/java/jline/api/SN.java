@@ -3,9 +3,12 @@ package jline.api;
 import java.util.*;
 
 
+import jline.examples.Gallery;
+import jline.examples.GettingStarted;
 import jline.lang.constant.GlobalConstants;
 import jline.lang.constant.NodeType;
 import jline.lang.constant.SchedStrategy;
+import jline.lang.nodes.Station;
 import jline.util.Matrix;
 import jline.lang.NetworkStruct;
 import jline.lang.nodes.Node;
@@ -832,93 +835,93 @@ public class SN {
     }
 
     public static boolean snHasFCFS(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.sched.containsValue(SchedStrategy.FCFS);
     }
 
     public static boolean snHasDPS(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.sched.containsValue(SchedStrategy.DPS);
     }
 
     public static boolean snHasGPS(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.sched.containsValue(SchedStrategy.GPS);
     }
 
     public static boolean snHasINF(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.sched.containsValue(SchedStrategy.INF);
     }
 
     public static boolean snHasPS(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.sched.containsValue(SchedStrategy.PS);
     }
 
-    public static boolean snHasRAND(NetworkStruct sn) {
-        // TODO
-        return false;
+    public static boolean snHasSIRO(NetworkStruct sn) {
+        return sn.sched.containsValue(SchedStrategy.SIRO);
     }
 
     public static boolean snHasHOL(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.sched.containsValue(SchedStrategy.HOL);
     }
 
     public static boolean snHasLCFS(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.sched.containsValue(SchedStrategy.LCFS);
     }
 
     public static boolean snHasSEPT(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.sched.containsValue(SchedStrategy.SEPT);
     }
 
     public static boolean snHasLEPT(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.sched.containsValue(SchedStrategy.LEPT);
     }
 
     public static boolean snHasSJF(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.sched.containsValue(SchedStrategy.SJF);
     }
 
     public static boolean snHasLJF(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.sched.containsValue(SchedStrategy.LJF);
     }
 
     public static boolean snHasMultiClassFCFS(NetworkStruct sn) {
-        // TODO
+        for (Map.Entry<Station, SchedStrategy> entry : sn.sched.entrySet()) {
+            if (entry.getValue() == SchedStrategy.FCFS) {
+                int nnz_rates = 0;
+                for (int j=0; j<sn.nclasses; j++) {
+                    if (sn.rates.get(((Station) entry.getKey()).getStationIdx(), j)>0) {
+                        nnz_rates++;
+                    }
+                }
+                if (nnz_rates>1) {
+                    return true;
+                }
+            }
+        }
         return false;
     }
 
     public static boolean snHasMultiServer(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.nservers.elementMax() > 1;
     }
 
     public static boolean snHasSingleChain(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.nchains == 1;
     }
 
     public static boolean snHasMultiChain(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.nchains > 1;
     }
 
     public static boolean snHasSingleClass(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.nclasses == 1;
     }
 
     public static boolean snHasMultiClass(NetworkStruct sn) {
-        // TODO
-        return false;
+        return sn.nclasses > 1;
+    }
+
+    public static void main(String[] args) {
+        jline.lang.Network model = Gallery.gallery_mm1();
+        System.out.println(snHasSingleClass(model.getStruct()));
     }
 
 }
