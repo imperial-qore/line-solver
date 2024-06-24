@@ -5,7 +5,6 @@ import jline.lang.constant.SchedStrategy;
 import jline.lang.nodes.*;
 import jline.lang.processes.MAP;
 import jline.solvers.jmt.SolverJMT;
-import jline.solvers.mva.SolverMVA;
 
 import javax.xml.parsers.ParserConfigurationException;
 import java.util.List;
@@ -200,20 +199,51 @@ public class Gallery {
     }
 
     public static Network gallery_mapmk() {
-        Network model = new Network("model");
-        // TODO
-        return model;
+        return gallery_mapmk(MAP.rand(2), 2);
     }
 
+    public static Network gallery_mapmk(MAP map) {
+        return gallery_mapmk(map, 2);
+    }
+
+    public static Network gallery_mapmk(MAP map, int k) {
+        Network model = new Network("MAP/M/k");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, map);
+        queue.setService(oclass, new Exp(2));
+        queue.setNumberOfServers(k);
+        model.link(Network.serialRouting(source,queue,sink));
+        return model;
+    }
     public static Network gallery_mdk() {
-        Network model = new Network("model");
-        // TODO
+        return gallery_mdk(2);
+    }
+
+    public static Network gallery_mdk(int k) {
+        Network model = new Network("M/D/k");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, Exp.fitMean(1));
+        queue.setService(oclass, new Det(2.0/k));
+        queue.setNumberOfServers(k);
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
     public static Network gallery_merl1() {
-        Network model = new Network("model");
-        // TODO
+        Network model = new Network("M/E/1");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, new Exp(1));
+        queue.setService(oclass, Erlang.fitMeanAndOrder(0.5,2));
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
@@ -236,14 +266,31 @@ public class Gallery {
     }
 
     public static Network gallery_merlk() {
-        Network model = new Network("model");
-        // TODO
+        return gallery_merlk(2);
+    }
+
+    public static Network gallery_merlk(int k) {
+        Network model = new Network("M/E/1");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, new Exp(1));
+        queue.setService(oclass, Erlang.fitMeanAndOrder(0.5,2));
+        queue.setNumberOfServers(k);
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
     public static Network gallery_mhyp1() {
-        Network model = new Network("model");
-        // TODO
+        Network model = new Network("M/H/1");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, new Exp(1));
+        queue.setService(oclass, HyperExp.fitMeanAndSCV(0.5,4));
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
@@ -266,13 +313,32 @@ public class Gallery {
     }
 
     public static Network gallery_mhypk() {
-        Network model = new Network("model");
-        // TODO
+        return gallery_mhypk(2);
+    }
+
+    public static Network gallery_mhypk(int k) {
+        Network model = new Network("M/H/k");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, new Exp(1));
+        queue.setService(oclass, HyperExp.fitMeanAndSCV(0.5,4));
+        queue.setNumberOfServers(k);
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
     public static Network gallery_mm1() {
-        return gallery_mm1_linear(1, 0.5);
+        Network model = new Network("M/M/1");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, new Exp(1));
+        queue.setService(oclass, new Exp(2));
+        model.link(Network.serialRouting(source,queue,sink));
+        return model;
     }
 
     public static Network gallery_mm1_feedback() {
@@ -340,14 +406,32 @@ public class Gallery {
     }
 
     public static Network gallery_mm1_prio() {
-        Network model = new Network("model");
-        // TODO
+        Network model = new Network("M[2]/M[2]/1");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.HOL);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass1 = new OpenClass(model, "myClass1", 1);
+        source.setArrival(oclass1, new Exp(1));
+        queue.setService(oclass1, new Exp(4));
+        JobClass oclass2 = new OpenClass(model, "myClass2", 0);
+        source.setArrival(oclass2, new Exp(0.5));
+        queue.setService(oclass2, new Exp(4));
+        RoutingMatrix P = model.initRoutingMatrix();
+        P.set(oclass1, Network.serialRouting(source,queue,sink));
+        P.set(oclass2, Network.serialRouting(source,queue,sink));
+        model.link(P);
         return model;
     }
 
     public static Network gallery_mm1_ps() {
-        Network model = new Network("model");
-        // TODO
+        Network model = new Network("M/M/1-PS");
+        Source source = new Source(model, "mySource");
+        Queue queue = new Queue(model, "myQueue", SchedStrategy.PS);
+        Sink sink = new Sink(model, "mySink");
+        JobClass oclass = new OpenClass(model, "myClass");
+        source.setArrival(oclass, new Exp(1));
+        queue.setService(oclass, new Exp(2));
+        model.link(Network.serialRouting(source,queue,sink));
         return model;
     }
 
@@ -444,7 +528,7 @@ public class Gallery {
     }
 
     public static void main(String[] args) throws IllegalAccessException, ParserConfigurationException {
-        Network model = gallery_mapm1();
+        Network model = gallery_mm1_prio();
         NetworkStruct sn = model.getStruct(false);
         new SolverJMT(model).getAvgTable().print();
         model.jsimgView();

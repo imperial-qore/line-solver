@@ -77,8 +77,8 @@ public class GettingStarted {
             throw new RuntimeException(e);
         }
         RoutingMatrix P = model.initRoutingMatrix();
-        P.set(jobclass1, jobclass1, Network.serialRouting(source,queue,sink));
-        P.set(jobclass2, jobclass2, Network.serialRouting(source,queue,sink));
+        P.set(jobclass1, Network.serialRouting(source,queue,sink));
+        P.set(jobclass2, Network.serialRouting(source,queue,sink));
         model.link(P);
         NetworkAvgTable avgTable = new SolverJMT(model, "seed", 23000).getAvgTable();
         avgTable.print();
