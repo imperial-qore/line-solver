@@ -1066,30 +1066,38 @@ public class SN {
     }
 
     public static boolean snIsStateValid(NetworkStruct sn) {
-        Matrix nir = new Matrix(0, 0);
-        Matrix sir = new Matrix(0, 0);
+        NetworkStruct snTmp = null;
+        try {
+            snTmp = (NetworkStruct) sn.clone();
+        } catch (CloneNotSupportedException e) {
+            throw new RuntimeException(e);
+        }
+        Matrix nir = new Matrix(snTmp.nstations, snTmp.nclasses);
+        Matrix sir = new Matrix(snTmp.nstations, snTmp.nclasses);
 
-        for (int ist = 0; ist < sn.nstations; ist++) {
-            int isf = (int) sn.stationToStateful.get(ist);
-
-            if (sn.state.get(sn.stateful.get(isf)).length() > 1) {
-                System.out.printf("isStateValid will ignore some states of station %d, define a unique initial state to address this problem.\n", ist + 1);
-                Matrix firstState = sn.state.get(sn.stateful.get(isf));
-                sn.state = new HashMap<StatefulNode, Matrix>(sn.nstations);
-                sn.state.put(sn.stateful.get(isf), firstState);
+        for (int ist = 0; ist < snTmp.nstations; ist++) {
+            int isf = (int) snTmp.stationToStateful.get(0, ist);
+            if (snTmp.state.get(snTmp.stations.get(ist)).getNumRows() > 1) {
+                if (snTmp.stateprior.get(snTmp.stations.get(ist)).elementMax() < 1 - GlobalConstants.FineTol) {
+                    System.err.format("isStateValid will ignore some states of station %d, define a unique initial state to address this problem.\n", ist);
+                }
+                Matrix initialState = new Matrix(1, snTmp.state.get(snTmp.stations.get(ist)).getNumCols());
+                Matrix.extractRows(snTmp.state.get(snTmp.stations.get(ist)), 0, 1, initialState);
+                snTmp.state.put(snTmp.stations.get(ist), initialState);
             }
 
-            Matrix state = sn.state.get(sn.stateful.get(isf));
-            State.StateMarginalStatistics result = State.toMarginal(sn, (int) sn.stationToNode.get(ist), state, null, null, null, null, null);
-            for (int j = 0; j < result.nir.length(); j++) {
-                nir.set(ist, j, result.nir.get(0, j));
-            }
-            for (int j = 0; j < result.sir.length(); j++) {
-                sir.set(ist, j, result.sir.get(0, j));
+            State.StateMarginalStatistics stats = State.toMarginal(snTmp,
+                    (int) snTmp.stationToNode.get(0, ist),
+                    snTmp.state.get(snTmp.stations.get(ist)),
+                    null, null, null, null, null);
+
+            for (int i = 0; i < snTmp.nclasses; i++) {
+                nir.set(ist, i, stats.nir.get(0, i));
+                sir.set(ist, i, stats.sir.get(0, i));
             }
         }
 
-        return State.isValid(sn, nir, sir);
+        return State.isValid(snTmp, nir, sir);
     }
 
     public static Map<StatefulNode, Matrix> snGetStateAggr(NetworkStruct sn) {
