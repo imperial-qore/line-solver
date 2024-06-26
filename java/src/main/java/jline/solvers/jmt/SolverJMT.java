@@ -2705,7 +2705,6 @@ public class SolverJMT extends NetworkSolver {
         viewModel(jmtPath, fileName, ViewMode.JSIMW);
     }
 
-
     public void jsimgView() {
         jsimgView(jmtGetPath(), this.options);
     }

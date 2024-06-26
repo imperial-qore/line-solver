@@ -35,6 +35,8 @@ node{1}.setRouting(jobclass{2}, RoutingStrategy.RAND);
 node{2}.setRouting(jobclass{2}, RoutingStrategy.RAND);
 node{3}.setRouting(jobclass{2}, RoutingStrategy.RAND);
 
+
+
 M = model.getNumberOfNodes;
 K = model.getNumberOfClasses;
 

@@ -4,7 +4,7 @@ import jline.lang.constant.*;
 import jline.lang.nodes.*;
 import jline.lang.processes.Replayer;
 import jline.solvers.*;
-import jline.solvers.ctmc.SolverCTMC;
+//import jline.solvers.ctmc.SolverCTMC;
 import jline.lang.nodes.Delay;
 import jline.lang.*;
 import jline.lang.distributions.*;
@@ -95,9 +95,9 @@ public class GettingStarted {
         delay.setService(closedClass, new Exp(0.5));
         queue.setService(closedClass, new Exp(4.0));
         model.link(model.serialRouting(delay, queue));
-        SolverCTMC solver = new SolverCTMC(model);
-        NetworkAvgTable ctmcAvgTable = solver.getAvgTable();
-        ctmcAvgTable.print();
+//        SolverCTMC solver = new SolverCTMC(model);
+//        NetworkAvgTable ctmcAvgTable = solver.getAvgTable();
+//        ctmcAvgTable.print();
 //        ArrayList<SSAStateMatrix> stateSpace = solver.getStateSpace();
 //        for (SSAStateMatrix matrix : stateSpace) {
 //            matrix.print();
@@ -268,6 +268,6 @@ public class GettingStarted {
     }
 
     public static void main(String[] args) throws IllegalAccessException, ParserConfigurationException {
-        getting_started_6();
+        getting_started_1().jsimwView();
     }
 }

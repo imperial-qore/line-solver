@@ -16,6 +16,7 @@ import jline.solvers.jmt.SolverJMT;
 import jline.util.*;
 import org.apache.commons.lang3.NotImplementedException;
 
+import javax.xml.parsers.ParserConfigurationException;
 import java.io.Serializable;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -3020,11 +3021,11 @@ public class Network extends Model implements Serializable {
 
     public RoutingMatrix initRoutingMatrix() {
         RoutingMatrix rt = new RoutingMatrix(this, jobClasses, nodes);
-        for (JobClass j:jobClasses) {
+        for (JobClass j : jobClasses) {
             if (j instanceof SelfLoopingClass) {
-                for (Node i:nodes) {
+                for (Node i : nodes) {
                     //rt.set(j, j, ((SelfLoopingClass) j).getReferenceStation(), ((SelfLoopingClass) j).getReferenceStation(), 1.0);
-                    rt.set(j, j, i,i, 1.0);
+                    rt.set(j, j, i, i, 1.0);
                 }
             }
         }
@@ -3280,6 +3281,15 @@ public class Network extends Model implements Serializable {
     public void jsimgView() {
         SolverJMT jmt = new SolverJMT(this);
         jmt.jsimgView();
+    }
+
+    public void jsimwView() {
+        SolverJMT jmt = new SolverJMT(this);
+        try {
+            jmt.jsimwView();
+        } catch (ParserConfigurationException e) {
+            e.printStackTrace();
+        }
     }
 
     public boolean hasFCFS() {

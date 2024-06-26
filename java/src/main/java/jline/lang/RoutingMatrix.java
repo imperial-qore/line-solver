@@ -180,7 +180,7 @@ public class RoutingMatrix implements Serializable {
 
     public void addConnection(Node sourceNode, Node destNode, double probability) {
         for (JobClass jobClass : this.jobClasses) {
-            this.addConnection(sourceNode, destNode, jobClass, probability);
+                this.addConnection(sourceNode, destNode, jobClass, probability);
         }
     }
 
@@ -388,9 +388,11 @@ public class RoutingMatrix implements Serializable {
 
                 for (int i = col1; i < col2; i++) {
                     int rowIdx = nz_rows[i];
-                    double values = nz_values[i];
-                    model.addLink(rowIdx, colIdx);
-                    this.nodes.get(rowIdx).setRouting(this.jobClasses.get(r), RoutingStrategy.PROB, this.nodes.get(colIdx), values);
+                    double value = nz_values[i];
+                    if (value>0.0) {
+                        model.addLink(rowIdx, colIdx);
+                        this.nodes.get(rowIdx).setRouting(this.jobClasses.get(r), RoutingStrategy.PROB, this.nodes.get(colIdx), value);
+                    }
                 }
             }
 
@@ -414,11 +416,15 @@ public class RoutingMatrix implements Serializable {
     }
 
     public void set(JobClass jobclass, Matrix rt) {
-        this.routings.get(jobclass.getIndex()-1).get(jobclass.getIndex()-1).setTo(rt);
+        for (int i=0; i<this.nodes.size(); i++)
+            for (int k=0; k<this.nodes.size(); k++)
+                set(jobclass, this.nodes.get(i), this.nodes.get(k), rt.get(i, k));
     }
 
     public void set(JobClass jobclass1, JobClass jobclass2, Matrix rt) {
-        this.routings.get(jobclass1.getIndex()-1).get(jobclass2.getIndex()-1).setTo(rt);
+        for (int i=0; i<this.nodes.size(); i++)
+            for (int k=0; k<this.nodes.size(); k++)
+                set(jobclass1, jobclass2, this.nodes.get(i), this.nodes.get(k), rt.get(i, k));
     }
 
     public void set(JobClass jobclass, RoutingMatrix rt) {

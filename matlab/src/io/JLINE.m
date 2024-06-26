@@ -626,30 +626,32 @@ classdef JLINE
             end
         end
 
-        function from_line_links(line_network, network_object)
+        function from_line_links(line_network, jline_network)
             connections = line_network.getConnectionMatrix();
             [m, ~] = size(connections);
-            nodes = network_object.getNodes();
-            classes = network_object.getClasses();
-            n_classes = classes.size();
-            routing_matrix = network_object.initRoutingMatrix();
+            jline_nodes = jline_network.getNodes();
+            jline_classes = jline_network.getClasses();
+            nclasses = jline_classes.size();
+            jline_routing_matrix = jline_network.initRoutingMatrix();
             line_nodes = line_network.getNodes;
+            sn = line_network.getStruct;
+            nodevisits = cellsum(sn.nodevisits);
             % [ ] Update to consider different weights/routing for classes
             for i = 1:m
                 line_node = line_nodes{i};
-                for k = 1:n_classes
+                for k = 1:nclasses                    
                     output_strat = line_node.output.outputStrategy{k};
                     switch output_strat{2}
                         case RoutingStrategy.DISABLED
-                            nodes.get(i-1).setRouting(classes.get(k-1),jline.lang.constant.RoutingStrategy.DISABLED);
+                            jline_nodes.get(i-1).setRouting(jline_classes.get(k-1),jline.lang.constant.RoutingStrategy.DISABLED);
                         case RoutingStrategy.RAND
-                            nodes.get(i-1).setRouting(classes.get(k-1),jline.lang.constant.RoutingStrategy.RAND);
+                            jline_nodes.get(i-1).setRouting(jline_classes.get(k-1),jline.lang.constant.RoutingStrategy.RAND);
                             outlinks_i=find(connections(i,:));
-                            for j= outlinks_i
-                                routing_matrix.addConnection(nodes.get(i-1), nodes.get(j-1), classes.get(k-1), 1/length(outlinks_i));
+                            for j= outlinks_i     
+                                    jline_network.addLink(jline_nodes.get(i-1), jline_nodes.get(j-1));
                             end
-                            %                         case RoutingStrategy.RROBIN
-                            %                             nodes.get(i-1).setRouting(classes.get(k-1),jline.lang.constant.RoutingStrategy.RROBIN);
+                        %case RoutingStrategy.RROBIN
+                            %nodes.get(i-1).setRouting(classes.get(k-1),jline.lang.constant.RoutingStrategy.RROBIN);
                             %                             outlinks_i=find(connections(i,:))';
                             %                             for j= outlinks_i
                             %                                 routing_matrix.addConnection(nodes.get(i-1), nodes.get(j-1), classes.get(k-1), 1/length(outlinks_i));
@@ -660,30 +662,30 @@ classdef JLINE
                                 for j = 1:length(probabilities)
                                     dest_idx = probabilities{j}{1}.index;
                                     if (connections(i, dest_idx) ~= 0)
-                                        routing_matrix.set(classes.get(k-1), classes.get(k-1), nodes.get(i-1), nodes.get(dest_idx-1), probabilities{j}{2});
+                                        jline_routing_matrix.set(jline_classes.get(k-1), jline_classes.get(k-1), jline_nodes.get(i-1), jline_nodes.get(dest_idx-1), probabilities{j}{2});
                                     end
                                 end
                             end
                         otherwise
                             %keyboard
                             line_warning(mfilename, sprintf('''%s'' routing strategy not supported by JLINE, setting as Disabled.\n',output_strat{2}));
-                            nodes.get(i-1).setRouting(classes.get(k-1),jline.lang.constant.RoutingStrategy.DISABLED);
+                            jline_nodes.get(i-1).setRouting(jline_classes.get(k-1),jline.lang.constant.RoutingStrategy.DISABLED);
                     end
                 end
             end
-            network_object.link(routing_matrix);
+            jline_network.link(jline_routing_matrix);
 
             %Align the sn.rtorig be the same
-            sn = network_object.getStruct(true);
+            sn = jline_network.getStruct(true);
             rtorig = java.util.HashMap();
             if ~isempty(line_network.sn.rtorig)
                 if iscell(line_network.sn.rtorig)
-                    for r = 1:n_classes
+                    for r = 1:nclasses
                         sub_rtorig = java.util.HashMap();
-                        for s = 1:n_classes
-                            sub_rtorig.put(classes.get(s-1), JLINE.matrix_to_jlinematrix(line_network.sn.rtorig{r,s}));
+                        for s = 1:nclasses
+                            sub_rtorig.put(jline_classes.get(s-1), JLINE.matrix_to_jlinematrix(line_network.sn.rtorig{r,s}));
                         end
-                        rtorig.put(classes.get(r-1), sub_rtorig);
+                        rtorig.put(jline_classes.get(r-1), sub_rtorig);
                     end
                 end
             end

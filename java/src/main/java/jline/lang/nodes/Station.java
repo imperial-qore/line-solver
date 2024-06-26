@@ -15,7 +15,6 @@ import jline.util.Matrix;
 
 import jline.lang.*;
 import jline.lang.constant.DropStrategy;
-import jline.solvers.taussa.events.DepartureEvent;
 
 /**
  * A node where jobs can spend time stationing there
@@ -28,13 +27,10 @@ public class Station extends StatefulNode implements Serializable {
     protected Matrix lldScaling;
     protected SerializableFunction<Matrix, Double> lcdScaling;
 
-    protected Map<JobClass, DepartureEvent> departureEvents;
-
     public Station(String name) {
         super(name);
 
         this.classCap = new HashMap<JobClass, Double>();
-        this.departureEvents = new HashMap<JobClass, DepartureEvent>();
 
         this.cap = Double.POSITIVE_INFINITY;
         this.dropRule = new HashMap<JobClass, DropStrategy>();
@@ -220,13 +216,6 @@ public class Station extends StatefulNode implements Serializable {
     		}
     	}
     	return new ArrayList<Object>(Arrays.asList(map, mu, phi));
-    }
-    
-    public DepartureEvent getDepartureEvent(JobClass jobClass) {
-        if (!this.departureEvents.containsKey(jobClass)) {
-            this.departureEvents.put(jobClass, new DepartureEvent(this, jobClass));
-        }
-        return this.departureEvents.get(jobClass);
     }
 
     @Override
