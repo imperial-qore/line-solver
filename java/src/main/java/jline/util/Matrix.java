@@ -436,6 +436,22 @@ public class Matrix implements Serializable {
 		return new Matrix(this);
 	}
 
+	public boolean hasFinite() {
+		for(int i = 0; i < this.data.nz_length; i++) {
+			if (Double.isFinite(this.data.nz_values[i]))
+				return true;
+		}
+		return false;
+	}
+
+	public boolean hasInfinite() {
+		for(int i = 0; i < this.data.nz_length; i++) {
+			if (Double.isInfinite(this.data.nz_values[i]))
+				return true;
+		}
+		return false;
+	}
+
 	public boolean hasNaN() {
 		for(int i = 0; i < this.data.nz_length; i++) {
 			if (Double.isNaN(this.data.nz_values[i]))

@@ -3,12 +3,17 @@ package jline.api;
 import java.util.*;
 
 
+import jline.examples.ClosedModel;
 import jline.examples.Gallery;
 import jline.examples.GettingStarted;
+import jline.lang.JobClass;
 import jline.lang.constant.GlobalConstants;
 import jline.lang.constant.NodeType;
+import jline.lang.constant.RoutingStrategy;
 import jline.lang.constant.SchedStrategy;
+import jline.lang.nodes.StatefulNode;
 import jline.lang.nodes.Station;
+import jline.lang.state.State;
 import jline.util.Matrix;
 import jline.lang.NetworkStruct;
 import jline.lang.nodes.Node;
@@ -721,22 +726,6 @@ public class SN {
     }
 
     /**
-     * Checks if the network has one or more open classes
-     *
-     * @param sn - NetworkStruct object for the queueing network model
-     * @return boolean
-     */
-    public static boolean snHasOpenClasses(NetworkStruct sn) {
-        for (int i = 0; i < sn.njobs.getNumRows(); i++) {
-            for (int j = 0; j < sn.njobs.getNumCols(); j++) {
-                if (Double.isInfinite(sn.njobs.get(i, j)))
-                    return true;
-            }
-        }
-        return false;
-    }
-
-    /**
      * Checks if the network uses class-switching
      *
      * @param sn - NetworkStruct object for the queueing network model
@@ -782,6 +771,224 @@ public class SN {
             }
         }
         return false;
+    }
+
+    /**
+     * Checks if the network has one or more stations with multiclass heterogeneous FCFS
+     * and exponential service
+     *
+     * @param sn - NetworkStruct object for the queueing network model
+     * @return boolean
+     */
+    public static boolean snHasMultiClassHeterExpFCFS(NetworkStruct sn) {
+        for (int i = 0; i < sn.sched.size(); i++) {
+            if (sn.sched.get(sn.stations.get(i)) != SchedStrategy.FCFS) {
+                continue;
+            }
+            Matrix row = Matrix.extractRows(sn.rates, i, i + 1, null);
+            if (row.elementMax() - row.elementMin() > 0) {
+                Matrix scvs = Matrix.extractRows(sn.scv, i, i + 1, null);
+                if ((scvs.elementMax() < 1 + GlobalConstants.FineTol) && (scvs.elementMin() < 1 - GlobalConstants.FineTol)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    public static boolean snHasFCFS(NetworkStruct sn) {
+        return sn.sched.containsValue(SchedStrategy.FCFS);
+    }
+
+    public static boolean snHasDPS(NetworkStruct sn) {
+        return sn.sched.containsValue(SchedStrategy.DPS);
+    }
+
+    public static boolean snHasGPS(NetworkStruct sn) {
+        return sn.sched.containsValue(SchedStrategy.GPS);
+    }
+
+    public static boolean snHasINF(NetworkStruct sn) {
+        return sn.sched.containsValue(SchedStrategy.INF);
+    }
+
+    public static boolean snHasPS(NetworkStruct sn) {
+        return sn.sched.containsValue(SchedStrategy.PS);
+    }
+
+    public static boolean snHasSIRO(NetworkStruct sn) {
+        return sn.sched.containsValue(SchedStrategy.SIRO);
+    }
+
+    public static boolean snHasHOL(NetworkStruct sn) {
+        return sn.sched.containsValue(SchedStrategy.HOL);
+    }
+
+    public static boolean snHasLCFS(NetworkStruct sn) {
+        return sn.sched.containsValue(SchedStrategy.LCFS);
+    }
+
+    public static boolean snHasLCFSPR(NetworkStruct sn) {
+        return sn.sched.containsValue(SchedStrategy.LCFSPR);
+    }
+
+    public static boolean snHasSEPT(NetworkStruct sn) {
+        return sn.sched.containsValue(SchedStrategy.SEPT);
+    }
+
+    public static boolean snHasLEPT(NetworkStruct sn) {
+        return sn.sched.containsValue(SchedStrategy.LEPT);
+    }
+
+    public static boolean snHasSJF(NetworkStruct sn) {
+        return sn.sched.containsValue(SchedStrategy.SJF);
+    }
+
+    public static boolean snHasLJF(NetworkStruct sn) {
+        return sn.sched.containsValue(SchedStrategy.LJF);
+    }
+
+    public static boolean snHasMultiClassFCFS(NetworkStruct sn) {
+        for (Map.Entry<Station, SchedStrategy> entry : sn.sched.entrySet()) {
+            if (entry.getValue() == SchedStrategy.FCFS) {
+                int nnz_rates = 0;
+                for (int j = 0; j < sn.nclasses; j++) {
+                    if (sn.rates.get(((Station) entry.getKey()).getStationIdx(), j) > 0) {
+                        nnz_rates++;
+                    }
+                }
+                if (nnz_rates > 1) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    public static boolean snHasMultiServer(NetworkStruct sn) {
+        return sn.nservers.elementMax() > 1;
+    }
+
+    public static boolean snHasSingleChain(NetworkStruct sn) {
+        return sn.nchains == 1;
+    }
+
+    public static boolean snHasMultiChain(NetworkStruct sn) {
+        return sn.nchains > 1;
+    }
+
+    public static boolean snHasSingleClass(NetworkStruct sn) {
+        return sn.nclasses == 1;
+    }
+
+    public static boolean snHasMultiClass(NetworkStruct sn) {
+        return sn.nclasses > 1;
+    }
+
+    /**
+     * Checks if the network has one or more closed classes
+     *
+     * @param sn - NetworkStruct object for the queueing network model
+     * @return boolean
+     */
+    public static boolean snHasClosedClasses(NetworkStruct sn) {
+        return sn.njobs.hasFinite();
+    }
+
+    /**
+     * Checks if the network has both open and closed classes
+     *
+     * @param sn - NetworkStruct object for the queueing network model
+     * @return boolean
+     */
+    public static boolean snHasMixedClasses(NetworkStruct sn) {
+        return sn.njobs.hasFinite() && sn.njobs.hasInfinite();
+    }
+
+    /**
+     * Checks if the network has one or more open classes
+     *
+     * @param sn - NetworkStruct object for the queueing network model
+     * @return boolean
+     */
+    public static boolean snHasOpenClasses(NetworkStruct sn) {
+        return sn.njobs.hasInfinite();
+    }
+
+    /**
+     * Checks if the network is a closed model
+     *
+     * @param sn - NetworkStruct object for the queueing network model
+     * @return boolean
+     */
+    public static boolean snIsClosedModel(NetworkStruct sn) {
+        return !sn.njobs.hasInfinite() && sn.njobs.hasFinite();
+    }
+
+    /**
+     * Checks if the network is a mixed model
+     *
+     * @param sn - NetworkStruct object for the queueing network model
+     * @return boolean
+     */
+    public static boolean snIsMixedModel(NetworkStruct sn) {
+        return SN.snHasMixedClasses(sn);
+    }
+
+    /**
+     * Checks if the network is an open model
+     *
+     * @param sn - NetworkStruct object for the queueing network model
+     * @return boolean
+     */
+    public static boolean snIsOpenModel(NetworkStruct sn) {
+        return !sn.njobs.hasFinite() && sn.njobs.hasInfinite();
+    }
+
+    public static void snPrintRoutingMatrix(NetworkStruct sn) {
+        snPrintRoutingMatrix(sn, null);
+    }
+
+    public static void snPrintRoutingMatrix(NetworkStruct sn, JobClass onlyclass) {
+        // Node and class details
+        List<String> nodeNames = sn.nodenames;
+        List<String> classNames = sn.classnames;
+        Matrix rtNodes = sn.rtnodes;
+        int nNodes = sn.nnodes;
+        int nClasses = sn.nclasses;
+
+        // Iterate through all nodes and classes
+        for (int i = 0; i < nNodes; i++) {
+            for (int r = 0; r < nClasses; r++) {
+                for (int j = 0; j < nNodes; j++) {
+                    for (int s = 0; s < nClasses; s++) {
+                        if (rtNodes.get(i * nClasses + r, j * nClasses + s) > 0) {
+                            String pr;
+                            if (sn.nodetypes.get(i) == NodeType.Cache) {
+                                pr = "state-dependent";
+                            } else if (sn.nodetypes.get(i) == NodeType.Sink) {
+                                continue;
+                            } else {
+                                if (sn.routing.get(sn.nodes.get(i)).get(sn.jobclasses.get(r)) == RoutingStrategy.DISABLED) {
+                                    continue;
+                                } else {
+                                    pr = String.format("%f", rtNodes.get(i * nClasses + r, j * nClasses + s));
+                                }
+                            }
+
+                            if (onlyclass == null) {
+                                System.out.printf("\n%s [%s] => %s [%s] : Pr=%s", nodeNames.get(i), classNames.get(r), nodeNames.get(j), classNames.get(s), pr);
+                            } else {
+                                if (classNames.get(r).equalsIgnoreCase(onlyclass.getName()) || classNames.get(s).equalsIgnoreCase(onlyclass.getName())) {
+                                    System.out.printf("\n%s [%s] => %s [%s] : Pr=%s", nodeNames.get(i), classNames.get(r), nodeNames.get(j), classNames.get(s), pr);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        System.out.print("\n");
     }
 
     public static class snGetProductFormChainParamsReturn {
@@ -834,94 +1041,75 @@ public class SN {
         }
     }
 
-    public static boolean snHasFCFS(NetworkStruct sn) {
-        return sn.sched.containsValue(SchedStrategy.FCFS);
-    }
+    public static Matrix snGetAvgArvRFromTput(NetworkStruct sn, Matrix TN, Matrix TH) {
+        int M = sn.nstations;
+        int R = sn.nclasses;
+        Matrix AN = new Matrix(M, R);
 
-    public static boolean snHasDPS(NetworkStruct sn) {
-        return sn.sched.containsValue(SchedStrategy.DPS);
-    }
-
-    public static boolean snHasGPS(NetworkStruct sn) {
-        return sn.sched.containsValue(SchedStrategy.GPS);
-    }
-
-    public static boolean snHasINF(NetworkStruct sn) {
-        return sn.sched.containsValue(SchedStrategy.INF);
-    }
-
-    public static boolean snHasPS(NetworkStruct sn) {
-        return sn.sched.containsValue(SchedStrategy.PS);
-    }
-
-    public static boolean snHasSIRO(NetworkStruct sn) {
-        return sn.sched.containsValue(SchedStrategy.SIRO);
-    }
-
-    public static boolean snHasHOL(NetworkStruct sn) {
-        return sn.sched.containsValue(SchedStrategy.HOL);
-    }
-
-    public static boolean snHasLCFS(NetworkStruct sn) {
-        return sn.sched.containsValue(SchedStrategy.LCFS);
-    }
-
-    public static boolean snHasSEPT(NetworkStruct sn) {
-        return sn.sched.containsValue(SchedStrategy.SEPT);
-    }
-
-    public static boolean snHasLEPT(NetworkStruct sn) {
-        return sn.sched.containsValue(SchedStrategy.LEPT);
-    }
-
-    public static boolean snHasSJF(NetworkStruct sn) {
-        return sn.sched.containsValue(SchedStrategy.SJF);
-    }
-
-    public static boolean snHasLJF(NetworkStruct sn) {
-        return sn.sched.containsValue(SchedStrategy.LJF);
-    }
-
-    public static boolean snHasMultiClassFCFS(NetworkStruct sn) {
-        for (Map.Entry<Station, SchedStrategy> entry : sn.sched.entrySet()) {
-            if (entry.getValue() == SchedStrategy.FCFS) {
-                int nnz_rates = 0;
-                for (int j=0; j<sn.nclasses; j++) {
-                    if (sn.rates.get(((Station) entry.getKey()).getStationIdx(), j)>0) {
-                        nnz_rates++;
+        if (TH != null && TN != null) {
+            for (int i = 0; i < M; i++) {
+                for (int k = 0; k < R; k++) {
+                    double a = 0.0;
+                    for (int j = 0; j < M; j++) {
+                        for (int r = 0; r < R; r++) {
+                            a += TN.get(j, r) * sn.rt.get((j * R) + r, (i * R) + k);
+                        }
                     }
-                }
-                if (nnz_rates>1) {
-                    return true;
+                    AN.set(i, k, a);
                 }
             }
+        } else {
+            AN = new Matrix(0, 0);
         }
-        return false;
+
+        return AN;
     }
 
-    public static boolean snHasMultiServer(NetworkStruct sn) {
-        return sn.nservers.elementMax() > 1;
+    public static boolean snIsStateValid(NetworkStruct sn) {
+        Matrix nir = new Matrix(0, 0);
+        Matrix sir = new Matrix(0, 0);
+
+        for (int ist = 0; ist < sn.nstations; ist++) {
+            int isf = (int) sn.stationToStateful.get(ist);
+
+            if (sn.state.get(sn.stateful.get(isf)).length() > 1) {
+                System.out.printf("isStateValid will ignore some states of station %d, define a unique initial state to address this problem.\n", ist + 1);
+                Matrix firstState = sn.state.get(sn.stateful.get(isf));
+                sn.state = new HashMap<StatefulNode, Matrix>(sn.nstations);
+                sn.state.put(sn.stateful.get(isf), firstState);
+            }
+
+            Matrix state = sn.state.get(sn.stateful.get(isf));
+            State.StateMarginalStatistics result = State.toMarginal(sn, (int) sn.stationToNode.get(ist), state, null, null, null, null, null);
+            for (int j = 0; j < result.nir.length(); j++) {
+                nir.set(ist, j, result.nir.get(0, j));
+            }
+            for (int j = 0; j < result.sir.length(); j++) {
+                sir.set(ist, j, result.sir.get(0, j));
+            }
+        }
+
+        return State.isValid(sn, nir, sir);
     }
 
-    public static boolean snHasSingleChain(NetworkStruct sn) {
-        return sn.nchains == 1;
-    }
-
-    public static boolean snHasMultiChain(NetworkStruct sn) {
-        return sn.nchains > 1;
-    }
-
-    public static boolean snHasSingleClass(NetworkStruct sn) {
-        return sn.nclasses == 1;
-    }
-
-    public static boolean snHasMultiClass(NetworkStruct sn) {
-        return sn.nclasses > 1;
+    public static Map<StatefulNode, Matrix> snGetStateAggr(NetworkStruct sn) {
+        Map<StatefulNode, Matrix> initialState = sn.state;
+        Map<StatefulNode, Matrix> initialStateAggr = new HashMap<>();
+        for (int isf = 0; isf < initialState.size(); isf++) {
+            int ind = (int) sn.statefulToNode.get(isf);
+            initialState.get(sn.stateful.get(isf));
+            State.StateMarginalStatistics aggrState = State.toMarginalAggr(sn, ind, initialState.get(sn.stateful.get(isf)), null, null, null, null, null);
+            initialStateAggr.put(sn.stateful.get(isf), aggrState.nir);
+        }
+        return initialStateAggr;
     }
 
     public static void main(String[] args) {
-        jline.lang.Network model = Gallery.gallery_mm1();
-        System.out.println(snHasSingleClass(model.getStruct()));
+        jline.lang.Network model = ClosedModel.example_closedModel_3();
+        NetworkStruct sn = model.getStruct();
+        Map<StatefulNode, Matrix> initialStateAggr = snGetStateAggr(sn);
+        initialStateAggr.get(sn.stateful.get(1)).print();
+        // bug in block starting at line 279 of State.toMarginalAggr
     }
 
 }

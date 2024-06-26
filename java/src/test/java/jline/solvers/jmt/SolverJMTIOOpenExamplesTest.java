@@ -24,6 +24,7 @@ public class SolverJMTIOOpenExamplesTest {
         options.cutoff = 10;
         options.seed = 23000;
         options.iter_max = 200;
+        options.samples = 10000;
         SolverJMT solver = new SolverJMT(model, options);
 
         NetworkAvgTable avgTable = solver.getAvgTable();
@@ -69,6 +70,7 @@ public class SolverJMTIOOpenExamplesTest {
         options.verbose = VerboseLevel.STD;
         options.cutoff = 7;
         options.seed = 23000;
+        options.samples = 10000;
         SolverJMT solver = new SolverJMT(model, options);
 //        solver.jsimgView();
         NetworkAvgTable avgTable = solver.getAvgTable();

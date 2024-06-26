@@ -22,6 +22,7 @@ public class SolverJMTClosedExamplesTest {
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;
         options.keep = false;
+        options.samples = 10000;
         SolverJMT solver = new SolverJMT(model, options);
 //        solver.jsimgView();
 
@@ -160,6 +161,7 @@ public class SolverJMTClosedExamplesTest {
         options.seed = 23000;
         options.keep = true;
         options.verbose = VerboseLevel.STD;
+        options.samples = 10000;
         SolverJMT solver = new SolverJMT(model, options);
 
         NetworkAvgTable avgTable = solver.getAvgTable();
@@ -188,6 +190,7 @@ public class SolverJMTClosedExamplesTest {
         Network model = ClosedModel.example_closedModel_9();
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;
+        options.samples = 10000;
         options.keep = true;
         options.verbose = VerboseLevel.STD;
         SolverJMT solver = new SolverJMT(model, options);

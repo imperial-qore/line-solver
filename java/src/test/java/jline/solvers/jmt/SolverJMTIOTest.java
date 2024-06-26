@@ -28,6 +28,7 @@ public class SolverJMTIOTest {
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;
         options.keep = true;
+        options.samples = 10000;
         SolverJMT solver = new SolverJMT(model, options);
 
         solver.runAnalyzer();
@@ -87,6 +88,7 @@ public class SolverJMTIOTest {
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;
 //        options.keep = true;
+        options.samples = 10000;
         SolverJMT solver = new SolverJMT(model, options);
 
         NetworkAvgTable avgTable = solver.getAvgTable();
@@ -114,6 +116,7 @@ public class SolverJMTIOTest {
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;
 //        options.keep = true;
+        options.samples = 10000;
         SolverJMT solver = new SolverJMT(model, options);
 
         NetworkAvgTable avgTable = solver.getAvgTable();
@@ -140,6 +143,7 @@ public class SolverJMTIOTest {
         SolverOptions options = new SolverOptions(SolverType.JMT);
         options.seed = 23000;
 //        options.keep = true;
+        options.samples = 10000;
         SolverJMT solver = new SolverJMT(model, options);
 //        solver.jsimgView();
 
@@ -170,6 +174,7 @@ public class SolverJMTIOTest {
         options.keep = true;
         options.cutoff = 3;
         options.verbose = VerboseLevel.STD;
+        options.samples = 10000;
         SolverJMT solver = new SolverJMT(model, options);
 
         NetworkAvgTable avgTable = solver.getAvgTable();
