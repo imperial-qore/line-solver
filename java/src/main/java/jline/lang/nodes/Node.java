@@ -7,9 +7,6 @@ import jline.lang.constant.SchedStrategy;
 import jline.lang.sections.InputSection;
 import jline.lang.sections.OutputSection;
 import jline.lang.sections.ServiceSection;
-import jline.solvers.taussa.events.ArrivalEvent;
-import jline.solvers.taussa.events.NodeArrivalEvent;
-import jline.solvers.taussa.events.SynchedEvent;
 import jline.util.Pair;
 
 import java.io.Serializable;
@@ -25,8 +22,6 @@ public class Node extends NetworkElement implements Serializable {
     protected ServiceSection server;
     protected DropStrategy dropStrategy;
 
-    protected Map<JobClass, ArrivalEvent> arrivalEvents;
-
     protected int statefulIdx;
     protected int nodeIndex;
     protected int stationIdx;
@@ -35,7 +30,6 @@ public class Node extends NetworkElement implements Serializable {
 
     public Node(String nodeName) {
         super(nodeName);
-        this.arrivalEvents = new HashMap<JobClass, ArrivalEvent>();
 
         this.output = new OutputSection("Generic Output");
         this.input = new InputSection("Generic Input");
@@ -98,21 +92,6 @@ public class Node extends NetworkElement implements Serializable {
     }
 
     public double getCap() { return Double.POSITIVE_INFINITY; }
-
-    public ArrivalEvent getArrivalEvent(JobClass jobClass) {
-        if (!this.arrivalEvents.containsKey(jobClass)) {
-            this.arrivalEvents.put(jobClass, new NodeArrivalEvent(this, jobClass));
-        }
-        return this.arrivalEvents.get(jobClass);
-    }
-
-    public SynchedEvent getOutputEvent(JobClass jobClass, Random random) {
-        return this.output.getOutputEvent(jobClass, random);
-    }
-
-    public ArrayList<Pair<SynchedEvent,Double>>  getOutputEvents(JobClass jobClass, Random random) {
-        return this.output.getOutputEvents(jobClass, random);
-    }
 
 
     public List<OutputStrategy> getOutputStrategies() {

@@ -9,8 +9,6 @@ import jline.lang.constant.SchedStrategyType;
 import jline.lang.sections.Buffer;
 import jline.lang.sections.ClassSwitchOutputSection;
 import jline.lang.sections.StatelessClassSwitcher;
-import jline.solvers.taussa.events.ArrivalEvent;
-import jline.solvers.taussa.events.ClassSwitchArrivalEvent;
 import jline.util.Matrix;
 
 import java.io.Serializable;
@@ -74,11 +72,4 @@ public class ClassSwitch extends Node implements Serializable {
         this.setRouting(jobClass, RoutingStrategy.PROB, destination, probability);
     }
 
-    @Override
-    public ArrivalEvent getArrivalEvent(JobClass jobClass) {
-        if (!this.arrivalEvents.containsKey(jobClass)) {
-            this.arrivalEvents.put(jobClass, new ClassSwitchArrivalEvent(this, jobClass, (StatelessClassSwitcher) this.server));
-        }
-        return this.arrivalEvents.get(jobClass);
-    }
 }

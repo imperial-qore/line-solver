@@ -2,7 +2,6 @@ package jline.lang.nodes;
 import java.io.Serializable;
 
 import jline.lang.*;
-import jline.solvers.taussa.events.ArrivalEvent;
 import jline.util.Matrix;
 
 /**
@@ -62,11 +61,4 @@ public class StatefulNode extends Node implements Serializable {
     	return this.statePrior;
     }
 
-    @Override
-    public ArrivalEvent getArrivalEvent(JobClass jobClass) {
-        if (!this.arrivalEvents.containsKey(jobClass)) {
-            this.arrivalEvents.put(jobClass, new ArrivalEvent(this, jobClass));
-        }
-        return this.arrivalEvents.get(jobClass);
-    }
 }

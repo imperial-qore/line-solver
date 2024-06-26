@@ -1,8 +1,6 @@
 package jline.lang.nodes;
 
 import jline.lang.sections.ServiceSection;
-import jline.solvers.taussa.events.ArrivalEvent;
-import jline.solvers.taussa.events.SinkArrivalEvent;
 
 import java.io.Serializable;
 import jline.lang.*;
@@ -13,7 +11,6 @@ import jline.lang.constant.SchedStrategy;
  */
 public class Sink extends Node implements Serializable {
     protected SchedStrategy schedStrategy;
-    protected jline.solvers.taussa.events.ArrivalEvent arrivalEvent;
 
     public Sink(Network model, String name) {
         super(name);
@@ -27,8 +24,6 @@ public class Sink extends Node implements Serializable {
             this.setModel(model);
             this.schedStrategy = SchedStrategy.EXT;
         }
-
-        this.arrivalEvent = new SinkArrivalEvent(this);
     }
 
     @Override
@@ -36,9 +31,4 @@ public class Sink extends Node implements Serializable {
         System.out.format("jline.Sink: %s\n", this.getName());
     }
 
-
-    @Override
-    public ArrivalEvent getArrivalEvent(JobClass jobClass) {
-        return this.arrivalEvent;
-    }
 }

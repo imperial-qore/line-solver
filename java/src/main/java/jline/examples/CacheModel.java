@@ -12,7 +12,6 @@ import jline.lang.distributions.Exp;
 import jline.lang.nodes.*;
 import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
-import jline.solvers.ctmc.SolverCTMC;
 import jline.solvers.mva.MVAOptions;
 import jline.solvers.mva.SolverMVA;
 import jline.util.Matrix;
