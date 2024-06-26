@@ -758,6 +758,12 @@ classdef Network < Model
             bool = snHasLCFS(self.getStruct);
         end
 
+        function bool = hasLCFSPR(self)
+            % BOOL = HASLCFSPR()
+
+            bool = snHasLCFSPR(self.getStruct);
+        end
+        
         function bool = hasSEPT(self)
             % BOOL = HASSEPT()
 

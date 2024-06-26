@@ -1,3 +1,3 @@
 function bool = snIsMixedModel(sn)
-bool = hasMixedClasses(sn);
+bool = snHasMixedClasses(sn);
 end

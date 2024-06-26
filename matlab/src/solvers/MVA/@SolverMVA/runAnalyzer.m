@@ -305,7 +305,7 @@ switch options.lang
         sn = self.model.getStruct();
 
         % Compute average residence time at steady-state
-        AN = getAvgArvRFromTput(sn, TN, self.getAvgTputHandles());
+        AN = snGetAvgArvRFromTput(sn, TN, self.getAvgTputHandles());
         M = sn.nstations;
         R = sn.nclasses;
         WN = RN;

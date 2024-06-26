@@ -206,7 +206,7 @@ runtime = toc(T0);
 self.result.solverSpecific = lastSol;
 QN = Q; UN=U; RN=R; TN=T; CN=C; XN=X;
 % Compute average arrival rate at steady-state
-AN = getAvgArvRFromTput(sn, TN, self.getAvgTputHandles());
+AN = snGetAvgArvRFromTput(sn, TN, self.getAvgTputHandles());
 self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,runtime,options.method,iter);
 Rt={}; Xt={}; Ct={};
 self.setTranAvgResults(Qt,Ut,Rt,Tt,Ct,Xt,runtime);

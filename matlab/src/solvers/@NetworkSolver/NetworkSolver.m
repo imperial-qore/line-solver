@@ -223,7 +223,7 @@ classdef NetworkSolver < Solver
             % Compute average arrival rate at steady-state
             TH = getAvgTputHandles(self);
             [~,~,~,TN] = self.getAvg([],[],[],TH,[],[]);
-            AN = getAvgArvRFromTput(sn, TN, TH);
+            AN = snGetAvgArvRFromTput(sn, TN, TH);
         end
 
         % also accepts a cell array with the handlers in it

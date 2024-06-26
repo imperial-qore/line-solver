@@ -143,7 +143,7 @@ switch options.lang
             end
         end
         % Compute average arrival rate at steady-state
-        AN = getAvgArvRFromTput(sn, TN, self.getAvgTputHandles());
+        AN = snGetAvgArvRFromTput(sn, TN, self.getAvgTputHandles());
 end
 switch method
     case 'default'

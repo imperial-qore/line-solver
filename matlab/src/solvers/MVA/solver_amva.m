@@ -107,11 +107,7 @@ if snHasProductFormExceptMultiClassHeterExpFCFS(sn) && ~snHasLoadDependence(sn) 
                     Zr = Z(r);
                     Nvec_1r = Nvec; Nvec_1r(r)=Nvec_1r(r)-1;
                     Br = Nvec./(Z+L+L.*(sum(Nvec)-1-sum(Z.*Nvec_1r./(Z+L+L*(sum(Nvec)-2))))).*Z;
-                    %if snHasMultiClassHeterExpFCFS(sn)
-                    %    Br = Lr*sum(Br(setdiff(1:C,r)));
-                    %else
                     Br = Lr*sum(Br(setdiff(1:C,r)));
-                    %end
                     X(r) = (Zr - (Br^2 - 2*Br*Lr*Nt - 2*Br*Zr + Lr^2*Nt^2 + 2*Lr*Nt*Zr - 4*Nr*Lr*Zr + Zr^2)^(1/2) - Br + Lr*Nt)/(2*Lr*Zr);
                     U(queueIdx,r) = X(r)*L(r);
                     Q(queueIdx,r) = N(r)-X(r)*Z(r);
@@ -121,7 +117,7 @@ if snHasProductFormExceptMultiClassHeterExpFCFS(sn) && ~snHasLoadDependence(sn) 
         case 'bs'
             [X,Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,totiter] = pfqn_bs(L,N,Z,options.tol,options.iter_max,[],sn.schedid(queueIdx));
         case 'aql'
-            if snHasMultiClassHeterExpFCFS(sn)
+            if snHasMultiServer(sn)
                 line_error(mfilename,'AQL cannot handle multi-server stations. Try with the ''default'' or ''lin'' methods.');
             end
             [X,Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,totiter] = pfqn_aql(L,N,Z,options.tol,options.iter_max);

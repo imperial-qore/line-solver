@@ -1,4 +1,4 @@
-function AN=getAvgArvRFromTput(sn, TN, TH)
+function AN=snGetAvgArvRFromTput(sn, TN, TH)
 % Compute average arrival rate at steady-state
 % SN: network struct
 % TN: average tput
