@@ -23,6 +23,7 @@ import java.util.stream.Collectors;
 import java.util.stream.DoubleStream;
 
 import static java.lang.Double.isFinite;
+import static jline.api.SN.snIsStateValid;
 import static jline.lib.KPCToolbox.*;
 
 /**
@@ -436,13 +437,14 @@ public class Network extends Model implements Serializable {
         boolean output = true;
         if (!this.hasState) { // check if all stations are initialized
             for (int i = 0; i < this.getNumberOfNodes(); i++) {
-                if (this.nodes.get(i) instanceof StatefulNode) {
-                    if (((StatefulNode) this.nodes.get(i)).getState().isEmpty()) {
-                        output = false;
+                  if (this.nodes.get(i) instanceof StatefulNode) {
+                        if (((StatefulNode) this.nodes.get(i)).getState().isEmpty()) {
+                            output = false;
+                            break;
+                        }
                     }
                 }
             }
-        }
         return output;
     }
 
@@ -552,8 +554,7 @@ public class Network extends Model implements Serializable {
                 } else if (this.nodes.get(i) instanceof Router) {
                     Matrix one = new Matrix(1, 1, 1);
                     one.set(0, 0, 1);
-                    //Router temporarily changed from StatefulNode to Node as SSA does not work otherwise
-                    //((Router)this.nodes.get(i)).setState(one);
+                    ((Router)this.nodes.get(i)).setState(one);
                 } else {
                     ((StatefulNode) this.nodes.get(i)).setState(new Matrix(0, 0));
                 }
@@ -568,38 +569,8 @@ public class Network extends Model implements Serializable {
     }
 
     private boolean isStateValid() {
-        // This code in LINE is found in api/sn/snIsStateValid.m
-        // It is only ever called by isStateValid method in Network
-        // For that reason, and to avoid unnecessary complication, I've consolidated into one method in JLINE
-
-        // Modified so not using this.sn
-        NetworkStruct snTmp = this.getStruct(true);
-        Matrix nir = new Matrix(snTmp.nstations, snTmp.nclasses);
-        Matrix sir = new Matrix(snTmp.nstations, snTmp.nclasses);
-
-        for (int ist = 0; ist < snTmp.nstations; ist++) {
-            int isf = (int) snTmp.stationToStateful.get(0, ist);
-            if (snTmp.state.get(snTmp.stations.get(ist)).getNumRows() > 1) {
-                if (snTmp.stateprior.get(snTmp.stations.get(ist)).elementMax() < 1 - GlobalConstants.FineTol) {
-                    System.err.format("isStateValid will ignore some states of station %d, define a unique initial state to address this problem.\n", ist);
-                }
-                Matrix initialState = new Matrix(1, snTmp.state.get(snTmp.stations.get(ist)).getNumCols());
-                Matrix.extractRows(snTmp.state.get(snTmp.stations.get(ist)), 0, 1, initialState);
-                snTmp.state.put(snTmp.stations.get(ist), initialState);
-            }
-
-            State.StateMarginalStatistics stats = State.toMarginal(snTmp,
-                    (int) snTmp.stationToNode.get(0, ist),
-                    snTmp.state.get(snTmp.stations.get(ist)),
-                    null, null, null, null, null);
-
-            for (int i = 0; i < snTmp.nclasses; i++) {
-                nir.set(ist, i, stats.nir.get(0, i));
-                sir.set(ist, i, stats.sir.get(0, i));
-            }
-        }
-
-        return State.isValid(snTmp, nir, sir);
+        NetworkStruct sn = this.getStruct();
+        return snIsStateValid(sn);
     }
 
     public void printSummary() {

@@ -13,7 +13,7 @@ import jline.lang.sections.*;
 /**
  * A node that routes jobs without imposing any delay
  */
-public class Router extends Node implements HasSchedStrategy, Serializable {
+public class Router extends StatefulNode implements HasSchedStrategy, Serializable {
     protected double cap;
     protected int numberOfServers;
     protected SchedStrategyType schedPolicy;
