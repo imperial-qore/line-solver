@@ -12,6 +12,8 @@ import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.solvers.env.SolverEnv;
 import jline.solvers.fluid.SolverFluid;
+import jline.solvers.mva.SolverMVA;
+import jline.solvers.nc.SolverNC;
 import jline.util.Matrix;
 
 import java.util.Arrays;
@@ -25,7 +27,8 @@ public class TestModels {
 
 
     public static void main(String[] args) {
-
+        Network model = test_closedModel_2();
+        model.getStruct();
     }
 
     public static Network test_closedModel_2() {
