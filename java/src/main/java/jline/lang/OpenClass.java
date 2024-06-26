@@ -4,7 +4,6 @@ import java.io.Serializable;
 
 import jline.lang.constant.JobClassType;
 import jline.lang.constant.JoinStrategy;
-import jline.lang.constant.RoutingStrategy;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.nodes.Join;
 import jline.lang.nodes.Node;
@@ -23,7 +22,7 @@ public class OpenClass extends JobClass  implements Serializable {
         this.index = model.getNumberOfClasses()+1;
         model.addJobClass(this);
         try {
-            setReference(model.getSource());
+            setReferenceStation(model.getSource());
         } catch (Exception e){
             System.err.println("The model requires a Source prior to instantiating open classes.");
         }
@@ -50,11 +49,11 @@ public class OpenClass extends JobClass  implements Serializable {
     }
 
     @Override
-    public void setReference(Node source) throws Exception {
+    public void setReferenceStation(Node source) throws Exception {
         if (!(source instanceof Source)) {
             throw new Exception("The reference station for an open class must be a jline.Source.");
         }
-        super.setReference(source);
+        super.setReferenceStation(source);
     }
 
     @Override

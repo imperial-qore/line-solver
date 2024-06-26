@@ -28,7 +28,7 @@ public class JobClass extends NetworkElement implements Serializable {
         this.attribute = new Integer[] {null,null};
     }
 
-    public void setReference(Node source) throws Exception {
+    public void setReferenceStation(Node source) throws Exception {
         this.refstat = source;
     }
 
