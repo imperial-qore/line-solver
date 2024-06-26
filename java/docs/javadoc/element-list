@@ -14,7 +14,6 @@ jline.lib
 jline.lib.ltinversion
 jline.lib.thirdparty
 jline.solvers
-jline.solvers.ctmc
 jline.solvers.env
 jline.solvers.fluid
 jline.solvers.fluid.analyzers
@@ -30,9 +29,4 @@ jline.solvers.mva.handlers
 jline.solvers.nc
 jline.solvers.nc.analyzers
 jline.solvers.ssa
-jline.solvers.taussa
-jline.solvers.taussa.events
-jline.solvers.taussa.metrics
-jline.solvers.taussa.state
-jline.solvers.taussa.strategies
 jline.util
