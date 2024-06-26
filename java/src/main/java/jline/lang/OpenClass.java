@@ -5,10 +5,7 @@ import java.io.Serializable;
 import jline.lang.constant.JobClassType;
 import jline.lang.constant.JoinStrategy;
 import jline.lang.constant.SchedStrategy;
-import jline.lang.nodes.Join;
-import jline.lang.nodes.Node;
-import jline.lang.nodes.Sink;
-import jline.lang.nodes.Source;
+import jline.lang.nodes.*;
 
 /**
  * A class of jobs that arrives from the external world to the Network and, after completion, leaves it
@@ -49,7 +46,7 @@ public class OpenClass extends JobClass  implements Serializable {
     }
 
     @Override
-    public void setReferenceStation(Node source) throws Exception {
+    public void setReferenceStation(Station source) throws Exception {
         if (!(source instanceof Source)) {
             throw new Exception("The reference station for an open class must be a jline.Source.");
         }

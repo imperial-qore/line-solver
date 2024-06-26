@@ -13,7 +13,6 @@ import java.io.Serializable;
  */
 public class ClosedClass extends JobClass implements Serializable {
     protected double population;
-    protected Station refstat;
     protected int classIndex;
     protected Network model;
     public ClosedClass(Network model, String name, double njobs, Station refstat, int priority) {
@@ -46,10 +45,6 @@ public class ClosedClass extends JobClass implements Serializable {
     @Override
     public double getNumberOfJobs() {
         return population;
-    }
-
-    public Station getReferenceStation() {
-        return this.refstat;
     }
 
     public double getPopulation() {

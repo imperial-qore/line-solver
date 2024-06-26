@@ -4,6 +4,7 @@ import java.io.Serializable;
 
 import jline.lang.constant.JobClassType;
 import jline.lang.nodes.Node;
+import jline.lang.nodes.Station;
 
 /**
  * Superclass representing a class of jobs
@@ -12,7 +13,7 @@ public class JobClass extends NetworkElement implements Serializable {
     protected JobClassType type;
     protected int priority;
     protected boolean completes;
-    protected Node refstat;
+    protected Station refstat;
     protected boolean isrefclass;
     protected int index;
 
@@ -21,15 +22,19 @@ public class JobClass extends NetworkElement implements Serializable {
     public JobClass(JobClassType type, String name) {
         super(name);
         this.priority = 0;
-        this.refstat = new Node("Unallocated");
+        this.refstat = null;
         this.type = type;
         this.completes = true;
         this.isrefclass = false;
         this.attribute = new Integer[] {null,null};
     }
 
-    public void setReferenceStation(Node source) throws Exception {
-        this.refstat = source;
+    public void setReferenceStation(Station ref) throws Exception {
+        this.refstat = ref;
+    }
+
+    public Station getReferenceStation() {
+        return this.refstat;
     }
 
     public boolean isReferenceStation(Node node) {
