@@ -29,6 +29,9 @@ public class NCRunner {
 
   /**
    * runAnalyzer() method from LINE.
+   * This method is used to run the solver on the given network.
+   * It returns the performance measures corresponding to the given network.
+   * The method is called from the SolverNC class.
    *
    * @return - the performance measures corresponding to the given network
    */
@@ -42,6 +45,7 @@ public class NCRunner {
     SolverNCResult ret = new SolverNCResult();
     NCAnalyzer analyzer;
     boolean wasDefault = false;
+    // Method Selection and Preprocessing
     switch (options.method) {
       case "default":
         if (sn.nstations == 2 && !sn.nodetypes.contains(NodeType.Cache) && sn.nodetypes.contains(NodeType.Delay)) {
@@ -80,9 +84,13 @@ public class NCRunner {
         break;
     }
     solver.resetRandomGeneratorSeed(options.seed);
+
+    // Special Handling for Non-Reentrant Nodes: the system model meets certain criteria 
+    // (e.g., no closed jobs and contains only source, cache, and sink nodes)
     List<NodeType> nonReentrant = new ArrayList<>(Arrays.asList(NodeType.Source, NodeType.Cache, NodeType.Sink));
     if (sn.nclosedjobs == 0 && sn.nodetypes.size() == 3 && sn.nodetypes.containsAll(nonReentrant)) {
       for (int ind = 0; ind < sn.nnodes; ind++) {
+        // Cache Node Handling: For each cache node, initialize hit and miss probabilities and analyze the network.
         if (sn.nodetypes.get(ind) == NodeType.Cache) {
           Cache cacheNode = (Cache) solver.model.getNodes().get(ind);
           Matrix prob = new Matrix(cacheNode.getHitClass());

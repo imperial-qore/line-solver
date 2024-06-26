@@ -87,7 +87,7 @@ public class EventStack {
             Pair<Node,Event> iterPair = eventIterator.next();
             Node eventNode = iterPair.getLeft();
 
-            if ((eventNode instanceof Source) || (eventNode.isRefstat())) {
+            if ((eventNode instanceof Source) || (eventNode.isReferenceStation())) {
                 candidateEvents.add(iterPair);
                 eventIterator.remove();
             }

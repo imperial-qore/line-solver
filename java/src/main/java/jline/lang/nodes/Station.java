@@ -230,10 +230,10 @@ public class Station extends StatefulNode implements Serializable {
     }
 
     @Override
-    public boolean isRefstat() {
+    public boolean isReferenceStation() {
         for (JobClass jobClass : this.model.getClasses()) {
             if (jobClass instanceof ClosedClass) {
-                if (((ClosedClass)jobClass).getRefstat() == this) {
+                if (((ClosedClass)jobClass).getReferenceStation() == this) {
                     return true;
                 }
             }

@@ -5,7 +5,6 @@ import jline.io.SysUtils;
 import jline.util.Maths;
 import jline.lang.*;
 import jline.lang.constant.*;
-import jline.lang.nodes.Cache;
 import jline.lang.nodes.Node;
 import jline.lang.nodes.StatefulNode;
 import jline.lang.nodes.Station;
@@ -1401,224 +1400,8 @@ public class SolverJMT extends NetworkSolver {
     }
 
 
-    public String CacheStrategyMap(ReplacementStrategy method){
-        Map<ReplacementStrategy, String> cacheStrategyMap = new HashMap<>();
-        cacheStrategyMap.put(ReplacementStrategy.FIFO, "jmt.engine.NetStrategies.CacheStrategies.FIFOCache");
-        cacheStrategyMap.put(ReplacementStrategy.RR, "jmt.engine.NetStrategies.CacheStrategies.RandomCache");
-        cacheStrategyMap.put(ReplacementStrategy.LRU, "jmt.engine.NetStrategies.CacheStrategies.LRUCache");
-        //cacheStrategyMap.put("LFU", "jmt.engine.NetStrategies.CacheStrategies.LFUCache");
-        //cacheStrategyMap.put("TTL", "jmt.engine.NetStrategies.CacheStrategies.TTLCache");
 
-        return cacheStrategyMap.get(method);
-    }
-
-
-    /*
-     * Save the cache strategy for the given node
-     */
-    public DocumentSectionPair saveCacheStrategy(DocumentSectionPair documentSectionPair, int ind) {
-        System.out.println("documentSectionPair.simDoc" + documentSectionPair.simDoc + "documentSectionPair.section" + documentSectionPair.section);
-        // [SIMDOC, SECTION] = SAVECLASSSWITCHSTRATEGY(SIMDOC, SECTION, NODEIDX)
-        System.out.println("saveCacheStrategy");
-        Document simDoc = documentSectionPair.simDoc;  //TODO
-        Element section = documentSectionPair.section;  //TODO
-
-        System.out.println();
-
-        NetworkStruct sn = this.getStruct();
-        int numOfClasses = sn.nclasses;
-        int i = (int) sn.nodeToStation.get(ind);
-        Cache cacheNode = (Cache) sn.nodes.get(ind);
-        Matrix conn_i = new Matrix(0, 0);
-        Matrix.extractRows(this.sn.connmatrix, ind, ind + 1, conn_i);
-        Matrix conn_i_find = conn_i.find();
-        int j = (int) conn_i_find.get(0);
-        /* 
-        System.out.println("==========================");
-        int nitems = cacheNode.getItems().getNumberOfItems();
-        System.out.println("nitems: " + nitems);
-        */
-
-        /*
-        add jsimg doc
-        <parameter classPath="java.lang.Integer" name="maxItems">
-            <value>10</value>
-        </parameter>
-         */
-        Element paramNode = simDoc.createElement("parameter");
-        //paramNode.setAttribute("classPath", "java.lang.Integer"); right one
-        paramNode.setAttribute("classPath", "java.lang.Integer");
-        paramNode.setAttribute("name", "maxItems");
-        Element valueNode = simDoc.createElement("value");
-        //valueNode.appendChild(simDoc.createTextNode(loggerNodesValues.get(j)));
-        valueNode.appendChild(simDoc.createTextNode(String.format("%d", cacheNode.getItems().getNumberOfItems())));
-        paramNode.appendChild(valueNode);
-        section.appendChild(paramNode);
-
-
-        /*
-        <parameter classPath="java.lang.Integer" name="cacheCapacity">
-            <value>1</value>
-        </parameter>
-         */
-        Element cacheCapacityParamNode = simDoc.createElement("parameter");
-        //cacheCapacityParamNode.setAttribute("classPath", "java.lang.Integer");
-        cacheCapacityParamNode.setAttribute("classPath", "java.lang.Integer");
-        cacheCapacityParamNode.setAttribute("name", "cacheCapacity");
-        Element cacheCapacityvalueNode = simDoc.createElement("value");
-        //cacheCapacityvalueNode.appendChild(simDoc.createTextNode(loggerNodesValues.get(j)));
-        cacheCapacityvalueNode.appendChild(simDoc.createTextNode(String.format("%d", (int) cacheNode.getItemLevelCap().get(0,0)))); //TODO: expand to the case when itemLevelCap is a matrix. This only works for int values
-        cacheCapacityParamNode.appendChild(cacheCapacityvalueNode);
-        section.appendChild(cacheCapacityParamNode);
-
-        /*
-         * <parameter classPath="jmt.engine.NetStrategies.CacheStrategies.FIFOCache" name="replacePolicy"/>
-         */
-        Element cacheStrategyParamNode = simDoc.createElement("parameter");
-        String strategyPath = CacheStrategyMap(cacheNode.getReplacementPolicy());
-        cacheStrategyParamNode.setAttribute("classPath", strategyPath);
-        cacheStrategyParamNode.setAttribute("name", "replacePolicy");
-        section.appendChild(cacheStrategyParamNode);
-
-        /*
-         * <parameter array="true" classPath="jmt.engine.random.discrete.DiscreteDistribution" name="popularity">
-         */
-        Element cachePopularityParamNode = simDoc.createElement("parameter");
-        cachePopularityParamNode.setAttribute("array", "true");
-        cachePopularityParamNode.setAttribute("classPath", "jmt.engine.random.discrete.DiscreteDistribution");   //TODO
-        cachePopularityParamNode.setAttribute("name", "popularity");
-       
-
-        
-
-        /*
-        NetworkStruct sn = getStruct();
-        int K = sn.nclasses;
-        System.out.println("sn.nclasses: " + sn.nclasses + "sn: " + sn);
-        Matrix conn_i = new Matrix(0, 0);
-        Matrix.extractRows(this.sn.connmatrix, ind, ind + 1, conn_i);
-        Matrix conn_i_find = conn_i.find();
-        int j = (int) conn_i_find.get(0);
-        */
-
-        
-        for (int r = 0; r < numOfClasses; r++) {
-            Element refClassNode = simDoc.createElement("refClass");
-            refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
-            cachePopularityParamNode.appendChild(refClassNode);
-
-            System.out.println("cacheNode.popularityGet(r).getName(): " + cacheNode.popularityGet(r).getName());
-
-            Element subParNodeRow = null;
-            if (cacheNode.popularityGet(r).getName().equals("Zipf")) {
-            System.out.println("Zipf distribution" + cacheNode.popularityGet(r).getName());
-
-            subParNodeRow = simDoc.createElement("subParameter");
-            // subParNodeRow.setAttribute("array", "true");
-            subParNodeRow.setAttribute("classPath", "jmt.engine.random.discrete.Zipf");   //TODO: add support for more distributions
-            subParNodeRow.setAttribute("name", "popularity");
-
-            Element subParNodeCell1 = simDoc.createElement("subParameter");
-            subParNodeCell1.setAttribute("classPath", "java.lang.Double");
-            subParNodeCell1.setAttribute("name", "alpha");
-            Element valNode1 = simDoc.createElement("value");
-            valNode1.appendChild(simDoc.createTextNode(String.format("%12.12f", cacheNode.popularityGet(r).getParam(3).getValue())));
-
-    
-            subParNodeCell1.appendChild(valNode1);
-            subParNodeRow.appendChild(subParNodeCell1);
-
-            Element subParNodeCell2 = simDoc.createElement("subParameter");
-            subParNodeCell2.setAttribute("classPath", "java.lang.Integer");
-            subParNodeCell2.setAttribute("name", "numberOfElements");
-            Element valNode2 = simDoc.createElement("value");
-            valNode2.appendChild(simDoc.createTextNode("1000"));
-            subParNodeCell2.appendChild(valNode2);
-            subParNodeRow.appendChild(subParNodeCell2);
-            }
-            /* 
-            else if (cacheNode.popularityGet(r).getName().equals("Uniform")) {
-                System.out.println("Uniform distribution" + cacheNode.popularityGet(r).getName());   //TODO: add support for more distributions
-            }
-                */
-            else{
-                /*
-                 * <subParameter classPath="jmt.engine.random.discrete.DiscreteDistribution" name="popularity">
-                 * <value>null</value>
-                 * </subParameter>
-                 */
-                subParNodeRow = simDoc.createElement("subParameter");
-                subParNodeRow.setAttribute("array", "true");
-                subParNodeRow.setAttribute("classPath", "jmt.engine.random.discrete.DiscreteDistribution");   //TODO: add support for more distributions
-                subParNodeRow.setAttribute("name", "popularity");
-
-                Element valueNodeCell = simDoc.createElement("value");
-                valueNodeCell.appendChild(simDoc.createTextNode("null"));
-                subParNodeRow.appendChild(valueNodeCell);
-            }
-            
-
-
-
-            
-            /*for (int s = 0; s < K; s++) {
-                refClassNode = simDoc.createElement("refClass");
-                refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(s)));
-                subParNodeRow.appendChild(refClassNode);
-
-                Element subParNodeCell = simDoc.createElement("subParameter");
-                subParNodeCell.setAttribute("classPath", "java.lang.Float");
-                subParNodeCell.setAttribute("name", "cell1");
-                Element valNode = simDoc.createElement("value");
-                valNode.appendChild(simDoc.createTextNode(String.format("%12.12f", sn.rtnodes.get(ind * K + r, j * K + s))));
-                subParNodeCell.appendChild(valNode);
-                subParNodeRow.appendChild(subParNodeCell);
-            }
-                */
-                
-            if (subParNodeRow != null) {
-                cachePopularityParamNode.appendChild(subParNodeRow);
-            }
-            
-        }
-
-        section.appendChild(cachePopularityParamNode);
-        
-        Element paramNodeMatrix = simDoc.createElement("parameter");
-        paramNodeMatrix.setAttribute("array", "true");
-        paramNodeMatrix.setAttribute("classPath", "java.lang.Object");
-        paramNodeMatrix.setAttribute("name", "matrix");
-
-        for (int r = 0; r < numOfClasses; r++) {
-            Element refClassNode = simDoc.createElement("refClass");
-            refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
-            paramNodeMatrix.appendChild(refClassNode);
-
-            Element subParNodeRow = simDoc.createElement("subParameter");
-            subParNodeRow.setAttribute("array", "true");
-            subParNodeRow.setAttribute("classPath", "java.lang.Float");
-            subParNodeRow.setAttribute("name", "row");
-            for (int s = 0; s < numOfClasses; s++) {
-                refClassNode = simDoc.createElement("refClass");
-                refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(s)));
-                subParNodeRow.appendChild(refClassNode);
-
-                Element subParNodeCell = simDoc.createElement("subParameter");
-                subParNodeCell.setAttribute("classPath", "java.lang.Float");
-                subParNodeCell.setAttribute("name", "cell");
-                Element valNode = simDoc.createElement("value");
-                valNode.appendChild(simDoc.createTextNode(String.format("%12.12f", sn.rtnodes.get(ind * numOfClasses + r, j * numOfClasses + s))));
-                subParNodeCell.appendChild(valNode);
-                subParNodeRow.appendChild(subParNodeCell);
-            }
-            paramNodeMatrix.appendChild(subParNodeRow);
-        }
-
-        // paramNode.appendChild(paramNodeMatrix);
-        // section.appendChild(paramNode);
-        return new DocumentSectionPair(simDoc, section);
-    }
-
+   
     public DocumentSectionPair saveLogTunnel(DocumentSectionPair documentSectionPair, int ind) {
         // [SIMDOC, SECTION] = SAVELOGTUNNEL(SIMDOC, SECTION, NODEIDX)
         Document simDoc = documentSectionPair.simDoc;
@@ -1852,7 +1635,6 @@ public class SolverJMT extends NetworkSolver {
         return new DocumentSectionPair(simDoc, section);
     }
 
-
     public ElementDocumentPair saveClasses(ElementDocumentPair elementDocumentPair) {
         Element simElem = elementDocumentPair.simElem;
         Document simDoc = elementDocumentPair.simDoc;
@@ -1875,10 +1657,7 @@ public class SolverJMT extends NetworkSolver {
             Map<Integer, Matrix> integerMatrixMap = sn.proc.get(sn.stations.get(refStatIndex)).get(sn.jobclasses.get(r));
 
             if (!integerMatrixMap.isEmpty()) {  //TODO: check if this is correct
-                if (options.method.equals("jsim.cache")){
-                    userClass.setAttribute("referenceSource", sn.nodes.get(r).getName());
-                }
-                else if (Double.isFinite(sn.njobs.get(r))) {
+		if (Double.isFinite(sn.njobs.get(r))) {
                     userClass.setAttribute("customers", String.valueOf((int) sn.njobs.get(r)));
                     userClass.setAttribute("referenceSource", sn.nodenames.get((int) sn.stationToNode.get(refStatIndex)));
                 } else if (integerMatrixMap.get(0).hasNaN()) { // open disabled in source
@@ -3037,13 +2816,6 @@ public class SolverJMT extends NetworkSolver {
                             simXML.section.setAttribute("className", "ClassSwitch"); // overwrite with JMT class name
                             simXML = saveClassSwitchStrategy(simXML, i);
                             break;
-                        case "Cache":
-                        case "jline.Cache":
-                            //TODO: implement cache
-                            simXML.section.setAttribute("className", "Cache"); // overwrite with JMT class name
-                            System.out.println("simXML: " + simXML + "; i:" + i);
-                            simXML = saveCacheStrategy(simXML, i);
-                            break;
                         case "LogTunnel":
                             simXML = saveLogTunnel(simXML, i);
                             break;
@@ -3524,7 +3296,7 @@ public class SolverJMT extends NetworkSolver {
                 "Pareto", "Weibull", "Replayer", "Uniform",
                 "StatelessClassSwitcher", "InfiniteServer", "SharedServer", "Buffer", "Dispatcher",
                 "Server", "Sink", "RandomSource", "ServiceTunnel",
-                "CacheClassSwitcher", "Cache", "LogTunnel", "Linkage", "Enabling", "Timing", "Firing", "Storage", "Place",
+		"LogTunnel", "Linkage", "Enabling", "Timing", "Firing", "Storage", "Place",
                 "Transition",
                 "SchedStrategy_INF", "SchedStrategy_PS",
                 "SchedStrategy_DPS", "SchedStrategy_FCFS", "SchedStrategy_GPS", "SchedStrategy_SIRO", "SchedStrategy_HOL",

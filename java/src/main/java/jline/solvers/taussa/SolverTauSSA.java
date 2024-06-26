@@ -7,8 +7,6 @@ import jline.lang.nodes.StatefulNode;
 import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.solvers.SolverResult;
-import jline.solvers.nc.SolverNC;
-import jline.solvers.nc.SolverNCResult;
 import jline.solvers.taussa.events.DepartureEvent;
 import jline.solvers.taussa.events.Event;
 import jline.solvers.taussa.metrics.Metrics;
@@ -120,7 +118,7 @@ public class SolverTauSSA extends NetworkSolver {
             if (jobClass instanceof ClosedClass) {
                 int classIdx = this.model.getJobClassIndex(jobClass);
                 ClosedClass cClass = (ClosedClass) jobClass;
-                int stationIdx = this.model.getStatefulNodeIndex(cClass.getRefstat());
+                int stationIdx = this.model.getStatefulNodeIndex(cClass.getReferenceStation());
                 networkState.setState(stationIdx, classIdx, (int) cClass.getPopulation());
                 for (int i = 0; i < cClass.getPopulation(); i++) {
                     networkState.addToBuffer(stationIdx, classIdx);

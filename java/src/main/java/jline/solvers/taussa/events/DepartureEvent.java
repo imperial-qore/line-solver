@@ -75,7 +75,7 @@ public class DepartureEvent extends Event implements NodeEvent {
         } else if (node instanceof ClassSwitch) {
             this.isReference = true;
         } else if (jobClass instanceof ClosedClass) {
-            if (node == ((ClosedClass) jobClass).getRefstat()) {
+            if (node == ((ClosedClass) jobClass).getReferenceStation()) {
                 this.isReference = true;
             }
         } else {

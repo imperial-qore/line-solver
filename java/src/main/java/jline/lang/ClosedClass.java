@@ -1,7 +1,5 @@
 package jline.lang;
 
-import jline.lang.JobClass;
-import jline.lang.Network;
 import jline.lang.constant.JobClassType;
 import jline.lang.constant.JoinStrategy;
 import jline.lang.nodes.Join;
@@ -50,7 +48,7 @@ public class ClosedClass extends JobClass implements Serializable {
         return population;
     }
 
-    public Station getRefstat() {
+    public Station getReferenceStation() {
         return this.refstat;
     }
 

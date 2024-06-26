@@ -90,8 +90,6 @@ public class NetworkStruct implements Serializable, Cloneable {
     public List<StatefulNode> stateful;
     public List<JobClass> jobclasses;
     public List<Node> nodes;
-    public Map<EventCacheKey, EventResult> eventCache;
-    public boolean eventCacheEnabled = true;
 
     @Override
     public Object clone() throws CloneNotSupportedException {

@@ -129,6 +129,11 @@ public class Cache extends StatefulNode implements Serializable {
         this.cacheServer.missClass.set(jobinindex, joboutindex);
     }
 
+    /**
+     * Set the read policy for a job class
+     * @param jobClass - the job class
+     * @param distribution - the popularity distribution
+     */
     public void setRead(JobClass jobClass, Distribution distribution){
         ItemSet itemclass = this.items;
         if(distribution.isDiscrete()){
@@ -240,6 +245,10 @@ public class Cache extends StatefulNode implements Serializable {
 
     public ReplacementStrategy getReplacementPolicy() {
         return replacementPolicy;
+    }
+
+    public int getNumberOfItems(){
+        return this.items.getNumberOfItems();
     }
 
     public void popularitySet(int i, Distribution o){

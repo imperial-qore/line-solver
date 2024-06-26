@@ -853,8 +853,6 @@ public class Network extends Model implements Serializable {
         sn.classnames = classnames;
         sn.connmatrix = conn;
 
-        sn.eventCache = new HashMap<>();
-
         //line 97-108 is ignored since for transition node
 
         sn.nodeToStateful = new Matrix(1, nodes.size(), nodes.size());
@@ -1136,7 +1134,7 @@ public class Network extends Model implements Serializable {
                 refstat.set(i, 0, getIndexSourceStation());
             } else {
                 ClosedClass cc = (ClosedClass) jobClasses.get(i);
-                refstat.set(i, 0, getStationIndex(cc.getRefstat()));
+                refstat.set(i, 0, getStationIndex(cc.getReferenceStation()));
             }
         }
 
@@ -3022,11 +3020,11 @@ public class Network extends Model implements Serializable {
 
     public RoutingMatrix initRoutingMatrix() {
         RoutingMatrix rt = new RoutingMatrix(this, jobClasses, nodes);
-        for (JobClass j : jobClasses) {
+        for (JobClass j:jobClasses) {
             if (j instanceof SelfLoopingClass) {
-                for (Node i : nodes) {
-                    //rt.set(j, j, ((SelfLoopingClass) j).getRefstat(), ((SelfLoopingClass) j).getRefstat(), 1.0);
-                    rt.set(j, j, i, i, 1.0);
+                for (Node i:nodes) {
+                    //rt.set(j, j, ((SelfLoopingClass) j).getReferenceStation(), ((SelfLoopingClass) j).getReferenceStation(), 1.0);
+                    rt.set(j, j, i,i, 1.0);
                 }
             }
         }
@@ -3318,6 +3316,10 @@ public class Network extends Model implements Serializable {
 
     public boolean hasLCFS() {
         return SN.snHasLCFS(getStruct());
+    }
+
+    public boolean hasLCFSPR() {
+        return SN.snHasLCFSPR(getStruct());
     }
 
     public boolean hasSEPT() {

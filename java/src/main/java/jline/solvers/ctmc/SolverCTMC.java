@@ -11,7 +11,6 @@ import jline.lang.nodes.StatefulNode;
 import jline.lang.state.State;
 import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
-import jline.solvers.mam.SolverMAM;
 import jline.solvers.taussa.EventStack;
 import jline.solvers.taussa.events.*;
 import jline.solvers.taussa.state.SSAStateMatrix;
@@ -98,7 +97,7 @@ public class  SolverCTMC extends NetworkSolver {
             if (jobClass instanceof ClosedClass) {
                 int classIdx = this.model.getJobClassIndex(jobClass);
                 ClosedClass cClass = (ClosedClass) jobClass;
-                int stationIdx = this.model.getStatefulNodeIndex(cClass.getRefstat());
+                int stationIdx = this.model.getStatefulNodeIndex(cClass.getReferenceStation());
                 networkState.setState(stationIdx, classIdx, (int)cClass.getPopulation());
                 for (int i = 0; i < cClass.getPopulation(); i++) {
                     networkState.addToBuffer(stationIdx, classIdx);

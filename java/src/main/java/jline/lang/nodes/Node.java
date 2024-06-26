@@ -123,7 +123,7 @@ public class Node extends NetworkElement implements Serializable {
         return this.dropStrategy;
     }
 
-    public boolean isRefstat() { return false; }
+    public boolean isReferenceStation() { return false; }
 
     public int getStatefulIdx() {
         this.statefulIdx = this.model.getStatefulNodeIndex(this);
