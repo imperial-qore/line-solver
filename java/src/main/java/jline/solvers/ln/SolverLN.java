@@ -740,11 +740,12 @@ public class SolverLN extends EnsembleSolver {
         List<Double> Rval = RN.toList1D();
         List<Double> Residval = WN.toList1D();
         List<Double> Tval = TN.toList1D();
-        Qval.remove(0);
-        Uval.remove(0);
-        Rval.remove(0);
-        Residval.remove(0);
-        Tval.remove(0);
+        //This was a hack for JLQN to work but need to be refactored as MATLAB then doesn't work anymore
+        //Qval.remove(0);
+        //Uval.remove(0);
+        //Rval.remove(0);
+        //Residval.remove(0);
+        //Tval.remove(0);
         LayeredNetworkAvgTable AvgTable = new LayeredNetworkAvgTable(
                 Qval, Uval, Rval, Residval, Tval
         );
