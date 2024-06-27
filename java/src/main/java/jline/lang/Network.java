@@ -26,6 +26,7 @@ import java.util.stream.DoubleStream;
 import static java.lang.Double.isFinite;
 import static jline.api.SN.snIsStateValid;
 import static jline.lib.KPCToolbox.*;
+import static jline.util.Maths.circul;
 
 /**
  * A queueing network model
@@ -3267,6 +3268,124 @@ public class Network extends Model implements Serializable {
         return SN.snHasClassSwitching(getStruct());
     }
 
+    public static Network tandem(Matrix lambda, Matrix D, SchedStrategy[] strategy, Matrix S) {
+        Network model = new Network("Model");
+        int M = D.getNumRows();
+        int R = D.getNumCols();
+
+        List<Node> nodes = new ArrayList<>(M);
+        List<OpenClass> jobclasses = new ArrayList<>(R);
+
+        int nqueues = 0;
+        int ndelays = 0;
+        nodes.add(new Source(model,"Source"));
+
+        for (int i = 0; i < M; i++) {
+            if (strategy[i] == SchedStrategy.INF) {
+                ndelays++;
+                nodes.add(new Delay(model, "Delay" + ndelays));
+            } else {
+                nqueues++;
+                Queue queueNode = new Queue(model, "Queue" + nqueues, strategy[i]);
+                queueNode.setNumberOfServers((int) S.get(i, 0));
+                nodes.add(queueNode);
+            }
+        }
+
+        nodes.add(new Sink(model,"Sink"));
+
+        for (int r = 0; r < R; r++) {
+            OpenClass newclass = new OpenClass(model, "Class" + (r + 1), 0);
+            jobclasses.add(newclass);
+        }
+
+        for (int r = 0; r < R; r++) {
+            ((Source)nodes.get(0)).setArrival(jobclasses.get(r), Exp.fitMean(1/lambda.get(0,r)));
+            for (int i = 0; i < M; i++) {
+                ((Queue) nodes.get(1+i)).setService(jobclasses.get(r), Exp.fitMean(D.get(i, r)));
+            }
+        }
+
+        RoutingMatrix P = model.initRoutingMatrix();
+        for (int r = 0; r < R; r++) {
+            Matrix Pr = circul(nodes.size());
+            P.set(jobclasses.get(r), Pr);
+        }
+
+        model.link(P);
+        return model;
+    }
+
+    public static Network tandemFcfsInf(Matrix lambda, Matrix D) {
+        return tandemFcfsInf(lambda, D, new Matrix(""));
+    }
+
+    public static Network tandemFcfsInf(Matrix lambda, Matrix D, Matrix Z) {
+        Matrix S = new Matrix(D.getNumRows(),1, D.getNumRows());
+        S.fill(1.0);
+        return tandemFcfsInf(lambda, D, Z, S);
+    }
+
+    public static Network tandemFcfsInf(Matrix lambda, Matrix D, Matrix Z, Matrix S) {
+        int M = D.getNumRows();
+        int MZ = Z.getNumRows();
+        if (Z.elementMax()==0) MZ = 0;
+        int R = D.getNumCols();
+        SchedStrategy[] strategy = new SchedStrategy[M+MZ];
+        for (int i=0; i<MZ; i++) strategy[i] = SchedStrategy.INF;
+        for (int i=0; i<M; i++) strategy[MZ+i] = SchedStrategy.FCFS;
+
+        Matrix Dnew = new Matrix(M+MZ,R);
+        if (MZ>0) {
+            Matrix.concatRows(Z,D,Dnew);
+        } else {
+            Dnew = D;
+        }
+        Matrix Snew = new Matrix(M+MZ,1);
+        Matrix Sinf = new Matrix(MZ,1); Sinf.fill(Double.POSITIVE_INFINITY);
+        if (MZ>0) {
+            Matrix.concatRows(Sinf,S,Snew);
+        } else {
+            Snew = S;
+        }
+        return Network.tandem(lambda, Dnew, strategy, Snew);
+    }
+
+    public static Network tandemPsInf(Matrix lambda, Matrix D) {
+        return tandemPsInf(lambda, D, new Matrix(""));
+    }
+
+    public static Network tandemPsInf(Matrix lambda, Matrix D, Matrix Z) {
+        Matrix S = new Matrix(D.getNumRows(),1, D.getNumRows());
+        S.fill(1.0);
+        return tandemPsInf(lambda, D, Z, S);
+    }
+
+    public static Network tandemPsInf(Matrix lambda, Matrix D, Matrix Z, Matrix S) {
+        int M = D.getNumRows();
+        int MZ = Z.getNumRows();
+        if (Z.elementMax()==0) MZ = 0;
+        int R = D.getNumCols();
+        SchedStrategy[] strategy = new SchedStrategy[M+MZ];
+        for (int i=0; i<MZ; i++) strategy[i] = SchedStrategy.INF;
+        for (int i=0; i<M; i++) strategy[MZ+i] = SchedStrategy.PS;
+
+        Matrix Dnew = new Matrix(M+MZ,R);
+        if (MZ>0) {
+            Matrix.concatRows(Z,D,Dnew);
+        } else {
+            Dnew = D;
+        }
+        Matrix Snew = new Matrix(M+MZ,1);
+        Matrix Sinf = new Matrix(MZ,1); Sinf.fill(Double.POSITIVE_INFINITY);
+        if (MZ>0) {
+            Matrix.concatRows(Sinf,S,Snew);
+        } else {
+            Snew = S;
+        }
+        return Network.tandem(lambda, Dnew, strategy, Snew);
+    }
+
     public static Network cyclic(Matrix N, Matrix D, SchedStrategy[] strategy, Matrix S) {
         Network model = new Network("Model");
         int M = D.getNumRows();
@@ -3303,7 +3422,7 @@ public class Network extends Model implements Serializable {
 
         RoutingMatrix P = model.initRoutingMatrix();
         for (int r = 0; r < R; r++) {
-            P.set(jobclasses.get(r), Maths.circul(M));
+            P.set(jobclasses.get(r), circul(M));
         }
 
         model.link(P);
@@ -3340,9 +3459,9 @@ public class Network extends Model implements Serializable {
         return Network.cyclic(N, Dnew, strategy, Snew);
     }
 
-    public static Network cyclicFcfsInf(Matrix N, Matrix D, Matrix S) {
+    public static Network cyclicFcfsInf(Matrix N, Matrix D, Matrix Z) {
         int R = D.getNumCols();
-        return cyclicFcfsInf(N, D, new Matrix(1,R), S);
+        return cyclicFcfsInf(N, D, new Matrix(1,R), Z);
     }
 
     public static Network cyclicFcfsInf(Matrix N, Matrix D, Matrix Z, Matrix S) {
@@ -3370,13 +3489,27 @@ public class Network extends Model implements Serializable {
         return Network.cyclic(N, Dnew, strategy, Snew);
     }
 
+    public Map<JobClass, Map<JobClass, Matrix>> getLinkedRoutingMatrix() {
+        return getStruct(false).rtorig;
+    }
+
+    public int getNumberOfChains() {
+        return getStruct(false).nchains;
+    }
+
     public static void main(String[] args) {
+        Matrix lambda = new Matrix("[0.01,0.02]");
         Matrix N = new Matrix("[11,7]");
         Matrix D = new Matrix("[10,5;5,9]");
+        Matrix Z = new Matrix("[91,92]");
         Matrix S = new Matrix("[1;1]");
 
-        Network model = Network.cyclicFcfsInf(N, D, S);
-        new SolverMVA(model).getAvgTable().print();
+        Network oqn = Network.tandemFcfsInf(lambda, D, Z, S);
+        new SolverMVA(oqn).getAvgTable().print();
+        oqn.jsimwView();
+
+        Network cqn = Network.cyclicFcfsInf(N, D, Z, S);
+        new SolverMVA(cqn).getAvgTable().print();
     }
 
 }

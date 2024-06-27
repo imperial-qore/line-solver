@@ -920,14 +920,15 @@ classdef Network < Model
             model = Network.tandem(lambda,[Z;D],strategy);
         end
 
-        function model = tandem(lambda,S,strategy)
+        function model = tandem(lambda,D,strategy)
             % MODEL = TANDEM(LAMBDA,S,STRATEGY)
 
-            % S(i,r) - mean service time of class r at station i
+            % D(i,r) - mean service demand of class r at station i, equal
+            % to mean service time since the topology is linear
             % lambda(r) - number of jobs of class r
             % station(i) - scheduling strategy at station i
             model = Network('Model');
-            [M,R] = size(S);
+            [M,R] = size(D);
             node{1} = Source(model, 'Source');
             for i=1:M
                 switch SchedStrategy.toId(strategy{i})
@@ -946,7 +947,7 @@ classdef Network < Model
             for r=1:R
                 node{1}.setArrival(jobclass{r}, Exp.fitMean(1/lambda(r)));
                 for i=1:M
-                    node{1+i}.setService(jobclass{r}, Exp.fitMean(S(i,r)));
+                    node{1+i}.setService(jobclass{r}, Exp.fitMean(D(i,r)));
                 end
             end
             model.link(P);

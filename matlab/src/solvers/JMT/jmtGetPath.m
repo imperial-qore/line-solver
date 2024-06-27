@@ -6,7 +6,7 @@ function jmtPath = jmtGetPath
 
 jmtPath = fileparts(which('JMT.jar'));
 if isempty(jmtPath)
-    line_printf('\nJava Modelling Tools cannot be found. LINE will try to download the latest JMT version (download approx. 30MB).\n')
+    line_printf('\nJava Modelling Tools cannot be found. LINE will try to download the latest JMT version (download approx. 50MB).\n')
     jmtSolverFolder = fileparts(mfilename('fullpath'));
 %    if isdeployed
         m='Y';

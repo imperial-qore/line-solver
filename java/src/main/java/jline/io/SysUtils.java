@@ -36,7 +36,7 @@ public class SysUtils {
     public static String jmtGetPath(String jmtPath) {
         File jmtFile = new File(jmtPath);
         if (!jmtFile.exists()) {
-            java.lang.System.out.println("\nJava Modelling Tools cannot be found. LINE will try to download the latest JMT version (download approx. 30MB).");
+            java.lang.System.out.println("\nJava Modelling Tools cannot be found. LINE will try to download the latest JMT version (download approx. 50MB).");
             String m = "Y"; // replace with user input logic if needed
 
             if (m.equalsIgnoreCase("Y")) {

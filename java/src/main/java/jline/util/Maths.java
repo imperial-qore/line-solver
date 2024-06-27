@@ -132,9 +132,13 @@ public class Maths {
       return C;
     }
 
-    Matrix v = new Matrix(1, c);
-    v.set(0, c - 1, 1);
-    return circul(v);
+    Matrix R = new Matrix(c, c);
+    R.set(0, c - 1, 1);
+    for (int i = 1; i < c; i++) {
+      R.set(i, i - 1, 1);
+    }
+    R = R.transpose();
+    return R;
   }
 
   // Returns a circulant matrix of order c
