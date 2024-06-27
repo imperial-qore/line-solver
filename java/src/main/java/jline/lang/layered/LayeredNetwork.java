@@ -43,6 +43,7 @@ public class LayeredNetwork extends Ensemble {
     protected Map<Integer, Task> reftasks;
     protected Map<Integer, Activity> activities;
     protected Map<Integer, Entry> entries;
+    protected Map<Integer, LayeredNetworkElement> nodes;
 
     private class Param {
 
@@ -79,6 +80,7 @@ public class LayeredNetwork extends Ensemble {
         this.tasks = new HashMap<>();
         this.reftasks = new HashMap<>();
         this.entries = new HashMap<>();
+        this.nodes = new HashMap<>();
         this.param = new Param();
         this.param.Nodes.RespT = 0;
         this.param.Nodes.Tput = 0;
@@ -97,6 +99,18 @@ public class LayeredNetwork extends Ensemble {
         this.param.Edges.RespT = 0;
         this.param.Edges.Tput = 0;
         this.param.Edges.QLen = 0;
+    }
+
+    public void reset(boolean isHard) {
+        this.ensemble = new ArrayList<>();
+        if (isHard) {
+            this.hosts = new HashMap<>();
+            this.activities = new HashMap<>();
+            this.tasks = new HashMap<>();
+            this.reftasks = new HashMap<>();
+            this.entries = new HashMap<>();
+            this.nodes = new HashMap<>();
+        }
     }
 
     public void generateGraph() {
@@ -832,6 +846,14 @@ public class LayeredNetwork extends Ensemble {
         this_lqn.print();
     }
 
+    public static LayeredNetwork readXML(String filename) {
+        return parseXML(filename, false);
+    }
+
+    public static LayeredNetwork readXML(String filename, boolean verbose) {
+        return parseXML(filename, verbose);
+    }
+
     public static LayeredNetwork parseXML(String filename) {
         return parseXML(filename, false);
     }
@@ -1153,6 +1175,16 @@ public class LayeredNetwork extends Ensemble {
             }
         }
         return myLN;
+    }
+
+    public LayeredNetworkElement getNodeByName(String nodeName) {
+        List<String> nodenames = this.getNodeNames();
+        for (int idx = 0; idx < nodenames.size(); idx++) {
+            if (nodenames.get(idx).equals(nodeName)) {
+                return this.nodes.get(idx);
+            }
+        }
+        return null;
     }
 
     public Integer getNodeIndex(LayeredNetworkElement node) {

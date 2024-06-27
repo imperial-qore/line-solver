@@ -37,37 +37,21 @@ public class Activity extends LayeredNetworkElement {
         this.boundToEntry = boundToEntry;
         this.setCallOrder(callOrder);
         model.activities.put(model.activities.size(),this);
+        model.nodes.put(model.activities.size(),this);
         this.model = model;
     }
 
     public Activity(LayeredNetwork model, String name, Distribution hostDemand, String boundToEntry) {
-        super(name);
-
-        this.setHostDemand(hostDemand);
-        this.boundToEntry = boundToEntry;
-        this.setCallOrder("STOCHASTIC");
-        model.activities.put(model.activities.size(),this);
-        this.model = model;
+        this(model, name, hostDemand, boundToEntry, "STOCHASTIC");
     }
 
     public Activity(LayeredNetwork model, String name, Distribution hostDemand) {
-        super(name);
-        this.setHostDemand(hostDemand);
-        this.boundToEntry = "";
-        this.setCallOrder("STOCHASTIC");
-        model.activities.put(model.activities.size(),this);
-        this.model = model;
+        this(model, name, hostDemand, "", "STOCHASTIC");
     }
 
     public Activity(LayeredNetwork model, String name) {
-        super(name);
-        this.setHostDemand(1e-8);
-        this.boundToEntry = "";
-        this.setCallOrder("STOCHASTIC");
-        model.activities.put(model.activities.size(),this);
-        this.model = model;
+        this(model, name, new Immediate(), "", "STOCHASTIC");
     }
-
 
     public void setParent(Task parent){
         this.parentName = parent.getName();//TODO
@@ -81,8 +65,6 @@ public class Activity extends LayeredNetworkElement {
         this.parent = parent;
         return this;
     }
-
-
 
     public void setHostDemand(double hostDemand) {
         if (hostDemand <= GlobalConstants.Zero){

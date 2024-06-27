@@ -71,6 +71,10 @@ public class Matrix implements Serializable {
 	}
 
 	public Matrix(String matrixString) {
+			if (matrixString.length() == 0){
+				data = new DMatrixSparseCSC(0, 0, 0);
+				return;
+			}
 			// Parse matrix from string
 			// Remove spaces
 			matrixString = matrixString.replaceAll("\\s", "");
@@ -2282,6 +2286,7 @@ public class Matrix implements Serializable {
 		}
 	}
 
+	// get a set of rows starting from a particular one
 	public Matrix getRowsFrom(int row) {
 		if (this.getNumRows() < 0 || row >= this.getNumRows()) {
 			throw new IllegalArgumentException("The number of rows is out of range");

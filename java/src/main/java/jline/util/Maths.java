@@ -837,6 +837,7 @@ public class Maths {
     return new laplaceApproxReturn(H, I, logI);
   }
 
+
   public static class laplaceApproxComplexReturn {
     public ComplexMatrix H;
     public Complex I;
@@ -860,4 +861,8 @@ public class Maths {
       this.logI = logI;
     }
   }
+
+  public static void main(String[] args) {
+     Maths.circul((int) 3).print();
+ }
 }

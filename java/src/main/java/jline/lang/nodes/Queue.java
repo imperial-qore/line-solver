@@ -96,7 +96,8 @@ public class Queue extends Station implements HasSchedStrategy, Serializable {
     	return this.schedStrategyPar.getOrDefault(jobClass, 0.0);
     }
 
-    public final Distribution getServiceProcess(JobClass jobClass) {
+    @Override
+    public Distribution getServiceProcess(JobClass jobClass) {
         for (ServiceBinding serviceProcess : this.serviceProcesses) {
             if (serviceProcess.getJobClass() == jobClass) {
                 return serviceProcess.getDistribution();
@@ -150,7 +151,7 @@ public class Queue extends Station implements HasSchedStrategy, Serializable {
     public void setService(JobClass jobClass, Distribution distribution) {
         setService(jobClass, distribution, 1);
     }
-    
+
     public boolean containsJobClass(JobClass jobClass) {
         for (ServiceBinding serviceProcess : this.serviceProcesses) {
             if (serviceProcess.getJobClass() == jobClass) {

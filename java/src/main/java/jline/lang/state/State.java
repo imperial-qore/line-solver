@@ -732,12 +732,12 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
 
   public static Matrix fromMarginalAndStarted(
           NetworkStruct sn, int ind, Matrix n, Matrix s) {
-    return fromMarginalAndStarted(sn, ind, n, s, true);
+    return fromMarginalAndStarted(sn, ind, n, s, false);
   }
 
   public static Matrix fromMarginalAndStarted(
           Network network, int ind, Matrix n, Matrix s) {
-    return fromMarginalAndStarted(network.getStruct(true), ind, n, s, true);
+    return fromMarginalAndStarted(network.getStruct(true), ind, n, s, false);
   }
 
   public static Matrix fromMarginalAndStarted(
@@ -895,8 +895,8 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
           if (sizeEstimator > 2) {
             if (!optionsForce) {
               System.err.format(
-                      "State space size is very large: 1e%f states. Cannot generate valid state space. Initializing station %d from a default state.\n",
-                      sizeEstimator, ind);
+                      "State space size is large: 1e%d states. Cannot generate valid state space. Initializing station %d from a default state.\n",
+                      (int)sizeEstimator, ind);
               state = inbuf.clone();
               return state;
             }

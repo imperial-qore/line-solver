@@ -9,11 +9,11 @@ import java.io.Serializable;
  */
 public class Model implements Serializable {
     private String name;
-    private final String lineVersion;
+    private String lineVersion;
 
     public Model(String modelName) {
         this.name = modelName;
-        this.lineVersion = GlobalConstants.Version;
+        this.setVersion(GlobalConstants.Version);
     }
 
     public String getName() {
@@ -23,4 +23,5 @@ public class Model implements Serializable {
         this.name = setName;
     }
     public String getVersion() { return this.lineVersion; }
+    public void setVersion(String version) { this.lineVersion = version; }
 }

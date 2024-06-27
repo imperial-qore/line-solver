@@ -19,6 +19,7 @@ public class Entry extends LayeredNetworkElement{
         super(name);
         this.openArrivalRate = 0.0;
         model.entries.put(model.entries.size(),this);
+        model.nodes.put(model.entries.size(),this);
         this.model = model;
     }
 

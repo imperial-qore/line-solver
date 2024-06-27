@@ -40,55 +40,22 @@ public class Task extends LayeredNetworkElement{
         this.replyEntry = new ArrayList<>();
         // link within model
         model.tasks.put(model.tasks.size(),this);
+        model.nodes.put(model.tasks.size(),this);
         if(scheduling == SchedStrategy.REF) {
             model.reftasks.put(model.reftasks.size(),this);
         }
     }
 
     public Task(LayeredNetwork model, String name, int multiplicity, SchedStrategy scheduling) {
-        super(name);
-        this.parent = null;
-        this.setReplication(1);
-        this.model = model;
-        this.multiplicity = multiplicity;
-        this.scheduling = scheduling;
-        setThinkTime(GlobalConstants.Zero);
-        model.tasks.put(model.tasks.size(),this);
-        this.entries = new ArrayList<>();
-        this.activities =new ArrayList<>();
-        this.precedences = new ArrayList<>();
-        this.replyEntry = new ArrayList<>();
-        if(scheduling == SchedStrategy.REF) model.reftasks.put(model.tasks.size(),this);
+        this(model, name, multiplicity, scheduling, new Immediate());
     }
 
     public Task(LayeredNetwork model, String name, int multiplicity) {
-        super(name);
-        this.parent = null;
-        this.setReplication(1);
-        this.model = model;
-        this.multiplicity = multiplicity;
-        this.scheduling = SchedStrategy.INF;
-        setThinkTime(GlobalConstants.Zero);
-        this.entries = new ArrayList<>();
-        this.activities =new ArrayList<>();
-        this.precedences = new ArrayList<>();
-        this.replyEntry = new ArrayList<>();
-        model.tasks.put(model.tasks.size(),this);
+        this(model, name, multiplicity, SchedStrategy.INF, new Immediate());
     }
 
     public Task(LayeredNetwork model, String name) {
-        super(name);
-        this.parent = null;
-        this.setReplication(1);
-        this.model = model;
-        this.multiplicity = 1;
-        this.scheduling = SchedStrategy.INF;
-        setThinkTime(GlobalConstants.Zero);
-        this.entries = new ArrayList<>();
-        this.activities =new ArrayList<>();
-        this.precedences = new ArrayList<>();
-        this.replyEntry = new ArrayList<>();
-        model.tasks.put(model.tasks.size(),this);
+        this(model, name, 1, SchedStrategy.INF, new Immediate());
     }
 
     public Task setReplication(int replication) {

@@ -4,6 +4,7 @@ import jline.api.DTMC;
 import jline.api.SN;
 import jline.lang.processes.MAP;
 import jline.lang.processes.Replayer;
+import jline.solvers.mva.SolverMVA;
 import jline.util.Maths;
 import jline.lang.constant.*;
 import jline.lang.distributions.*;
@@ -260,15 +261,13 @@ public class Network extends Model implements Serializable {
 
     public int getNodeIndex(String name) {
         for (Node node : this.nodes) {
-            if (node.getName().equals(name))
-                return getNodeIndex(node);
+            if (node.getName().equals(name)) return getNodeIndex(node);
         }
         return -1;
     }
 
     public int getStatefulNodeIndex(Node node) {
-        if (!(node instanceof StatefulNode))
-            return -1;
+        if (!(node instanceof StatefulNode)) return -1;
 
         int outIdx = 0;
         for (Node nodeIter : this.nodes) {
@@ -437,14 +436,14 @@ public class Network extends Model implements Serializable {
         boolean output = true;
         if (!this.hasState) { // check if all stations are initialized
             for (int i = 0; i < this.getNumberOfNodes(); i++) {
-                  if (this.nodes.get(i) instanceof StatefulNode) {
-                        if (((StatefulNode) this.nodes.get(i)).getState().isEmpty()) {
-                            output = false;
-                            break;
-                        }
+                if (this.nodes.get(i) instanceof StatefulNode) {
+                    if (((StatefulNode) this.nodes.get(i)).getState().isEmpty()) {
+                        output = false;
+                        break;
                     }
                 }
             }
+        }
         return output;
     }
 
@@ -510,10 +509,7 @@ public class Network extends Model implements Serializable {
                 }
 
                 for (int r = 0; r < sn.nclasses; r++) {
-                    if ((sn.routing.get(sn.nodes.get(i)).get(sn.jobclasses.get(r))
-                            == RoutingStrategy.RROBIN)
-                            || (sn.routing.get(sn.nodes.get(i)).get(sn.jobclasses.get(r))
-                            == RoutingStrategy.WRROBIN)) {
+                    if ((sn.routing.get(sn.nodes.get(i)).get(sn.jobclasses.get(r)) == RoutingStrategy.RROBIN) || (sn.routing.get(sn.nodes.get(i)).get(sn.jobclasses.get(r)) == RoutingStrategy.WRROBIN)) {
                         // Start from first connected queue
                         List<Integer> findSnRt = new ArrayList<>();
                         for (int p = 0; p < sn.rt.getNumCols(); p++) {
@@ -554,7 +550,7 @@ public class Network extends Model implements Serializable {
                 } else if (this.nodes.get(i) instanceof Router) {
                     Matrix one = new Matrix(1, 1, 1);
                     one.set(0, 0, 1);
-                    ((Router)this.nodes.get(i)).setState(one);
+                    ((Router) this.nodes.get(i)).setState(one);
                 } else {
                     ((StatefulNode) this.nodes.get(i)).setState(new Matrix(0, 0));
                 }
@@ -673,8 +669,7 @@ public class Network extends Model implements Serializable {
     }
 
     public Matrix getConnectionMatrix() {
-        if (this.connections.getNumCols() < this.getNumberOfNodes() ||
-                this.connections.getNumRows() < this.getNumberOfNodes())
+        if (this.connections.getNumCols() < this.getNumberOfNodes() || this.connections.getNumRows() < this.getNumberOfNodes())
             this.connections.expandMatrix(this.getNumberOfNodes(), this.getIndexSourceNode(), this.getNumberOfNodes() * this.getNumberOfNodes());
         return this.connections;
     }
@@ -715,11 +710,9 @@ public class Network extends Model implements Serializable {
     }
 
     public NetworkStruct getStruct(boolean wantInitialState) {
-        if (!this.hasStruct)
-            refreshStruct(true);
+        if (!this.hasStruct) refreshStruct(true);
 
-        if (wantInitialState)
-            getState();
+        if (wantInitialState) getState();
 
         return this.sn;
     }
@@ -758,8 +751,7 @@ public class Network extends Model implements Serializable {
         lldscaling = getLimitedLoadDependence();
         cdscaling = getLimitedClassDependence();
 
-        if (sn == null)
-            sn = new NetworkStruct();
+        if (sn == null) sn = new NetworkStruct();
 
         sn.nnodes = nodenames.size();
         sn.nclasses = classnames.size();
@@ -1000,8 +992,7 @@ public class Network extends Model implements Serializable {
                     Source source = (Source) node;
                     for (int k = 0; k < K; k++) {
                         JobClass jobclass = this.jobClasses.get(k);
-                        if (!source.containsJobClass(jobclass))
-                            source.setArrival(jobclass, new Disabled());
+                        if (!source.containsJobClass(jobclass)) source.setArrival(jobclass, new Disabled());
                     }
                 } else if (node instanceof Router) {
                     // Do nothing
@@ -1037,33 +1028,22 @@ public class Network extends Model implements Serializable {
         try {
             for (int i = 0; i < M; i++) {
                 Node nodeIter = this.nodes.get(i);
-                if (nodeIter instanceof Logger)
-                    nodetypes.add(NodeType.Logger);
-                else if (nodeIter instanceof ClassSwitch)
-                    nodetypes.add(NodeType.ClassSwitch);
-                else if (nodeIter instanceof Join)
-                    nodetypes.add(NodeType.Join);
-                else if (nodeIter instanceof Sink)
-                    nodetypes.add(NodeType.Sink);
-                else if (nodeIter instanceof Router)
-                    nodetypes.add(NodeType.Router);
-                else if (nodeIter instanceof Delay)
-                    nodetypes.add(NodeType.Delay);
-                else if (nodeIter instanceof Fork)
-                    nodetypes.add(NodeType.Fork);
-                else if (nodeIter instanceof Queue)
-                    nodetypes.add(NodeType.Queue);
-                else if (nodeIter instanceof Source)
-                    nodetypes.add(NodeType.Source);
+                if (nodeIter instanceof Logger) nodetypes.add(NodeType.Logger);
+                else if (nodeIter instanceof ClassSwitch) nodetypes.add(NodeType.ClassSwitch);
+                else if (nodeIter instanceof Join) nodetypes.add(NodeType.Join);
+                else if (nodeIter instanceof Sink) nodetypes.add(NodeType.Sink);
+                else if (nodeIter instanceof Router) nodetypes.add(NodeType.Router);
+                else if (nodeIter instanceof Delay) nodetypes.add(NodeType.Delay);
+                else if (nodeIter instanceof Fork) nodetypes.add(NodeType.Fork);
+                else if (nodeIter instanceof Queue) nodetypes.add(NodeType.Queue);
+                else if (nodeIter instanceof Source) nodetypes.add(NodeType.Source);
 //				Below node types are not supported in JLine
 //        		else if (nodeIter instanceof Place)
 //        			nodetypes.add(NodeType.Place);
 //        		else if (nodeIter instanceof Transition)
 //        			nodetypes.add(NodeType.Transition);
-                else if (nodeIter instanceof Cache)
-                    nodetypes.add(NodeType.Cache);
-                else
-                    throw new Exception("Unknown node type.");
+                else if (nodeIter instanceof Cache) nodetypes.add(NodeType.Cache);
+                else throw new Exception("Unknown node type.");
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -1074,8 +1054,7 @@ public class Network extends Model implements Serializable {
     }
 
     public List<String> getClassNames() {
-        if (hasStruct && sn.classnames != null)
-            return sn.classnames;
+        if (hasStruct && sn.classnames != null) return sn.classnames;
 
         int K = getNumberOfClasses();
         List<String> classnames = new ArrayList<String>();
@@ -1086,8 +1065,7 @@ public class Network extends Model implements Serializable {
     }
 
     public List<String> getNodeNames() {
-        if (hasStruct && sn.classnames != null)
-            return sn.nodenames;
+        if (hasStruct && sn.classnames != null) return sn.nodenames;
 
         int M = getNumberOfNodes();
         List<String> nodenames = new ArrayList<String>();
@@ -1118,8 +1096,7 @@ public class Network extends Model implements Serializable {
         int K = this.jobClasses.size();
         Matrix refclass = new Matrix(K, 1);
         for (int i = 0; i < K; i++) {
-            if (this.jobClasses.get(i).isReferenceClass())
-                refclass.set(i, 0, 1.0);
+            if (this.jobClasses.get(i).isReferenceClass()) refclass.set(i, 0, 1.0);
         }
         return refclass;
     }
@@ -1127,8 +1104,7 @@ public class Network extends Model implements Serializable {
     public int getIndexSourceNode() {
         int res = 0;
         for (Node nodeIter : this.nodes) {
-            if (nodeIter instanceof Source)
-                return res;
+            if (nodeIter instanceof Source) return res;
             res++;
         }
 
@@ -1156,8 +1132,7 @@ public class Network extends Model implements Serializable {
     public int getIndexSinkNode() {
         int res = 0;
         for (Node nodeIter : this.nodes) {
-            if (nodeIter instanceof Sink)
-                return res;
+            if (nodeIter instanceof Sink) return res;
             res++;
         }
 
@@ -1168,8 +1143,7 @@ public class Network extends Model implements Serializable {
         int K = getNumberOfClasses();
         Matrix njobs = new Matrix(K, 1, K);
         for (int i = 0; i < K; i++) {
-            if (jobClasses.get(i).type == JobClassType.Open)
-                njobs.set(i, 0, Double.POSITIVE_INFINITY);
+            if (jobClasses.get(i).type == JobClassType.Open) njobs.set(i, 0, Double.POSITIVE_INFINITY);
             else if (jobClasses.get(i).type == JobClassType.Closed)
                 njobs.set(i, 0, jobClasses.get(i).getNumberOfJobs());
         }
@@ -1182,8 +1156,7 @@ public class Network extends Model implements Serializable {
         for (int i = 0; i < I; i++) {
             if (stations.get(i).getNumberOfServers() == Integer.MAX_VALUE)
                 numservers.set(i, 0, Double.POSITIVE_INFINITY);
-            else
-                numservers.set(i, 0, stations.get(i).getNumberOfServers());
+            else numservers.set(i, 0, stations.get(i).getNumberOfServers());
         }
 
         return numservers;
@@ -1206,8 +1179,7 @@ public class Network extends Model implements Serializable {
             if (mu.length() > 0) {
                 Matrix.extract(mu, 0, 1, 0, mu.length(), alpha, i, 0);
                 for (int j = 0; j < mu.length(); j++) {
-                    if (alpha.get(i, j) == 0)
-                        alpha.set(i, j, 1.0);
+                    if (alpha.get(i, j) == 0) alpha.set(i, j, 1.0);
                 }
             }
         }
@@ -1218,8 +1190,7 @@ public class Network extends Model implements Serializable {
         Map<Station, SerializableFunction<Matrix, Double>> gamma = new HashMap<Station, SerializableFunction<Matrix, Double>>();
 
         for (Station station : this.stations) {
-            if (station.getLimitedClassDependence() != null)
-                gamma.put(station, station.getLimitedClassDependence());
+            if (station.getLimitedClassDependence() != null) gamma.put(station, station.getLimitedClassDependence());
         }
 
         if (gamma.size() > 0) {
@@ -1239,18 +1210,16 @@ public class Network extends Model implements Serializable {
 
     public RoutingStrategy getRoutingStrategyFromNodeAndClassPair(Node node, JobClass c) {
         //Another approach is to use the last routing strategy
-        if (node.getOutput().getOutputStrategyByClass(c).size() == 0)
-            if (node instanceof Sink) {
-                return RoutingStrategy.DISABLED;
-            } else {
-                return RoutingStrategy.RAND;
-            }
+        if (node.getOutput().getOutputStrategyByClass(c).size() == 0) if (node instanceof Sink) {
+            return RoutingStrategy.DISABLED;
+        } else {
+            return RoutingStrategy.RAND;
+        }
         RoutingStrategy res = null;
         try {
             for (OutputStrategy outputStrategy : node.getOutputStrategies()) {
                 if (outputStrategy.getJobClass().equals(c)) {
-                    if (res == null)
-                        res = outputStrategy.getRoutingStrategy();
+                    if (res == null) res = outputStrategy.getRoutingStrategy();
                     else if (!res.equals(outputStrategy.getRoutingStrategy()))
                         throw new Exception("Inconsistent routing strategy.");
                 }
@@ -1260,19 +1229,15 @@ public class Network extends Model implements Serializable {
             System.exit(1);
         }
 
-        if (res != null)
-            return res;
-        else if (c instanceof OpenClass)
-            return RoutingStrategy.RAND;
-        else
-            return RoutingStrategy.DISABLED;
+        if (res != null) return res;
+        else if (c instanceof OpenClass) return RoutingStrategy.RAND;
+        else return RoutingStrategy.DISABLED;
     }
 
     private Matrix getIsStationArray() {
         Matrix isStation = new Matrix(nodes.size(), 1, nodes.size());
         for (int i = 0; i < nodes.size(); i++) {
-            if (nodes.get(i) instanceof Station)
-                isStation.set(i, 0, 1);
+            if (nodes.get(i) instanceof Station) isStation.set(i, 0, 1);
         }
         return isStation;
     }
@@ -1280,8 +1245,7 @@ public class Network extends Model implements Serializable {
     private Matrix getIsStatefulArray() {
         Matrix isStateful = new Matrix(nodes.size(), 1, nodes.size());
         for (int i = 0; i < nodes.size(); i++) {
-            if (nodes.get(i) instanceof StatefulNode)
-                isStateful.set(i, 0, 1);
+            if (nodes.get(i) instanceof StatefulNode) isStateful.set(i, 0, 1);
         }
         return isStateful;
     }
@@ -1297,8 +1261,7 @@ public class Network extends Model implements Serializable {
             classprio.set(0, i, jobClasses.get(i).priority);
         }
 
-        if (this.sn != null)
-            sn.classprio = classprio;
+        if (this.sn != null) sn.classprio = classprio;
     }
 
     public void refreshService(List<Integer> statSet, List<Integer> classSet) {
@@ -1421,15 +1384,13 @@ public class Network extends Model implements Serializable {
         if (!hasRateChanged) {
             Matrix tmp = rates.sub(1, rates_orig);
             tmp.abs();
-            if (tmp.elementSum() > 0)
-                hasRateChanged = true;
+            if (tmp.elementSum() > 0) hasRateChanged = true;
         }
 
         if (!hasSCVChanged) {
             Matrix tmp = scv.sub(1, scv_orig);
             tmp.abs();
-            if (tmp.elementSum() > 0)
-                hasSCVChanged = true;
+            if (tmp.elementSum() > 0) hasSCVChanged = true;
         }
 
         if (hasRateChanged) {
@@ -1496,8 +1457,7 @@ public class Network extends Model implements Serializable {
             proctype.put(station, map);
         }
 
-        if (this.sn != null)
-            this.sn.proctype = proctype;
+        if (this.sn != null) this.sn.proctype = proctype;
     }
 
     public ProcessType getProcessType(Distribution distr) {
@@ -1598,8 +1558,7 @@ public class Network extends Model implements Serializable {
                 for (int idx = 0; idx < mu_val.length; idx++)
                     flag = flag && Double.isNaN(mu_val[idx]);
 
-                if (!flag)
-                    phases.set(i, r, mu_val.length);
+                if (!flag) phases.set(i, r, mu_val.length);
             }
         }
 
@@ -1652,23 +1611,18 @@ public class Network extends Model implements Serializable {
                 JobClass jobclass = this.jobClasses.get(r);
                 if (i == sourceIdx) {
                     Distribution distr = ((Source) station).getArrivalDistribution(jobclass);
-                    if (distr instanceof Disabled)
-                        map.put(jobclass, null);
-                    else
-                        map.put(jobclass, e -> distr.evalLST(e));
+                    if (distr instanceof Disabled) map.put(jobclass, null);
+                    else map.put(jobclass, e -> distr.evalLST(e));
                 } else {
                     //line 45-46 is ignored since Fork is not station
-                    if (station instanceof Join)
-                        map.put(jobclass, null);
-                    else
-                        map.put(jobclass, e -> station.getServer().getServiceDistribution(jobclass).evalLST(e));
+                    if (station instanceof Join) map.put(jobclass, null);
+                    else map.put(jobclass, e -> station.getServer().getServiceDistribution(jobclass).evalLST(e));
                 }
             }
             lst.put(station, map);
         }
 
-        if (this.sn != null)
-            this.sn.lst = lst;
+        if (this.sn != null) this.sn.lst = lst;
     }
 
     @SuppressWarnings("unchecked")
@@ -1700,8 +1654,7 @@ public class Network extends Model implements Serializable {
 
             for (int r = 0; r < K; r++) {
                 Map<Integer, Matrix> ph_i_r = ph_i.get(this.jobClasses.get(r));
-                if (ph_i_r == null)
-                    phases.set(i, r, 1.0);
+                if (ph_i_r == null) phases.set(i, r, 1.0);
                 else if (!(ph_i_r.get(0).hasNaN() || ph_i_r.get(1).hasNaN()))
                     phases.set(i, r, ph_i_r.get(0).getNumCols());
                 //Other situation set to 0 (The matrix initial value is 0)
@@ -1828,8 +1781,7 @@ public class Network extends Model implements Serializable {
                 for (int s = 0; s < K; s++) {
                     for (int isf = 0; isf < stateful.getNumRows(); isf++) {
                         for (int jsf = 0; jsf < stateful.getNumRows(); jsf++) {
-                            if (rt.get(isf * K + r, jsf * K + s) > 0)
-                                csmask.set(r, s, 1.0);
+                            if (rt.get(isf * K + r, jsf * K + s) > 0) csmask.set(r, s, 1.0);
                         }
                     }
                 }
@@ -1844,8 +1796,7 @@ public class Network extends Model implements Serializable {
                         if (r != s) {
                             if (isCS) {
                                 ClassSwitcher classSwitcher = (ClassSwitcher) this.nodes.get(ind).getServer();
-                                if (classSwitcher.applyCsFun(r, s) > 0)
-                                    csmask.set(r, s, 1.0);
+                                if (classSwitcher.applyCsFun(r, s) > 0) csmask.set(r, s, 1.0);
                             }
                         }
                     }
@@ -1892,16 +1843,14 @@ public class Network extends Model implements Serializable {
             outerloop:
             for (JobClass jobclass : this.jobClasses) {
                 for (Map<JobClass, RoutingStrategy> nodeRoutingMap : this.sn.routing.values()) {
-                    if (nodeRoutingMap.get(jobclass) != RoutingStrategy.DISABLED)
-                        continue outerloop;
+                    if (nodeRoutingMap.get(jobclass) != RoutingStrategy.DISABLED) continue outerloop;
                 }
                 throw new RuntimeException("Routing strategy is unspecified at all nodes");
             }
         }
 
         boolean isStateDep = (Matrix.extractColumn(this.sn.isstatedep, 2, null).getNonZeroLength() > 0);
-        Map<Integer, Map<Integer, SerializableFunction<Pair<Map<Node, Matrix>, Map<Node, Matrix>>, Double>>> rtnodefuncell =
-                new HashMap<Integer, Map<Integer, SerializableFunction<Pair<Map<Node, Matrix>, Map<Node, Matrix>>, Double>>>();
+        Map<Integer, Map<Integer, SerializableFunction<Pair<Map<Node, Matrix>, Map<Node, Matrix>>, Double>>> rtnodefuncell = new HashMap<Integer, Map<Integer, SerializableFunction<Pair<Map<Node, Matrix>, Map<Node, Matrix>>, Double>>>();
 
         if (isStateDep) {
             for (int ind = 0; ind < M; ind++) {
@@ -1912,8 +1861,7 @@ public class Network extends Model implements Serializable {
                         final int r_final = r;
                         for (int s = 0; s < K; s++) {
                             final int s_final = s;
-                            Map<Integer, SerializableFunction<Pair<Map<Node, Matrix>, Map<Node, Matrix>>, Double>> map =
-                                    rtnodefuncell.getOrDefault(ind * K + r, new HashMap<Integer, SerializableFunction<Pair<Map<Node, Matrix>, Map<Node, Matrix>>, Double>>());
+                            Map<Integer, SerializableFunction<Pair<Map<Node, Matrix>, Map<Node, Matrix>>, Double>> map = rtnodefuncell.getOrDefault(ind * K + r, new HashMap<Integer, SerializableFunction<Pair<Map<Node, Matrix>, Map<Node, Matrix>>, Double>>());
                             if (this.sn.isstatedep.get(ind, 2) > 0) {
                                 switch (this.sn.routing.get(this.nodes.get(ind)).get(this.jobClasses.get(r))) {
                                     case RROBIN:
@@ -1956,8 +1904,7 @@ public class Network extends Model implements Serializable {
                                 int row = ind * K + r;
                                 int col = jnd * K + s;
                                 double val = rtnodefuncell.get(row).get(col).apply(pair);
-                                if (val != 0)
-                                    cellfunnodes.set(row, col, val);
+                                if (val != 0) cellfunnodes.set(row, col, val);
                             }
                         }
                     }
@@ -2020,8 +1967,7 @@ public class Network extends Model implements Serializable {
             idxSink = this.sn.nodetypes.indexOf(NodeType.Sink);
             idxOpenClasses = new ArrayList<Integer>();
             for (int col = 0; col < this.sn.njobs.getNumCols(); col++) {
-                if (Double.isInfinite((this.sn.njobs.get(0, col))))
-                    idxOpenClasses.add(col);
+                if (Double.isInfinite((this.sn.njobs.get(0, col)))) idxOpenClasses.add(col);
             }
             hasOpen = !idxOpenClasses.isEmpty();
             if ((arvRates == null) || arvRates.isEmpty()) {
@@ -2044,8 +1990,7 @@ public class Network extends Model implements Serializable {
             K = this.getNumberOfClasses();
             NK = this.getNumberOfJobs().transpose();
 
-            if (this.sn == null)
-                this.sn = new NetworkStruct();
+            if (this.sn == null) this.sn = new NetworkStruct();
             this.sn.connmatrix = conn;
             sn.routing = new HashMap<Node, Map<JobClass, RoutingStrategy>>();
             for (Node node : this.nodes) {
@@ -2072,8 +2017,7 @@ public class Network extends Model implements Serializable {
                             List<OutputStrategy> outputStrategy_k = node.getOutput().getOutputStrategyByClass(jobclass);
                             if (outputStrategy_k.size() > 0)
                                 rtnodes.set(i * K + k, j * K + k, 1.0 / outputStrategy_k.size());
-                            else
-                                rtnodes.set(i * K + k, j * K + k, 1.0);
+                            else rtnodes.set(i * K + k, j * K + k, 1.0);
                             if (this.sn.routing.get(node).get(jobclass) == RoutingStrategy.PROB) {
                                 //Check the number of outgoing links
                                 int sum = (int) conn.sumRows(i);
@@ -2108,8 +2052,7 @@ public class Network extends Model implements Serializable {
                         case DISABLED:
                             double sum = conn.sumRows(i);
                             for (int j = 0; j < I; j++) {
-                                if (conn.get(i, j) > 0)
-                                    rtnodes.set(i * K + k, j * K + k, 1.0 / sum);
+                                if (conn.get(i, j) > 0) rtnodes.set(i * K + k, j * K + k, 1.0 / sum);
                             }
                             break;
                         case RAND:
@@ -2119,26 +2062,22 @@ public class Network extends Model implements Serializable {
                             if (Double.isInfinite((NK.get(0, k)))) {
                                 sum = conn.sumRows(i);
                                 for (int j = 0; j < I; j++) {
-                                    if (conn.get(i, j) > 0)
-                                        rtnodes.set(i * K + k, j * K + k, 1.0 / sum);
+                                    if (conn.get(i, j) > 0) rtnodes.set(i * K + k, j * K + k, 1.0 / sum);
                                 }
                             } else if (!isSource_i && !isSink_i) {
                                 Matrix connectionClosed = conn.clone();
                                 if (idxSink >= 0) { // this is empty set in MATLAB
-                                    if (connectionClosed.get(i, idxSink) > 0)
-                                        connectionClosed.remove(i, idxSink);
+                                    if (connectionClosed.get(i, idxSink) > 0) connectionClosed.remove(i, idxSink);
                                 }
                                 sum = connectionClosed.sumRows(i);
                                 for (int j = 0; j < I; j++) {
-                                    if (connectionClosed.get(i, j) > 0)
-                                        rtnodes.set(i * K + k, j * K + k, 1.0 / sum);
+                                    if (connectionClosed.get(i, j) > 0) rtnodes.set(i * K + k, j * K + k, 1.0 / sum);
                                 }
                             }
                             break;
                         default:
                             for (int j = 0; j < I; j++) {
-                                if (conn.get(i, j) > 0)
-                                    rtnodes.set(i * K + k, j * K + k, GlobalConstants.Zero);
+                                if (conn.get(i, j) > 0) rtnodes.set(i * K + k, j * K + k, GlobalConstants.Zero);
                             }
                     }
 
@@ -2172,10 +2111,8 @@ public class Network extends Model implements Serializable {
                     for (int row = 0; row < K; row++) {
                         for (int col = 0; col < K; col++) {
                             double val = repmatPij.get(row, col) * Pcs.get(row, col);
-                            if (val != 0)
-                                rtnodes.set(i * K + row, jnd * K + col, val);
-                            else
-                                rtnodes.remove(i * K + row, jnd * K + col);
+                            if (val != 0) rtnodes.set(i * K + row, jnd * K + col, val);
+                            else rtnodes.remove(i * K + row, jnd * K + col);
                         }
                     }
                 }
@@ -2249,8 +2186,7 @@ public class Network extends Model implements Serializable {
                         }
                     }
                     for (int r = 0; r < K; r++) {
-                        if (cacheClassSwitcher.actualHitProb.length() > r && cacheClassSwitcher.hitClass.length() > r &&
-                                cacheClassSwitcher.hitClass.get(r) != -1) {
+                        if (cacheClassSwitcher.actualHitProb.length() > r && cacheClassSwitcher.hitClass.length() > r && cacheClassSwitcher.hitClass.get(r) != -1) {
                             double ph = cacheClassSwitcher.actualHitProb.get(r);
                             double pm = cacheClassSwitcher.actualMissProb.get(r);
 
@@ -2300,8 +2236,7 @@ public class Network extends Model implements Serializable {
         Matrix sumRtnodesCols = rtnodes.sumCols();
         Set<Integer> colsToIgnore = new HashSet<Integer>();
         for (int col = 0; col < sumRtnodesCols.getNumCols(); col++) {
-            if (sumRtnodesCols.get(col) == 0)
-                colsToIgnore.add(col);
+            if (sumRtnodesCols.get(col) == 0) colsToIgnore.add(col);
         }
         if (hasOpen) {
             for (int i = idxSource * K; i < (idxSource + 1) * K; i++)
@@ -2357,8 +2292,7 @@ public class Network extends Model implements Serializable {
                 //rows = find(chains(:,col));
                 List<Integer> rows = new ArrayList<Integer>();
                 for (int j = 0; j < chains.getNumRows(); j++) {
-                    if (chains.get(j, i) == 1)
-                        rows.add(j);
+                    if (chains.get(j, i) == 1) rows.add(j);
                 }
 
                 if (rows.size() > 1) {
@@ -2366,10 +2300,8 @@ public class Network extends Model implements Serializable {
                     for (int j = 1; j < rows.size(); j++) {
                         //chains(rows(1),:) = chains(row(1),:) | chains(r,:);
                         for (int k = 0; k < chains.getNumCols(); k++) {
-                            if (chains.get(row, k) == 1 || chains.get(rows.get(j), k) == 1)
-                                chains.set(row, k, 1);
-                            else
-                                chains.set(row, k, 0);
+                            if (chains.get(row, k) == 1 || chains.get(rows.get(j), k) == 1) chains.set(row, k, 1);
+                            else chains.set(row, k, 0);
                         }
                         splitChains.add(j);
                     }
@@ -2523,8 +2455,7 @@ public class Network extends Model implements Serializable {
                         chaincap.set(i, c, chainCap);
                         if (station.getClassCap(jobclass) >= 0)
                             classcap.set(i, r, Math.min(classcap.get(i, r), station.getClassCap(jobclass)));
-                        if (station.getCap() >= 0)
-                            classcap.set(i, r, Math.min(classcap.get(i, r), station.getCap()));
+                        if (station.getCap() >= 0) classcap.set(i, r, Math.min(classcap.get(i, r), station.getCap()));
                     }
                 }
             }
@@ -2746,14 +2677,10 @@ public class Network extends Model implements Serializable {
                                         case WRROBIN:
                                         case JSQ:
                                             final int i_final = i, j_final = j, r_final = r, s_final = s;
-                                            synct.passive.put(0, new NetworkEvent(EventType.ARV, j, s,
-                                                    ((pair) -> sn.rtfun.apply(pair).get(i_final * nclasses + r_final, j_final * nclasses + s_final)),
-                                                    new Matrix(0, 0), Double.NaN, Double.NaN));
+                                            synct.passive.put(0, new NetworkEvent(EventType.ARV, j, s, ((pair) -> sn.rtfun.apply(pair).get(i_final * nclasses + r_final, j_final * nclasses + s_final)), new Matrix(0, 0), Double.NaN, Double.NaN));
                                             break;
                                         default:
-                                            synct.passive.put(0, new NetworkEvent(EventType.ARV, j, s,
-                                                    sn.rt.get(isf * nclasses + r, jsf * nclasses + s),
-                                                    new Matrix(0, 0), Double.NaN, Double.NaN));
+                                            synct.passive.put(0, new NetworkEvent(EventType.ARV, j, s, sn.rt.get(isf * nclasses + r, jsf * nclasses + s), new Matrix(0, 0), Double.NaN, Double.NaN));
                                     }
                                     sync.put(sync.size(), synct);
                                 }
@@ -2764,8 +2691,7 @@ public class Network extends Model implements Serializable {
             }
         }
 
-        if (this.sn != null)
-            this.sn.sync = sync;
+        if (this.sn != null) this.sn.sync = sync;
     }
 
     public double sub_rr_wrr(int ind, int jnd, int r, int s, Matrix linksmat, Map<Node, Matrix> state_before, Map<Node, Matrix> state_after) {
@@ -2800,10 +2726,8 @@ public class Network extends Model implements Serializable {
                     }
                 }
                 double min = n.elementMin();
-                if (n.get(jnd) == min)
-                    return 1.0 / n.count(min);
-                else
-                    return 0.0;
+                if (n.get(jnd) == min) return 1.0 / n.count(min);
+                else return 0.0;
             } else {
                 return 0.0;
             }
@@ -2820,13 +2744,10 @@ public class Network extends Model implements Serializable {
         Matrix isServiceDefined = Matrix.ones(M, K);
 
         for (int i = 0; i < M; i++) {
-            if (this.stations.get(i) instanceof Source)
-                isSource.set(i, 0, 1);
-            if (((Node) this.stations.get(i)) instanceof Sink)
-                isSink.set(i, 0, 1);
+            if (this.stations.get(i) instanceof Source) isSource.set(i, 0, 1);
+            if (((Node) this.stations.get(i)) instanceof Sink) isSink.set(i, 0, 1);
 
-            if (this.stations.get(i).getServer() instanceof ServiceTunnel)
-                hasServiceTunnel.set(i, 0, 1);
+            if (this.stations.get(i).getServer() instanceof ServiceTunnel) hasServiceTunnel.set(i, 0, 1);
             else {
                 for (int r = 0; r < K; r++) {
 //                    if (!this.stations.get(i).getServer().containsJobClass(this.jobClasses.get(r)))
@@ -2845,10 +2766,8 @@ public class Network extends Model implements Serializable {
                 Qir.type = "Number of Customers";
                 Qir.jobClass = this.jobClasses.get(r);
                 Qir.station = this.stations.get(i);
-                if (isSource.get(i, 0) > 0)
-                    Qir.isDisabled = true;
-                else if (isSink.get(i, 0) > 0)
-                    Qir.isDisabled = true;
+                if (isSource.get(i, 0) > 0) Qir.isDisabled = true;
+                else if (isSink.get(i, 0) > 0) Qir.isDisabled = true;
                 else Qir.isDisabled = hasServiceTunnel.get(i, 0) == 0 && isServiceDefined.get(i, r) == 0;
                 map.put(this.jobClasses.get(r), Qir);
             }
@@ -2864,12 +2783,9 @@ public class Network extends Model implements Serializable {
                 Uir.type = "Utilization";
                 Uir.jobClass = this.jobClasses.get(r);
                 Uir.station = this.stations.get(i);
-                if (isSource.get(i, 0) > 0)
-                    Uir.isDisabled = true;
-                else if (isSink.get(i, 0) > 0)
-                    Uir.isDisabled = true;
-                else if (this.stations.get(i) instanceof Join)
-                    Uir.isDisabled = true;
+                if (isSource.get(i, 0) > 0) Uir.isDisabled = true;
+                else if (isSink.get(i, 0) > 0) Uir.isDisabled = true;
+                else if (this.stations.get(i) instanceof Join) Uir.isDisabled = true;
                 else Uir.isDisabled = hasServiceTunnel.get(i, 0) == 0 && isServiceDefined.get(i, r) == 0;
                 map.put(this.jobClasses.get(r), Uir);
             }
@@ -2885,10 +2801,8 @@ public class Network extends Model implements Serializable {
                 Rir.type = "Response Time";
                 Rir.jobClass = this.jobClasses.get(r);
                 Rir.station = this.stations.get(i);
-                if (isSource.get(i, 0) > 0)
-                    Rir.isDisabled = true;
-                else if (isSink.get(i, 0) > 0)
-                    Rir.isDisabled = true;
+                if (isSource.get(i, 0) > 0) Rir.isDisabled = true;
+                else if (isSink.get(i, 0) > 0) Rir.isDisabled = true;
                 else Rir.isDisabled = hasServiceTunnel.get(i, 0) == 0 && isServiceDefined.get(i, r) == 0;
                 map.put(this.jobClasses.get(r), Rir);
             }
@@ -2954,10 +2868,7 @@ public class Network extends Model implements Serializable {
                     // Must be single class token
                     stations.get(i).setState(n.sumRows(0, n.getNumCols()));
                 } else {
-                    stations.get(i).setState(State.fromMarginal(
-                            sn,
-                            i,
-                            new Matrix(Matrix.extractRows(n, ist, ist + 1, null))));
+                    stations.get(i).setState(State.fromMarginal(sn, i, new Matrix(Matrix.extractRows(n, ist, ist + 1, null))));
                 }
                 if (stations.get(i).getState().isEmpty()) {
                     throw new RuntimeException("Invalid state assignment for a station.");
@@ -3137,8 +3048,7 @@ public class Network extends Model implements Serializable {
         public Map<JobClass, Map<JobClass, Matrix>> rtNodesByClass;
         public Map<Node, Map<Node, Matrix>> rtNodesByStation;
 
-        public routingMatrixReturn(Matrix rt, Matrix rtnodes, Matrix linksmat,
-                                   Matrix chains, Map<JobClass, Map<JobClass, Matrix>> rtNodesByClass, Map<Node, Map<Node, Matrix>> rtNodesByStation) {
+        public routingMatrixReturn(Matrix rt, Matrix rtnodes, Matrix linksmat, Matrix chains, Map<JobClass, Map<JobClass, Matrix>> rtNodesByClass, Map<Node, Map<Node, Matrix>> rtNodesByStation) {
             this.rt = rt;
             this.rtnodes = rtnodes;
             this.linksmat = linksmat;
@@ -3349,6 +3259,118 @@ public class Network extends Model implements Serializable {
 
     public boolean hasClassSwitching() {
         return SN.snHasClassSwitching(getStruct());
+    }
+
+    public static Network cyclic(Matrix N, Matrix D, SchedStrategy[] strategy, Matrix S) {
+        Network model = new Network("Model");
+        int M = D.getNumRows();
+        int R = D.getNumCols();
+
+        List<Node> nodes = new ArrayList<>(M);
+        List<ClosedClass> jobclasses = new ArrayList<>(R);
+
+        int nqueues = 0;
+        int ndelays = 0;
+
+        for (int i = 0; i < M; i++) {
+            if (strategy[i] == SchedStrategy.INF) {
+                ndelays++;
+                nodes.add(new Delay(model, "Delay" + ndelays));
+            } else {
+                nqueues++;
+                Queue queueNode = new Queue(model, "Queue" + nqueues, strategy[i]);
+                queueNode.setNumberOfServers((int) S.get(i, 0));
+                nodes.add(queueNode);
+            }
+        }
+
+        for (int r = 0; r < R; r++) {
+            ClosedClass newclass = new ClosedClass(model, "Class" + (r + 1), (int) N.get(0, r), (Station) nodes.get(0), 0);
+            jobclasses.add(newclass);
+        }
+
+        for (int i = 0; i < M; i++) {
+            for (int r = 0; r < R; r++) {
+                ((Queue) nodes.get(i)).setService(jobclasses.get(r), Exp.fitMean(D.get(i, r)));
+            }
+        }
+
+        RoutingMatrix P = model.initRoutingMatrix();
+        for (int r = 0; r < R; r++) {
+            P.set(jobclasses.get(r), Maths.circul(M));
+        }
+
+        model.link(P);
+        return model;
+    }
+
+    public static Network cyclicPsInf(Matrix N, Matrix D, Matrix S) {
+        int R = D.getNumCols();
+        return cyclicPsInf(N, D, new Matrix(1,R), S);
+    }
+
+    public static Network cyclicPsInf(Matrix N, Matrix D, Matrix Z, Matrix S) {
+        int M = D.getNumRows();
+        int MZ = Z.getNumRows();
+        if (Z.elementMax()==0) MZ = 0;
+        int R = D.getNumCols();
+        SchedStrategy[] strategy = new SchedStrategy[M+MZ];
+        for (int i=0; i<MZ; i++) strategy[i] = SchedStrategy.INF;
+        for (int i=0; i<M; i++) strategy[MZ+i] = SchedStrategy.PS;
+
+        Matrix Dnew = new Matrix(M+MZ,R);
+        if (MZ>0) {
+            Matrix.concatRows(Z,D,Dnew);
+        } else {
+            Dnew = D;
+        }
+        Matrix Snew = new Matrix(M+MZ,1);
+        Matrix Sinf = new Matrix(MZ,1); Sinf.fill(Double.POSITIVE_INFINITY);
+        if (MZ>0) {
+            Matrix.concatRows(Sinf,S,Snew);
+        } else {
+            Snew = S;
+        }
+        return Network.cyclic(N, Dnew, strategy, Snew);
+    }
+
+    public static Network cyclicFcfsInf(Matrix N, Matrix D, Matrix S) {
+        int R = D.getNumCols();
+        return cyclicFcfsInf(N, D, new Matrix(1,R), S);
+    }
+
+    public static Network cyclicFcfsInf(Matrix N, Matrix D, Matrix Z, Matrix S) {
+        int M = D.getNumRows();
+        int MZ = Z.getNumRows();
+        if (Z.elementMax()==0) MZ = 0;
+        int R = D.getNumCols();
+        SchedStrategy[] strategy = new SchedStrategy[M+MZ];
+        for (int i=0; i<MZ; i++) strategy[i] = SchedStrategy.INF;
+        for (int i=0; i<M; i++) strategy[MZ+i] = SchedStrategy.FCFS;
+
+        Matrix Dnew = new Matrix(M+MZ,R);
+        if (MZ>0) {
+            Matrix.concatRows(Z,D,Dnew);
+        } else {
+            Dnew = D;
+        }
+        Matrix Snew = new Matrix(M+MZ,1);
+        Matrix Sinf = new Matrix(MZ,1); Sinf.fill(Double.POSITIVE_INFINITY);
+        if (MZ>0) {
+            Matrix.concatRows(Sinf,S,Snew);
+        } else {
+            Snew = S;
+        }
+        return Network.cyclic(N, Dnew, strategy, Snew);
+    }
+
+    public static void main(String[] args) {
+        Matrix N = new Matrix("[11,7]");
+        Matrix D = new Matrix("[10,5;5,9]");
+        Matrix S = new Matrix("[1;1]");
+
+        Network model = Network.cyclicFcfsInf(N, D, S);
+        new SolverJMT(model).getAvgTable().print();
     }
 
 }

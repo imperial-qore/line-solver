@@ -26,55 +26,24 @@ public class Host extends LayeredNetworkElement {
         this.speedFactor = speedFactor;
         this.model = model;
         this.tasks = new ArrayList<>();
-        model.hosts.put(model.hosts.size(),this);//TODO
+        model.hosts.put(model.hosts.size(),this);
+        model.nodes.put(model.hosts.size(),this);
     }
 
     public Host(LayeredNetwork model, String name, int multiplicity, SchedStrategy scheduling, double quantum) {
-        super(name);
-        this.multiplicity = multiplicity;
-        this.replication = 1;
-        this.scheduling = scheduling;
-        this.quantum = quantum;
-        this.speedFactor = 1;
-        this.model = model;
-        this.tasks = new ArrayList<>();
-        model.hosts.put(model.hosts.size(),this);
+        this(model, name, multiplicity, scheduling, quantum, 1);
     }
 
     public Host(LayeredNetwork model, String name, int multiplicity, SchedStrategy scheduling) {
-        super(name);
-        this.multiplicity = multiplicity;
-        this.replication = 1;
-        this.scheduling = scheduling;
-        this.quantum = 0.01;
-        this.speedFactor = 1;
-        this.model = model;
-        this.tasks = new ArrayList<>();
-        model.hosts.put(model.hosts.size(),this);
+        this(model, name, multiplicity, scheduling, 0.01, 1);
     }
 
     public Host(LayeredNetwork model, String name, int multiplicity) {
-        super(name);
-        this.multiplicity = multiplicity;
-        this.replication = 1;
-        this.scheduling = SchedStrategy.PS;
-        this.quantum = 0.01;
-        this.speedFactor = 1;
-        this.model = model;
-        this.tasks = new ArrayList<>();
-        model.hosts.put(model.hosts.size(),this);
+        this(model, name, multiplicity, SchedStrategy.PS, 0.01, 1);
     }
 
     public Host(LayeredNetwork model, String name) {
-        super(name);
-        this.multiplicity = 1;
-        this.replication = 1;
-        this.scheduling = SchedStrategy.PS;
-        this.quantum = 0.01;
-        this.speedFactor = 1;
-        this.model = model;
-        this.tasks = new ArrayList<>();
-        model.hosts.put(model.hosts.size(),this);
+        this(model, name, 1, SchedStrategy.PS, 0.01, 1);
     }
 
     public void setReplication(int replication) {
