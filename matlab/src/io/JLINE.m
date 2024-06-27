@@ -30,7 +30,7 @@ classdef JLINE
             for t=1:sn.ntasks
                 tidx = sn.tshift+t;
                 T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn.mult(tidx), jline.lang.constant.SchedStrategy.fromLINEString(sn.sched{tidx}));
-                T{t}.on(P{sn.parent(tidx)})
+                T{t}.on(P{sn.parent(tidx)});
                 if sn.repl(tidx)~=1
                     T{t}.setReplication(sn.repl(tidx));
                 end
@@ -1361,13 +1361,23 @@ classdef JLINE
             end
         end
 
-        function [QN,UN,RN,WN,AN,TN] = arrayListToResults(alist)
-            QN = JLINE.arraylist_to_matrix(alist.getQLen());
-            UN = JLINE.arraylist_to_matrix(alist.getUtil());
-            RN = JLINE.arraylist_to_matrix(alist.getRespT());
-            WN = JLINE.arraylist_to_matrix(alist.getResidT());
-            AN = JLINE.arraylist_to_matrix(alist.getArvR());
-            TN = JLINE.arraylist_to_matrix(alist.getTput());
+        function [QN,UN,RN,WN,AN,TN] = arrayListToResults(alist)            
+            switch class(alist)
+                case 'jline.solvers.LayeredNetworkAvgTable'
+                    QN = JLINE.arraylist_to_matrix(alist.getQLen());
+                    UN = JLINE.arraylist_to_matrix(alist.getUtil());
+                    RN = JLINE.arraylist_to_matrix(alist.getRespT());
+                    WN = JLINE.arraylist_to_matrix(alist.getResidT());
+                    AN = NaN*JLINE.arraylist_to_matrix(alist.getTput()); % getArvR not yet available in JLINE
+                    TN = JLINE.arraylist_to_matrix(alist.getTput());
+                otherwise
+                    QN = JLINE.arraylist_to_matrix(alist.getQLen());
+                    UN = JLINE.arraylist_to_matrix(alist.getUtil());
+                    RN = JLINE.arraylist_to_matrix(alist.getRespT());
+                    WN = JLINE.arraylist_to_matrix(alist.getResidT());
+                    AN = JLINE.arraylist_to_matrix(alist.getArvR());
+                    TN = JLINE.arraylist_to_matrix(alist.getTput());
+            end
         end
 
         function featSupported = getFeatureSet()

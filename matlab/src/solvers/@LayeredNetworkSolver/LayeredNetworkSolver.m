@@ -46,7 +46,7 @@ classdef LayeredNetworkSolver < Solver
             end
             if ~isempty(self.obj)
                 avgTable = self.obj.getEnsembleAvg();
-                [QN,UN,RN,TN,AN,WN] = JLINE.arrayListToResults(avgTable);
+                [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(avgTable);
                 QN(1)=[];
                 UN(1)=[];
                 RN(1)=[];

@@ -61,7 +61,7 @@ switch class(this_model)
                         line_printf('Method unsupported by %s.\n',proposedSolvers{s}.getName);
                     end
                 else
-                    keyboard
+                    %keyboard
                     line_warning(mfilename,[ME.message,'\n']);
                 end
             end
