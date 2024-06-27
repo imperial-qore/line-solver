@@ -894,9 +894,11 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
           sizeEstimator = Math.round(sizeEstimator / Math.log(10));
           if (sizeEstimator > 2) {
             if (!optionsForce) {
+              if (GlobalConstants.Verbose == VerboseLevel.DEBUG){
               System.err.format(
                       "State space size is large: 1e%d states. Cannot generate valid state space. Initializing station %d from a default state.\n",
                       (int)sizeEstimator, ind);
+              }
               state = inbuf.clone();
               return state;
             }
@@ -1223,11 +1225,14 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
         }
       }
 
+
       for (int j = 0; j < n.getNumCols(); j++) {
         if (n.get(ist, j) > sn.classcap.get(ist, j)) {
-          System.out.println("n: " + n.get(ist, j) + " classcap: " + sn.classcap.get(ist, j));
-          System.err.format(
-              "Station %d is in a state with more jobs than its allowed capacity. ", ist);
+          if (GlobalConstants.Verbose == VerboseLevel.DEBUG) {
+            System.err.format(
+                    "Station %d is in a state with more jobs than its allowed capacity. ", ist);
+            System.err.println("n: " + n.get(ist, j) + " classcap: " + sn.classcap.get(ist, j));
+          }
           return false;
         }
       }

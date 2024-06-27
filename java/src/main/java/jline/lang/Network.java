@@ -530,7 +530,9 @@ public class Network extends Model implements Serializable {
                 }
 
                 if (state_i.isEmpty()) {
-                    System.err.format("Default initialisation failed on station %d", i);
+                    if (GlobalConstants.Verbose == VerboseLevel.DEBUG) {
+                        System.err.format("Default initialisation failed on station %d", i);
+                    }
                 } else {
                     ((StatefulNode) this.nodes.get(i)).setState(state_i);
 
@@ -560,7 +562,9 @@ public class Network extends Model implements Serializable {
         if (this.isStateValid()) {
             this.hasState = true;
         } else {
-            System.err.println("Default initialisation failed.");
+            if (GlobalConstants.Verbose == VerboseLevel.DEBUG) {
+                System.err.println("Default initialisation failed.");
+            }
         }
     }
 
@@ -2850,14 +2854,16 @@ public class Network extends Model implements Serializable {
         getStruct(true);
 
         if (!State.isValid(sn, n, new Matrix(0, 0))) {
-            System.err.println("Initial state not contained in the state spac. Trying to recover.");
+            if (GlobalConstants.Verbose == VerboseLevel.DEBUG) {
+                System.err.println("Initial state not contained in the state spac. Trying to recover.");
+            }
             for (int row = 0; row < n.getNumRows(); row++) {
                 for (int col = 0; col < n.getNumCols(); col++) {
                     n.set(row, col, Math.round(n.get(row, col)));
                 }
             }
             if (!State.isValid(sn, n, new Matrix(0, 0))) {
-                throw new RuntimeException("Cannot recover - stopping.");
+                throw new RuntimeException("Cannot recover from failed state initialization - stopping.");
             }
         }
 
@@ -3370,7 +3376,7 @@ public class Network extends Model implements Serializable {
         Matrix S = new Matrix("[1;1]");
 
         Network model = Network.cyclicFcfsInf(N, D, S);
-        new SolverJMT(model).getAvgTable().print();
+        new SolverMVA(model).getAvgTable().print();
     }
 
 }

@@ -71,14 +71,9 @@ classdef LayeredNetwork < Model & Ensemble
 
     methods
         idx = getNodeIndex(self,node)
-        name = getNodeName(self,node)
         node = getNodeByName(self,name)
-        [names,hostnames,tasknames,entrynames,actnames] = getNodeNames(self)
-        proc = getNodeHost(self,node)
-        task = getNodeTask(self,node)
-        type = getNodeType(self,node)
+        [names,hostnames,tasknames,entrynames,actnames] = getNodeNames(self)        
 
-        writeSRVN(self,filename);
         writeXML(self,filename,useAbstractNames);
     end
 
@@ -131,34 +126,6 @@ classdef LayeredNetwork < Model & Ensemble
                 usedFeatures{e} = self.ensemble{e}.getUsedLangFeatures;
             end
             self.usedFeatures = usedFeatures;
-        end
-
-        function [lambda,D,N,Z,mu,S]= getProductFormParameters(self)
-            % [LAMBDA,D,N,Z,MU,S]= GETPRODUCTFORMPARAMETERS()
-
-            ensemble = self.getEnsemble;
-            for e=1:length(ensemble)
-                [lambda{e,1},D{e,1},N{e,1},Z{e,1},mu{e,1},S{e,1}] = ensemble{e}.getProductFormParameters;
-            end
-        end
-
-        function [lambda,D,N,Z,mu,S]= getProductFormChainParameters(self)
-            % [LAMBDA,D,N,Z,MU,S]= GETPRODUCTFORMCHAINPARAMETERS()
-
-            ensemble = self.getEnsemble;
-            for e=1:length(ensemble)
-                [lambda{e,1},D{e,1},N{e,1},Z{e,1},mu{e,1},S{e,1}] = ensemble{e}.getProductFormChainParameters;
-            end
-        end
-
-        function nnodes = getNumberOfStatefulNodes(self)
-            if isempty(self.ensemble)
-                self.getEnsemble();
-            end
-            nnodes = 0; % delay and queue
-            for e=1:length(self.ensemble)
-                nnodes = nnodes + self.ensemble{e}.getNumberOfStatefulNodes();
-            end
         end
 
     end
