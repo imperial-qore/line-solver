@@ -749,11 +749,11 @@ class SolverLNTest {
         SolverOptions options = new LNOptions();
         options.verbose = VerboseLevel.SILENT;
         SolverLN solver = new SolverLN(buildModel4(), options);
-        double[] expectedQlen = {Double.NaN, Double.NaN, 12.1041, 0.0039, 0.1244, 12.1041, 0.0039, 0.1244, 12.1041, 0.0039, 0.1244};
-        double[] expectedUtil = {0.9473, 0.0415, 0.9470, 0.0003, 0.0415, Double.NaN, Double.NaN, Double.NaN, 0.9470, 0.0003, 0.0415};
-        double[] expectedRespT = {Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 0.6391, 0.2887, 0.0200, 0.6391, 0.2887, 0.0200};
-        double[] expectedResidT = {Double.NaN, Double.NaN, 0.3531, 0.1884, 0.0200, Double.NaN, Double.NaN, Double.NaN, 0.3531, 0.1884, 0.0200};
-        double[] expectedTput = {0.0134, 6.2189, 18.9393, 0.0134, 6.2189, 18.9393, 0.0134, 6.2189, 18.9393, 0.0134, 6.2189};
+        double[] expectedQlen = {0, Double.NaN, Double.NaN, 12.1041, 0.0039, 0.1244, 12.1041, 0.0039, 0.1244, 12.1041, 0.0039, 0.1244};
+        double[] expectedUtil = {0, 0.9473, 0.0415, 0.9470, 0.0003, 0.0415, Double.NaN, Double.NaN, Double.NaN, 0.9470, 0.0003, 0.0415};
+        double[] expectedRespT = {0, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 0.6391, 0.2887, 0.0200, 0.6391, 0.2887, 0.0200};
+        double[] expectedResidT = {0, Double.NaN, Double.NaN, 0.3531, 0.1884, 0.0200, Double.NaN, Double.NaN, Double.NaN, 0.3531, 0.1884, 0.0200};
+        double[] expectedTput = {0, 0.0134, 6.2189, 18.9393, 0.0134, 6.2189, 18.9393, 0.0134, 6.2189, 18.9393, 0.0134, 6.2189};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
             assertTrue(compareOutput(avg.getQLen().get(idx), expectedQlen[idx]));
@@ -769,11 +769,11 @@ class SolverLNTest {
         SolverOptions options = new LNOptions();
         options.verbose = VerboseLevel.SILENT;
         SolverLN solver = new SolverLN(buildModel5(), options);
-        double[] expectedQlen = {Double.NaN, 1, 1, 0.1587, 0.5238, 0.3174};
-        double[] expectedUtil = {1, 1, Double.NaN, 0.1587, 0.5238, 0.3174};
-        double[] expectedRespT = {Double.NaN, Double.NaN, 12.6, 2, 3, 4};
-        double[] expectedResidT = {Double.NaN, 12.6, Double.NaN, 2, 6.6, 4};
-        double[] expectedTput = {0.07936, 0.07936, 0.07936, 0.07936, 0.1746, 0.07936};
+        double[] expectedQlen = {0, Double.NaN, 1, 1, 0.1587, 0.5238, 0.3174};
+        double[] expectedUtil = {0, 1, 1, Double.NaN, 0.1587, 0.5238, 0.3174};
+        double[] expectedRespT = {0, Double.NaN, Double.NaN, 12.6, 2, 3, 4};
+        double[] expectedResidT = {0, Double.NaN, 12.6, Double.NaN, 2, 6.6, 4};
+        double[] expectedTput = {0, 0.07936, 0.07936, 0.07936, 0.07936, 0.1746, 0.07936};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
             assertTrue(compareOutput(avg.getQLen().get(idx), expectedQlen[idx]));
@@ -788,11 +788,11 @@ class SolverLNTest {
         SolverOptions options = new LNOptions();
         options.verbose = VerboseLevel.SILENT;
         SolverLN solver = new SolverLN(buildModel6(), options);
-        double[] expectedQlen = {Double.NaN, 1, 1, 0.16529, 0.07438, 0.09917, 0.1652, 0.4958};
-        double[] expectedUtil = {0.1, 0.1, Double.NaN, 0.01652, 0.00743, 0.00991, 0.01652, 0.04958};
-        double[] expectedRespT = {Double.NaN, Double.NaN, 12.1, 2, 3, 4, 5, 6};
-        double[] expectedResidT = {Double.NaN, 12.1, Double.NaN, 2, 0.9, 1.2, 2, 6};
-        double[] expectedTput = {0.08264, 0.08264, 0.08264, 0.08264, 0.02479, 0.02479, 0.03305, 0.08264};
+        double[] expectedQlen = {0, Double.NaN, 1, 1, 0.16529, 0.07438, 0.09917, 0.1652, 0.4958};
+        double[] expectedUtil = {0, 0.1, 0.1, Double.NaN, 0.01652, 0.00743, 0.00991, 0.01652, 0.04958};
+        double[] expectedRespT = {0, Double.NaN, Double.NaN, 12.1, 2, 3, 4, 5, 6};
+        double[] expectedResidT = {0, Double.NaN, 12.1, Double.NaN, 2, 0.9, 1.2, 2, 6};
+        double[] expectedTput = {0, 0.08264, 0.08264, 0.08264, 0.08264, 0.02479, 0.02479, 0.03305, 0.08264};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
             assertTrue(compareOutput(avg.getQLen().get(idx), expectedQlen[idx]));
