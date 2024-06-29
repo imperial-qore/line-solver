@@ -6,11 +6,10 @@ package jline.solvers.fluid.odes;
 import jline.lang.constant.GlobalConstants;
 import jline.util.Matrix;
 import jline.lang.NetworkStruct;
+import jline.util.MatrixEquation;
 import org.apache.commons.math3.exception.DimensionMismatchException;
 import org.apache.commons.math3.exception.MaxCountExceededException;
 import org.apache.commons.math3.ode.FirstOrderDifferentialEquations;
-import org.ejml.equation.Equation;
-import org.ejml.simple.SimpleMatrix;
 
 import java.util.List;
 
@@ -77,10 +76,10 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
       xDMS.set(i, 0, x[i]);
     }
 
-    Equation calculateSumXQa = new Equation();
-    calculateSumXQa.alias(xDMS.toDMatrixSparseCSC(), "x", SQ.toDMatrixSparseCSC(), "SQ", GlobalConstants.FineTol, "distribZero");
+    MatrixEquation calculateSumXQa = new MatrixEquation();
+    calculateSumXQa.alias(xDMS, "x", SQ, "SQ", GlobalConstants.FineTol, "distribZero");
     calculateSumXQa.process("sumXQa = distribZero + SQ * x");
-    SimpleMatrix sumXQa = calculateSumXQa.lookupSimple("sumXQa");
+    Matrix sumXQa = calculateSumXQa.lookupSimple("sumXQa");
 
     int QaCols = this.Qa.getNumCols();
     Matrix SQa = new Matrix(QaCols, 1);
@@ -88,7 +87,7 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
       SQa.set(i, 0, S.get((int) Qa.get(0, i), 0));
     }
 
-    SimpleMatrix dxdtTmp;
+    Matrix dxdtTmp;
     if (this.pQa.getNumRows() == 0) { // If no pStar values have been specified
       dxdtTmp = computeDerivativesWithoutSmoothing(xDMS, sumXQa, SQa);
     } else {
@@ -100,11 +99,11 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
     }
   }
 
-  private SimpleMatrix computeDerivativesWithoutSmoothing(
-      Matrix x, SimpleMatrix sumXQa, Matrix SQa) {
+  private Matrix computeDerivativesWithoutSmoothing(
+      Matrix x, Matrix sumXQa, Matrix SQa) {
 
-    int sumXQaRows = sumXQa.numRows();
-    int sumXQaCols = sumXQa.numCols();
+    int sumXQaRows = sumXQa.getNumRows();
+    int sumXQaCols = sumXQa.getNumCols();
     Matrix minOfSumXQaAndSQa = new Matrix(sumXQaRows, sumXQaCols);
     for (int i = 0; i < sumXQaRows; i++) {
       for (int j = 0; j < sumXQaCols; j++) {
@@ -112,15 +111,15 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
       }
     }
 
-    Equation computeDerivatives = new Equation();
+    MatrixEquation computeDerivatives = new MatrixEquation();
     computeDerivatives.alias(
-        W.toDMatrixSparseCSC(), "W", x.toDMatrixSparseCSC(), "x", sumXQa, "sumXQa", minOfSumXQaAndSQa.toDMatrixSparseCSC(), "minOfSumXQaAndSQa", ALambda.toDMatrixSparseCSC(), "ALambda");
+        W, "W", x, "x", sumXQa, "sumXQa", minOfSumXQaAndSQa, "minOfSumXQaAndSQa", ALambda, "ALambda");
     computeDerivatives.process("dxdt = W' * (x ./ sumXQa .* minOfSumXQaAndSQa) + ALambda");
     return computeDerivatives.lookupSimple("dxdt");
   }
 
-  private SimpleMatrix computeDerivativesUsingPNormSmoothing(
-          Matrix x, SimpleMatrix sumXQa, Matrix SQa) {
+  private Matrix computeDerivativesUsingPNormSmoothing(
+          Matrix x, Matrix sumXQa, Matrix SQa) {
 
     // ghat = smoothed processor-share constraint approximation, per Ruuskanen et. al
     Matrix ghat = Matrix.createLike(new Matrix(x));
@@ -137,8 +136,8 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
       }
     }
 
-    Equation computeDerivatives = new Equation();
-    computeDerivatives.alias(W.toDMatrixSparseCSC(), "W", x.toDMatrixSparseCSC(), "x", ghat.toDMatrixSparseCSC(), "ghat", ALambda.toDMatrixSparseCSC(), "ALambda");
+    MatrixEquation computeDerivatives = new MatrixEquation();
+    computeDerivatives.alias(W, "W", x, "x", ghat, "ghat", ALambda, "ALambda");
     computeDerivatives.process("dxdt = W' * (x .* ghat) + ALambda");
     return computeDerivatives.lookupSimple("dxdt");
   }

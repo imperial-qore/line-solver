@@ -15,10 +15,9 @@ import jline.solvers.SolverOptions;
 import jline.solvers.SolverResult;
 import jline.solvers.fluid.odes.MatrixMethodODE;
 import jline.solvers.fluid.odes.TransientDataHandler;
+import jline.util.MatrixEquation;
 import org.apache.commons.math3.ode.FirstOrderDifferentialEquations;
 import org.apache.commons.math3.ode.FirstOrderIntegrator;
-import org.ejml.data.DMatrixSparseCSC;
-import org.ejml.equation.Equation;
 
 import java.util.*;
 
@@ -274,8 +273,8 @@ public class MatrixMethodAnalyzer implements MethodAnalyzer {
   private Matrix calculateW(NetworkStruct sn, Matrix psi, Matrix A, Matrix B) {
 
     // ODE building as per Ruuskanen et al., PEVA 151 (2021).
-    Equation calculateW = new Equation();
-    calculateW.alias( psi.toDMatrixSparseCSC(), "psi", A.toDMatrixSparseCSC(), "A", sn.rt.toDMatrixSparseCSC(), "P", B.toDMatrixSparseCSC(), "B");
+    MatrixEquation calculateW = new MatrixEquation();
+    calculateW.alias( psi, "psi", A, "A", sn.rt, "P", B, "B");
     calculateW.process("W = psi + B*P*A'");
     Matrix W = new Matrix(calculateW.lookupSimple("W"));
 
