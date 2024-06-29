@@ -274,13 +274,8 @@ public class MatrixMethodAnalyzer implements MethodAnalyzer {
   private Matrix calculateW(NetworkStruct sn, Matrix psi, Matrix A, Matrix B) {
 
     // ODE building as per Ruuskanen et al., PEVA 151 (2021).
-    DMatrixSparseCSC psiDMatrix = psi.toDMatrixSparseCSC();
-    DMatrixSparseCSC ADMatrix = A.toDMatrixSparseCSC();
-    DMatrixSparseCSC BDMatrix = B.toDMatrixSparseCSC();
-    DMatrixSparseCSC P = sn.rt.toDMatrixSparseCSC();
-
     Equation calculateW = new Equation();
-    calculateW.alias(psiDMatrix, "psi", ADMatrix, "A", P, "P", BDMatrix, "B");
+    calculateW.alias( psi.toDMatrixSparseCSC(), "psi", A.toDMatrixSparseCSC(), "A", sn.rt.toDMatrixSparseCSC(), "P", B.toDMatrixSparseCSC(), "B");
     calculateW.process("W = psi + B*P*A'");
     Matrix W = new Matrix(calculateW.lookupSimple("W"));
 

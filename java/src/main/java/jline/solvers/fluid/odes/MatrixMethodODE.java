@@ -9,7 +9,6 @@ import jline.lang.NetworkStruct;
 import org.apache.commons.math3.exception.DimensionMismatchException;
 import org.apache.commons.math3.exception.MaxCountExceededException;
 import org.apache.commons.math3.ode.FirstOrderDifferentialEquations;
-import org.ejml.data.DMatrixSparseCSC;
 import org.ejml.equation.Equation;
 import org.ejml.simple.SimpleMatrix;
 
@@ -19,23 +18,23 @@ import static java.lang.Math.min;
 
 public class MatrixMethodODE implements FirstOrderDifferentialEquations {
 
-  private final DMatrixSparseCSC W;
-  private final DMatrixSparseCSC SQ;
-  private final DMatrixSparseCSC S;
-  private final DMatrixSparseCSC Qa;
-  private final DMatrixSparseCSC ALambda;
+  private final Matrix W;
+  private final Matrix SQ;
+  private final Matrix S;
+  private final Matrix Qa;
+  private final Matrix ALambda;
   private final int numDimensions;
-  private DMatrixSparseCSC pQa;
+  private Matrix pQa;
 
   public MatrixMethodODE(
           Matrix W, Matrix SQ, Matrix S, Matrix Qa, Matrix ALambda, int numDimensions) {
-    this.W = W.toDMatrixSparseCSC();
-    this.SQ = SQ.toDMatrixSparseCSC();
-    this.S = S.toDMatrixSparseCSC();
-    this.Qa = Qa.toDMatrixSparseCSC();
-    this.ALambda = ALambda.toDMatrixSparseCSC();
+    this.W = W.clone();
+    this.SQ = SQ.clone();
+    this.S = S.clone();
+    this.Qa = Qa.clone();
+    this.ALambda = ALambda.clone();
     this.numDimensions = numDimensions;
-    this.pQa = new DMatrixSparseCSC(0, 0);
+    this.pQa = new Matrix(0, 0);
   }
 
   public MatrixMethodODE(
@@ -50,7 +49,7 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
 
     this(W, SQ, S, Qa, ALambda, numDimensions);
 
-    this.pQa = new DMatrixSparseCSC(SQ.getNumRows(), 1);
+    this.pQa = new Matrix(SQ.getNumRows(), 1);
     int row = 0;
     for (int i = 0; i < sn.nstations; i++) {
       double pStarValue = pStarValues.get(i);
@@ -73,18 +72,18 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
   public void computeDerivatives(double t, double[] x, double[] dxdt)
       throws MaxCountExceededException, DimensionMismatchException {
 
-    DMatrixSparseCSC xDMS = new DMatrixSparseCSC(x.length, 1);
+    Matrix xDMS = new Matrix(x.length, 1);
     for (int i = 0; i < x.length; i++) {
       xDMS.set(i, 0, x[i]);
     }
 
     Equation calculateSumXQa = new Equation();
-    calculateSumXQa.alias(xDMS, "x", SQ, "SQ", GlobalConstants.FineTol, "distribZero");
+    calculateSumXQa.alias(xDMS.toDMatrixSparseCSC(), "x", SQ.toDMatrixSparseCSC(), "SQ", GlobalConstants.FineTol, "distribZero");
     calculateSumXQa.process("sumXQa = distribZero + SQ * x");
     SimpleMatrix sumXQa = calculateSumXQa.lookupSimple("sumXQa");
 
     int QaCols = this.Qa.getNumCols();
-    DMatrixSparseCSC SQa = new DMatrixSparseCSC(QaCols, 1);
+    Matrix SQa = new Matrix(QaCols, 1);
     for (int i = 0; i < QaCols; i++) {
       SQa.set(i, 0, S.get((int) Qa.get(0, i), 0));
     }
@@ -102,11 +101,11 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
   }
 
   private SimpleMatrix computeDerivativesWithoutSmoothing(
-      DMatrixSparseCSC x, SimpleMatrix sumXQa, DMatrixSparseCSC SQa) {
+      Matrix x, SimpleMatrix sumXQa, Matrix SQa) {
 
     int sumXQaRows = sumXQa.numRows();
     int sumXQaCols = sumXQa.numCols();
-    DMatrixSparseCSC minOfSumXQaAndSQa = new DMatrixSparseCSC(sumXQaRows, sumXQaCols);
+    Matrix minOfSumXQaAndSQa = new Matrix(sumXQaRows, sumXQaCols);
     for (int i = 0; i < sumXQaRows; i++) {
       for (int j = 0; j < sumXQaCols; j++) {
         minOfSumXQaAndSQa.set(i, j, min(sumXQa.get(i, j), SQa.get(i, j)));
@@ -115,16 +114,16 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
 
     Equation computeDerivatives = new Equation();
     computeDerivatives.alias(
-        W, "W", x, "x", sumXQa, "sumXQa", minOfSumXQaAndSQa, "minOfSumXQaAndSQa", ALambda, "ALambda");
+        W.toDMatrixSparseCSC(), "W", x.toDMatrixSparseCSC(), "x", sumXQa, "sumXQa", minOfSumXQaAndSQa.toDMatrixSparseCSC(), "minOfSumXQaAndSQa", ALambda.toDMatrixSparseCSC(), "ALambda");
     computeDerivatives.process("dxdt = W' * (x ./ sumXQa .* minOfSumXQaAndSQa) + ALambda");
     return computeDerivatives.lookupSimple("dxdt");
   }
 
   private SimpleMatrix computeDerivativesUsingPNormSmoothing(
-      DMatrixSparseCSC x, SimpleMatrix sumXQa, DMatrixSparseCSC SQa) {
+          Matrix x, SimpleMatrix sumXQa, Matrix SQa) {
 
     // ghat = smoothed processor-share constraint approximation, per Ruuskanen et. al
-    DMatrixSparseCSC ghat = x.createLike();
+    Matrix ghat = Matrix.createLike(new Matrix(x));
     for (int i = 0; i < x.getNumRows(); i++) {
       // x, c and p as per Ruuskanen's Julia implementation
       double xVal = sumXQa.get(i, 0);
@@ -139,7 +138,7 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
     }
 
     Equation computeDerivatives = new Equation();
-    computeDerivatives.alias(W, "W", x, "x", ghat, "ghat", ALambda, "ALambda");
+    computeDerivatives.alias(W.toDMatrixSparseCSC(), "W", x.toDMatrixSparseCSC(), "x", ghat.toDMatrixSparseCSC(), "ghat", ALambda.toDMatrixSparseCSC(), "ALambda");
     computeDerivatives.process("dxdt = W' * (x .* ghat) + ALambda");
     return computeDerivatives.lookupSimple("dxdt");
   }
