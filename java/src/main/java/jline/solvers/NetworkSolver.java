@@ -432,7 +432,14 @@ public abstract class NetworkSolver extends Solver {
         if (!UNclass.isEmpty()) {
             boolean unstableQueueFlag = false;
             for (int i = 0; i < M; i++) {
-                if (UNclass.sumRows(i) > 0.99 * sn.nservers.get(i, 0)) {
+                double Uiopen = 0.0;
+                for (int j = 0; j < K; j++) {
+                    // sum util of open classes
+                    if (Double.isInfinite(sn.njobs.get(j))) {
+                        Uiopen += UNclass.get(i, j);
+                    }
+                }
+                if (Uiopen > 0.99 * sn.nservers.get(i, 0)) {
                     unstableQueueFlag = true;
                     break;
                 }

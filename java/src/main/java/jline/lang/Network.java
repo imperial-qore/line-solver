@@ -1181,7 +1181,7 @@ public class Network extends Model implements Serializable {
         alpha.fill(1.0);
         for (int i = 0; i < M; i++) {
             Matrix mu = mus.get(i);
-            if (mu.length() > 0) {
+            if (!mu.isEmpty()) {
                 Matrix.extract(mu, 0, 1, 0, mu.length(), alpha, i, 0);
                 for (int j = 0; j < mu.length(); j++) {
                     if (alpha.get(i, j) == 0) alpha.set(i, j, 1.0);
@@ -1198,7 +1198,7 @@ public class Network extends Model implements Serializable {
             if (station.getLimitedClassDependence() != null) gamma.put(station, station.getLimitedClassDependence());
         }
 
-        if (gamma.size() > 0) {
+        if (!gamma.isEmpty()) {
             for (Station station : this.stations) {
                 if (gamma.getOrDefault(station, null) == null) {
                     gamma.put(station, (nvec) -> {

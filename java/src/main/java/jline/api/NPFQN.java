@@ -117,13 +117,16 @@ public class NPFQN {
         return SMMAP;
     }
 
-    public static npfqnNonexpApproxReturn npfqn_nonexp_approx(String method, NetworkStruct sn, Matrix ST, Matrix V, Matrix SCV, Matrix T, Matrix U, Matrix gamma, Matrix nservers) {
+    public static npfqnNonexpApproxReturn npfqn_nonexp_approx(String method, NetworkStruct sn, Matrix ST, Matrix V, Matrix SCV, Matrix Tin, Matrix Uin, Matrix gamma, Matrix nservers) {
         int M = sn.nstations;
         Matrix rho = new Matrix(M, 1);
         rho.zero();
         Matrix scva = Matrix.ones(M, 1);
         Matrix scvs = scva.clone();
         Matrix eta = scva.clone();
+        Matrix T = Tin.clone();
+        Matrix U = Uin.clone();
+
         switch (method) {
             case "default": case "none": case "hmva":
                 return new npfqnNonexpApproxReturn(ST, gamma, nservers, rho, scva, scvs, eta);

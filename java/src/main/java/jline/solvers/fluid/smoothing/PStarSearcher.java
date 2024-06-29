@@ -46,7 +46,7 @@ public class PStarSearcher {
     //// USER INPUT ////: Manually set options for SolverSSA
     int numSamplesSSA = 5000;
     int seedSSA = 50;
-    int R5kSSA = 19;
+    //int R5kSSA = 19;
 
     // Model solved using SolverSSA
     SolverOptions options = new SolverOptions(SolverType.SSA);

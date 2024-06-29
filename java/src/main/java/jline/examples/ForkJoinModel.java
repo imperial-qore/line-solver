@@ -8,6 +8,7 @@ import jline.lang.constant.SchedStrategy;
 import jline.lang.distributions.Exp;
 import jline.lang.distributions.Immediate;
 import jline.lang.nodes.*;
+import jline.solvers.mva.SolverMVA;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -116,9 +117,7 @@ public class ForkJoinModel {
         node7.setService(jobclass2, new Exp(2.0)); // (Queue2,class2)
 
         // Block 3: topology
-        RoutingMatrix routingMatrix = new RoutingMatrix(model,
-                Arrays.asList(jobclass1, jobclass2),
-                Arrays.asList(node1, node2, node3, node4, node5, node6, node7));
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
 
         routingMatrix.set(jobclass1, jobclass1, node1, node2, 1.000000); // (Delay,class1) -> (Fork1,class1)
         routingMatrix.set(jobclass1, jobclass1, node2, node6, 1.000000); // (Fork1,class1) -> (Queue1,class1)
@@ -143,7 +142,36 @@ public class ForkJoinModel {
 
     public static Network example_forkJoin_4() {
         Network model = new Network("model");
-        // TODO
+
+        // Block 1: nodes
+        Source node1 = new Source(model, "Source");
+        Queue node2 = new Queue(model, "Queue1", SchedStrategy.PS);
+        Queue node3 = new Queue(model, "Queue2", SchedStrategy.PS);
+        Queue node4 = new Queue(model, "Queue3", SchedStrategy.PS);
+        Fork node5 = new Fork(model, "Fork");
+        Sink node6 = new Sink(model, "Sink");
+
+        // Block 2: classes
+        OpenClass jobclass1 = new OpenClass(model, "class1", 0);
+
+        node1.setArrival(jobclass1, Exp.fitMean(2.000000)); // (Source,class1)
+        node2.setService(jobclass1, Exp.fitMean(1.000000)); // (Queue1,class1)
+        node3.setService(jobclass1, Exp.fitMean(0.500000)); // (Queue2,class1)
+        node4.setService(jobclass1, Exp.fitMean(0.333333)); // (Queue3,class1)
+
+        // Block 3: topology
+        RoutingMatrix routingMatrix = model.initRoutingMatrix();
+
+        routingMatrix.set(jobclass1, jobclass1, node1, node5, 1.000000); // (Source,class1) -> (Fork,class1)
+        routingMatrix.set(jobclass1, jobclass1, node2, node6, 1.000000); // (Queue1,class1) -> (Sink,class1)
+        routingMatrix.set(jobclass1, jobclass1, node3, node6, 1.000000); // (Queue2,class1) -> (Sink,class1)
+        routingMatrix.set(jobclass1, jobclass1, node4, node6, 1.000000); // (Queue3,class1) -> (Sink,class1)
+        routingMatrix.set(jobclass1, jobclass1, node5, node2, 0.333333); // (Fork,class1) -> (Queue1,class1)
+        routingMatrix.set(jobclass1, jobclass1, node5, node3, 0.333333); // (Fork,class1) -> (Queue2,class1)
+        routingMatrix.set(jobclass1, jobclass1, node5, node4, 0.333333); // (Fork,class1) -> (Queue3,class1)
+
+        model.link(routingMatrix);
+
         return model;
     }
 
@@ -329,5 +357,10 @@ public class ForkJoinModel {
         Network model = new Network("model");
         // TODO
         return model;
+    }
+
+    public static void main(String[] args){
+        Network model = example_forkJoin_4();
+        new SolverMVA(model).getAvgTable();
     }
 }

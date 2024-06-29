@@ -133,8 +133,15 @@ public class MVARunner {
 						}
 						Matrix util = UNnosource.sumRows();
 						for(int i = 0; i < util.getNumRows(); i++){
-							if(util.get(i) > 0.99 && this.sn.nservers.get(i) != Integer.MAX_VALUE){
-								System.out.println("The model may be unstable: the utilization of station " + i + " exceeds 99 percent.\n");
+							double Uiopen = 0.0;
+							for (int j = 0; j < UN.getNumCols(); j++) {
+								// sum util of open classes
+								if (Double.isInfinite(sn.njobs.get(j))) {
+									Uiopen += UN.get(i, j);
+								}
+							}
+							if(Uiopen > 0.99 && this.sn.nservers.get(i) != Integer.MAX_VALUE){
+								System.out.println("The model may be unstable: the utilization of station " + i + " for open classes exceeds 99 percent.\n");
 							}
 						}
 					}

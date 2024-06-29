@@ -241,4 +241,5 @@ public class SolverMVAClosedExamplesTest {
 		assertEquals(1.1594466405279864, Tput.get(4), 1e-13);
 		assertEquals(0.7500093077114268, Tput.get(5), 1e-13);
 	}
+
 }

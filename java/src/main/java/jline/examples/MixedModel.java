@@ -4,6 +4,7 @@ import jline.lang.*;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.distributions.*;
 import jline.lang.nodes.*;
+import jline.solvers.nc.SolverNC;
 
 /**
  * Examples of mixed queueing networks
@@ -238,7 +239,11 @@ public class MixedModel {
         model.link(routingMatrix);
 
         return model;
+    }
 
+    public static void main(String[] args) {
+        Network model= example_mixedModel_4();
+        new SolverNC(model).getAvgTable().print();
     }
 
 }
