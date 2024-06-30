@@ -277,7 +277,7 @@ classdef JLINE
                     end
                 end
                 if precMarker > 0
-                    T{tidx-sn.tshift}.addPrecedence(jline.lang.layered.ActivityPrecedence.AndJoin(precActs, sn.names{precMarker+sn.ashift}, length(precActs)));
+                    T{tidx-sn.tshift}.addPrecedence(jline.lang.layered.ActivityPrecedence.AndJoin(precActs, sn.names{precMarker+sn.ashift}));
                     precMarker = 0;
                 end
             end

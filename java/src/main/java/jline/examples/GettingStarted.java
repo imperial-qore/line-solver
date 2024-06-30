@@ -268,6 +268,10 @@ public class GettingStarted {
     }
 
     public static void main(String[] args) throws IllegalAccessException, ParserConfigurationException {
-        getting_started_1().jsimwView();
+        Network model = getting_started_6();
+        NetworkSolver solver = new SolverMVA(model);
+        solver.getAvgTable().print();
+        Cache cache = (Cache) model.getNodeByName("Cache");
+        System.out.println(cache.getHitRatio());
     }
 }

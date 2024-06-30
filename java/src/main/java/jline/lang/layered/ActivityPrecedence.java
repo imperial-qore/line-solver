@@ -56,7 +56,7 @@ public class ActivityPrecedence {
         this.postParams = null;
     }
 
-    public ActivityPrecedence(List<String > preActs, List<String> postActs){
+    public ActivityPrecedence(List<String> preActs, List<String> postActs) {
         this.preActs = preActs;
         this.postActs = postActs;
         this.preType = ActivityPrecedenceType.PRE_SEQ;
@@ -68,10 +68,10 @@ public class ActivityPrecedence {
     public ActivityPrecedence(boolean isActivity, List<Activity> preActs, List<Activity> postActs, String preType, String postType, Matrix preParams, Matrix postParams) {
         List<String> preActsName = new ArrayList<>();
         List<String> postActsName = new ArrayList<>();
-        for(Activity preAct:preActs){
+        for (Activity preAct : preActs) {
             preActsName.add(preAct.getName());
         }
-        for(Activity postAct: postActs){
+        for (Activity postAct : postActs) {
             postActsName.add(postAct.getName());
         }
         this.preActs = preActsName;
@@ -82,13 +82,13 @@ public class ActivityPrecedence {
         this.postParams = postParams;
     }
 
-    public ActivityPrecedence(boolean isActivity, List<Activity> preActs, List<Activity> postActs,String preType, String postType, Matrix preParams) {
+    public ActivityPrecedence(boolean isActivity, List<Activity> preActs, List<Activity> postActs, String preType, String postType, Matrix preParams) {
         List<String> preActsName = new ArrayList<>();
         List<String> postActsName = new ArrayList<>();
-        for(Activity preAct:preActs){
+        for (Activity preAct : preActs) {
             preActsName.add(preAct.getName());
         }
-        for(Activity postAct: postActs){
+        for (Activity postAct : postActs) {
             postActsName.add(postAct.getName());
         }
         this.preActs = preActsName;
@@ -99,13 +99,13 @@ public class ActivityPrecedence {
         this.postParams = null;
     }
 
-    public ActivityPrecedence(boolean isActivity, List<Activity> preActs, List<Activity> postActs,String preType, String postType) {
+    public ActivityPrecedence(boolean isActivity, List<Activity> preActs, List<Activity> postActs, String preType, String postType) {
         List<String> preActsName = new ArrayList<>();
         List<String> postActsName = new ArrayList<>();
-        for(Activity preAct:preActs){
+        for (Activity preAct : preActs) {
             preActsName.add(preAct.getName());
         }
-        for(Activity postAct: postActs){
+        for (Activity postAct : postActs) {
             postActsName.add(postAct.getName());
         }
         this.preActs = preActsName;
@@ -116,13 +116,13 @@ public class ActivityPrecedence {
         this.postParams = null;
     }
 
-    public ActivityPrecedence(boolean isActivity, List<Activity> preActs, List<Activity> postActs,String preType) {
+    public ActivityPrecedence(boolean isActivity, List<Activity> preActs, List<Activity> postActs, String preType) {
         List<String> preActsName = new ArrayList<>();
         List<String> postActsName = new ArrayList<>();
-        for(Activity preAct:preActs){
+        for (Activity preAct : preActs) {
             preActsName.add(preAct.getName());
         }
-        for(Activity postAct: postActs){
+        for (Activity postAct : postActs) {
             postActsName.add(postAct.getName());
         }
         this.preActs = preActsName;
@@ -136,10 +136,10 @@ public class ActivityPrecedence {
     public ActivityPrecedence(boolean isActivity, List<Activity> preActs, List<Activity> postActs) {
         List<String> preActsName = new ArrayList<>();
         List<String> postActsName = new ArrayList<>();
-        for(Activity preAct:preActs){
+        for (Activity preAct : preActs) {
             preActsName.add(preAct.getName());
         }
-        for(Activity postAct: postActs){
+        for (Activity postAct : postActs) {
             postActsName.add(postAct.getName());
         }
         this.preActs = preActsName;
@@ -151,24 +151,23 @@ public class ActivityPrecedence {
     }
 
 
-
-    public static ActivityPrecedence[] Serial(List<String> varargin){
+    public static ActivityPrecedence[] Serial(List<String> varargin) {
         int length = varargin.size();
 
         ActivityPrecedence[] ap = new ActivityPrecedence[length];//TODO
 
-        for(int i = 0; i<length;i++){
-            ap[i] = ActivityPrecedence.Sequence(varargin.get(i),varargin.get(i+1));
+        for (int i = 0; i < length; i++) {
+            ap[i] = ActivityPrecedence.Sequence(varargin.get(i), varargin.get(i + 1));
         }
 
         return ap;
 
     }
 
-    public static int getPrecedenceId(String precedence){
+    public static int getPrecedenceId(String precedence) {
         int typeId = -1;
 
-        switch (precedence){
+        switch (precedence) {
             case ActivityPrecedenceType.PRE_SEQ:
                 typeId = ActivityPrecedenceType.ID_PRE_SEQ;
                 break;
@@ -206,44 +205,58 @@ public class ActivityPrecedence {
         return new ActivityPrecedence(preActs, postActs);
     }
 
+    public static ActivityPrecedence AndJoin(List<String> preActs, String postAct) {
+        Matrix quorum = new Matrix(1,1);
+        quorum.fill(preActs.size());
+        List<String> postActs = new ArrayList<String>();
+        postActs.add(postAct);
+        return new ActivityPrecedence(preActs, postActs, ActivityPrecedenceType.PRE_AND, ActivityPrecedenceType.POST_SEQ, quorum, null);
+    }
+
     public static ActivityPrecedence AndJoin(List<String> preActs, String postAct, Matrix quorum) {
         List<String> postActs = new ArrayList<String>();
         postActs.add(postAct);
-        return new ActivityPrecedence(preActs, postActs,ActivityPrecedenceType.PRE_AND,ActivityPrecedenceType.POST_SEQ,quorum,null);
+        return new ActivityPrecedence(preActs, postActs, ActivityPrecedenceType.PRE_AND, ActivityPrecedenceType.POST_SEQ, quorum, null);
     }
 
     public static ActivityPrecedence OrJoin(List<String> preActs, String postAct) {
         List<String> postActs = new ArrayList<String>();
         postActs.add(postAct);
-        return new ActivityPrecedence(preActs,postActs,ActivityPrecedenceType.PRE_OR,ActivityPrecedenceType.POST_SEQ);
+        return new ActivityPrecedence(preActs, postActs, ActivityPrecedenceType.PRE_OR, ActivityPrecedenceType.POST_SEQ);
+    }
+
+    public static ActivityPrecedence AndFork(String preAct, List<String> postActs) {
+        Matrix fanout = new Matrix(1,postActs.size(),postActs.size());
+        fanout.fill(1.0);
+        return ActivityPrecedence.AndFork(preAct, postActs, fanout);
     }
 
     public static ActivityPrecedence AndFork(String preAct, List<String> postActs, Matrix fanout) {
         List<String> preActs = new ArrayList<>();
         preActs.add(preAct);
-        return new ActivityPrecedence(preActs,postActs,ActivityPrecedenceType.PRE_SEQ,ActivityPrecedenceType.POST_AND, null, fanout);
+        return new ActivityPrecedence(preActs, postActs, ActivityPrecedenceType.PRE_SEQ, ActivityPrecedenceType.POST_AND, null, fanout);
     }
 
     public static ActivityPrecedence Xor(String preAct, List<String> postActs, Matrix probs) {
 
-        return ActivityPrecedence.OrFork(preAct,postActs,probs);
+        return ActivityPrecedence.OrFork(preAct, postActs, probs);
     }
 
     public static ActivityPrecedence OrFork(String preAct, List<String> postActs, Matrix probs) {
         List<String> preActs = new ArrayList<>();
         preActs.add(preAct);
-        return new ActivityPrecedence(preActs,postActs,ActivityPrecedenceType.PRE_SEQ,ActivityPrecedenceType.POST_OR,null,probs);
+        return new ActivityPrecedence(preActs, postActs, ActivityPrecedenceType.PRE_SEQ, ActivityPrecedenceType.POST_OR, null, probs);
     }
 
-    public static ActivityPrecedence Loop(String preAct, List<String> postActs, Matrix counts){
+    public static ActivityPrecedence Loop(String preAct, List<String> postActs, Matrix counts) {
         List<String> preActs = new ArrayList<>();
         preActs.add(preAct);
-        return new ActivityPrecedence(preActs,postActs,ActivityPrecedenceType.PRE_SEQ,ActivityPrecedenceType.POST_LOOP,null,counts);
+        return new ActivityPrecedence(preActs, postActs, ActivityPrecedenceType.PRE_SEQ, ActivityPrecedenceType.POST_LOOP, null, counts);
     }
 
-    public static ActivityPrecedence CacheAccess(String preAct, List<String> postActs){
+    public static ActivityPrecedence CacheAccess(String preAct, List<String> postActs) {
         List<String> preActs = new ArrayList<>();
         preActs.add(preAct);
-        return new ActivityPrecedence(preActs,postActs,ActivityPrecedenceType.PRE_SEQ,ActivityPrecedenceType.POST_CACHE);
+        return new ActivityPrecedence(preActs, postActs, ActivityPrecedenceType.PRE_SEQ, ActivityPrecedenceType.POST_CACHE);
     }
 }
