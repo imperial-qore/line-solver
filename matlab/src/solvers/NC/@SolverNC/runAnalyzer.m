@@ -15,9 +15,11 @@ wasDefault = false;
 
 switch options.lang
     case 'java'
+        sn = self.getStruct;
         jmodel = LINE2JLINE(self.model);
         %M = jmodel.getNumberOfStatefulNodes;
         M = jmodel.getNumberOfStations;
+        R = jmodel.getNumberOfClasses;
         jsolver = JLINE.SolverNC(jmodel, options);
         [QN,UN,RN,WN,AN,TN] = JLINE.arrayListToResults(jsolver.getAvgTable);
         runtime = jsolver.result.runtime;

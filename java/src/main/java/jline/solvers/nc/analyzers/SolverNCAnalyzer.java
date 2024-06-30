@@ -44,7 +44,9 @@ public class SolverNCAnalyzer implements NCAnalyzer {
     }
     if (nonIntegerJob) {
       SolverNC.SolverNCReturn retfloor = SolverNC.solver_nc(snfloor, options);
+      res.runtime = retfloor.runtime;
       SolverNC.SolverNCReturn retceil = SolverNC.solver_nc(snceil, options);
+      res.runtime += retceil.runtime;
       res.QN = retfloor.Q.add(1, eta.elementMult(retceil.Q.sub(1, retfloor.Q), null));
       res.UN = retfloor.U.add(1, eta.elementMult(retceil.U.sub(1, retfloor.U), null));
       res.RN = retfloor.R.add(1, eta.elementMult(retceil.R.sub(1, retfloor.R), null));
@@ -65,6 +67,7 @@ public class SolverNCAnalyzer implements NCAnalyzer {
       res.XN = ret.X;
       res.lG = ret.lG;
       res.it = ret.it;
+      res.runtime = ret.runtime;
       res.method = ret.method;
     }
     res.runtime = System.currentTimeMillis() - Tstart;

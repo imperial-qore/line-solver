@@ -19,7 +19,11 @@ classdef JLINE
             %% host processors
             P = cell(1,sn.nhosts);
             for h=1:sn.nhosts
-                P{h} = jline.lang.layered.Processor(model, sn.names{h}, sn.mult(h), jline.lang.constant.SchedStrategy.fromLINEString(sn.sched{h}));
+                if ~isinf(sn.mult(h))
+                    P{h} = jline.lang.layered.Processor(model, sn.names{h}, sn.mult(h), jline.lang.constant.SchedStrategy.fromLINEString(sn.sched{h}));
+                else
+                    P{h} = jline.lang.layered.Processor(model, sn.names{h}, java.lang.Integer.MAX_VALUE, jline.lang.constant.SchedStrategy.fromLINEString(sn.sched{h}));
+                end
                 if sn.repl(h)~=1
                     P{h}.setReplication(sn.repl(h));
                 end
@@ -29,7 +33,11 @@ classdef JLINE
             T = cell(1,sn.ntasks);
             for t=1:sn.ntasks
                 tidx = sn.tshift+t;
-                T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn.mult(tidx), jline.lang.constant.SchedStrategy.fromLINEString(sn.sched{tidx}));
+                if ~isinf(sn.mult(tidx))
+                    T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn.mult(tidx), jline.lang.constant.SchedStrategy.fromLINEString(sn.sched{tidx}));
+                else
+                    T{t} = jline.lang.layered.Task(model, sn.names{tidx}, java.lang.Integer.MAX_VALUE, jline.lang.constant.SchedStrategy.fromLINEString(sn.sched{tidx}));                    
+                end
                 T{t}.on(P{sn.parent(tidx)});
                 if sn.repl(tidx)~=1
                     T{t}.setReplication(sn.repl(tidx));
@@ -505,6 +513,9 @@ classdef JLINE
                 if ~isempty(line_node.lldScaling)
                     node_object.setLoadDependence(JLINE.matrix_to_jlinematrix(line_node.lldScaling));
                 end
+                if ~isempty(line_node.lcdScaling)                                   
+                    node_object.setLimitedClassDependence(JLINE.handle_to_serializablefun(line_node.lcdScaling));
+                end
             elseif isa(line_node, 'Source')
                 node_object = jline.lang.nodes.Source(java_network, line_node.getName);
             elseif isa(line_node, 'Sink')
@@ -893,6 +904,7 @@ classdef JLINE
             sn.statefulToNode = JLINE.jlinematrix_to_matrix(java_sn.statefulToNode)+1;
             sn.statefulToNode(sn.statefulToNode==0) = nan;
             sn.rates = JLINE.jlinematrix_to_matrix(java_sn.rates);
+            sn.fj = JLINE.jlinematrix_to_matrix(java_sn.fj);
             sn.classprio = JLINE.jlinematrix_to_matrix(java_sn.classprio);
             sn.phases = JLINE.jlinematrix_to_matrix(java_sn.phases);
             sn.phasessz = JLINE.jlinematrix_to_matrix(java_sn.phasessz);
@@ -1639,6 +1651,10 @@ classdef JLINE
         function [ln] = SolverLN(layered_network_object)
             solverOptions = jline.solvers.SolverOptions(jline.lang.constant.SolverType.LN);
             ln = jline.solvers.ln.SolverLN(layered_network_object, solverOptions);
+        end
+
+        function serfun = handle_to_serializablefun(handle)
+            line_error(mfilename, "Class-dependent models not supported in LINE MATLAB-to-JAVA translation.");
         end
 
     end

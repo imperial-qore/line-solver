@@ -132,7 +132,7 @@ public class SolverNC extends NetworkSolver {
     ((SolverNCResult) this.result).solver = this.name;
     ((SolverNCResult) this.result).prob.marginal = Pnir;
     long endTimeMillis = System.currentTimeMillis();
-    double runtime = (endTimeMillis-startTimeMillis) / 1000.0;
+    double runtime = (double) (endTimeMillis-startTimeMillis) / 1000.0;
     this.result.runtime = runtime;
 
     return Pnir.get(ist);
@@ -438,6 +438,7 @@ public class SolverNC extends NetworkSolver {
     int C = sn.nchains;
     Matrix SCV = sn.scv;
     int K = sn.nclasses;
+    long startTime = System.currentTimeMillis();
 
     Matrix V = new Matrix(sn.nstateful, K);
     for (int i = 0; i < sn.visits.size(); i++) {
@@ -732,7 +733,8 @@ public class SolverNC extends NetworkSolver {
     U.removeInfinity();
     Q.removeInfinity();
     R.removeInfinity();
-    return new SolverNCReturn(Q, U, R, T, C, X, lG, STeff, it, method);
+    double runtime = ( System.currentTimeMillis() - startTime ) / 1000.0;
+    return new SolverNCReturn(Q, U, R, T, C, X, lG, STeff, it, runtime, method);
   }
 
   public static SolverNCLDReturn solver_ncld(NetworkStruct sn, SolverOptions options) {
@@ -1149,9 +1151,10 @@ public static class SolverNCMargReturn {
     public Matrix STeff;
     public int it;
     public String method;
+    public double runtime;
 
     public SolverNCReturn(Matrix Q, Matrix U, Matrix R, Matrix T, int C,
-                          Matrix X, double lG, Matrix STeff, int it, String method) {
+                          Matrix X, double lG, Matrix STeff, int it, double runtime, String method) {
       this.Q = Q;
       this.U = U;
       this.R = R;

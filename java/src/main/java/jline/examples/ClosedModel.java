@@ -389,7 +389,7 @@ public class ClosedModel {
     }
 
     public static void main(String[] args) throws Exception {
-        Network model = example_closedModel_1();
+        Network model = example_closedModel_4();
         new SolverMVA(model).getAvgTable().print();
         new SolverNC(model).getAvgTable().print();
     }

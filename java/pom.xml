@@ -35,6 +35,27 @@
           <destDir>javadoc</destDir>
         </configuration>
       </plugin>
+<!--      <plugin>-->
+<!--        <groupId>org.codehaus.mojo</groupId>-->
+<!--        <artifactId>exec-maven-plugin</artifactId>-->
+<!--        <version>3.0.0</version>-->
+<!--        <executions>-->
+<!--          <execution>-->
+<!--            <id>copy-jars</id>-->
+<!--            <phase>package</phase>-->
+<!--            <goals>-->
+<!--              <goal>exec</goal>-->
+<!--            </goals>-->
+<!--            <configuration>-->
+<!--              <executable>sh</executable>-->
+<!--              <arguments>-->
+<!--                <argument>-c</argument>-->
+<!--                <argument>cp ${project.build.directory}/jline.jar ${project.build.directory}/../../matlab/ &amp;&amp; cp ${project.build.directory}/jline.jar ${project.build.directory}/../../python/line_solver/ </argument>-->
+<!--              </arguments>-->
+<!--            </configuration>-->
+<!--          </execution>-->
+<!--        </executions>-->
+<!--      </plugin>-->
         <plugin>
 	  <groupId>org.apache.maven.plugins</groupId>
 	  <artifactId>maven-shade-plugin</artifactId>

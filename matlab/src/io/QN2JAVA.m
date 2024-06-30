@@ -183,27 +183,26 @@ if hasSink
 end
 
 fprintf(fid,'\t\n');
-fprintf(fid,'\t\tRoutingMatrix routingMatrix = new RoutingMatrix(model,\n');
-fprintf(fid,'\t\t\t Arrays.asList(');
-for c = 1:sn.nclasses
-    fprintf(fid,'jobclass%d',c);
-    if c<sn.nclasses
-        fprintf(fid,', ');
-    else
-        fprintf(fid,'),\n');
-    end
-end
-fprintf(fid,'\t\t\t Arrays.asList(');
-for i = 1:sn.nnodes
-    fprintf(fid,'node%d',i);
-    if i<sn.nnodes
-        fprintf(fid,', ');
-    else
-        fprintf(fid,'));\n');
-    end
-end
-
-
+fprintf(fid,'\t\tRoutingMatrix routingMatrix = model.initRoutingMatrix(); \n');
+% fprintf(fid,'\t\tRoutingMatrix routingMatrix = new RoutingMatrix(model,\n');
+% fprintf(fid,'\t\t\t Arrays.asList(');
+% for c = 1:sn.nclasses
+%     fprintf(fid,'jobclass%d',c);
+%     if c<sn.nclasses
+%         fprintf(fid,', ');
+%     else
+%         fprintf(fid,'),\n');
+%     end
+% end
+% fprintf(fid,'\t\t\t Arrays.asList(');
+% for i = 1:sn.nnodes
+%     fprintf(fid,'node%d',i);
+%     if i<sn.nnodes
+%         fprintf(fid,', ');
+%     else
+%         fprintf(fid,'));\n');
+%     end
+% end
 fprintf(fid,'\t\n');
 
 

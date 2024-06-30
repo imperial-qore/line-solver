@@ -42,6 +42,7 @@ public class PFQN {
     /*
 		SolverOptions options = Solver.parseOptions();
      */
+		//L.print(); N.print(); Z.print();
 		String method = options.method;
 		int Rin = N.length();
 
@@ -327,6 +328,8 @@ public class PFQN {
 			tmp.set(i, Math.log(tmp.get(i)));
 		}
 		lG = lGopen + lGnzdem + lGzdem + N_new.mult(tmp.transpose()).get(0);
+
+		//System.out.println(lG);
 		return new pfqnNcXQReturn(lG, X, Q, method);
 	}
 
@@ -912,7 +915,7 @@ public class PFQN {
 		// TODO: several methods missing
 		switch (options.method) {
 			case "ca": {
-				pfqnNcReturn ret = pfqn_ca(L,N,Z.sumCols());
+				pfqnNcReturn ret = pfqn_ca(L, N, Z.sumCols());
 				lG = ret.lG;
 				break;
 			}
@@ -921,16 +924,16 @@ public class PFQN {
 				Matrix Z_colSum = Z.sumCols();
 				if (M > 1) {
 					if (R == 1 || (R <= 3 && N.elementSum() < 50)) {
-						pfqnNcReturn ret = pfqn_ca(L,N,Z.sumCols());
+						pfqnNcReturn ret = pfqn_ca(L, N, Z.sumCols());
 						lG = ret.lG;
 						method = "ca";
 					} else {
-						if (M <= R) {
-							pfqnNcReturn ret = pfqn_kt(L,N,Z.sumCols());
+						if (M > R) {
+							pfqnNcReturn ret = pfqn_kt(L, N, Z.sumCols());
 							lG = ret.lG;
 							method = "kt";
 						} else {
-							pfqnNcReturn ret = pfqn_le(L,N,Z.sumCols());
+							pfqnNcReturn ret = pfqn_le(L, N, Z.sumCols());
 							lG = ret.lG;
 							method = "le";
 						}
@@ -944,11 +947,11 @@ public class PFQN {
 					method = "exact";
 				} else {
 					if (N.elementMax() < 10000) {
-						pfqnNcReturn ret = pfqn_mmint2_gausslegendre(L,N,Z.sumCols(),null);
+						pfqnNcReturn ret = pfqn_mmint2_gausslegendre(L, N, Z.sumCols(), null);
 						lG = ret.lG;
 						method = "gleint";
 					} else {
-						pfqnNcReturn ret = pfqn_le(L,N,Z.sumCols());
+						pfqnNcReturn ret = pfqn_le(L, N, Z.sumCols());
 						lG = ret.lG;
 						method = "le";
 					}
@@ -956,9 +959,15 @@ public class PFQN {
 				break;
 			}
 			case "sampling": {
-				pfqnNcReturn ret = pfqn_ls(L,N,Z.sumCols(),options.samples);
+				pfqnNcReturn ret = pfqn_ls(L, N, Z.sumCols(), options.samples);
 				lG = ret.lG;
 				method = "ls";
+				break;
+			}
+			case "kt":{
+				pfqnNcReturn ret = pfqn_kt(L, N, Z.sumCols());
+				lG = ret.lG;
+				method = "kt";
 				break;
 			}
 			case "mmint2":
@@ -1432,6 +1441,9 @@ public class PFQN {
 		if (gausslegendreNodes.isEmpty()) {
 			try {
 				InputStream nodeStream = PFQN.class.getResourceAsStream("/gausslegendre-nodes.txt");
+				if (nodeStream == null) {
+					throw new FileNotFoundException("Resource gausslegendre-nodes.txt not found.");
+				}
 				BufferedReader nodeReader = new BufferedReader(new InputStreamReader(nodeStream));
 				String line;
 				while ((line = nodeReader.readLine()) != null) {

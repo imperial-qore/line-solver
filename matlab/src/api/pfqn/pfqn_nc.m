@@ -160,6 +160,7 @@ function [lG,X,Q,method] = compute_norm_const(L,N,Z,options)
 % Note: methods that can handle more efficiently replicas need to do so
 % within the method function 
 
+% L,N,Z
 [M,R] = size(L);
 X=[];Q=[];
 method = options.method;

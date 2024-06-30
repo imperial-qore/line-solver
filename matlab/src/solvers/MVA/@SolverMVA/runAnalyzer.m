@@ -86,8 +86,8 @@ switch options.lang
                     if self.model.hasOpenClasses
                         sourceIndex = self.model.getSource.index;
                         UNnosource = UN; UNnosource(sourceIndex,:) = 0;
-                        if any(find(sum(UNnosource,2)>0.99 * sn.nservers))
-                            line_warning(mfilename,'The model may be unstable: the utilization of station %i exceeds 99 percent.\n',maxpos(sum(UNnosource,2)));
+                        if any(find(sum(UNnosource(:,isinf(sn.njobs(1:size(QN,2)))),2)>0.99 * sn.nservers))
+                            line_warning(mfilename,'The model may be unstable: the utilization of station %i for open classes exceeds 99 percent.\n',maxpos(sum(UNnosource,2)));
                         end
                     end
                     QN_1 = QN;
