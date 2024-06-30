@@ -525,7 +525,7 @@ classdef JLINE
             elseif isa(line_node, 'ClassSwitch')
                 node_object = jline.lang.nodes.ClassSwitch(java_network, line_node.getName);
             elseif isa(line_node, 'Fork')
-                node_object = jline.lang.nodes.Fork(java_network);
+                node_object = jline.lang.nodes.Fork(java_network, line_node.name);
             elseif isa(line_node, 'Join')
                 node_object = jline.lang.nodes.Join(java_network, line_node.name, forkNode);
             elseif isa(line_node, 'Cache')
@@ -622,6 +622,9 @@ classdef JLINE
                 node_class = jline.lang.ClosedClass(java_network, line_class.getName, line_class.population, java_network.getNodeByName(line_class.refstat.getName), line_class.priority);
             else
                 line_error(mfilename,'Class type not supported by JLINE.');
+            end
+            if line_class.isReferenceClass()
+                node_class.setReferenceClass(true);
             end
         end
 
