@@ -21,6 +21,7 @@ import javax.xml.parsers.ParserConfigurationException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.Paths;
+
 import de.xypron.jcobyla.Calcfc;
 import de.xypron.jcobyla.Cobyla;
 import jline.solvers.nc.SolverNC;
@@ -77,8 +78,8 @@ public class GettingStarted {
             throw new RuntimeException(e);
         }
         RoutingMatrix P = model.initRoutingMatrix();
-        P.set(jobclass1, Network.serialRouting(source,queue,sink));
-        P.set(jobclass2, Network.serialRouting(source,queue,sink));
+        P.set(jobclass1, Network.serialRouting(source, queue, sink));
+        P.set(jobclass2, Network.serialRouting(source, queue, sink));
         model.link(P);
         NetworkAvgTable avgTable = new SolverJMT(model, "seed", 23000).getAvgTable();
         avgTable.print();
@@ -155,42 +156,42 @@ public class GettingStarted {
     }
 
     public static Network getting_started_6() {
-            Network model = new Network("Model");
+        Network model = new Network("Model");
 
-            // Block 1: nodes
-            Delay clientDelay = new Delay(model, "Client");
-            Cache cacheNode = new Cache(model, "Cache", 1000, 50, ReplacementStrategy.LRU);
-            Delay cacheDelay = new Delay(model, "CacheDelay");
+        // Block 1: nodes
+        Delay clientDelay = new Delay(model, "Client");
+        Cache cacheNode = new Cache(model, "Cache", 1000, 50, ReplacementStrategy.LRU);
+        Delay cacheDelay = new Delay(model, "CacheDelay");
 
-            // Block 2: classes
-            ClosedClass clientClass = new ClosedClass(model, "ClientClass", 1, clientDelay, 0);
-            ClosedClass hitClass = new ClosedClass(model, "HitClass", 0, clientDelay, 0);
-            ClosedClass missClass = new ClosedClass(model, "MissClass", 0, clientDelay, 0);
+        // Block 2: classes
+        ClosedClass clientClass = new ClosedClass(model, "ClientClass", 1, clientDelay, 0);
+        ClosedClass hitClass = new ClosedClass(model, "HitClass", 0, clientDelay, 0);
+        ClosedClass missClass = new ClosedClass(model, "MissClass", 0, clientDelay, 0);
 
-            clientDelay.setService(clientClass, new Immediate()); // (Client,ClientClass)
-            cacheDelay.setService(hitClass, Exp.fitMean(0.200000)); // (CacheDelay,HitClass)
-            cacheDelay.setService(missClass, Exp.fitMean(1.000000)); // (CacheDelay,MissClass)
+        clientDelay.setService(clientClass, new Immediate()); // (Client,ClientClass)
+        cacheDelay.setService(hitClass, Exp.fitMean(0.200000)); // (CacheDelay,HitClass)
+        cacheDelay.setService(missClass, Exp.fitMean(1.000000)); // (CacheDelay,MissClass)
 
-            cacheNode.setRead(clientClass, new Zipf(1.4,1000));
-            cacheNode.setHitClass(clientClass, hitClass);
-            cacheNode.setMissClass(clientClass, missClass);
+        cacheNode.setRead(clientClass, new Zipf(1.4, 1000));
+        cacheNode.setHitClass(clientClass, hitClass);
+        cacheNode.setMissClass(clientClass, missClass);
 
-            // Block 3: topology
-            RoutingMatrix routingMatrix = model.initRoutingMatrix();
+        // Block 3: topology
+        RoutingMatrix P = model.initRoutingMatrix();
 
-            routingMatrix.set(clientClass, clientClass, clientDelay, cacheNode, 1.000000); // (Client,ClientClass) -> (Cache,ClientClass)
+        P.set(clientClass, clientClass, clientDelay, cacheNode, 1.000000); // (Client,ClientClass) -> (Cache,ClientClass)
 
-            routingMatrix.set(hitClass, hitClass, cacheNode, cacheDelay, 1.000000); // (Client,HitClass) -> (Cache,HitClass)
-            routingMatrix.set(missClass, missClass, cacheNode, cacheDelay, 1.000000); // (Cache,MissClass) -> (CacheDelay,MissClass)
+        P.set(hitClass, hitClass, cacheNode, cacheDelay, 1.000000); // (Client,HitClass) -> (Cache,HitClass)
+        P.set(missClass, missClass, cacheNode, cacheDelay, 1.000000); // (Cache,MissClass) -> (CacheDelay,MissClass)
 
-            routingMatrix.set(hitClass, clientClass, cacheDelay, clientDelay, 1.000000); // (Cache,HitClass) -> (CacheDelay,HitClass)
-            routingMatrix.set(missClass, clientClass, cacheDelay, clientDelay, 1.000000); // (Client,MissClass) -> (Cache,MissClass)
+        P.set(hitClass, clientClass, cacheDelay, clientDelay, 1.000000); // (Cache,HitClass) -> (CacheDelay,HitClass)
+        P.set(missClass, clientClass, cacheDelay, clientDelay, 1.000000); // (Client,MissClass) -> (Cache,MissClass)
 
-            model.link(routingMatrix);
-            //TODO
-            //new SolverSSA(model,"samples",2e4,"seed",1,"verbose",true).getAvgTable().print();
-            return model;
-        }
+        model.link(P);
+        //TODO
+        //new SolverSSA(model,"samples",2e4,"seed",1,"verbose",true).getAvgTable().print();
+        return model;
+    }
 
     public static Network getting_started_7() {
         Network model = new Network("Model");
@@ -206,7 +207,7 @@ public class GettingStarted {
         node2.setService(jobclass1, Exp.fitMean(2.000000)); // (Queue1,Class1)
 
         // Block 3: topology
-        model.link(Network.serialRouting(node1,node2));
+        model.link(Network.serialRouting(node1, node2));
 
         //TODO
         //RDfluid = new SolverFluid(model).getCdfRespT();
@@ -248,7 +249,7 @@ public class GettingStarted {
         Calcfc objFun = new Calcfc() {
             @Override
             public double compute(int n, int m, double[] x, double[] con) {
-                return routingModel.apply(x[0]) ;
+                return routingModel.apply(x[0]);
             }
         };
 
