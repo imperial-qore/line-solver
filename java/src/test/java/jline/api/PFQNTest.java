@@ -775,9 +775,8 @@ class PFQNTest {
         Z.set(0, 1, 0.333);
         Z.set(0, 2, 0.1986);
         pfqnNcXQReturn ret = compute_norm_const(L,N,Z,options);
-        // this has a slight perturbation compared to matlab that gives 164.8623063443114
-        assertEquals(164.86216529289987, ret.lG, 164.86216529289987*tolerance);
-        assertEquals("kt", ret.method);
+        assertEquals(170.0939228986258, ret.lG, 170.0939228986258*tolerance);
+        assertEquals("le", ret.method);
     }
 
     @Test

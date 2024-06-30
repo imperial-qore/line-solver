@@ -117,19 +117,25 @@ public class Matrix implements Serializable {
 		}
 
 
-	public static Matrix allbut(Matrix y, int xset) {
+	/**
+	 * Returns all elements in y but the ones in ypos
+	 * @param y - a matrix
+	 * @param ypos - a position of an element in the matrix
+	 * @return - A row vector with all elements of y but ypos
+	 */
+	public static Matrix allbut(Matrix y, int ypos) {
 		int index = -1;
-		if (xset >= 0 && xset < y.length()) {
-			index = xset;
+		if (ypos >= 0 && ypos < y.getNumElements()) {
+			index = ypos;
 		}
 		Matrix ret;
 		if (index == -1) {
-			ret = new Matrix(1, y.length());
+			ret = new Matrix(1, y.getNumElements());
 		} else {
-			ret = new Matrix(1, y.length()-1);
+			ret = new Matrix(1, y.getNumElements()-1);
 		}
 		int i = 0;
-		for (int j = 0; j < y.length(); j++) {
+		for (int j = 0; j < y.getNumElements(); j++) {
 			if (j != index) {
 				ret.set(i, y.get(j));
 				i++;
@@ -204,16 +210,28 @@ public class Matrix implements Serializable {
 		return res;
 	}
 
+	/**
+	 * Computes log(x!) of all elements x of the input matrix
+	 *
+	 * @param n input matrix
+	 * @return Decreased vector
+	 */
 	public static Matrix factln(Matrix n) {
 		Matrix ret = n.clone();
-		for (int i = 0; i < n.length(); i++) {
+		for (int i = 0; i < n.getNumElements(); i++) {
 			ret.set(i, Maths.factln(ret.get(i)));
 		}
 		return ret;
 	}
 
+	/**
+	 * Computes log(sum_i exp(x_i)) of all elements x_i of the input matrix
+	 *
+	 * @param x input matrix
+	 * @return log-sum-exp value
+	 */
 	public static double logsumexp(Matrix x) {
-		int n = x.length();
+		int n = x.getNumElements();
 		double a = x.elementMax();
 		int k = -1;
 		for (int i = 0; i < n; i++) {
@@ -235,74 +253,129 @@ public class Matrix implements Serializable {
 		return (a + Math.log1p(s));
 	}
 
+	/**
+	 * Get the total number of columns
+	 **/
 	public int getNumCols(){
 		return data.getNumCols();
 	}
 
+	/**
+	 * Get the total number of elements
+	 **/
 	public int getNumElements(){
 		return data.getNumElements();
 	}
 
+	/**
+	 * Get the total number of rows
+	 **/
 	public int getNumRows(){
 		return data.getNumRows();
 	}
 
+	/**
+	 * Get number of rows with at least a non-zero
+	 **/
 	public int[] getNonZeroRows() {
 		return data.nz_rows;
 	}
 
+	/**
+	 * Get array of non-zeros
+	 **/
 	public double[] getNonZeroValues() {
 		return data.nz_values;
 	}
 
+	/**
+	 * Get number of non-zeros
+	 **/
 	public int getNonZeroLength() {
 		return data.getNonZeroLength();
 	}
 
+
+	/**
+	 * Reshape matrix to the given number of rows and columns
+	 **/
 	public void reshape(int numRows, int numCols){
 		data.reshape(numRows, numCols);
 	}
 
+	/**
+	 * Get indexes of columns that carry data
+	 **/
 	public int[] getColIndexes(){
 		return data.col_idx;
 	}
 
+	/**
+	 * Copy values of the input matrix
+	 **/
 	public void setTo(Matrix m){
 		data.setTo(m.data);
 	}
 
+	/**
+	 * Grow the maximum number of columns
+	 **/
 	public void growMaxColumns(int newmax, boolean preserve) {
 		data.growMaxColumns(newmax, preserve);
 	}
 
+	/**
+	 * Grow the maximum number of elements
+	 **/
 	public void growMaxLength(int newmax, boolean preserve) {
 		data.growMaxLength(newmax, preserve);
 	}
 
+	/**
+	 * Reduce the maximum number of columns
+	 **/
 	public void shrinkNumCols(int newmax) {
 		data.numCols = newmax;
 	}
 
+	/**
+	 * Reduce the maximum number of rows
+	 **/
 	public void shrinkNumRows(int newmax) {
 		data.numRows = newmax;
 	}
 
+	/**
+	 * Check if sparse matrix element is assigned
+	 **/
 	public boolean isAssigned(int row, int col){
 		return data.isAssigned(row, col);
 	}
 
+	/**
+	 * Fast version of set that does not check bounds
+	 **/
 	public void unsafe_set(int row, int col, double val) {
 		data.unsafe_set(row,col,val);
 	}
 
+	/**
+	 * Print non-zero values
+	 **/
 	public void printNonZero() {
 		data.printNonZero();
 	}
 
+	/**
+	 * Reshape number of rows, columns and the number of non-zeros
+	 **/
 	public void reshape(int numRows, int numCols, int arrayLength){
-		data.reshape(numRows, numCols, arrayLength);
+			data.reshape(numRows, numCols, arrayLength);
 	}
 
+	/**
+	 *
+	 **/
 	public static Matrix decorate(Matrix inSpace1, Matrix inSpace2) {
 
 	  // TODO: upfront if clause for 1 parameter, lines 7 to 14
@@ -747,13 +820,6 @@ public class Matrix implements Serializable {
 		for(int i = 0; i < unique_array.size(); i++)
 			res.set(i, 0, unique_array.get(i));
 		return res;
-	}
-
-	public static void main(String[] args) {
-		Matrix m1 = new Matrix(3,3);
-		m1.fromArray2D(new int[][]{{1,2,3}, {1,2,3}, {4,5,6}});
-		m1.expandMatrix(5,5,2);
-		System.out.println(m1);
 	}
 
 	public static UniqueRowResult uniqueRows(Matrix m) {
@@ -2303,6 +2369,17 @@ public class Matrix implements Serializable {
 			}
 		}
 		return new Matrix(newData);
+	}
+
+	public static void main(String[] args) {
+		Matrix m1 = new Matrix(3,3);
+		m1.fromArray2D(new int[][]{{1,2,3}, {2,2,3}, {4,5,6}});
+		Matrix m2 = new Matrix(3,3);
+		m1.fromArray2D(new int[][]{{1,2,3}, {2,2,3}, {4,5,6}});
+		//m1.expandMatrix(5,5,2);
+		//System.out.println(m1);
+		Matrix.decorate(m1, m2).print();
+		//System.out.println(Matrix.allbut(m1,1));
 	}
 
 }
