@@ -1,4 +1,4 @@
-function [QN] = qbd_setupdelayoff(lambda, mu, alpharate, alphascv, betarate, betascv)
+function QN = qbd_setupdelayoff(lambda, mu, alpharate, alphascv, betarate, betascv)
 
 alpha = APH.fitMeanAndSCV(1/alpharate, alphascv).getRepres;
 na = length(alpha{1});

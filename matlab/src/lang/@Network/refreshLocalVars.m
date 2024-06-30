@@ -150,7 +150,7 @@ for ind=1:self.getNumberOfNodes
                     if isempty(nodeparam{ind}{r})
                         nodeparam{ind}{r} = struct();
                     end
-                    nodeparam{ind}{r}.setupTime = node.setupTime{r};
+                    nodeparam{ind}{r}.setupTime = node.setupTime{r}.getRepres();
                     nodeparam{ind}{r}.delayoffTime = node.delayoffTime{r}.getRepres();
                 end
                 if (strcmp(class(node),'Queue') || strcmp(class(node),'QueueingStation'))

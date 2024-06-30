@@ -217,7 +217,25 @@ while max(max(abs(TN-TN_1))) > tol && it <= options.iter_max %#ok<max>
                                             end
                                         else
                                             if sn.isfunction(ist)
-                                                [Qret{1:K}] = qbd_setupdelayoff(ist, sn, aggrLambda);
+                                                alpharate = map_lambda(sn.nodeparam{ist}{end}.setupTime);
+                                                alphascv = map_scv(sn.nodeparam{ist}{end}.setupTime);
+                                                betarate = map_lambda(sn.nodeparam{ist}{end}.delayoffTime);
+                                                betascv = map_scv(sn.nodeparam{ist}{end}.delayoffTime);
+                                                aggrRate = 0;
+                                                % TODO: at the moment this
+                                                % maps each class to an
+                                                % independent
+                                                % setup-delayoff queue
+                                                for k=1:K
+                                                    pie_k = pie{ist}{k};
+                                                    if ~isnan(pie_k(1))
+                                                        mu_k = 1 / (pie_k * inv(-D0{ist,k}) * ones(size(pie_k))'); 
+                                                        aggrRate = mu_k;
+                                                        [Qret{k}] = qbd_setupdelayoff(aggrLambda, aggrRate, alpharate, alphascv, betarate, betascv);
+                                                    else
+                                                        Qret{k} = NaN;
+                                                    end
+                                                end
                                             else
                                                 [pdistr{1:K}] = MMAPPH1FCFS(D, {pie{ist}{:}}, {D0{ist,:}}, 'ncDistr', maxLevel);
                                             
