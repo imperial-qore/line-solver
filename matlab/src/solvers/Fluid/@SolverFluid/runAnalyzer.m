@@ -62,6 +62,8 @@ switch options.lang
         end
         self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,runtime,options.method,lastiter);
         self.result.Prob.logNormConstAggr = lG;
+        self.result.solverSpecific.sn = JLINE.from_jline_struct(jmodel);
+        self.result.solverSpecific.odeStateVec = JLINE.jlinematrix_to_matrix(jsolver.result.odeStateVec);        
         return
     case 'matlab'
         switch options.method
