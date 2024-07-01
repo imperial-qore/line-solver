@@ -16,7 +16,7 @@ public class ClosedClass extends JobClass implements Serializable {
     protected int classIndex;
     protected Network model;
     public ClosedClass(Network model, String name, double njobs, Station refstat, int priority) {
-        super(JobClassType.Closed, name);
+        super(JobClassType.CLOSED, name);
         this.index = model.getNumberOfClasses()+1;
         model.addJobClass(this);
         this.population = njobs;

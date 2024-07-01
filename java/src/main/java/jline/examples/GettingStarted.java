@@ -11,6 +11,7 @@ import jline.lang.distributions.*;
 import jline.solvers.fluid.SolverFluid;
 import jline.solvers.jmt.JMTOptions;
 import jline.solvers.jmt.SolverJMT;
+import jline.solvers.mam.SolverMAM;
 import jline.solvers.mva.SolverMVA;
 
 import jline.lang.nodes.Queue;
@@ -269,10 +270,8 @@ public class GettingStarted {
     }
 
     public static void main(String[] args) throws IllegalAccessException, ParserConfigurationException {
-        Network model = getting_started_6();
-        NetworkSolver solver = new SolverMVA(model);
+        Network model = getting_started_2();
+        NetworkSolver solver = new SolverMAM(model);
         solver.getAvgTable().print();
-        Cache cache = (Cache) model.getNodeByName("Cache");
-        System.out.println(cache.getHitRatio());
     }
 }

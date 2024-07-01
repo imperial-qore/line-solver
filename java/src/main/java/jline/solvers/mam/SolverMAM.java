@@ -13,6 +13,7 @@ import jline.solvers.NetworkSolver;
 import jline.solvers.Solver;
 import jline.solvers.SolverOptions;
 import jline.solvers.SolverResult;
+import jline.solvers.jmt.SolverJMTResult;
 import jline.util.Matrix;
 
 import java.util.*;
@@ -29,10 +30,12 @@ import static jline.lib.thirdparty.BUTOOLS.*;
 public class SolverMAM extends NetworkSolver {
     public SolverMAM(Network model){
         super(model,"SolverMAM",new SolverOptions(SolverType.MAM));
+        this.result = new SolverMAMResult();
     }
 
     public SolverMAM(Network model, String method){
         super(model, "SolverMAM", SolverMAM.defaultOptions().method(method));
+        this.result = new SolverMAMResult();
     }
 
     public SolverMAM(Network model, Object... varargin) {

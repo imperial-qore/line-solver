@@ -56,7 +56,7 @@ public class MatrixMethodAnalyzer implements MethodAnalyzer {
     for (int i = 0; i < M; i++) {
       if (sn.nodetypes.get((int) sn.stationToNode.get(i)) == NodeType.Source) {
         for (int k = 0; k < K; k++) {
-          if (sn.jobclasses.get(k).getJobClassType() == JobClassType.Open) {
+          if (sn.jobclasses.get(k).getJobClassType() == JobClassType.OPEN) {
             lambda.set(i * K + k, 0, sn.rates.get(i, k));
           }
         }

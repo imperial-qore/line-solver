@@ -1085,7 +1085,7 @@ public class Network extends Model implements Serializable {
         Matrix refstat = new Matrix(K, 1, K);
 
         for (int i = 0; i < K; i++) {
-            if (jobClasses.get(i).type == JobClassType.Open) {
+            if (jobClasses.get(i).type == JobClassType.OPEN) {
                 refstat.set(i, 0, getIndexSourceStation());
             } else {
                 ClosedClass cc = (ClosedClass) jobClasses.get(i);
@@ -1148,8 +1148,8 @@ public class Network extends Model implements Serializable {
         int K = getNumberOfClasses();
         Matrix njobs = new Matrix(K, 1, K);
         for (int i = 0; i < K; i++) {
-            if (jobClasses.get(i).type == JobClassType.Open) njobs.set(i, 0, Double.POSITIVE_INFINITY);
-            else if (jobClasses.get(i).type == JobClassType.Closed)
+            if (jobClasses.get(i).type == JobClassType.OPEN) njobs.set(i, 0, Double.POSITIVE_INFINITY);
+            else if (jobClasses.get(i).type == JobClassType.CLOSED)
                 njobs.set(i, 0, jobClasses.get(i).getNumberOfJobs());
         }
         return njobs;

@@ -13,7 +13,7 @@ classdef DisabledClass < JobClass
         function self = DisabledClass(model, name, refstat)
             % SELF = DISABLEDCLASS(MODEL, NAME, REFSTAT)
             
-            self@JobClass('disabled', name);
+            self@JobClass('Disabled', name);
             self.type = JobClassType.DISABLED;
             self.priority = 0;
             model.addJobClass(self);

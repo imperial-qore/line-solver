@@ -716,7 +716,7 @@ public class SolverFluid extends NetworkSolver {
               int Kc = K + 1; // Add a single new class
               // Single new class is arbitrarily open
               if (Kc > sn.jobclasses.size()) {
-                KcClass = new JobClass(JobClassType.Open, "singleNewClass");
+                KcClass = new JobClass(JobClassType.OPEN, "singleNewClass");
                 sn.jobclasses.add(KcClass);
               }
               // Indices of the transient class corresponding to each class in the original model

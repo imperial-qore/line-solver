@@ -19,7 +19,6 @@ import jline.lang.nodes.Queue;
 import jline.solvers.*;
 import jline.solvers.mva.SolverMVA;
 import jline.util.Matrix;
-import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.NotImplementedException;
 
 import java.util.*;
@@ -612,11 +611,11 @@ public class SolverLN extends EnsembleSolver {
                         }
 
                         switch (this.ensemble[e].getClasses().get(c).getJobClassType()) {
-                            case Closed:
+                            case CLOSED:
                                 TN.set(aidx, TN.get(aidx) + this.results.get(this.results.size()).get(e).TN.get(serverIdx - 1, c));
                                 break;
 
-                            case Open:
+                            case OPEN:
                                 TN.set(aidx, TN.get(aidx) + this.results.get(this.results.size()).get(e).TN.get(sourceIdx - 1, c));
                                 break;
 
@@ -1497,7 +1496,7 @@ public class SolverLN extends EnsembleSolver {
             // here update the number of jobs in the task chain
             if (aidx < (this.lqn.tshift + this.lqn.ntasks)) {
                 // aidx here is actually set to tidx in buildLayersRecursive
-                if (tmp_class.getJobClassType() == JobClassType.Closed) {
+                if (tmp_class.getJobClassType() == JobClassType.CLOSED) {
                     ClosedClass tmp_class_c = (ClosedClass) tmp_class;
                     tmp_class_c.setPopulation(this.njobs.get((int) aidx, (int) idx));
                 }

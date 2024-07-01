@@ -15,7 +15,7 @@ public class OpenClass extends JobClass  implements Serializable {
     protected Network model;
 
     public OpenClass(Network model, String name, int priority) {
-        super(JobClassType.Open, name);
+        super(JobClassType.OPEN, name);
         this.index = model.getNumberOfClasses()+1;
         model.addJobClass(this);
         try {

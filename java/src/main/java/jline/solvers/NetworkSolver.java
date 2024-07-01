@@ -79,12 +79,12 @@ public abstract class NetworkSolver extends Solver {
 
     // Returns true if the solver has computed steady-state average metrics.
     protected boolean hasAvgResults() {
-        return !((result.QN == null || result.QN.isEmpty()) &&
+        return !(result == null) && (!((result.QN == null || result.QN.isEmpty()) &&
                 (result.UN == null || result.UN.isEmpty()) &&
                 (result.RN == null || result.RN.isEmpty()) &&
                 (result.TN == null || result.TN.isEmpty()) &&
                 (result.CN == null || result.CN.isEmpty()) &&
-                (result.XN == null || result.XN.isEmpty()));
+                (result.XN == null || result.XN.isEmpty())));
     }
 
     // Returns true if the solver has computed transient average metrics.
