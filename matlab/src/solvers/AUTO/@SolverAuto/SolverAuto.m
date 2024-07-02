@@ -152,9 +152,9 @@ classdef SolverAuto
                 self.solvers{s}.reset();
             end
         end
-        function setDoChecks(self,bool)
+        function setChecks(self,bool)
             for s=1:length(self.solvers)
-                self.solvers{s}.setDoChecks(bool);
+                self.solvers{s}.setChecks(bool);
             end
         end
     end

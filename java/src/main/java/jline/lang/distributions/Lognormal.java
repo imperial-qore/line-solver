@@ -9,11 +9,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+import static jline.io.InputOutput.line_error;
+import static jline.io.InputOutput.mfilename;
+
 public class Lognormal extends ContinuousDistribution implements Serializable {
     public Lognormal(double mu, double sigma) {
         super("LogNormal", 2, new Pair<Double,Double>(0.0, Double.POSITIVE_INFINITY));
         if (sigma < 0){
-            System.err.println("sigma parameter must be >= 0.0");
+            line_error(mfilename(new Object(){}),"sigma parameter must be >= 0.0");
         }
         this.setParam(1, "mu", mu);
         this.setParam(2, "sigma", sigma);

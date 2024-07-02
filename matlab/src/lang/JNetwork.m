@@ -93,8 +93,8 @@ classdef JNetwork < Model
             P = cellzeros(R,R,M,M);
         end
 
-        function self = setDoChecks(self, bool)
-            self.obj.setDoChecks(bool);
+        function self = setChecks(self, bool)
+            self.obj.setChecks(bool);
         end
 
     end

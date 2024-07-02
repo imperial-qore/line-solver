@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Random;
 
 import static jline.api.DTMC.dtmc_stochcomp;
+import static jline.io.InputOutput.line_error;
+import static jline.io.InputOutput.mfilename;
 
 /**
  * MVA Analyzer class for solver_mva_cacheqn_analyzer
@@ -31,7 +33,7 @@ public class SolverMVACacheQNAnalyzer implements MVAAnalyzer{
             ObjectInputStream in = new ObjectInputStream(bis);
             snorig = (NetworkStruct) in.readObject();
         } catch (IOException | ClassNotFoundException e) {
-            System.err.println("Could not create a copy of the NetworkStruct in SolverMVACacheQNAnalyzer");
+            line_error(mfilename(new Object(){}),"Could not create a copy of the NetworkStruct in SolverMVACacheQNAnalyzer");
         }
         sn = snorig;
         Random random = new Random(options.seed);

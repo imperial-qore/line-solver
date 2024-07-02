@@ -24,6 +24,7 @@ import java.util.*;
 import static java.lang.Double.*;
 import static java.lang.Math.abs;
 import static java.lang.Math.min;
+import static jline.io.InputOutput.*;
 
 import odesolver.LSODA;
 
@@ -192,7 +193,7 @@ public class MatrixMethodAnalyzer implements MethodAnalyzer {
     }
     else {
       if (options.tol > GlobalConstants.CoarseTol && (options.verbose == VerboseLevel.DEBUG)) {
-        System.err.println(
+        line_warning(mfilename(new Object(){}),
                 "Fast, non-stiff ODE solver is not yet available in JLINE. Using accurate non-stiff ODE solver instead.");
       }
       FirstOrderIntegrator odeSolver = options.odesolvers.accurateODESolver;

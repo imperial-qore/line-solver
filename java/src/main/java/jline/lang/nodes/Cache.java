@@ -19,6 +19,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import static jline.io.InputOutput.line_error;
+import static jline.io.InputOutput.mfilename;
+
 /**
  * A class switch node based on cache hits or misses
  */
@@ -147,8 +150,8 @@ public class Cache extends StatefulNode implements Serializable {
                 ObjectInputStream in = new ObjectInputStream(bis);
                 distribution_copy = (Distribution) in.readObject();
             } catch (IOException | ClassNotFoundException e) {
-                System.err.println("Could not copy the distribution in the setRead method of CacheExamples.java");
                 e.printStackTrace();
+                line_error(mfilename(new Object(){}),"Could not copy the distribution in the setRead method of CacheExamples.java");
             }
             this.popularitySet(itemclass.getIndex(), jobClass.getIndex() - 1, distribution_copy);
             if(distribution_copy.getSupport().getRight() != itemclass.getNumberOfItems()){
@@ -174,7 +177,7 @@ public class Cache extends StatefulNode implements Serializable {
                 ObjectInputStream in = new ObjectInputStream(bis);
                 popularity_copy = (Distribution) in.readObject();
             } catch (IOException | ClassNotFoundException e) {
-                System.err.println("Could not copy the distribution in the setReadItemEntry method of CacheExamples.java");
+                line_error(mfilename(new Object(){}),"Could not copy the distribution in the setReadItemEntry method of CacheExamples.java");
                 e.printStackTrace();
             }
             this.popularitySet(jobClass.getIndex(), popularity_copy);

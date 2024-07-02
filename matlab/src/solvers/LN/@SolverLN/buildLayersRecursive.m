@@ -5,7 +5,7 @@ curClassKey = cell(lqn.nidx,1);
 nreplicas = lqn.repl(idx);
 callresidtproc = self.callresidtproc;
 model = Network(lqn.hashnames{idx});
-model.setDoChecks(false); % fast mode
+model.setChecks(false); % fast mode
 model.attribute = struct('hosts',[],'tasks',[],'entries',[],'activities',[],'calls',[],'serverIdx',0);
 if ishostlayer | any(any(lqn.issynccaller(callers, lqn.entriesof{idx}))) %#ok<OR2>
     clientDelay = Delay(model, 'Clients');

@@ -14,6 +14,8 @@ import javax.xml.parsers.ParserConfigurationException;
 import java.io.IOException;
 import java.util.*;
 
+import static jline.io.InputOutput.*;
+
 // Abstract class for solvers applicable to Network models
 public abstract class NetworkSolver extends Solver {
 
@@ -187,7 +189,7 @@ public abstract class NetworkSolver extends Solver {
             } catch (IllegalAccessException e) {
                 System.out.println("IllegalAccessException upon running runAnalyzer()");
             } catch (ParserConfigurationException e) {
-                System.err.println("ParserConfigurationException upon running runAnalyzer()");
+                line_error(mfilename(new Object(){}),"ParserConfigurationException upon running runAnalyzer()");
             } catch (IOException e) {
                 System.out.println("IOException upon running runAnalyzer()");
             }
@@ -454,7 +456,7 @@ public abstract class NetworkSolver extends Solver {
             }
 
             if (unstableQueueFlag && infJobsFlag) {
-                System.err.println(
+                line_warning(mfilename(new Object(){}),
                         "The model has unstable queues, performance metrics may grow unbounded.");
             }
         }
@@ -750,14 +752,14 @@ public abstract class NetworkSolver extends Solver {
 
         if (this.model.hasFork()) {
             if (this.model.hasOpenClasses()) {
-                System.err.println(
+                line_error(mfilename(new Object(){}),
                         "System response time computation not yet supported with open classes in the presence of fork nodes.");
                 this.result.RN.fill(Double.NaN);
             }
         }
         if (this.model.hasJoin()) {
             if (this.model.hasOpenClasses()) {
-                System.err.println(
+                line_error(mfilename(new Object(){}),
                         "System response time computation not yet supported with open classes in the presence of join nodes.");
                 this.result.RN.fill(Double.NaN);
             }

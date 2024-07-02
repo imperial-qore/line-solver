@@ -1,7 +1,6 @@
 global LINEStdOut
 global LINEVerbose
 global LINEVersion
-global LINEDoChecks
 global LINEDummyMode % If true, getAvgTable returns empty results without running the solvers
 global LINECoarseTol % Coarse tolerance for comparing averages, weights, states
 global LINEFineTol % Fine tolerance eg for distribution comparisons
@@ -29,7 +28,6 @@ import Utilities.*; %#ok<SIMPT>
 LINEStdOut = 1; % console
 LINEVersion = '2.0.35';
 LINEVerbose = VerboseLevel.STD;
-LINEDoChecks = true;
 LINEDummyMode = false; 
 LINECoarseTol = 1e-3; 
 LINEFineTol = 1e-8; 
@@ -49,12 +47,6 @@ switch LINEVerbose
     fprintf(1,'VerboseLevel=DEBUG, ');
     case VerboseLevel.DISABLED
     fprintf(1,'VerboseLevel=DISABLED, ');    
-end
-
-if LINEDoChecks
-    fprintf(1,'DoChecks=true, ');
-else
-    fprintf(1,'DoChecks=false, ');
 end
 
 fprintf(1,'CoarseTol=%e, ',LINECoarseTol);

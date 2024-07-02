@@ -827,7 +827,7 @@ public class SolverLN extends EnsembleSolver {
         Map<Integer, JobClass> curClassKey = new HashMap<>(lqn.nidx);
         int nreplicas = (int) lqn.repl.get(0, idx);
         Network model = new Network(lqn.hashnames.get(idx));
-        model.setDoChecks(false);
+        model.setChecks(false);
 
         boolean hasSynccaller = false;
         if (!ishostlayer) {

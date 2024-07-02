@@ -226,7 +226,7 @@ classdef SolverLN < LayeredNetworkSolver & EnsembleSolver
             if it==1
                 % now disable all solver support checks for future iterations
                 for e=1:length(self.ensemble)
-                    self.solvers{e}.setDoChecks(false);
+                    self.solvers{e}.setChecks(false);
                 end
             end
         end

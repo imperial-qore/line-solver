@@ -104,14 +104,14 @@ classdef Network < Model
             self.regions = {};
             self.sourceidx = [];
             self.sinkidx = [];
-            self.setDoChecks(true);
+            self.setChecks(true);
             self.hasStruct = false;
             self.allowReplace = false;
         end
 
         setInitialized(self, bool);
 
-        function self = setDoChecks(self, bool)
+        function self = setChecks(self, bool)
             self.enableChecks = bool;
         end
 

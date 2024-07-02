@@ -4,6 +4,9 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 
+import static jline.io.InputOutput.line_error;
+import static jline.io.InputOutput.mfilename;
+
 /**
  * Class representing the features of a particular solver
  */
@@ -87,7 +90,7 @@ public class FeatureSet {
             if(set.containsKey(feature))
                 set.put(feature, true);
             else
-                System.err.println("Unrecognized feature to set to true in the feature set: " + feature);
+                line_error(mfilename(new Object(){}),"Unrecognized feature to set to true in the feature set: " + feature);
         }
     }
 
@@ -96,7 +99,7 @@ public class FeatureSet {
             if(set.containsKey(feature))
                 set.put(feature, false);
             else
-                System.err.println("Unrecognized feature to set to false in the feature set: " + feature);
+                line_error(mfilename(new Object(){}),"Unrecognized feature to set to false in the feature set: " + feature);
         }
     }
 

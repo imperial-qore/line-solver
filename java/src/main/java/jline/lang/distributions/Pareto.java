@@ -10,12 +10,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+import static jline.io.InputOutput.line_error;
+import static jline.io.InputOutput.mfilename;
+
 public class Pareto extends ContinuousDistribution implements Serializable {
 
     public Pareto(double shape, double scale) {
         super("Pareto", 2, new Pair<Double,Double>(0.0, Double.POSITIVE_INFINITY));
         if (shape < 2){
-            System.err.println("shape parameter must be >= 2.0");
+            line_error(mfilename(new Object(){}),"shape parameter must be >= 2.0");
         }
         this.setParam(1, "alpha", shape);
         this.setParam(2, "k", scale);

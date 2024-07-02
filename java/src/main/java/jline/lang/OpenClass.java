@@ -7,6 +7,9 @@ import jline.lang.constant.JoinStrategy;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.nodes.*;
 
+import static jline.io.InputOutput.line_error;
+import static jline.io.InputOutput.mfilename;
+
 /**
  * A class of jobs that arrives from the external world to the Network and, after completion, leaves it
  */
@@ -21,7 +24,7 @@ public class OpenClass extends JobClass  implements Serializable {
         try {
             setReferenceStation(model.getSource());
         } catch (Exception e){
-            System.err.println("The model requires a Source prior to instantiating open classes.");
+            line_error(mfilename(this),"The model requires a Source prior to instantiating open classes.");
         }
         this.classIndex = -1;
 

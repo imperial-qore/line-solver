@@ -18,6 +18,7 @@ import jline.util.Matrix;
 import org.w3c.dom.*;
 import org.xml.sax.SAXException;
 
+import static jline.io.InputOutput.*;
 import static jline.io.SysUtils.lineTempName;
 
 // LayeredNetworkSolver not available in Java
@@ -156,7 +157,7 @@ public class SolverLQNS extends Solver {
                     try {
                         iterations = Integer.parseInt(iterationsStr);
                     } catch (NumberFormatException e) {
-                        System.err.println("Error parsing iterations value: " + iterationsStr);
+                        line_warning(mfilename(new Object(){}),"Error parsing iterations value: " + iterationsStr);
                     }
                 }
             }

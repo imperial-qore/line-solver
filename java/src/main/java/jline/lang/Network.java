@@ -25,6 +25,7 @@ import java.util.stream.DoubleStream;
 
 import static java.lang.Double.isFinite;
 import static jline.api.SN.snIsStateValid;
+import static jline.io.InputOutput.*;
 import static jline.lib.KPCToolbox.*;
 import static jline.util.Maths.circul;
 
@@ -32,7 +33,7 @@ import static jline.util.Maths.circul;
  * A queueing network model
  */
 public class Network extends Model implements Serializable {
-    private boolean doChecks;
+    private boolean enableChecks;
     private boolean hasState;
     private String logPath;
     private boolean usedFeatures;
@@ -59,7 +60,7 @@ public class Network extends Model implements Serializable {
         super(modelName);
 
         this.hasState = false;
-        this.doChecks = true;
+        this.enableChecks = true;
 
         this.nodes = new ArrayList<Node>();
         this.jobClasses = new ArrayList<JobClass>();
@@ -76,8 +77,8 @@ public class Network extends Model implements Serializable {
         this.attribute = new NetworkAttribute();
     }
 
-    public void setDoChecks(boolean doChecks) {
-        this.doChecks = doChecks;
+    public void setChecks(boolean doChecks) {
+        this.enableChecks = doChecks;
     }
 
     public int[] getSize() {
@@ -218,6 +219,11 @@ public class Network extends Model implements Serializable {
     }
 
     public void addJobClass(JobClass jobClass) {
+        if (this.enableChecks){
+            if (!(this.getClassByName(jobClass.getName()) == null)) {
+                line_error(mfilename(new Object(){}),"A class with name " + jobClass.getName() +" already exists.\n");
+            }
+        }
         this.jobClasses.add(jobClass);
     }
 
@@ -532,7 +538,7 @@ public class Network extends Model implements Serializable {
 
                 if (state_i.isEmpty()) {
                     if (GlobalConstants.Verbose == VerboseLevel.DEBUG) {
-                        System.err.format("Default initialisation failed on station %d", i);
+                        line_warning(mfilename(new Object(){}),"Default initialisation failed on station " + i);
                     }
                 } else {
                     ((StatefulNode) this.nodes.get(i)).setState(state_i);
@@ -564,7 +570,7 @@ public class Network extends Model implements Serializable {
             this.hasState = true;
         } else {
             if (GlobalConstants.Verbose == VerboseLevel.DEBUG) {
-                System.err.println("Default initialisation failed.");
+                line_warning(mfilename(new Object(){}),"Default initialisation failed.");
             }
         }
     }
@@ -1844,7 +1850,7 @@ public class Network extends Model implements Serializable {
         Matrix linksmat = res.linksmat;
         Matrix chains = res.chains;
 
-        if (this.doChecks) {
+        if (this.enableChecks) {
             outerloop:
             for (JobClass jobclass : this.jobClasses) {
                 for (Map<JobClass, RoutingStrategy> nodeRoutingMap : this.sn.routing.values()) {

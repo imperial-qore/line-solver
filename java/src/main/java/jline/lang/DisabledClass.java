@@ -15,7 +15,7 @@ import java.io.Serializable;
 public class DisabledClass extends JobClass implements Serializable {
 
     public DisabledClass(Network model, String name,  Station refstat) throws Exception {
-        super("Disabled", name);
+        super(JobClassType.DISABLED, name);
         this.type = JobClassType.DISABLED;
         this.priority = 0;
         model.addJobClass(this);

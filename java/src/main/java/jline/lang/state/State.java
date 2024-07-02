@@ -20,6 +20,7 @@ import jline.util.Matrix;
 import jline.lang.NetworkStruct;
 import jline.util.SerializableFunction;
 
+import static jline.io.InputOutput.*;
 import static jline.lang.constant.SchedStrategy.*;
 
 /**
@@ -406,11 +407,10 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
         if (!sn.proc.isEmpty()
                 && !sn.proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(r)).isEmpty()
                 && sn.proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(r)).get(0).hasNaN()) {
-          System.err.format(
-                  "State vector at station %d exceeds the class capacity. Some service classes are disabled.\n",
-                  ist);
+          line_warning(mfilename(new Object(){}),
+                  "State vector at station "+ist + " exceeds the class capacity. Some service classes are disabled.\n");
         } else {
-          System.err.format("State vector at station %d exceeds the class capacity.\n", ist);
+          line_warning(mfilename(new Object(){}),"State vector at station "+ ist + " exceeds the class capacity.\n");
         }
       }
       return space;
@@ -478,8 +478,8 @@ public static StateMarginalStatistics toMarginalAggr(NetworkStruct sn,
           sizeEstimator = Math.round(sizeEstimator/Math.log(10));
           if (sizeEstimator > 2) {
             if (!optionsForce) {
-              System.err.format("State space size is very large: 1e%d states. Stopping execution. " +
-                      "Set options.force=true to bypass this control.\n",Math.round(sizeEstimator/Math.log(10)));
+              line_error(mfilename(new Object(){}),"State space size is very large: 1e" + Math.round(sizeEstimator/Math.log(10)) + " states. Stopping execution. " +
+                      "Set options.force=true to bypass this control.\n");
             }
           }
           if (n.elementSum() == 0) {

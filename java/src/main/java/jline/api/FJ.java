@@ -16,6 +16,9 @@ import jline.util.Matrix;
 import java.io.*;
 import java.util.*;
 
+import static jline.io.InputOutput.line_error;
+import static jline.io.InputOutput.mfilename;
+
 /**
  * API for the methods used to deal with fork-join (FJ) systems in the MVA solver.
  */
@@ -48,7 +51,7 @@ public class FJ {
             ObjectInputStream in = new ObjectInputStream(bis);
             nonfjmodel = (Network) in.readObject();
         } catch (IOException | ClassNotFoundException e) {
-            System.err.println("Could not create a copy of the model in the Heidelberger-Trivedi method");
+            line_error(mfilename(new Object(){}),"Could not create a copy of the model in the Heidelberger-Trivedi method");
             return null;
         }
 //        nonfjmodel.allowReplace = true; -- no allowReplace implemented in JLINE
@@ -169,7 +172,7 @@ public class FJ {
                     for(int par = 0; par < parallelBranches; par++){
                         // One artificial class for each parallel branch
                         if(((Forker) model.getNodes().get(f).getOutput()).taskPerLink > 1){
-                            System.err.println("Multiple tasks per link are not supported in H-T.");
+                            line_error(mfilename(new Object(){}),"Multiple tasks per link are not supported in H-T.");
                         }
                         int auxPopulation = (int) (((Forker) model.getNodes().get(f).getOutput()).taskPerLink *
                                 ((ClosedClass) model.getClasses().get(r)).getPopulation());
@@ -206,7 +209,7 @@ public class FJ {
                                             ObjectInputStream in = new ObjectInputStream(bis);
                                             distributionCopy = (Distribution) in.readObject();
                                         } catch (IOException | ClassNotFoundException e) {
-                                            System.err.println("Could not copy the distribution of the original class in H-T");
+                                            line_error(mfilename(new Object(){}),"Could not copy the distribution of the original class in H-T");
                                         }
                                         ((Queue) nonfjmodel.getNodes().get(i)).setService(auxClasses.get(new
                                                         AuxClassKey(r, par)), distributionCopy);
@@ -314,7 +317,7 @@ public class FJ {
             ObjectInputStream in = new ObjectInputStream(bis);
             nonfjmodel = (Network) in.readObject();
         } catch (IOException | ClassNotFoundException e) {
-            System.err.println("Could not create a copy of the model in the Heidelberger-Trivedi method");
+            line_error(mfilename(new Object(){}),"Could not create a copy of the model in the Heidelberger-Trivedi method");
             return null;
         }
 //        nonfjmodel.allowReplace = true; -- no allowReplace implemented in JLINE
@@ -449,7 +452,7 @@ public class FJ {
                     }
                     int s = fjclassmap.get(oclass.get(oclass.size() - 1).getIndex() - 1);
                     if(((Forker) model.getNodes().get(f).getOutput()).taskPerLink > 1){
-                        System.err.println("There are no synchronisation delays implemented in FJT for multiple tasks per link.");
+                        line_error(mfilename(new Object(){}),"There are no synchronisation delays implemented in FJT for multiple tasks per link.");
                     }
                     fanout.put(oclass.get(oclass.size() - 1).getIndex() - 1, (int) (origfanout.get(f, r) * ((Forker) model.getNodes().get(f).getOutput()).taskPerLink));
                     if(sn.nodevisits.get(fc).get(f, r) == 0){

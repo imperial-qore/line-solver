@@ -15,6 +15,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
 
+import static jline.io.InputOutput.line_error;
+import static jline.io.InputOutput.mfilename;
+
 // Abstract class for model solution algorithms and tools
 public abstract class Solver {
 
@@ -114,7 +117,7 @@ public abstract class Solver {
           } else if (value instanceof String) {
             options.seed(Integer.parseInt((String) value));
           } else {
-            System.err.println("Error: unrecognized argument type to seed option.");
+            line_error(mfilename(new Object(){}),"Error: unrecognized argument type to seed option.");
           }
           break;
         case "samples":
@@ -123,7 +126,7 @@ public abstract class Solver {
           } else if (value instanceof String) {
             options.samples(Integer.parseInt((String) value));
           } else {
-            System.err.println("Error: unrecognized argument type to samples option.");
+            line_error(mfilename(new Object(){}),"Error: unrecognized argument type to samples option.");
           }
           break;
         case "verbose":

@@ -10,11 +10,6 @@ classdef GlobalConstants
             can = LINEDummyMode;
         end
 
-        function do=DoChecks()
-            global LINEDoChecks
-            do = LINEDoChecks;
-        end
-
         function stdo=StdOut()
             global LINEStdOut
             stdo = LINEStdOut;
@@ -50,9 +45,9 @@ classdef GlobalConstants
             ver = LINEVersion;
         end
 
-        function setDoChecks(val)
-            global LINEDoChecks
-            LINEDoChecks = val;
+        function setChecks(val)
+            global LINEChecks
+            LINEChecks = val;
         end
 
         function setStdOut(val)

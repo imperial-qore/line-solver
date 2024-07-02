@@ -59,7 +59,7 @@ classdef Solver < handle
             line_error(mfilename,'An abstract method was called. The function needs to be overridden by a subclass.');
         end
 
-        function self = setDoChecks(self, bool)
+        function self = setChecks(self, bool)
             self.enableChecks = bool;
         end
     end
