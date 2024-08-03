@@ -6,7 +6,7 @@ LINE is an open source package for Java, Matlab and Python to analyze queueing m
 
 LINE is developed by the <a href="http://qore.doc.ic.ac.uk/">QORE lab</a> at Imperial College London and distributed under the <a href="http://opensource.org/licenses/BSD-3-Clause" target="_blank">BSD-3</a> license.</p>
 
-# Obtaining LINE
+### Obtaining LINE
 Please visit the project website for more information: http://line-solver.sourceforge.net/
 
 Latest stable release: https://sourceforge.net/projects/line-solver/files/latest/download
