@@ -1,6 +1,8 @@
 ## LINE Solver: Queueing Theory Algorithms 
 LINE is an open source package for Java, Matlab and Python to analyze queueing models via analytical methods and simulation. The tool features algorithms for the solution of open queueing systems (e.g., M/M/1, M/M/k, M/G/1, ...), open and closed queueing networks, and layered queueing networks. 
 
+LINE is developed by the <a href="http://qore.doc.ic.ac.uk/">QORE lab</a> at Imperial College London and distributed under the <a href="http://opensource.org/licenses/BSD-3-Clause" target="_blank">BSD-3</a> license.</p>
+
 Please visit the project website: http://line-solver.sourceforge.net/
 
 Latest stable release: https://sourceforge.net/projects/line-solver/files/latest/download
