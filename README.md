@@ -9,4 +9,8 @@ LINE is developed by the <a href="http://qore.doc.ic.ac.uk/">QORE lab</a> at Imp
 ### Obtaining LINE
 Please visit the project website for more information: http://line-solver.sourceforge.net/
 
-Latest stable release: https://sourceforge.net/projects/line-solver/files/latest/download
+<a href="https://sourceforge.net/projects/line-solver/files/latest/download" download>
+  <button style="padding: 10px 15px; font-size: 16px; color: white; background-color: #4CAF50; border: none; border-radius: 5px; cursor: pointer;">
+    Download Latest Stable Release
+  </button>
+</a>
