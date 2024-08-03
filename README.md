@@ -1,5 +1,5 @@
 ## LINE Solver: Queueing Theory Algorithms 
-Website: http://line-solver.sourceforge.net/
+Please visit the project website: http://line-solver.sourceforge.net/
 
 Latest stable release: https://sourceforge.net/projects/line-solver/files/latest/download
 
@@ -11,84 +11,8 @@ Main distribution of the LINE solver for [MATLAB](https://sourceforge.net/p/line
 ### What is LINE?
 LINE is an open source package to analyze queueing models via analytical methods and simulation. The tool features algorithms for the solution of open queueing systems (e.g., M/M/1, M/M/k, M/G/1, ...), open and closed queueing networks, and layered queueing networks. 
 
-### Documentation
-Check out the [LINE manual](https://sourceforge.net/p/line-solver/code/ci/master/tree/doc) and the README files in the [java/](https://sourceforge.net/p/line-solver/code/ci/master/tree/java), [matlab/](https://sourceforge.net/p/line-solver/code/ci/master/tree/matlab), and [python/](https://sourceforge.net/p/line-solver/code/ci/master/tree/python) folders for getting started information. 
-
 ### License
 LINE is released as open source under the [BSD-3 license](https://raw.githubusercontent.com/imperial-qore/line-solver/main/matlab/LICENSE).
 
 ### Acknowledgement
 The development of LINE has been partially funded by the European Commission grants FP7-318484 (MODAClouds), H2020-644869 (DICE), H2020-825040 (RADON), and by the EPSRC grant EP/M009211/1 (OptiMAM).
-
-### Example: Solving a basic queueing system
-We illustrate how to simulate an M/M/1 queue:
-
-**MATLAB**: 
-```
-lineStart;
-model = Network('M/M/1');
-
-source = Source(model, 'Source');
-queue = Queue(model, 'Queue', SchedStrategy.FCFS);
-sink = Sink(model, 'Sink');
-
-jobclass = OpenClass(model, 'Class1');
-source.setArrival(jobclass, Exp(1.0));
-queue.setService(jobclass, Exp(2.0));
-
-model.link(Network.serialRouting(source,queue,sink));
-
-AvgTable = SolverJMT(model,'seed',23000).getAvgTable
-```
-**Java**: 
-```
-import jline.lang.*;
-import jline.lang.constant.*;
-import jline.lang.distributions.*;
-import jline.lang.nodes.*;
-import jline.solvers.jmt.JMTOptions;
-import jline.solvers.jmt.SolverJMT;
-
-public class MM1 {
-    public static void main(String[] args){
-        Network model = new Network("M/M/1");
-        
-        Source source = new Source(model, "Source");
-        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
-        Sink sink = new Sink(model, "Sink");
-        
-        OpenClass jobclass = new OpenClass(model, "Class1");
-        source.setArrival(jobclass, new Exp(1.0)); 
-        queue.setService(jobclass, new Exp(2.0)); 
-        
-        model.link(Network.serialRouting(source, queue, sink));
-        
-        new SolverJMT(model, "seed", 23000).getAvgTable().print();
-    }
-}
-```
-**Python**: 
-```
-from line_solver import *
-
-if __name__ == "__main__":
-    model = Network("M/M/1")
-
-    source = Source(model, "Source")
-    queue = Queue(model, "Queue", SchedStrategy.FCFS)
-    sink = Sink(model, "Sink")
-    
-    jobclass = OpenClass(model, "Class1")
-    source.setArrival(jobclass, Exp(1.0))
-    queue.setService(jobclass, Exp(2.0))
-   
-    model.link(Network.serialRouting(source, queue, sink))
-    
-    table = SolverJMT(model,"seed",23000).getAvgTable()
-```
-To extract a particular value you may use LINE's table get function (tget), for example: 
-```
-    print(tget(table,'Queue'))
-    print(table['RespT'].tolist())
-    print(tget(table,'Queue','Class1')['RespT'].tolist())
-```
