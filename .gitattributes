@@ -1,0 +1,8 @@
+* text=auto
+*.jar binary
+*.pdf binary
+*.jsimg text
+*.jsimw text
+*.jsim text
+*.lqnx text
+*.xml text

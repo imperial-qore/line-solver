@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<!-- Simple forwarding model: client calls e0, which forwards to e1 -->
+<lqn-model name="SimpleForwarding" description="Basic forwarding test model">
+   <solver-params comment="Simple forwarding" conv_val="1e-05" it_limit="50" underrelax_coeff="0.9" print_int="10"/>
+   <processor name="client_proc" scheduling="inf">
+      <task name="client" scheduling="ref" multiplicity="1">
+         <entry name="client" type="PH1PH2">
+            <entry-phase-activities>
+               <activity name="client_1" phase="1" host-demand-mean="1">
+                  <synch-call dest="e0" calls-mean="1"/>
+               </activity>
+            </entry-phase-activities>
+         </entry>
+      </task>
+   </processor>
+   <processor name="server_proc" scheduling="ps" quantum="0.1">
+      <task name="server0" scheduling="fcfs">
+         <entry name="e0" type="PH1PH2">
+            <forwarding dest="e1" prob="1"/>
+            <entry-phase-activities>
+               <activity name="e0_1" phase="1" host-demand-mean="1"/>
+            </entry-phase-activities>
+         </entry>
+      </task>
+      <task name="server1" scheduling="fcfs">
+         <entry name="e1" type="PH1PH2">
+            <entry-phase-activities>
+               <activity name="e1_1" phase="1" host-demand-mean="1"/>
+            </entry-phase-activities>
+         </entry>
+      </task>
+   </processor>
+</lqn-model>
