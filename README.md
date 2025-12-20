@@ -8,7 +8,7 @@ LINE is an open source package for Java, Matlab and Python to analyze queueing m
 
 LINE is developed by the QORE lab at Imperial College London and distributed under the BSD-3 license.
 
-> **Note**: This is a lightweight CLI-only distribution. For full source code with MATLAB, Python, and Java/Kotlin implementations, click the **Download Sources** button above.
+> **Note**: This is a lightweight CLI-only distribution. For full source code with MATLAB, Python, and Java/Kotlin implementations, click the **Download Now** button above.
 
 ## Quick Start
 
