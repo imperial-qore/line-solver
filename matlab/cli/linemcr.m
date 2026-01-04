@@ -88,7 +88,7 @@ if serverMode
     fprintf(sprintf('Version %s. All rights reserved.\n',Model('').getVersion()));
     fprintf('--------------------------------------------------------------------\n');
     fprintf(sprintf('Running in server mode on port %d.\n',serverPort));
-    fprintf('Press Q to stop the server at any time.\n')
+    fprintf('Enter Q to stop the server at any time.\n')
     while true
         cmd = input('','s');
         switch cmd

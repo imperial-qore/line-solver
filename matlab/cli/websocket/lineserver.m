@@ -56,7 +56,7 @@ classdef lineserver < WebSocketServer
         
         function onClose(obj,conn,message)
             fprintf('%s\n',message)
-            fprintf('Press Q to stop the server at any time.\n')   
+            fprintf('Enter Q to stop the server at any time.\n')   
         end
     end
 end

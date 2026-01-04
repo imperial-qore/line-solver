@@ -958,7 +958,10 @@ class JarRunner:
         )
 
     def start_rest_server(self, port: int = 8080) -> subprocess.Popen:
-        """Start LINE in REST API server mode."""
+        """Start LINE in REST API server mode.
+
+        Note: The JAR uses WebSocket server mode (-p) for both WebSocket and REST.
+        """
         self._validate_jar()
         self._validate_java()
 
@@ -966,7 +969,7 @@ class JarRunner:
             self.java_path,
             "-jar",
             str(self.jar_path),
-            "-r", str(port),
+            "-p", str(port),
         ]
 
         return subprocess.Popen(

@@ -177,6 +177,6 @@ public class LineWebSocketServer extends WebSocketServer {
         System.out.printf("Version %s. All rights reserved.%n", new Model("").getVersion());
         System.out.println("--------------------------------------------------------------------");
         System.out.printf("Running in server mode on %s.%n", this.getAddress());
-        System.out.println("Press Q to stop the server at any time.");
+        System.out.println("Enter Q to stop the server at any time.");
     }
 }
