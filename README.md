@@ -3,7 +3,9 @@
 [![Download LINE](https://img.shields.io/sourceforge/dt/line-solver.svg)](https://sourceforge.net/projects/line-solver/files/latest/download)
 [![Download LINE](https://a.fsdn.com/con/app/sf-download-button)](https://sourceforge.net/projects/line-solver/files/latest/download)
 
-LINE is an open-source queueing network solver for performance and reliability analysis. Visit the [LINE website](http://line-solver.sf.net) for more information. 
+LINE is an open-source software package to analyze queueing models via analytical methods or simulation. The package is developed by the [QORE lab](https://www.imperial.ac.uk/qore) at Imperial College London and distributed under the BSD-3 license.
+
+The package offers solution algorithms for queueing systems (e.g., M/M/1, M/M/k, M/G/1, ...), queueing networks, layered queueing networks, and queueing models in random environments. Models are solved in LINE either natively or via external solvers, such as [JMT](http://jmt.sourceforge.net/), [LQNS](http://www.sce.carleton.ca/rads/lqns/), [MAMSolver](https://www.cs.wm.edu/MAMSolver/), [Q-MAM](https://win.uantwerpen.be/~vanhoudt/), [SMCSolver](https://win.uantwerpen.be/~vanhoudt/), and [BuTools](http://webspn.hit.bme.hu/~telek/tools/butools/). Visit the [LINE website](http://line-solver.sf.net) for more information. 
 
 ## Available Versions
 
