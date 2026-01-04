@@ -20,7 +20,7 @@ The Python Wrapper interfaces with the Java/Kotlin JAR via JPype, allowing Pytho
 
 ## Command-Line Interface
 
-The `line-cli.py` script provides a standalone command-line interface for solving queueing network models without writing code. It wraps the Java/Kotlin JAR and supports multiple solvers, input formats (JSIM, JSIMG, LQNX), and output formats (table, JSON, CSV). Run `python line-cli.py solve model.jsimg` to solve a model, `python line-cli.py list solvers` to see available solvers, or `python line-cli.py info` for command line options and features. The script can also start WebSocket or REST API servers for integration with other tools.
+The `line-cli.py` script provides a standalone command-line interface for solving queueing network models without writing code. It wraps the Java/Kotlin JAR and supports multiple solvers, input formats (JSIM, JSIMG, LQNX), and output formats (table, JSON, CSV). Run `python line-cli.py solve example.jsimg --solver mva` to solve a model, `python line-cli.py list solvers` to see available solvers, or `python line-cli.py info` for command line options and features. The script can also start WebSocket or REST API servers for integration with other tools.
 
 ## License
 
