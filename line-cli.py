@@ -150,6 +150,18 @@ def resolve_solver(solver: str) -> str:
     return SOLVER_ALIASES.get(solver.lower(), solver.lower())
 
 
+def auto_select_solver(input_format: str) -> str:
+    """Select an appropriate solver based on input format when 'auto' is specified.
+
+    Returns a concrete solver name since the JAR doesn't support 'auto'.
+    """
+    # For LQN models, use the layered network solver
+    if input_format in ("lqnx", "xml"):
+        return "ln"
+    # For JMT formats, use MVA as the default analytical solver
+    return "mva"
+
+
 INPUT_FORMATS: Dict[str, Dict[str, Any]] = {
     "jsim": {
         "name": "JSIM",
@@ -1101,6 +1113,19 @@ def cmd_solve(args: argparse.Namespace) -> int:
     if solver not in SOLVERS:
         print(f"Error: Unknown solver '{args.solver}'. Available: {', '.join(SOLVERS.keys())}", file=sys.stderr)
         return 1
+
+    # Determine input format early for auto solver selection
+    input_format = args.input_format
+    if args.model_file is not None and input_format is None:
+        input_format = detect_format(Path(args.model_file))
+
+    # Handle 'auto' solver - select concrete solver based on input format
+    if solver == "auto":
+        if input_format is None:
+            # Default to mva for unknown formats
+            solver = "mva"
+        else:
+            solver = auto_select_solver(input_format)
 
     # Validate analysis types
     try:
