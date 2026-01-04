@@ -4,12 +4,13 @@
 A single-file script for solving queueing network models using the LINE solver.
 
 Usage:
-    python line.py solve model.jsimg
-    python line.py solve model.jsimg -s fld -o json
-    python line.py info
-    python line.py list solvers
-    python line.py server -p 5863     # Start WebSocket server
-    python line.py rest -p 8080       # Start REST API server
+    python line-cli.py solve model.jsimg -s mva
+    python line-cli.py solve model.jsimg -s nc -o json
+    python line-cli.py solve model.lqnx -s ln
+    python line-cli.py info
+    python line-cli.py list solvers
+    python line-cli.py server -p 5863     # Start WebSocket server
+    python line-cli.py rest -p 8080       # Start REST API server
 """
 
 import argparse
@@ -127,7 +128,7 @@ SOLVERS: Dict[str, Dict[str, Any]] = {
         "formats": ["jsim", "jsimg", "jsimw", "lqnx", "xml"],
     },
     "qns": {
-        "name": "QNSolver",
+        "name": "QNS",
         "description": "External QNSolver integration",
         "formats": ["jsim", "jsimg", "jsimw"],
     },
@@ -793,6 +794,18 @@ class JarRunner:
 
         cmd = self._build_command(model_path, options)
 
+        # Warn user if JMT solver may need to download JMT.jar
+        if options.solver == "jmt":
+            jmt_paths = [
+                self.jar_path.parent / "JMT.jar" if self.jar_path else None,
+                Path.home() / ".jmt" / "JMT.jar",
+                Path("/usr/share/jmt/JMT.jar"),
+                Path("/opt/jmt/JMT.jar"),
+            ]
+            jmt_found = any(p and p.exists() for p in jmt_paths)
+            if not jmt_found:
+                print("Note: JMT.jar not found. It will be downloaded automatically (~50MB). This may take several minutes, please hold.", file=sys.stderr)
+
         start_time = time.time()
         try:
             result = subprocess.run(
@@ -871,6 +884,18 @@ class JarRunner:
 
         if options.reward_name is not None:
             cmd.extend(["--reward-name", options.reward_name])
+
+        # Warn user if JMT solver may need to download JMT.jar
+        if options.solver == "jmt":
+            jmt_paths = [
+                self.jar_path.parent / "JMT.jar" if self.jar_path else None,
+                Path.home() / ".jmt" / "JMT.jar",
+                Path("/usr/share/jmt/JMT.jar"),
+                Path("/opt/jmt/JMT.jar"),
+            ]
+            jmt_found = any(p and p.exists() for p in jmt_paths)
+            if not jmt_found:
+                print("Note: JMT.jar not found. It will be downloaded automatically (~50MB). This may take several minutes, please hold.", file=sys.stderr)
 
         start_time = time.time()
         try:
@@ -1389,6 +1414,17 @@ def cmd_info(args: argparse.Namespace) -> int:
     for row in rows:
         row_line = "  ".join(str(cell).ljust(col_widths[i]) for i, cell in enumerate(row))
         print(row_line)
+
+    print("\nUsage:")
+    print("-" * 40)
+    print("Specify solver with -s/--solver option:")
+    print("  python line-cli.py solve model.jsimg -s mva")
+    print("  python line-cli.py solve model.jsimg -s nc")
+    print("  python line-cli.py solve model.jsimg -s fld")
+    print("  python line-cli.py solve model.lqnx -s ln")
+    print()
+    print("List all solvers:  python line-cli.py list solvers")
+    print("List all options:  python line-cli.py solve --help")
 
     return 0
 
