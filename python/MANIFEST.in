@@ -1,0 +1,12 @@
+include AUTHORS
+include LICENSE
+include mm1.py
+include mm1.ipynb
+include README.md
+include requirements.txt
+#include line_solver/jline.jar
+recursive-exclude line_solver jline.jar
+recursive-exclude line_solver JMT.jar
+recursive-include line_solver *.py
+recursive-include gettingstarted *.*
+recursive-include examples *.*

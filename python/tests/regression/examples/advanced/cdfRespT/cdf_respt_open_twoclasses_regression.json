@@ -1,0 +1,252 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "#!/usr/bin/env python3\nimport sys\nimport os\n# Add the line_solver package to path if running as script\nif '__file__' in globals():\n    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))\n\nfrom line_solver import *\nimport numpy as np",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-09-10T15:30:47.845969Z",
+          "start_time": "2025-09-10T15:30:46.977582Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:28.491542Z",
+          "iopub.execute_input": "2026-01-01T10:31:28.491655Z",
+          "shell.execute_reply": "2026-01-01T10:31:28.973535Z",
+          "iopub.status.idle": "2026-01-01T10:31:28.973836Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "# CDF Response Time Analysis Example 3\n# Open network with two classes, comparing Fluid and JMT transient CDF\n\nmodel = Network('myModel')\n\n# Block 1: nodes\nnode = [None] * 4  # using 0-based indexing\nnode[0] = Source(model, 'Source')\nnode[1] = Queue(model, 'Queue1', SchedStrategy.FCFS)\nnode[2] = Queue(model, 'Queue2', SchedStrategy.FCFS)\nnode[3] = Sink(model, 'Sink')\n\n# Block 2: classes\njobclass = [None] * 2  # using 0-based indexing\njobclass[0] = OpenClass(model, 'Class1', 0)\njobclass[1] = OpenClass(model, 'Class2', 0)\n\n# Arrival processes\nnode[0].set_arrival(jobclass[0], Exp.fit_mean(4.0))  # Source,Class1\nnode[0].set_arrival(jobclass[1], Exp.fit_mean(4.0))  # Source,Class2\n\n# Service processes\nnode[1].set_service(jobclass[0], Exp.fit_mean(1.0))  # Queue1,Class1\nnode[1].set_service(jobclass[1], Exp.fit_mean(1.0))  # Queue1,Class2\n\nnode[2].set_service(jobclass[0], Exp.fit_mean(1.0))  # Queue2,Class1\nnode[2].set_service(jobclass[1], Exp.fit_mean(1.0))  # Queue2,Class2\n\n# Block 3: topology - matching MATLAB implementation\nP = model.init_routing_matrix()\n\n# MATLAB: P{1,1}(1,2) = 1 - Class1->Class1: Source->Queue1\nP.set(jobclass[0], jobclass[0], node[0], node[1], 1.0)\n\n# MATLAB: P{1,2}(2,3) = 1 - Class1->Class2: Queue1->Queue2\nP.set(jobclass[0], jobclass[1], node[1], node[2], 1.0)\n\n# MATLAB: P{2,1}(3,4) = 1 - Class2->Class1: Queue2->Sink\nP.set(jobclass[1], jobclass[0], node[2], node[3], 1.0)\n\n# MATLAB: P{2,2}(1,2) = 1 - Class2->Class2: Source->Queue1\nP.set(jobclass[1], jobclass[1], node[0], node[1], 1.0)\n\n# MATLAB: P{2,1}(2,3) = 1 - Class2->Class1: Queue1->Queue2\nP.set(jobclass[1], jobclass[0], node[1], node[2], 1.0)\n\n# MATLAB: P{1,2}(3,4) = 1 - Class1->Class2: Queue2->Sink\nP.set(jobclass[0], jobclass[1], node[2], node[3], 1.0)\n\nmodel.link(P)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-09-10T15:30:47.874576Z",
+          "start_time": "2025-09-10T15:30:47.850216Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:28.975010Z",
+          "iopub.execute_input": "2026-01-01T10:31:28.975143Z",
+          "shell.execute_reply": "2026-01-01T10:31:28.977964Z",
+          "iopub.status.idle": "2026-01-01T10:31:28.978224Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Solve with JMT solver - aligned with MATLAB test scenario  \njmtoptions = JMT.default_options()\njmtoptions.samples = int(10000)  # Aligned with MATLAB: samples=1e4\njmtoptions.seed = 23000  # Aligned with MATLAB: seed=23000\nRDsim = JMT(model, jmtoptions).get_tran_cdf_respt()  # Using getTranCdfRespT like MATLAB\n\n# Solve with Fluid solver - aligned with MATLAB test scenario\noptions = FLD.default_options()  \noptions.iter_max = 300  # Aligned with MATLAB: iter_max=300\nRDfluid = FLD(model, options).cdf_respt()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-09-10T15:31:14.615490Z",
+          "start_time": "2025-09-10T15:30:47.910838Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:28.979074Z",
+          "iopub.execute_input": "2026-01-01T10:31:28.979161Z",
+          "shell.execute_reply": "2026-01-01T10:31:29.589841Z",
+          "iopub.status.idle": "2026-01-01T10:31:29.590092Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/solvers.py:1380: UserWarning: SolverJMT native does not currently support transient CDF extraction. Returning empty results.\n  warnings.warn(\n/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/solvers.py:1356: UserWarning: SolverJMT native does not currently support CDF extraction. Returning empty results. Use SolverFluid (FLD) for CDF analysis.\n  warnings.warn(\n",
+            "numerical_values": [
+              1380.0,
+              1356.0
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "SolverJMT command: java -cp /home/gcasale/Dropbox/code/line-dev.git/common/JMT.jar jmt.commandline.Jmt sim /tmp/jmt_17jjpfbo/model.jsimg\n",
+            "numerical_values": [
+              17.0
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/solvers_native/solver_fld_native/methods/passage_time.py:82: UserWarning: Passage time analysis on multi-station network (M=3). Using station 0 only.\n  warnings.warn(f\"Passage time analysis on multi-station network (M={self.sn.nstations}). \"\n/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/solvers_native/solver_fld_native/methods/passage_time.py:82: UserWarning: Passage time analysis on multi-station network (M=3). Using station 1 only.\n  warnings.warn(f\"Passage time analysis on multi-station network (M={self.sn.nstations}). \"\n/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/solvers_native/solver_fld_native/methods/passage_time.py:82: UserWarning: Passage time analysis on multi-station network (M=3). Using station 2 only.\n  warnings.warn(f\"Passage time analysis on multi-station network (M={self.sn.nstations}). \"\n",
+            "numerical_values": [
+              82.0,
+              3.0,
+              0.0,
+              82.0,
+              3.0,
+              1.0,
+              82.0,
+              3.0,
+              2.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Plotting and comparison - matching MATLAB layout (4 plots in 2x2 grid)\nimport matplotlib.pyplot as plt\n\n# Create 2x2 subplot grid for the 4 plots (2 stations x 2 classes)\nfig, axes = plt.subplots(2, 2, figsize=(12, 8))\n\nprint(f\"Number of stations: {model.get_number_of_stations()}\")\nprint(f\"Station range: {list(range(1, model.get_number_of_stations() - 1))}\")\n\nplot_idx = 0\n# Iterate over both queue stations 1 and 2 \nfor i in range(1, model.get_number_of_stations() - 1):  # Should be [1, 2] for stations Queue1, Queue2\n    for c in range(model.get_number_of_classes()):  # classes [0, 1]\n        row = plot_idx // 2\n        col = plot_idx % 2\n        \n        print(f\"Processing station {i}, class {c} -> plot position [{row}, {col}]\")\n        \n        if i < len(RDsim) and c < len(RDsim[i]) and RDsim[i][c] is not None and len(RDsim[i]) > c and RDfluid[i][c] is not None:\n            axes[row, col].loglog(RDsim[i][c][:, 1], 1 - RDsim[i][c][:, 0], 'r--', label='sim')\n            axes[row, col].loglog(RDfluid[i][c][:, 1], 1 - RDfluid[i][c][:, 0], 'b-.', label='fluid')\n            axes[row, col].legend(loc='lower left')\n            axes[row, col].set_title(f'RespT Tail: Node {i}, Class {c+1}')\n            print(f\"  -> Plotted data for station {i}, class {c}\")\n        else:\n            axes[row, col].set_title(f'RespT Tail: Node {i}, Class {c+1} (no data)')\n            print(f\"  -> No data for station {i}, class {c}\")\n        \n        plot_idx += 1\n\nplt.tight_layout()\nplt.show()\n\n# Calculate average response times from CDFs - matching MATLAB indexing\nAvgRespTfromCDFfluid = np.zeros((model.get_number_of_stations(), model.get_number_of_classes()))\nAvgRespTfromCDFsim = np.zeros((model.get_number_of_stations(), model.get_number_of_classes()))\n\nfor i in range(1, model.get_number_of_stations()):  # stations 1,2,3 like MATLAB i=2:end\n    for c in range(model.get_number_of_classes()):\n        # From Fluid CDF\n        if i < len(RDfluid) and c < len(RDfluid[i]) and RDfluid[i][c] is not None and len(RDfluid[i][c]) > 1:\n            diffs = np.diff(RDfluid[i][c][:, 0])\n            values = RDfluid[i][c][1:, 1]\n            AvgRespTfromCDFfluid[i, c] = np.sum(diffs * values)\n        \n        # From Simulation CDF\n        if i < len(RDsim) and c < len(RDsim[i]) and RDsim[i][c] is not None and len(RDsim[i][c]) > 1:\n            diffs = np.diff(RDsim[i][c][:, 0])\n            values = RDsim[i][c][1:, 1]\n            AvgRespTfromCDFsim[i, c] = np.sum(diffs * values)\n\nprint('AvgRespTfromCDFfluid =')\nprint(AvgRespTfromCDFfluid)\nprint('AvgRespTfromCDFsim =')\nprint(AvgRespTfromCDFsim)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-09-10T15:31:39.227291Z",
+          "start_time": "2025-09-10T15:31:38.752907Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:29.591037Z",
+          "iopub.execute_input": "2026-01-01T10:31:29.591122Z",
+          "iopub.status.idle": "2026-01-01T10:31:29.886654Z",
+          "shell.execute_reply": "2026-01-01T10:31:29.886382Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Number of stations: 3\nStation range: [1]\nProcessing station 1, class 0 -> plot position [0, 0]\n  -> No data for station 1, class 0\nProcessing station 1, class 1 -> plot position [0, 1]\n  -> No data for station 1, class 1\n",
+            "numerical_values": [
+              3.0,
+              1.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              0.0,
+              1.0,
+              1.0,
+              0.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "output_type": "display_data",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "text/plain": "<Figure size 1200x800 with 4 Axes>",
+            "numerical_values": [
+              1200.0,
+              800.0,
+              4.0
+            ],
+            "image/png": "<image_data_length:31792>"
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "AvgRespTfromCDFfluid =\n[[0.         0.        ]\n [2.68417623 2.68417623]\n [2.68417623 2.68417623]]\nAvgRespTfromCDFsim =\n[[0. 0.]\n [0. 0.]\n [0. 0.]]\n",
+            "numerical_values": [
+              0.0,
+              0.0,
+              2.68417623,
+              2.68417623,
+              2.68417623,
+              2.68417623,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 4
+    }
+  },
+  "numerical_summary": {
+    "cell_0": [
+      3.0,
+      0.0
+    ],
+    "cell_2": [
+      1380.0,
+      1356.0,
+      17.0,
+      82.0,
+      3.0,
+      0.0,
+      82.0,
+      3.0,
+      1.0,
+      82.0,
+      3.0,
+      2.0,
+      10000.0,
+      10000.0,
+      23000.0,
+      23000.0,
+      300.0,
+      300.0
+    ],
+    "cell_3": [
+      3.0,
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      1.0,
+      1.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0,
+      1200.0,
+      800.0,
+      4.0,
+      0.0,
+      0.0,
+      2.68417623,
+      2.68417623,
+      2.68417623,
+      2.68417623,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "cdfRespT/cdf_respt_open_twoclasses.ipynb",
+    "source_dir": "examples/advanced",
+    "total_cells": 4,
+    "code_cells": 4,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

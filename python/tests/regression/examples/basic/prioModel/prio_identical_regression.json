@@ -1,0 +1,547 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:25:42.092959Z",
+          "start_time": "2025-07-30T22:25:42.090934Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:03.558847Z",
+          "iopub.execute_input": "2026-01-01T10:31:03.558930Z",
+          "iopub.status.idle": "2026-01-01T10:31:04.038180Z",
+          "shell.execute_reply": "2026-01-01T10:31:04.037825Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "# Create network model\nmodel = Network('model')\n\n# Block 1: Create nodes\nnode = np.empty(2, dtype=object)\nnode[0] = Delay(model, 'Delay')\nnode[1] = Queue(model, 'Queue1', SchedStrategy.GPSPRIO)  # Generalized Processor Sharing with Priority\n\nprint(\"Network created with nodes:\")\nprint(\"  Delay: Think time/delay station\")\nprint(\"  Queue1: GPSPRIO (Generalized Processor Sharing with Priority) queue\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:25:42.157739Z",
+          "start_time": "2025-07-30T22:25:42.155409Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:04.039499Z",
+          "iopub.execute_input": "2026-01-01T10:31:04.039632Z",
+          "iopub.status.idle": "2026-01-01T10:31:04.041688Z",
+          "shell.execute_reply": "2026-01-01T10:31:04.041437Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Network created with nodes:\n  Delay: Think time/delay station\n  Queue1: GPSPRIO (Generalized Processor Sharing with Priority) queue\n",
+            "numerical_values": [
+              1.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Block 2: Create job classes with different priorities and populations\njobclass = np.empty(4, dtype=object)\njobclass[0] = ClosedClass(model, 'Class1', 6, node[0], 0)  # 6 jobs, priority 0\njobclass[1] = ClosedClass(model, 'Class2', 4, node[0], 1)  # 4 jobs, priority 1  \njobclass[2] = ClosedClass(model, 'Class3', 4, node[0], 1)  # 4 jobs, priority 1\njobclass[3] = ClosedClass(model, 'Class4', 1, node[0], 2)  # 1 job, priority 2 (highest)\n\nprint(\"Job classes created:\")\nprint(\"  Class1: 6 jobs, priority 0 (lowest)\")\nprint(\"  Class2: 4 jobs, priority 1 (medium)\")\nprint(\"  Class3: 4 jobs, priority 1 (medium)\")\nprint(\"  Class4: 1 job,  priority 2 (highest)\")\nprint(f\"  Total population: {6+4+4+1} jobs\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:25:42.230753Z",
+          "start_time": "2025-07-30T22:25:42.228205Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:04.042447Z",
+          "iopub.execute_input": "2026-01-01T10:31:04.042556Z",
+          "iopub.status.idle": "2026-01-01T10:31:04.044640Z",
+          "shell.execute_reply": "2026-01-01T10:31:04.044436Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Job classes created:\n  Class1: 6 jobs, priority 0 (lowest)\n  Class2: 4 jobs, priority 1 (medium)\n  Class3: 4 jobs, priority 1 (medium)\n  Class4: 1 job,  priority 2 (highest)\n  Total population: 15 jobs\n",
+            "numerical_values": [
+              1.0,
+              6.0,
+              0.0,
+              2.0,
+              4.0,
+              1.0,
+              3.0,
+              4.0,
+              1.0,
+              4.0,
+              1.0,
+              2.0,
+              15.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Block 3: Set service time distributions at Delay station\nnode[0].set_service(jobclass[0], Erlang(3, 2))  # Erlang(k=3, rate=2)\nnode[0].set_service(jobclass[1], Exp.fit_mean(1.0))  # Exponential with mean=1.0\nnode[0].set_service(jobclass[2], Exp.fit_mean(1.0))  # Exponential with mean=1.0\nnode[0].set_service(jobclass[3], Exp.fit_mean(0.5))  # Exponential with mean=0.5\n\nprint(\"Delay station service times configured:\")\nprint(\"  Class1: Erlang(k=3, rate=2)\")\nprint(\"  Class2: Exponential(mean=1.0)\")\nprint(\"  Class3: Exponential(mean=1.0)\")\nprint(\"  Class4: Exponential(mean=0.5)\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:25:42.290120Z",
+          "start_time": "2025-07-30T22:25:42.287441Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:04.045370Z",
+          "iopub.execute_input": "2026-01-01T10:31:04.045442Z",
+          "iopub.status.idle": "2026-01-01T10:31:04.047215Z",
+          "shell.execute_reply": "2026-01-01T10:31:04.047007Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Delay station service times configured:\n  Class1: Erlang(k=3, rate=2)\n  Class2: Exponential(mean=1.0)\n  Class3: Exponential(mean=1.0)\n  Class4: Exponential(mean=0.5)\n",
+            "numerical_values": [
+              1.0,
+              3.0,
+              2.0,
+              2.0,
+              1.0,
+              3.0,
+              1.0,
+              4.0,
+              0.5
+            ]
+          }
+        }
+      ],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# Block 4: Set service times and weights at GPSPRIO queue\n# Service rates and weights for weighted sharing within priority levels\nw1 = 12  # Weight for Class1\nw2 = 3   # Weight for Class2\nw3 = 5   # Weight for Class3\nw4 = 1   # Weight for Class4\n\n# Set service times with weights (Python API: setService(jobclass, distribution, weight))\nnode[1].set_service(jobclass[0], Exp.fitRate(30.0), w1)  # Rate=30, Weight=12\nnode[1].set_service(jobclass[1], Exp.fitRate(2.0), w2)   # Rate=2, Weight=3\nnode[1].set_service(jobclass[2], Exp.fitRate(12.0), w3)  # Rate=12, Weight=5\nnode[1].set_service(jobclass[3], Exp.fitRate(1.0), w4)   # Rate=1, Weight=1\n\nprint(\"GPSPRIO queue service configuration:\")\nprint(f\"  Class1 (priority 0): rate=30.0, weight={w1}\")\nprint(f\"  Class2 (priority 1): rate=2.0,  weight={w2}\")\nprint(f\"  Class3 (priority 1): rate=12.0, weight={w3}\")\nprint(f\"  Class4 (priority 2): rate=1.0,  weight={w4}\")\nprint()\nprint(\"GPSPRIO behavior:\")\nprint(\"  1. Class4 (priority 2) gets served first when present\")\nprint(\"  2. Class2&3 (priority 1) share capacity by weights 3:5 when present\")\nprint(\"  3. Class1 (priority 0) gets remaining capacity\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:25:42.349407Z",
+          "start_time": "2025-07-30T22:25:42.346160Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:04.047840Z",
+          "iopub.execute_input": "2026-01-01T10:31:04.047910Z",
+          "shell.execute_reply": "2026-01-01T10:31:04.049770Z",
+          "iopub.status.idle": "2026-01-01T10:31:04.049947Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "GPSPRIO queue service configuration:\n  Class1 (priority 0): rate=30.0, weight=12\n  Class2 (priority 1): rate=2.0,  weight=3\n  Class3 (priority 1): rate=12.0, weight=5\n  Class4 (priority 2): rate=1.0,  weight=1\n\nGPSPRIO behavior:\n  1. Class4 (priority 2) gets served first when present\n  2. Class2&3 (priority 1) share capacity by weights 3:5 when present\n  3. Class1 (priority 0) gets remaining capacity\n",
+            "numerical_values": [
+              1.0,
+              0.0,
+              30.0,
+              12.0,
+              2.0,
+              1.0,
+              2.0,
+              3.0,
+              3.0,
+              1.0,
+              12.0,
+              5.0,
+              4.0,
+              2.0,
+              1.0,
+              1.0,
+              1.0,
+              4.0,
+              2.0,
+              2.0,
+              2.0,
+              3.0,
+              1.0,
+              3.0,
+              5.0,
+              3.0,
+              1.0,
+              0.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# Block 5: Set routing (serial routing for all classes)\nP = model.init_routing_matrix()\n\n# All classes follow the same cyclic route: Delay <-> Queue1\nfor i in range(4):\n    P.add_route(jobclass[i], node[0], node[1], 1.0)  # Delay -> Queue1\n    P.add_route(jobclass[i], node[1], node[0], 1.0)  # Queue1 -> Delay\n\nmodel.link(P)\n\nprint(\"Routing configured: Delay <-> Queue1 (cyclic for all classes)\")\nprint(\"All classes follow the same route but with different priorities and weights\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:25:42.410799Z",
+          "start_time": "2025-07-30T22:25:42.407522Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:04.050472Z",
+          "iopub.execute_input": "2026-01-01T10:31:04.050541Z",
+          "shell.execute_reply": "2026-01-01T10:31:04.052074Z",
+          "iopub.status.idle": "2026-01-01T10:31:04.052275Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Routing configured: Delay <-> Queue1 (cyclic for all classes)\nAll classes follow the same route but with different priorities and weights\n",
+            "numerical_values": [
+              1.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 6
+    },
+    "cell_6": {
+      "cell_type": "code",
+      "source": "# Model information\nM = model.get_number_of_stations()\nK = model.get_number_of_classes()\nprint(f\"Model has {M} stations and {K} classes\")\nprint(f\"Total population: {sum(cls.get_number_of_jobs() for cls in jobclass)} jobs\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:25:42.487480Z",
+          "start_time": "2025-07-30T22:25:42.483735Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:04.052844Z",
+          "iopub.execute_input": "2026-01-01T10:31:04.052915Z",
+          "iopub.status.idle": "2026-01-01T10:31:04.054383Z",
+          "shell.execute_reply": "2026-01-01T10:31:04.054224Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Model has 2 stations and 4 classes\nTotal population: 15 jobs\n",
+            "numerical_values": [
+              2.0,
+              4.0,
+              15.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 7
+    },
+    "cell_7": {
+      "cell_type": "code",
+      "source": "# CTMC with verbose=SILENT to match JAR test  \nsolver_ctmc = CTMC(model, verbose=VerboseLevel.SILENT)\navg_table_ctmc = solver_ctmc.avg_table()\nprint(avg_table_ctmc)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:25:58.483752Z",
+          "start_time": "2025-07-30T22:25:42.546758Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:04.054922Z",
+          "iopub.execute_input": "2026-01-01T10:31:04.054991Z",
+          "shell.execute_reply": "2026-01-01T10:31:04.126081Z",
+          "iopub.status.idle": "2026-01-01T10:31:04.126423Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "CTMC state space size: 350\n  Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0   Delay   Class1  5.5963  0.0000  0.0000  0.0000  0.0000  0.0000\n1   Delay   Class2  1.0712  0.0000  0.0000  0.0000  0.0000  0.0000\n2   Delay   Class3  2.6522  0.0000  0.0000  0.0000  0.0000  0.0000\n3   Delay   Class4  0.0895  0.0000  0.0000  0.0000  0.0000  0.0000\n4  Queue1   Class1  0.4037  0.0622  0.2164  0.2164  1.8654  1.8654\n5  Queue1   Class2  2.9288  0.5356  2.7341  2.7341  1.0712  1.0712\n6  Queue1   Class3  1.3478  0.2210  0.5082  0.5082  2.6522  2.6522\n7  Queue1   Class4  0.9105  0.1790  5.0851  5.0851  0.1790  0.1790\n",
+            "numerical_values": [
+              350.0,
+              0.0,
+              1.0,
+              5.5963,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              2.0,
+              1.0712,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              2.0,
+              3.0,
+              2.6522,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              3.0,
+              4.0,
+              0.0895,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              4.0,
+              1.0,
+              1.0,
+              0.4037,
+              0.0622,
+              0.2164,
+              0.2164,
+              1.8654,
+              1.8654,
+              5.0,
+              1.0,
+              2.0,
+              2.9288,
+              0.5356,
+              2.7341,
+              2.7341,
+              1.0712,
+              1.0712,
+              6.0,
+              1.0,
+              3.0,
+              1.3478,
+              0.221,
+              0.5082,
+              0.5082,
+              2.6522,
+              2.6522,
+              7.0,
+              1.0,
+              4.0,
+              0.9105,
+              0.179,
+              5.0851,
+              5.0851,
+              0.179,
+              0.179
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/solvers/ctmc/handler.py:518: RuntimeWarning: invalid value encountered in scalar multiply\n  TN[ist, k] = UN[ist, k] * c * mu\n",
+            "numerical_values": [
+              518.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 8
+    },
+    "cell_8": {
+      "cell_type": "code",
+      "source": "# JMT removed - not tested in JAR for prio_identical\n# solver_jmt = JMT(model, seed=23000, verbose=VerboseLevel.STD, samples=30000)\n# avg_table_jmt = solver_jmt.avg_table()\n# print(avg_table_jmt)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:06.286648Z",
+          "start_time": "2025-07-30T22:25:58.533409Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:04.127247Z",
+          "iopub.execute_input": "2026-01-01T10:31:04.127338Z",
+          "shell.execute_reply": "2026-01-01T10:31:04.128522Z",
+          "iopub.status.idle": "2026-01-01T10:31:04.128767Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 9
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      1.0,
+      1.0,
+      2.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "cell_2": [
+      1.0,
+      6.0,
+      0.0,
+      2.0,
+      4.0,
+      1.0,
+      3.0,
+      4.0,
+      1.0,
+      4.0,
+      1.0,
+      2.0,
+      15.0
+    ],
+    "cell_3": [
+      1.0,
+      3.0,
+      2.0,
+      2.0,
+      1.0,
+      3.0,
+      1.0,
+      4.0,
+      0.5
+    ],
+    "cell_4": [
+      1.0,
+      0.0,
+      30.0,
+      12.0,
+      2.0,
+      1.0,
+      2.0,
+      3.0,
+      3.0,
+      1.0,
+      12.0,
+      5.0,
+      4.0,
+      2.0,
+      1.0,
+      1.0,
+      1.0,
+      4.0,
+      2.0,
+      2.0,
+      2.0,
+      3.0,
+      1.0,
+      3.0,
+      5.0,
+      3.0,
+      1.0,
+      0.0
+    ],
+    "cell_5": [
+      1.0
+    ],
+    "cell_6": [
+      2.0,
+      4.0,
+      15.0
+    ],
+    "cell_7": [
+      350.0,
+      0.0,
+      1.0,
+      5.5963,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      2.0,
+      1.0712,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      2.0,
+      3.0,
+      2.6522,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      3.0,
+      4.0,
+      0.0895,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      4.0,
+      1.0,
+      1.0,
+      0.4037,
+      0.0622,
+      0.2164,
+      0.2164,
+      1.8654,
+      1.8654,
+      5.0,
+      1.0,
+      2.0,
+      2.9288,
+      0.5356,
+      2.7341,
+      2.7341,
+      1.0712,
+      1.0712,
+      6.0,
+      1.0,
+      3.0,
+      1.3478,
+      0.221,
+      0.5082,
+      0.5082,
+      2.6522,
+      2.6522,
+      7.0,
+      1.0,
+      4.0,
+      0.9105,
+      0.179,
+      5.0851,
+      5.0851,
+      0.179,
+      0.179,
+      518.0
+    ],
+    "cell_8": [
+      23000.0,
+      30000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "prioModel/prio_identical.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 9,
+    "code_cells": 9,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

@@ -1,0 +1,211 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nimport time\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:13:13.582222Z",
+          "start_time": "2025-07-29T11:13:13.580019Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:17.809214Z",
+          "iopub.execute_input": "2026-01-01T10:32:17.809327Z",
+          "shell.execute_reply": "2026-01-01T10:32:18.284794Z",
+          "iopub.status.idle": "2026-01-01T10:32:18.285118Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "# Create network\nmodel = Network('model')\n\n# Block 1: nodes (all queues, no delay)\nnode1 = Queue(model, 'Queue1', SchedStrategy.PS)\nnode2 = Queue(model, 'Queue2', SchedStrategy.PS)\nnode3 = Queue(model, 'Queue3', SchedStrategy.PS)\nnode3.set_number_of_servers(3)  # Queue3 has 3 servers",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:13:13.591982Z",
+          "start_time": "2025-07-29T11:13:13.590186Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:18.286202Z",
+          "iopub.execute_input": "2026-01-01T10:32:18.286336Z",
+          "shell.execute_reply": "2026-01-01T10:32:18.287809Z",
+          "iopub.status.idle": "2026-01-01T10:32:18.288100Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Block 2: classes - each with 1 job\nN = [1, 1, 1, 1]  # Population for each class\njobclass1 = ClosedClass(model, 'Class1', N[0], node1, 0)\njobclass2 = ClosedClass(model, 'Class2', N[1], node1, 0)\njobclass3 = ClosedClass(model, 'Class3', N[2], node1, 0)\njobclass4 = ClosedClass(model, 'Class4', N[3], node1, 0)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:13:13.651457Z",
+          "start_time": "2025-07-29T11:13:13.648975Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:18.288825Z",
+          "iopub.execute_input": "2026-01-01T10:32:18.288906Z",
+          "shell.execute_reply": "2026-01-01T10:32:18.290381Z",
+          "iopub.status.idle": "2026-01-01T10:32:18.290679Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Set service times for Queue1\nnode1.set_service(jobclass1, Exp.fit_mean(1.0))\nnode1.set_service(jobclass2, Exp.fit_mean(1.0/2.0))\nnode1.set_service(jobclass3, Exp.fit_mean(1.0))\nnode1.set_service(jobclass4, Exp.fit_mean(1.0))\n\n# Set service times for Queue2\nnode2.set_service(jobclass1, Exp.fit_mean(1.0/3.0))\nnode2.set_service(jobclass2, Exp.fit_mean(1.0/4.0))\nnode2.set_service(jobclass3, Exp.fit_mean(1.0/5.0))\nnode2.set_service(jobclass4, Exp.fit_mean(1.0))\n\n# Set service times for Queue3\nnode3.set_service(jobclass1, Exp.fit_mean(1.0))\nnode3.set_service(jobclass2, Exp.fit_mean(1.0/3.0))\nnode3.set_service(jobclass3, Exp.fit_mean(1.0/5.0))\nnode3.set_service(jobclass4, Exp.fit_mean(1.0/2.0))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:13:13.700590Z",
+          "start_time": "2025-07-29T11:13:13.697881Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:18.291902Z",
+          "iopub.execute_input": "2026-01-01T10:32:18.291990Z",
+          "shell.execute_reply": "2026-01-01T10:32:18.293708Z",
+          "iopub.status.idle": "2026-01-01T10:32:18.293930Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# Block 3: routing with class switching\nK = 4  # Number of classes\nP = {}\n\n# Class1 routing: Queue1 -> Queue2 -> stays as Class1, Queue3 -> Queue1 as Class2\nP[(jobclass1, jobclass1)] = np.array([[0,1,0], [0,0,1], [0,0,0]])\nP[(jobclass1, jobclass2)] = np.array([[0,0,0], [0,0,0], [1,0,0]])\nP[(jobclass1, jobclass3)] = np.array([[0,0,0], [0,0,0], [0,0,0]])\nP[(jobclass1, jobclass4)] = np.array([[0,0,0], [0,0,0], [0,0,0]])\n\n# Class2 routing: Queue3 -> Queue1 as Class1\nP[(jobclass2, jobclass1)] = np.array([[0,0,0], [0,0,0], [1,0,0]])\nP[(jobclass2, jobclass2)] = np.array([[0,1,0], [0,0,1], [0,0,0]])\nP[(jobclass2, jobclass3)] = np.array([[0,0,0], [0,0,0], [0,0,0]])\nP[(jobclass2, jobclass4)] = np.array([[0,0,0], [0,0,0], [0,0,0]])\n\n# Class3 routing: Queue3 -> Queue1 as Class4\nP[(jobclass3, jobclass1)] = np.array([[0,0,0], [0,0,0], [0,0,0]])\nP[(jobclass3, jobclass2)] = np.array([[0,0,0], [0,0,0], [0,0,0]])\nP[(jobclass3, jobclass3)] = np.array([[0,1,0], [0,0,1], [0,0,0]])\nP[(jobclass3, jobclass4)] = np.array([[0,0,0], [0,0,0], [1,0,0]])\n\n# Class4 routing: Queue3 -> Queue1 as Class3, Queue1 -> Queue3\nP[(jobclass4, jobclass1)] = np.array([[0,0,0], [0,0,0], [0,0,0]])\nP[(jobclass4, jobclass2)] = np.array([[0,0,0], [0,0,0], [0,0,0]])\nP[(jobclass4, jobclass3)] = np.array([[0,0,0], [0,0,0], [1,0,0]])\nP[(jobclass4, jobclass4)] = np.array([[0,0,1], [0,0,0], [0,0,0]])\n\nmodel.link(P)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:13:13.752715Z",
+          "start_time": "2025-07-29T11:13:13.748398Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:18.294491Z",
+          "iopub.execute_input": "2026-01-01T10:32:18.294564Z",
+          "shell.execute_reply": "2026-01-01T10:32:18.297448Z",
+          "iopub.status.idle": "2026-01-01T10:32:18.297648Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# Set initial state: all jobs at Queue3\nn = np.array([[0,0,0,0],        # Queue1: no jobs\n              [0,0,0,0],        # Queue2: no jobs\n              [N[0],N[1],N[2],N[3]]])  # Queue3: all jobs\n\nnodes = [node1, node2, node3]\nfor i in range(len(nodes)):\n    nodes[i].set_state(n[i])\n\nstate = model.state()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:13:13.800870Z",
+          "start_time": "2025-07-29T11:13:13.798599Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:18.298451Z",
+          "iopub.execute_input": "2026-01-01T10:32:18.298521Z",
+          "shell.execute_reply": "2026-01-01T10:32:18.299843Z",
+          "iopub.status.idle": "2026-01-01T10:32:18.300030Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 6
+    },
+    "cell_6": {
+      "cell_type": "code",
+      "source": "# Solver options\noptions = Solver.defaultOptions\noptions.verbose = 1\n\n# Results storage\nresults = {}\ntimings = {}",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:13:13.857743Z",
+          "start_time": "2025-07-29T11:13:13.856055Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:18.300651Z",
+          "iopub.execute_input": "2026-01-01T10:32:18.300719Z",
+          "shell.execute_reply": "2026-01-01T10:32:18.301745Z",
+          "iopub.status.idle": "2026-01-01T10:32:18.301909Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 7
+    },
+    "cell_7": {
+      "cell_type": "code",
+      "source": "# CTMC solver\nstart_time = time.time()\noptions.seed = 23000\nsolver_ctmc = CTMC(model, options)\nPr_ctmc = solver_ctmc.prob_sys_aggr()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:13:21.935238Z",
+          "start_time": "2025-07-29T11:13:13.907822Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:18.302491Z",
+          "iopub.execute_input": "2026-01-01T10:32:18.302557Z",
+          "shell.execute_reply": "2026-01-01T10:32:18.347852Z",
+          "iopub.status.idle": "2026-01-01T10:32:18.348197Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 8
+    },
+    "cell_8": {
+      "cell_type": "code",
+      "source": "# JMT solver (simulation)\nstart_time = time.time()\nsolver_jmt = JMT(model, seed=23000, samples=100000)\nPr_jmt = solver_jmt.prob_sys_aggr()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:13:21.996188Z",
+          "start_time": "2025-07-29T11:13:21.939307Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:18.349268Z",
+          "iopub.execute_input": "2026-01-01T10:32:18.349361Z",
+          "shell.execute_reply": "2026-01-01T10:32:18.657608Z",
+          "iopub.status.idle": "2026-01-01T10:32:18.657891Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 9
+    },
+    "cell_9": {
+      "cell_type": "code",
+      "source": "# NC solver with sampling\nstart_time = time.time()\noptions_nc = Solver.defaultOptions\noptions_nc.verbose = 1\noptions_nc.method = 'ls'  # Logistic sampling\noptions_nc.seed = 23000\noptions_nc.samples = 1000\n\nsolver_nc = NC(model, options_nc)\nPr_nc = solver_nc.prob_sys_aggr()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:13:22.168251Z",
+          "start_time": "2025-07-29T11:13:22.006040Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:18.659092Z",
+          "iopub.execute_input": "2026-01-01T10:32:18.659217Z",
+          "iopub.status.idle": "2026-01-01T10:32:18.661860Z",
+          "shell.execute_reply": "2026-01-01T10:32:18.661653Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 10
+    }
+  },
+  "numerical_summary": {
+    "cell_6": [
+      1.0
+    ],
+    "cell_7": [
+      23000.0
+    ],
+    "cell_8": [
+      23000.0,
+      100000.0
+    ],
+    "cell_9": [
+      1.0,
+      23000.0,
+      1000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "stateProbabilities/statepr_sys_aggr_large.ipynb",
+    "source_dir": "examples/advanced",
+    "total_cells": 10,
+    "code_cells": 10,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

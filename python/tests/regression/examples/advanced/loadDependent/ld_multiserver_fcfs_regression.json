@@ -1,0 +1,500 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "collapsed": false,
+        "ExecuteTime": {
+          "end_time": "2025-07-14T16:57:34.186196Z",
+          "start_time": "2025-07-14T16:57:29.110947Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:49.761840Z",
+          "iopub.execute_input": "2026-01-01T10:31:49.761925Z",
+          "iopub.status.idle": "2026-01-01T10:31:50.232739Z",
+          "shell.execute_reply": "2026-01-01T10:31:50.232368Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "N = 16 # number of jobs\nc = 2 # number of servers\n\nmodel = Network('model')\nnode = np.empty(2, dtype=object)\nnode[0] = Delay(model, 'Delay')\nnode[1] = Queue(model, 'Queue1', SchedStrategy.FCFS)\n\njobclass = ClosedClass(model, 'Class1', N, node[0], 0)\n\nnode[0].set_service(jobclass, Exp.fit_mean(1.0)) # mean = 1\nnode[1].set_service(jobclass, Exp.fit_mean(1.5)) # mean = 1.5\nnode[1].set_number_of_servers(c)\n\nmodel.link(Network.serial_routing(node))\n\nmsT=NC(model).avg_table()\nprint(msT)\n\n# casted with scaling function that depends on the total queue\nldmodel = Network('model')\nnode = np.empty(2, dtype=object)\nnode[0] = Delay(ldmodel, 'Delay')\nnode[1] = Queue(ldmodel, 'Queue1', SchedStrategy.FCFS)\n\njobclass = ClosedClass(ldmodel, 'Class1', N, node[0], 0)\n\nnode[0].set_service(jobclass, Exp.fit_mean(1.0)) # mean = 1\nnode[1].set_service(jobclass, Exp.fit_mean(1.5)) # mean = 1.5\n\nnode[1].set_load_dependence(np.minimum(np.arange(1,N+1,1),c)) # multi-server with c servers\n\nldmodel.link(Network.serial_routing(node))\n\nlldAvgTableCTMC=CTMC(ldmodel).avg_table()\nprint(lldAvgTableCTMC)",
+      "metadata": {
+        "collapsed": false,
+        "ExecuteTime": {
+          "end_time": "2025-07-14T16:57:35.728765Z",
+          "start_time": "2025-07-14T16:57:34.888550Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:50.234170Z",
+          "iopub.execute_input": "2026-01-01T10:31:50.234358Z",
+          "iopub.status.idle": "2026-01-01T10:31:50.285243Z",
+          "shell.execute_reply": "2026-01-01T10:31:50.284840Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass     QLen    Util  RespT  ResidT    ArvR    Tput\n0   Delay   Class1   1.3333  1.3333    1.0     1.0  1.3333  1.3333\n1  Queue1   Class1  14.6667  1.0000   11.0    11.0  1.3333  1.3333\n  Station JobClass     QLen  Util  RespT  ResidT    ArvR    Tput\n0   Delay   Class1   0.6667   0.0    0.0     0.0  0.0000  0.0000\n1  Queue1   Class1  15.3333   1.0   23.0    23.0  0.6667  0.6667\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              1.3333,
+              1.3333,
+              1.0,
+              1.0,
+              1.3333,
+              1.3333,
+              1.0,
+              1.0,
+              1.0,
+              14.6667,
+              1.0,
+              11.0,
+              11.0,
+              1.3333,
+              1.3333,
+              0.0,
+              1.0,
+              0.6667,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              1.0,
+              15.3333,
+              1.0,
+              23.0,
+              23.0,
+              0.6667,
+              0.6667
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/solvers/ctmc/handler.py:518: RuntimeWarning: invalid value encountered in scalar multiply\n  TN[ist, k] = UN[ist, k] * c * mu\n",
+            "numerical_values": [
+              518.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# NC solver has limitations on multi-station load-dependent models\ntry:\n    lldAvgTableNC=NC(ldmodel).avg_table()\n    print(lldAvgTableNC)\nexcept Exception as e:\n    print(f\"NC solver limitation: {type(e).__name__}\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-14T16:57:37.572671Z",
+          "start_time": "2025-07-14T16:57:37.107177Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:50.286135Z",
+          "iopub.execute_input": "2026-01-01T10:31:50.286257Z",
+          "shell.execute_reply": "2026-01-01T10:31:50.290030Z",
+          "iopub.status.idle": "2026-01-01T10:31:50.290209Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass     QLen    Util  RespT  ResidT    ArvR    Tput\n0   Delay   Class1   0.6667  0.6667    1.0     1.0  0.6667  0.6667\n1  Queue1   Class1  15.3333  1.0000   23.0    23.0  0.6667  0.6667\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              0.6667,
+              0.6667,
+              1.0,
+              1.0,
+              0.6667,
+              0.6667,
+              1.0,
+              1.0,
+              1.0,
+              15.3333,
+              1.0,
+              23.0,
+              23.0,
+              0.6667,
+              0.6667
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "try:\n    lldAvgTableRD=NC(ldmodel, method='rd').avg_table()\n    print(lldAvgTableRD)\nexcept Exception as e:\n    print(f\"NC(rd) solver limitation: {type(e).__name__}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:50.290937Z",
+          "iopub.execute_input": "2026-01-01T10:31:50.291014Z",
+          "shell.execute_reply": "2026-01-01T10:31:50.294329Z",
+          "iopub.status.idle": "2026-01-01T10:31:50.294537Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Empty DataFrame\nColumns: [Station, JobClass, QLen, Util, RespT, ResidT, ArvR, Tput]\nIndex: []\n"
+          }
+        }
+      ],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "try:\n    lldAvgTableNRP=NC(ldmodel, method='nrp').avg_table()\n    print(lldAvgTableNRP)\nexcept Exception as e:\n    print(f\"NC(nrp) solver limitation: {type(e).__name__}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:50.295209Z",
+          "iopub.execute_input": "2026-01-01T10:31:50.295284Z",
+          "shell.execute_reply": "2026-01-01T10:31:50.299394Z",
+          "iopub.status.idle": "2026-01-01T10:31:50.299596Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0   Delay   Class1  6.8689  0.6667  1.0000  1.0000  6.8689  6.8689\n1  Queue1   Class1  9.1311  1.0000  1.3293  1.3293  6.8689  6.8689\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              6.8689,
+              0.6667,
+              1.0,
+              1.0,
+              6.8689,
+              6.8689,
+              1.0,
+              1.0,
+              1.0,
+              9.1311,
+              1.0,
+              1.3293,
+              1.3293,
+              6.8689,
+              6.8689
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/pfqn/ncld.py:178: ComplexWarning: Casting complex values to real discards the imaginary part\n  L = np.atleast_2d(np.asarray(L, dtype=float))\n",
+            "numerical_values": [
+              178.0,
+              2.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "try:\n    lldAvgTableNRL=NC(ldmodel, method='nrl').avg_table()\n    print(lldAvgTableNRL)\nexcept Exception as e:\n    print(f\"NC(nrl) solver limitation: {type(e).__name__}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:50.300235Z",
+          "iopub.execute_input": "2026-01-01T10:31:50.300313Z",
+          "shell.execute_reply": "2026-01-01T10:31:50.304546Z",
+          "iopub.status.idle": "2026-01-01T10:31:50.304817Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0   Delay   Class1  6.8689  0.6667  1.0000  1.0000  6.8689  6.8689\n1  Queue1   Class1  9.1311  1.0000  1.3293  1.3293  6.8689  6.8689\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              6.8689,
+              0.6667,
+              1.0,
+              1.0,
+              6.8689,
+              6.8689,
+              1.0,
+              1.0,
+              1.0,
+              9.1311,
+              1.0,
+              1.3293,
+              1.3293,
+              6.8689,
+              6.8689
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/pfqn/ncld.py:178: ComplexWarning: Casting complex values to real discards the imaginary part\n  L = np.atleast_2d(np.asarray(L, dtype=float))\n",
+            "numerical_values": [
+              178.0,
+              2.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 6
+    },
+    "cell_6": {
+      "cell_type": "code",
+      "source": "lldAvgTableMVALD=MVA(ldmodel, method='exact').avg_table()",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:50.305528Z",
+          "iopub.execute_input": "2026-01-01T10:31:50.305613Z",
+          "shell.execute_reply": "2026-01-01T10:31:50.308407Z",
+          "iopub.status.idle": "2026-01-01T10:31:50.308619Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/solvers_native/solver_mva.py:378: RuntimeWarning: invalid value encountered in cast\n  result = pfqn_mvams(lambda_arr, L, N, Z, mi=None, S=mi.astype(int))\n",
+            "numerical_values": [
+              378.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 7
+    },
+    "cell_7": {
+      "cell_type": "code",
+      "source": "try:\n    lldAvgTableQD=MVA(ldmodel, method='qd').avg_table()\n    print(lldAvgTableQD)\nexcept Exception as e:\n    print(f\"MVA(qd) solver error: {type(e).__name__}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:50.309353Z",
+          "iopub.execute_input": "2026-01-01T10:31:50.309431Z",
+          "shell.execute_reply": "2026-01-01T10:31:50.313172Z",
+          "iopub.status.idle": "2026-01-01T10:31:50.313388Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass     QLen    Util    RespT   ResidT    ArvR    Tput\n0   Delay   Class1   1.7423  0.6616   2.6334   2.6334  0.6616  0.6616\n1  Queue1   Class1  14.2577  0.9924  21.5499  21.5499  0.6616  0.6616\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              1.7423,
+              0.6616,
+              2.6334,
+              2.6334,
+              0.6616,
+              0.6616,
+              1.0,
+              1.0,
+              1.0,
+              14.2577,
+              0.9924,
+              21.5499,
+              21.5499,
+              0.6616,
+              0.6616
+            ]
+          }
+        }
+      ],
+      "execution_count": 8
+    },
+    "cell_8": {
+      "cell_type": "code",
+      "source": "# casted with scaling function that depends on the per-class queue population\ncdmodel = Network('model')\nnode = np.empty(2, dtype=object)\nnode[0] = Delay(cdmodel, 'Delay')\nnode[1] = Queue(cdmodel, 'Queue1', SchedStrategy.FCFS)\n\njobclass = ClosedClass(cdmodel, 'Class1', N, node[0], 0)\n\nnode[0].set_service(jobclass, Exp.fit_mean(1.0)) # mean = 1\nnode[1].set_service(jobclass, Exp.fit_mean(1.5)) # mean = 1.5\n\n# Note: setClassDependence(@(ni) min(sum(ni),c)) not available in Python\n#node[1].set_load_dependence(np.minimum(np.arange(1,N+1,1),c))\n\n#cdmodel.link(Network.serial_routing(node))\n#cdAvgTableCTMC=CTMC(cdmodel).avg_table()",
+      "metadata": {
+        "collapsed": false,
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:50.314278Z",
+          "iopub.execute_input": "2026-01-01T10:31:50.314360Z",
+          "iopub.status.idle": "2026-01-01T10:31:50.316129Z",
+          "shell.execute_reply": "2026-01-01T10:31:50.315931Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 9
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      0.0,
+      1.0,
+      1.3333,
+      1.3333,
+      1.0,
+      1.0,
+      1.3333,
+      1.3333,
+      1.0,
+      1.0,
+      1.0,
+      14.6667,
+      1.0,
+      11.0,
+      11.0,
+      1.3333,
+      1.3333,
+      0.0,
+      1.0,
+      0.6667,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0,
+      15.3333,
+      1.0,
+      23.0,
+      23.0,
+      0.6667,
+      0.6667,
+      518.0
+    ],
+    "cell_2": [
+      0.0,
+      1.0,
+      0.6667,
+      0.6667,
+      1.0,
+      1.0,
+      0.6667,
+      0.6667,
+      1.0,
+      1.0,
+      1.0,
+      15.3333,
+      1.0,
+      23.0,
+      23.0,
+      0.6667,
+      0.6667
+    ],
+    "cell_4": [
+      0.0,
+      1.0,
+      6.8689,
+      0.6667,
+      1.0,
+      1.0,
+      6.8689,
+      6.8689,
+      1.0,
+      1.0,
+      1.0,
+      9.1311,
+      1.0,
+      1.3293,
+      1.3293,
+      6.8689,
+      6.8689,
+      178.0,
+      2.0
+    ],
+    "cell_5": [
+      0.0,
+      1.0,
+      6.8689,
+      0.6667,
+      1.0,
+      1.0,
+      6.8689,
+      6.8689,
+      1.0,
+      1.0,
+      1.0,
+      9.1311,
+      1.0,
+      1.3293,
+      1.3293,
+      6.8689,
+      6.8689,
+      178.0,
+      2.0
+    ],
+    "cell_6": [
+      378.0
+    ],
+    "cell_7": [
+      0.0,
+      1.0,
+      1.7423,
+      0.6616,
+      2.6334,
+      2.6334,
+      0.6616,
+      0.6616,
+      1.0,
+      1.0,
+      1.0,
+      14.2577,
+      0.9924,
+      21.5499,
+      21.5499,
+      0.6616,
+      0.6616
+    ]
+  },
+  "metadata": {
+    "notebook_path": "loadDependent/ld_multiserver_fcfs.ipynb",
+    "source_dir": "examples/advanced",
+    "total_cells": 9,
+    "code_cells": 9,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

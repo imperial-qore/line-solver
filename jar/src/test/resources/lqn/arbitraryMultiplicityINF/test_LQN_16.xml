@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lqn-model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="LQN1" xsi:noNamespaceSchemaLocation="lqn.xsd">
+   <processor name="P1" scheduling="inf" speed-factor="1">
+      <task multiplicity="3" name="T1" scheduling="ref" think-time="1">
+         <entry name="E1" type="NONE"/>
+         <task-activities>
+            <activity bound-to-entry="E1" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="1" name="A1">
+               <synch-call calls-mean="1" dest="E3"/>
+               <synch-call calls-mean="1" dest="E4"/>
+            </activity>
+         </task-activities>
+      </task>
+   </processor>
+   <processor name="P2" scheduling="inf" speed-factor="1">
+      <task multiplicity="2" name="T2" scheduling="ref" think-time="1">
+         <entry name="E2" type="NONE"/>
+         <task-activities>
+            <activity bound-to-entry="E2" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="1" name="A2">
+               <synch-call calls-mean="1" dest="E4"/>
+               <synch-call calls-mean="1" dest="E5"/>
+            </activity>
+         </task-activities>
+      </task>
+      <task name="T5" scheduling="inf">
+         <entry name="E5" type="NONE"/>
+         <task-activities>
+            <activity bound-to-entry="E5" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="1" name="A5"/>
+            <reply-entry name="E5">
+               <reply-activity name="A5"/>
+            </reply-entry>
+         </task-activities>
+      </task>
+   </processor>
+   <processor name="P3" scheduling="inf" speed-factor="1">
+      <task name="T3" scheduling="inf">
+         <entry name="E3" type="NONE"/>
+         <task-activities>
+            <activity bound-to-entry="E3" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="1" name="A3"/>
+            <reply-entry name="E3">
+               <reply-activity name="A3"/>
+            </reply-entry>
+         </task-activities>
+      </task>
+   </processor>
+   <processor name="P4" scheduling="inf" speed-factor="1">
+      <task name="T4" scheduling="inf">
+         <entry name="E4" type="NONE"/>
+         <task-activities>
+            <activity bound-to-entry="E4" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="1" name="A4">
+               <synch-call calls-mean="1" dest="E5"/>
+            </activity>
+            <reply-entry name="E4">
+               <reply-activity name="A4"/>
+            </reply-entry>
+         </task-activities>
+      </task>
+   </processor>
+</lqn-model>

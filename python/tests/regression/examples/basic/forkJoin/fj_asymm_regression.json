@@ -1,0 +1,314 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:16:10.525862Z",
+          "start_time": "2025-07-30T22:16:09.661406Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:32:10.828627Z",
+          "iopub.execute_input": "2026-01-03T15:32:10.829006Z",
+          "shell.execute_reply": "2026-01-03T15:32:11.898526Z",
+          "iopub.status.idle": "2026-01-03T15:32:11.899348Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "# Fork-Join network example 10\nmodel = Network('model')",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:16:10.583606Z",
+          "start_time": "2025-07-30T22:16:10.579748Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:32:11.903471Z",
+          "iopub.execute_input": "2026-01-03T15:32:11.903827Z",
+          "iopub.status.idle": "2026-01-03T15:32:11.906277Z",
+          "shell.execute_reply": "2026-01-03T15:32:11.905758Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Create network\ndelay = Delay(model, 'Delay1')\nqueue1 = Queue(model,'Queue1',SchedStrategy.FCFS)\nqueue2 = Queue(model,'Queue2',SchedStrategy.FCFS)\nqueue3 = Queue(model,'Queue3',SchedStrategy.FCFS)\nfork = Fork(model,'Fork')\njoin = Join(model,'Join', fork)\n\njobclass1 = ClosedClass(model, 'class1', 10, delay, 0)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:16:10.656823Z",
+          "start_time": "2025-07-30T22:16:10.629439Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:32:11.909372Z",
+          "iopub.execute_input": "2026-01-03T15:32:11.909582Z",
+          "iopub.status.idle": "2026-01-03T15:32:11.912958Z",
+          "shell.execute_reply": "2026-01-03T15:32:11.912389Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Service configurations\nqueue1.set_service(jobclass1, Exp(1.0))\nqueue2.set_service(jobclass1, Exp(2.0))\nqueue3.set_service(jobclass1, Exp(1.0))\ndelay.set_service(jobclass1, Exp(0.5))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:16:10.687191Z",
+          "start_time": "2025-07-30T22:16:10.679688Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:32:11.927882Z",
+          "iopub.execute_input": "2026-01-03T15:32:11.928249Z",
+          "shell.execute_reply": "2026-01-03T15:32:11.931583Z",
+          "iopub.status.idle": "2026-01-03T15:32:11.932689Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# Set routing matrix with serial queue2->queue3 routing\nP = model.init_routing_matrix()\n\nP.set(jobclass1, jobclass1, delay, fork, 1.0)\nP.set(jobclass1, jobclass1, fork, queue1, 1.0)\nP.set(jobclass1, jobclass1, fork, queue2, 1.0)\nP.set(jobclass1, jobclass1, queue1, join, 1.0)\nP.set(jobclass1, jobclass1, queue2, queue3, 1.0)  # Serial routing: queue2 -> queue3\nP.set(jobclass1, jobclass1, queue3, join, 1.0)\nP.set(jobclass1, jobclass1, join, delay, 1.0)\n\nmodel.link(P)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:16:10.746667Z",
+          "start_time": "2025-07-30T22:16:10.739711Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:32:11.934913Z",
+          "iopub.execute_input": "2026-01-03T15:32:11.935373Z",
+          "shell.execute_reply": "2026-01-03T15:32:11.940292Z",
+          "iopub.status.idle": "2026-01-03T15:32:11.941070Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# Solve with multiple methods\nsolvers = [JMT(model, seed=23000), MVA(model)]\nfor i, solver in enumerate(solvers):\n    print(f'SOLVER {i+1}: {solver.get_name()}')\n    avgTable = solver.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:16:12.094815Z",
+          "start_time": "2025-07-30T22:16:10.788984Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:32:11.943480Z",
+          "iopub.execute_input": "2026-01-03T15:32:11.943784Z",
+          "shell.execute_reply": "2026-01-03T15:32:13.489428Z",
+          "iopub.status.idle": "2026-01-03T15:32:13.489913Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "SOLVER 1: JMT\n",
+            "numerical_values": [
+              1.0
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Station JobClass   QLen   Util  RespT  ResidT   ArvR   Tput\n Delay1   class1 1.9092 1.9092 1.9998  1.9998 0.9436 0.9436\n Queue1   class1 6.0179 0.9444 6.4394  6.4394 0.9300 0.9300\n Queue2   class1 0.8792 0.4812 0.9201  0.9201 0.9439 0.9439\n Queue3   class1 5.0972 0.9244 5.5832  5.5832 0.9432 0.9432\n   Join   class1 4.2477 0.9547 2.2373  2.2373 0.9354 0.9354\nSOLVER 2: MVA\nStation JobClass    QLen   Util  RespT  ResidT   ArvR   Tput\n Delay1   class1  1.6935 1.6935 2.0000  2.0000 0.8468 0.8468\n Queue1   class1  5.5256 0.8468 6.5256  6.5256 0.8468 0.8468\n Queue2   class1  0.7342 0.4234 0.8671  0.8671 0.8468 0.8468\n Queue3   class1  5.5256 0.8468 6.5256  6.5256 0.8468 0.8468\n   Join   class1 13.1340 0.0000 5.1703  5.1703 0.8468 0.8468\n",
+            "numerical_values": [
+              1.0,
+              1.0,
+              1.9092,
+              1.9092,
+              1.9998,
+              1.9998,
+              0.9436,
+              0.9436,
+              1.0,
+              1.0,
+              6.0179,
+              0.9444,
+              6.4394,
+              6.4394,
+              0.93,
+              0.93,
+              2.0,
+              1.0,
+              0.8792,
+              0.4812,
+              0.9201,
+              0.9201,
+              0.9439,
+              0.9439,
+              3.0,
+              1.0,
+              5.0972,
+              0.9244,
+              5.5832,
+              5.5832,
+              0.9432,
+              0.9432,
+              1.0,
+              4.2477,
+              0.9547,
+              2.2373,
+              2.2373,
+              0.9354,
+              0.9354,
+              2.0,
+              1.0,
+              1.0,
+              1.6935,
+              1.6935,
+              2.0,
+              2.0,
+              0.8468,
+              0.8468,
+              1.0,
+              1.0,
+              5.5256,
+              0.8468,
+              6.5256,
+              6.5256,
+              0.8468,
+              0.8468,
+              2.0,
+              1.0,
+              0.7342,
+              0.4234,
+              0.8671,
+              0.8671,
+              0.8468,
+              0.8468,
+              3.0,
+              1.0,
+              5.5256,
+              0.8468,
+              6.5256,
+              6.5256,
+              0.8468,
+              0.8468,
+              1.0,
+              13.134,
+              0.0,
+              5.1703,
+              5.1703,
+              0.8468,
+              0.8468
+            ]
+          }
+        }
+      ],
+      "execution_count": 6
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      10.0
+    ],
+    "cell_5": [
+      1.0,
+      1.0,
+      1.0,
+      1.9092,
+      1.9092,
+      1.9998,
+      1.9998,
+      0.9436,
+      0.9436,
+      1.0,
+      1.0,
+      6.0179,
+      0.9444,
+      6.4394,
+      6.4394,
+      0.93,
+      0.93,
+      2.0,
+      1.0,
+      0.8792,
+      0.4812,
+      0.9201,
+      0.9201,
+      0.9439,
+      0.9439,
+      3.0,
+      1.0,
+      5.0972,
+      0.9244,
+      5.5832,
+      5.5832,
+      0.9432,
+      0.9432,
+      1.0,
+      4.2477,
+      0.9547,
+      2.2373,
+      2.2373,
+      0.9354,
+      0.9354,
+      2.0,
+      1.0,
+      1.0,
+      1.6935,
+      1.6935,
+      2.0,
+      2.0,
+      0.8468,
+      0.8468,
+      1.0,
+      1.0,
+      5.5256,
+      0.8468,
+      6.5256,
+      6.5256,
+      0.8468,
+      0.8468,
+      2.0,
+      1.0,
+      0.7342,
+      0.4234,
+      0.8671,
+      0.8671,
+      0.8468,
+      0.8468,
+      3.0,
+      1.0,
+      5.5256,
+      0.8468,
+      6.5256,
+      6.5256,
+      0.8468,
+      0.8468,
+      1.0,
+      13.134,
+      0.0,
+      5.1703,
+      5.1703,
+      0.8468,
+      0.8468,
+      23000.0,
+      1.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "forkJoin/fj_asymm.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 6,
+    "code_cells": 6,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

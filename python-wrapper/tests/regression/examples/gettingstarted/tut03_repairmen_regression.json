@@ -1,0 +1,388 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:23:21.574825Z",
+          "start_time": "2025-07-27T17:23:20.660574Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:07:04.063986Z",
+          "iopub.execute_input": "2026-01-02T14:07:04.064109Z",
+          "iopub.status.idle": "2026-01-02T14:07:05.003583Z",
+          "shell.execute_reply": "2026-01-02T14:07:05.003031Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('MRP')\n# Block 1: nodes\ndelay = Delay(model, 'WorkingState')\nqueue = Queue(model, 'RepairQueue', SchedStrategy.FCFS)\nqueue.set_number_of_servers(2)\n# Block 2: classes\ncclass = ClosedClass(model, 'Machines', 3, delay)\ndelay.set_service(cclass, Exp(0.5))\nqueue.set_service(cclass, Exp(4.0))\n# Block 3: topology\nmodel.link(Network.serial_routing(delay, queue))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:23:21.660497Z",
+          "start_time": "2025-07-27T17:23:21.634727Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:07:05.006063Z",
+          "iopub.execute_input": "2026-01-02T14:07:05.006361Z",
+          "shell.execute_reply": "2026-01-02T14:07:05.032839Z",
+          "iopub.status.idle": "2026-01-02T14:07:05.033293Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Block 4: solution\nsolver = CTMC(model)\nctmcAvgTable = solver.avg_table()",
+      "metadata": {
+        "collapsed": false,
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:23:21.799424Z",
+          "start_time": "2025-07-27T17:23:21.668865Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:07:05.034724Z",
+          "iopub.execute_input": "2026-01-02T14:07:05.034999Z",
+          "shell.execute_reply": "2026-01-02T14:07:05.124231Z",
+          "iopub.status.idle": "2026-01-02T14:07:05.124555Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "        Station  JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0  WorkingState  Machines  2.6648  2.6648  2.0000  2.0000  1.3324  1.3324\n1   RepairQueue  Machines  0.3352  0.1666  0.2515  0.2515  1.3324  1.3324\n",
+            "numerical_values": [
+              0.0,
+              2.6648,
+              2.6648,
+              2.0,
+              2.0,
+              1.3324,
+              1.3324,
+              1.0,
+              0.3352,
+              0.1666,
+              0.2515,
+              0.2515,
+              1.3324,
+              1.3324
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "stateSpace, nodeStateSpace = solver.state_space()\nprint(\"CTMC state space:\")\nprint(stateSpace)\nprint(nodeStateSpace)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:23:21.809818Z",
+          "start_time": "2025-07-27T17:23:21.803724Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:07:05.125595Z",
+          "iopub.execute_input": "2026-01-02T14:07:05.125751Z",
+          "shell.execute_reply": "2026-01-02T14:07:05.132325Z",
+          "iopub.status.idle": "2026-01-02T14:07:05.132665Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "CTMC state space:\n[[0. 1. 2.]\n [1. 0. 2.]\n [2. 0. 1.]\n [3. 0. 0.]]\n{0: array([[0.],\n       [1.],\n       [2.],\n       [3.]]), 1: array([[1., 2.],\n       [0., 2.],\n       [0., 1.],\n       [0., 0.]])}\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              2.0,
+              1.0,
+              0.0,
+              2.0,
+              2.0,
+              0.0,
+              1.0,
+              3.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              2.0,
+              3.0,
+              1.0,
+              1.0,
+              2.0,
+              0.0,
+              2.0,
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "infGen, eventFilt = solver.generator()\nprint(\"CTMC infinitesimal generator:\")\nprint(infGen)",
+      "metadata": {
+        "collapsed": false,
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:23:21.881873Z",
+          "start_time": "2025-07-27T17:23:21.877293Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:07:05.133758Z",
+          "iopub.execute_input": "2026-01-02T14:07:05.133863Z",
+          "iopub.status.idle": "2026-01-02T14:07:05.139437Z",
+          "shell.execute_reply": "2026-01-02T14:07:05.139095Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "CTMC infinitesimal generator:\n[[-8.   8.   0.   0. ]\n [ 0.5 -8.5  8.   0. ]\n [ 0.   1.  -5.   4. ]\n [ 0.   0.   1.5 -1.5]]\n",
+            "numerical_values": [
+              -8.0,
+              8.0,
+              0.0,
+              0.0,
+              0.5,
+              -8.5,
+              8.0,
+              0.0,
+              0.0,
+              1.0,
+              -5.0,
+              4.0,
+              0.0,
+              0.0,
+              1.5,
+              -1.5
+            ]
+          }
+        }
+      ],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "CTMC.print_inf_gen(infGen, stateSpace)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:23:21.947166Z",
+          "start_time": "2025-07-27T17:23:21.930736Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:07:05.140512Z",
+          "iopub.execute_input": "2026-01-02T14:07:05.140694Z",
+          "iopub.status.idle": "2026-01-02T14:07:05.146617Z",
+          "shell.execute_reply": "2026-01-02T14:07:05.146377Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "[ 0.0   1.0   2.0 ] -> [ 1.0   0.0   2.0 ] : 8.0\n[ 1.0   0.0   2.0 ] -> [ 0.0   1.0   2.0 ] : 0.5\n[ 1.0   0.0   2.0 ] -> [ 2.0   0.0   1.0 ] : 8.0\n[ 2.0   0.0   1.0 ] -> [ 1.0   0.0   2.0 ] : 1.0\n[ 2.0   0.0   1.0 ] -> [ 3.0   0.0   0.0 ] : 4.0\n[ 3.0   0.0   0.0 ] -> [ 2.0   0.0   1.0 ] : 1.5\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              2.0,
+              1.0,
+              0.0,
+              2.0,
+              8.0,
+              1.0,
+              0.0,
+              2.0,
+              0.0,
+              1.0,
+              2.0,
+              0.5,
+              1.0,
+              0.0,
+              2.0,
+              2.0,
+              0.0,
+              1.0,
+              8.0,
+              2.0,
+              0.0,
+              1.0,
+              1.0,
+              0.0,
+              2.0,
+              1.0,
+              2.0,
+              0.0,
+              1.0,
+              3.0,
+              0.0,
+              0.0,
+              4.0,
+              3.0,
+              0.0,
+              0.0,
+              2.0,
+              0.0,
+              1.0,
+              1.5
+            ]
+          }
+        }
+      ],
+      "execution_count": 6
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      1.0,
+      2.0,
+      2.0,
+      3.0,
+      0.5,
+      4.0,
+      3.0
+    ],
+    "cell_2": [
+      0.0,
+      2.6648,
+      2.6648,
+      2.0,
+      2.0,
+      1.3324,
+      1.3324,
+      1.0,
+      0.3352,
+      0.1666,
+      0.2515,
+      0.2515,
+      1.3324,
+      1.3324,
+      4.0
+    ],
+    "cell_3": [
+      0.0,
+      1.0,
+      2.0,
+      1.0,
+      0.0,
+      2.0,
+      2.0,
+      0.0,
+      1.0,
+      3.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      2.0,
+      3.0,
+      1.0,
+      1.0,
+      2.0,
+      0.0,
+      2.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    "cell_4": [
+      -8.0,
+      8.0,
+      0.0,
+      0.0,
+      0.5,
+      -8.5,
+      8.0,
+      0.0,
+      0.0,
+      1.0,
+      -5.0,
+      4.0,
+      0.0,
+      0.0,
+      1.5,
+      -1.5
+    ],
+    "cell_5": [
+      0.0,
+      1.0,
+      2.0,
+      1.0,
+      0.0,
+      2.0,
+      8.0,
+      1.0,
+      0.0,
+      2.0,
+      0.0,
+      1.0,
+      2.0,
+      0.5,
+      1.0,
+      0.0,
+      2.0,
+      2.0,
+      0.0,
+      1.0,
+      8.0,
+      2.0,
+      0.0,
+      1.0,
+      1.0,
+      0.0,
+      2.0,
+      1.0,
+      2.0,
+      0.0,
+      1.0,
+      3.0,
+      0.0,
+      0.0,
+      4.0,
+      3.0,
+      0.0,
+      0.0,
+      2.0,
+      0.0,
+      1.0,
+      1.5
+    ]
+  },
+  "metadata": {
+    "notebook_path": "tut03_repairmen.ipynb",
+    "source_dir": "examples/gettingstarted",
+    "total_cells": 6,
+    "code_cells": 6,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

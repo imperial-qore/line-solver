@@ -1,0 +1,304 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:46:41.859643Z",
+          "start_time": "2025-07-15T22:46:36.814525Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:15:49.497708Z",
+          "iopub.execute_input": "2026-01-02T14:15:49.497841Z",
+          "shell.execute_reply": "2026-01-02T14:15:50.411234Z",
+          "iopub.status.idle": "2026-01-02T14:15:50.411741Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "# Create network\nmodel = Network('myModel')\n\n# Block 1: nodes\nnode1 = Delay(model, 'Delay')\nnode2 = Queue(model, 'Queue1', SchedStrategy.PS)\nnode3 = Queue(model, 'Queue2', SchedStrategy.PS)\nnode3.set_number_of_servers(2)  # Queue2 has 2 servers",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:46:42.308225Z",
+          "start_time": "2025-07-15T22:46:42.172083Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:15:50.413365Z",
+          "iopub.execute_input": "2026-01-02T14:15:50.413668Z",
+          "iopub.status.idle": "2026-01-02T14:15:50.428096Z",
+          "shell.execute_reply": "2026-01-02T14:15:50.426421Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Block 2: classes\njobclass1 = ClosedClass(model, 'Class1', 2, node1, 0)  # 2 jobs\njobclass2 = ClosedClass(model, 'Class2', 0, node1, 0)  # 0 jobs (placeholder)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:46:43.061910Z",
+          "start_time": "2025-07-15T22:46:42.407282Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:15:50.429791Z",
+          "iopub.execute_input": "2026-01-02T14:15:50.429996Z",
+          "shell.execute_reply": "2026-01-02T14:15:50.433313Z",
+          "iopub.status.idle": "2026-01-02T14:15:50.433675Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Set service times\n# Delay: both classes have same service time\nnode1.set_service(jobclass1, Exp.fit_mean(1.0))\nnode1.set_service(jobclass2, Exp.fit_mean(1.0))\n\n# Queue1: different service times - Class1 slower\nnode2.set_service(jobclass1, Exp.fit_mean(1.0/3.0))  # Mean = 0.333\nnode2.set_service(jobclass2, Exp.fit_mean(0.25))\n\n# Queue2: different service times\nnode3.set_service(jobclass1, Exp.fit_mean(1.0))\nnode3.set_service(jobclass2, Exp.fit_mean(1.0/3.0))  # Mean = 0.333",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:46:43.349613Z",
+          "start_time": "2025-07-15T22:46:43.271221Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:15:50.434903Z",
+          "iopub.execute_input": "2026-01-02T14:15:50.435117Z",
+          "iopub.status.idle": "2026-01-02T14:15:50.443371Z",
+          "shell.execute_reply": "2026-01-02T14:15:50.442917Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# Block 3: routing - serial chain\nP = model.init_routing_matrix()\n\n# Class1 routing: Delay -> Queue1 -> Queue2 -> Delay\nP.set(jobclass1, jobclass1, node1, node2, 1.0)  # Delay -> Queue1\nP.set(jobclass1, jobclass1, node2, node3, 1.0)  # Queue1 -> Queue2  \nP.set(jobclass1, jobclass1, node3, node1, 1.0)  # Queue2 -> Delay\n\n# Class2 routing (same pattern for consistency)\nP.set(jobclass2, jobclass2, node1, node2, 1.0)\nP.set(jobclass2, jobclass2, node2, node3, 1.0)\nP.set(jobclass2, jobclass2, node3, node1, 1.0)\n\nmodel.link(P)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:46:43.796856Z",
+          "start_time": "2025-07-15T22:46:43.654217Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:15:50.444982Z",
+          "iopub.execute_input": "2026-01-02T14:15:50.445222Z",
+          "iopub.status.idle": "2026-01-02T14:15:50.455714Z",
+          "shell.execute_reply": "2026-01-02T14:15:50.455385Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# Solve with CTMC for exact state probabilities\nsolver_ctmc = CTMC(model)\navg_table_ctmc = solver_ctmc.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:46:44.684722Z",
+          "start_time": "2025-07-15T22:46:43.931434Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:15:50.456991Z",
+          "iopub.execute_input": "2026-01-02T14:15:50.457186Z",
+          "iopub.status.idle": "2026-01-02T14:15:50.565694Z",
+          "shell.execute_reply": "2026-01-02T14:15:50.565284Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass  QLen  Util  RespT  ResidT  ArvR  Tput\n0   Delay   Class1  0.84  0.84  1.000   1.000  0.84  0.84\n1  Queue1   Class1  0.32  0.28  0.381   0.381  0.84  0.84\n2  Queue2   Class1  0.84  0.42  1.000   1.000  0.84  0.84\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              0.84,
+              0.84,
+              1.0,
+              1.0,
+              0.84,
+              0.84,
+              1.0,
+              1.0,
+              1.0,
+              0.32,
+              0.28,
+              0.381,
+              0.381,
+              0.84,
+              0.84,
+              2.0,
+              2.0,
+              1.0,
+              0.84,
+              0.42,
+              1.0,
+              1.0,
+              0.84,
+              0.84
+            ]
+          }
+        }
+      ],
+      "execution_count": 6
+    },
+    "cell_6": {
+      "cell_type": "code",
+      "source": "# Test state probability methods following MATLAB pattern# Set states for nodes (similar to MATLAB example)# n=[-1,-1; -1,-1; 0, 0];  % rows set to -1 are ignorednode1.set_state([-1, -1])  # State ignorednode2.set_state([-1, -1])  # State ignored  node3.set_state([0, 0])    # State specified# Test getProbAggr for node3 (station M=3)print(\"Testing getProbAggr for node3 (Queue2):\")try:    prob_ctmc = solver_ctmc.prob_aggr(node3)    print(f\"  CTMC getProbAggr(node3) = {prob_ctmc}\")except Exception as e:    print(f\"  CTMC getProbAggr failed: {e}\")# Test with NC solver for comparisonprint(\"\\nTesting with NC solver:\")try:    solver_nc = NC(model)    prob_nc = solver_nc.prob_aggr(node3)    print(f\"  NC getProbAggr(node3) = {prob_nc}\")except Exception as e:    print(f\"  NC getProbAggr failed: {e}\")print(\"\\n\u2705 State probability API working correctly!\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:46:45.820944Z",
+          "start_time": "2025-07-15T22:46:45.340956Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:15:50.567020Z",
+          "iopub.execute_input": "2026-01-02T14:15:50.567207Z",
+          "iopub.status.idle": "2026-01-02T14:15:50.569323Z",
+          "shell.execute_reply": "2026-01-02T14:15:50.568943Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 7
+    },
+    "cell_7": {
+      "cell_type": "code",
+      "source": "# Compare with MVA solution\nsolver_mva = MVA(model)\navg_table_mva = solver_mva.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:46:46.162719677Z",
+          "start_time": "2025-07-14T18:36:59.103585Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:15:50.570625Z",
+          "iopub.execute_input": "2026-01-02T14:15:50.570822Z",
+          "iopub.status.idle": "2026-01-02T14:15:50.679909Z",
+          "shell.execute_reply": "2026-01-02T14:15:50.679382Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass  QLen  Util  RespT  ResidT  ArvR  Tput\n0   Delay   Class1  0.84  0.84  1.000   1.000  0.84  0.84\n1  Queue1   Class1  0.32  0.28  0.381   0.381  0.84  0.84\n2  Queue2   Class1  0.84  0.42  1.000   1.000  0.84  0.84\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              0.84,
+              0.84,
+              1.0,
+              1.0,
+              0.84,
+              0.84,
+              1.0,
+              1.0,
+              1.0,
+              0.32,
+              0.28,
+              0.381,
+              0.381,
+              0.84,
+              0.84,
+              2.0,
+              2.0,
+              1.0,
+              0.84,
+              0.42,
+              1.0,
+              1.0,
+              0.84,
+              0.84
+            ]
+          }
+        }
+      ],
+      "execution_count": 8
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      1.0,
+      1.0,
+      2.0,
+      1.0,
+      3.0,
+      2.0,
+      3.0,
+      2.0,
+      2.0,
+      2.0
+    ],
+    "cell_5": [
+      0.0,
+      1.0,
+      0.84,
+      0.84,
+      1.0,
+      1.0,
+      0.84,
+      0.84,
+      1.0,
+      1.0,
+      1.0,
+      0.32,
+      0.28,
+      0.381,
+      0.381,
+      0.84,
+      0.84,
+      2.0,
+      2.0,
+      1.0,
+      0.84,
+      0.42,
+      1.0,
+      1.0,
+      0.84,
+      0.84
+    ],
+    "cell_7": [
+      0.0,
+      1.0,
+      0.84,
+      0.84,
+      1.0,
+      1.0,
+      0.84,
+      0.84,
+      1.0,
+      1.0,
+      1.0,
+      0.32,
+      0.28,
+      0.381,
+      0.381,
+      0.84,
+      0.84,
+      2.0,
+      2.0,
+      1.0,
+      0.84,
+      0.42,
+      1.0,
+      1.0,
+      0.84,
+      0.84
+    ]
+  },
+  "metadata": {
+    "notebook_path": "stateProbabilities/statepr_aggr.ipynb",
+    "source_dir": "examples/advanced",
+    "total_cells": 8,
+    "code_cells": 8,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

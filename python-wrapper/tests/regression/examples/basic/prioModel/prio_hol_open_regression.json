@@ -1,0 +1,178 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "collapsed": true,
+        "ExecuteTime": {
+          "end_time": "2025-07-31T08:01:50.088666Z",
+          "start_time": "2025-07-31T08:01:48.556540Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:34.614549Z",
+          "iopub.execute_input": "2026-01-02T14:13:34.614768Z",
+          "iopub.status.idle": "2026-01-02T14:13:35.847307Z",
+          "shell.execute_reply": "2026-01-02T14:13:35.846908Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "# multiclass example with PS, SIRO, FCFS, HOL priority\nmodel = Network('MyNetwork')\n\n# Block 1: nodes\nnode = np.empty(6, dtype=object)\nnode[0] = Source(model, 'Source')\nnode[1] = Queue(model, 'Queue1', SchedStrategy.FCFS)   # Fixed: was PS\nnode[2] = Queue(model, 'Queue2', SchedStrategy.SIRO)   # Fixed: was PS  \nnode[3] = Queue(model, 'Queue3', SchedStrategy.PS)     # Correct\nnode[4] = Queue(model, 'Queue4', SchedStrategy.HOL)    # Fixed: was PS\nnode[5] = Sink(model, 'Sink')\n\n# Block 2: classes\njobclass = np.empty(3, dtype=object)\njobclass[0] = OpenClass(model, 'Class1', 0)\njobclass[1] = OpenClass(model, 'Class2', 1) # higher priority\njobclass[2] = OpenClass(model, 'Class3', 0)\n\nnode[0].set_arrival(jobclass[0], Exp.fit_mean(10.0)) # (Source of Customers,Class0)\nnode[0].set_arrival(jobclass[1], Exp.fit_mean(10.0)) # (Source of Customers,Class1)\nnode[0].set_arrival(jobclass[2], Exp.fit_mean(10.0)) # (Source of Customers,Class2)\nnode[1].set_service(jobclass[0], Exp.fit_mean(0.3)) # (WebServer,Class0)\nnode[1].set_service(jobclass[1], Exp.fit_mean(0.5)) # (WebServer,Class1)\nnode[1].set_service(jobclass[2], Exp.fit_mean(0.6)) # (WebServer,Class2)\nnode[2].set_service(jobclass[0], Exp.fit_mean(1.1)) # (Storage1,Class0)\nnode[2].set_service(jobclass[1], Exp.fit_mean(1.3)) # (Storage1,Class1)\nnode[2].set_service(jobclass[2], Exp.fit_mean(1.5)) # (Storage1,Class2)\nnode[3].set_service(jobclass[0], Exp.fit_mean(2.0)) # (Storage2,Class0)\nnode[3].set_service(jobclass[1], Exp.fit_mean(2.1)) # (Storage2,Class1)\nnode[3].set_service(jobclass[2], Exp.fit_mean(1.9)) # (Storage2,Class2)\nnode[4].set_service(jobclass[0], Exp.fit_mean(2.5)) # (Storage3,Class0)\nnode[4].set_service(jobclass[1], Exp.fit_mean(1.9)) # (Storage3,Class1)\nnode[4].set_service(jobclass[2], Exp.fit_mean(4.3)) # (Storage3,Class2)\n\n# Block 3: topology\nP = model.init_routing_matrix() # initialize routing matrix\nP.set(jobclass[0],jobclass[0],node[0],node[1], 1.0) # (Source of Customers,Class0) -> (WebServer,Class0)\nP.set(jobclass[0],jobclass[0],node[1],node[2], 2.50e-01) # (WebServer,Class0) -> (Storage1,Class0)\nP.set(jobclass[0],jobclass[0],node[1],node[3], 2.50e-01) # (WebServer,Class0) -> (Storage2,Class0)\nP.set(jobclass[0],jobclass[0],node[1],node[4], 2.50e-01) # (WebServer,Class0) -> (Storage3,Class0)\nP.set(jobclass[0],jobclass[0],node[1],node[5], 2.50e-01) # (WebServer,Class0) -> (Out,Class0)\nP.set(jobclass[0],jobclass[0],node[2],node[1], 1.0) # (Storage1,Class0) -> (WebServer,Class0)\nP.set(jobclass[0],jobclass[0],node[3],node[1], 1.0) # (Storage2,Class0) -> (WebServer,Class0)\nP.set(jobclass[0],jobclass[0],node[4],node[1], 1.0) # (Storage3,Class0) -> (WebServer,Class0)\nP.set(jobclass[1],jobclass[1],node[0],node[1], 1.0) # (Source of Customers,Class1) -> (WebServer,Class1)\nP.set(jobclass[1],jobclass[1],node[1],node[2],2.50e-01) # (WebServer,Class1) -> (Storage1,Class1)\nP.set(jobclass[1],jobclass[1],node[1],node[3],2.50e-01) # (WebServer,Class1) -> (Storage2,Class1)\nP.set(jobclass[1],jobclass[1],node[1],node[4],2.50e-01) # (WebServer,Class1) -> (Storage3,Class1)\nP.set(jobclass[1],jobclass[1],node[1],node[5],2.50e-01) # (WebServer,Class1) -> (Out,Class1)\nP.set(jobclass[1],jobclass[1],node[2],node[1],1.0) # (Storage1,Class1) -> (WebServer,Class1)\nP.set(jobclass[1],jobclass[1],node[3],node[1],1.0) # (Storage2,Class1) -> (WebServer,Class1)\nP.set(jobclass[1],jobclass[1],node[4],node[1],1.0) # (Storage3,Class1) -> (WebServer,Class1)\nP.set(jobclass[2],jobclass[2],node[0],node[1],1.0) # (Source of Customers,Class2) -> (WebServer,Class2)\nP.set(jobclass[2],jobclass[2],node[1],node[2],2.50e-01) # (WebServer,Class2) -> (Storage1,Class2)\nP.set(jobclass[2],jobclass[2],node[1],node[3],2.50e-01) # (WebServer,Class2) -> (Storage2,Class2)\nP.set(jobclass[2],jobclass[2],node[1],node[4],2.50e-01) # (WebServer,Class2) -> (Storage3,Class2)\nP.set(jobclass[2],jobclass[2],node[1],node[5],2.50e-01) # (WebServer,Class2) -> (Out,Class2)\nP.set(jobclass[2],jobclass[2],node[2],node[1],1.0) # (Storage1,Class2) -> (WebServer,Class2)\nP.set(jobclass[2],jobclass[2],node[3],node[1],1.0) # (Storage2,Class2) -> (WebServer,Class2)\nP.set(jobclass[2],jobclass[2],node[4],node[1],1.0) # (Storage3,Class2) -> (WebServer,Class2)\nmodel.link(P)",
+      "metadata": {
+        "collapsed": false,
+        "ExecuteTime": {
+          "end_time": "2025-07-31T08:01:50.132014Z",
+          "start_time": "2025-07-31T08:01:50.101364Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:35.848818Z",
+          "iopub.execute_input": "2026-01-02T14:13:35.849181Z",
+          "iopub.status.idle": "2026-01-02T14:13:35.876075Z",
+          "shell.execute_reply": "2026-01-02T14:13:35.875741Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# CTMC removed - not tested in JAR for prio_hol_open\n# solver = CTMC(model, keep=False, cutoff=1)\n# AvgTable = solver.avg_table()",
+      "metadata": {
+        "collapsed": false,
+        "ExecuteTime": {
+          "end_time": "2025-07-31T08:02:05.609198Z",
+          "start_time": "2025-07-31T08:02:05.417742Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:35.877323Z",
+          "iopub.execute_input": "2026-01-02T14:13:35.877477Z",
+          "iopub.status.idle": "2026-01-02T14:13:35.878843Z",
+          "shell.execute_reply": "2026-01-02T14:13:35.878633Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# FLD removed - not tested in JAR for prio_hol_open\n# solver = FLD(model)\n# AvgTable = solver.avg_table()",
+      "metadata": {
+        "collapsed": false,
+        "ExecuteTime": {
+          "end_time": "2025-07-31T08:01:50.974961900Z",
+          "start_time": "2025-07-15T22:56:16.094703Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:35.879603Z",
+          "iopub.execute_input": "2026-01-02T14:13:35.879696Z",
+          "shell.execute_reply": "2026-01-02T14:13:35.880710Z",
+          "iopub.status.idle": "2026-01-02T14:13:35.880989Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# MVA with seed=23000 to match JAR test\nsolver = MVA(model, seed=23000, verbose=VerboseLevel.SILENT)\nAvgTable = solver.avg_table()",
+      "metadata": {
+        "collapsed": false,
+        "ExecuteTime": {
+          "end_time": "2025-07-31T08:01:50.982869300Z",
+          "start_time": "2025-07-15T22:56:16.861561Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:35.882158Z",
+          "iopub.execute_input": "2026-01-02T14:13:35.882247Z",
+          "shell.execute_reply": "2026-01-02T14:13:35.987591Z",
+          "iopub.status.idle": "2026-01-02T14:13:35.987921Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Priority: highest=Class1,Class3, lowest=Class2\n",
+            "numerical_values": [
+              1.0,
+              3.0,
+              2.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# JMT removed - not tested in JAR for prio_hol_open\n# solver = JMT(model, seed=23000, verbose=False, keep=False)\n# AvgTable = solver.avg_table()",
+      "metadata": {
+        "collapsed": false,
+        "ExecuteTime": {
+          "end_time": "2025-07-31T08:01:50.982869300Z",
+          "start_time": "2025-07-15T22:56:17.424543Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:35.988822Z",
+          "iopub.execute_input": "2026-01-02T14:13:35.988937Z",
+          "shell.execute_reply": "2026-01-02T14:13:35.990102Z",
+          "iopub.status.idle": "2026-01-02T14:13:35.990368Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 6
+    },
+    "cell_6": {
+      "cell_type": "code",
+      "source": "# SSA with seed=23000, samples=10000 to match JAR test\nsolver = SSA(model, seed=23000, samples=10000, verbose=VerboseLevel.SILENT)\nAvgTable = solver.avg_table()",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:35.991254Z",
+          "iopub.execute_input": "2026-01-02T14:13:35.991358Z",
+          "shell.execute_reply": "2026-01-02T14:13:41.751233Z",
+          "iopub.status.idle": "2026-01-02T14:13:41.751524Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 7
+    }
+  },
+  "numerical_summary": {
+    "cell_2": [
+      1.0
+    ],
+    "cell_4": [
+      1.0,
+      3.0,
+      2.0,
+      23000.0,
+      23000.0
+    ],
+    "cell_5": [
+      23000.0
+    ],
+    "cell_6": [
+      23000.0,
+      10000.0,
+      23000.0,
+      10000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "prioModel/prio_hol_open.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 7,
+    "code_cells": 7,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

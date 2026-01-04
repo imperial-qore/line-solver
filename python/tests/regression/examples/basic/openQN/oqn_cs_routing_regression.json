@@ -1,0 +1,466 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:32.475816Z",
+          "start_time": "2025-07-30T22:23:31.490321Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:47.147661Z",
+          "iopub.execute_input": "2026-01-01T10:27:47.147770Z",
+          "shell.execute_reply": "2026-01-01T10:27:47.622477Z",
+          "iopub.status.idle": "2026-01-01T10:27:47.622856Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "# Model creation\n# model = JMT2LINE('example_openModel_3.jsimg')  # Alternative: load from JMT file\nmodel = Network('myModel')\n\nprint(f\"Created model: {model.get_name()}\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:32.484784Z",
+          "start_time": "2025-07-30T22:23:32.480559Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:47.623955Z",
+          "iopub.execute_input": "2026-01-01T10:27:47.624091Z",
+          "iopub.status.idle": "2026-01-01T10:27:47.625738Z",
+          "shell.execute_reply": "2026-01-01T10:27:47.625529Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Created model: myModel\n"
+          }
+        }
+      ],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Block 1: Network nodes\nnode = np.empty(5, dtype=object)\nnode[0] = Source(model, 'Source 1')\nnode[1] = Queue(model, 'Queue 1', SchedStrategy.PS)\nnode[2] = ClassSwitch(model, 'ClassSwitch 1')  # Class switching is embedded in the routing matrix P\nnode[3] = Sink(model, 'Sink 1')\nnode[4] = Queue(model, 'Queue 2', SchedStrategy.PS)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:32.567401Z",
+          "start_time": "2025-07-30T22:23:32.551486Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:47.626610Z",
+          "iopub.execute_input": "2026-01-01T10:27:47.626714Z",
+          "iopub.status.idle": "2026-01-01T10:27:47.628386Z",
+          "shell.execute_reply": "2026-01-01T10:27:47.628177Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Block 2: Job classes  \njobclass = np.empty(3, dtype=object)\njobclass[0] = OpenClass(model, 'Class A', 0)\njobclass[1] = OpenClass(model, 'Class B', 0)\njobclass[2] = OpenClass(model, 'Class C', 0)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:32.604922Z",
+          "start_time": "2025-07-30T22:23:32.598657Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:47.629061Z",
+          "iopub.execute_input": "2026-01-01T10:27:47.629140Z",
+          "shell.execute_reply": "2026-01-01T10:27:47.630356Z",
+          "iopub.status.idle": "2026-01-01T10:27:47.630574Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# Arrival processes\nnode[0].set_arrival(jobclass[0], Exp.fit_mean(0.500000))  # (Source 1, Class A)\nnode[0].set_arrival(jobclass[1], Exp.fit_mean(1.000000))  # (Source 1, Class B)\nnode[0].set_arrival(jobclass[2], Disabled.getInstance())  # (Source 1, Class C) - no direct arrivals",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:32.654203Z",
+          "start_time": "2025-07-30T22:23:32.648905Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:47.631316Z",
+          "iopub.execute_input": "2026-01-01T10:27:47.631401Z",
+          "shell.execute_reply": "2026-01-01T10:27:47.632656Z",
+          "iopub.status.idle": "2026-01-01T10:27:47.632870Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# Service processes at Queue 1\nnode[1].set_service(jobclass[0], Exp.fit_mean(0.200000))  # (Queue 1, Class A)\nnode[1].set_service(jobclass[1], Exp.fit_mean(0.300000))  # (Queue 1, Class B)\nnode[1].set_service(jobclass[2], Exp.fit_mean(0.333333))  # (Queue 1, Class C)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:32.703518Z",
+          "start_time": "2025-07-30T22:23:32.698839Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:47.633735Z",
+          "iopub.execute_input": "2026-01-01T10:27:47.633815Z",
+          "iopub.status.idle": "2026-01-01T10:27:47.635223Z",
+          "shell.execute_reply": "2026-01-01T10:27:47.635049Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 6
+    },
+    "cell_6": {
+      "cell_type": "code",
+      "source": "# Service processes at Queue 2\nnode[4].set_service(jobclass[0], Exp.fit_mean(1.000000))  # (Queue 2, Class A)\nnode[4].set_service(jobclass[1], Exp.fit_mean(1.000000))  # (Queue 2, Class B)\nnode[4].set_service(jobclass[2], Exp.fit_mean(0.150000))  # (Queue 2, Class C)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:32.750386Z",
+          "start_time": "2025-07-30T22:23:32.748254Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:47.635863Z",
+          "iopub.execute_input": "2026-01-01T10:27:47.635934Z",
+          "shell.execute_reply": "2026-01-01T10:27:47.637183Z",
+          "iopub.status.idle": "2026-01-01T10:27:47.637395Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 7
+    },
+    "cell_7": {
+      "cell_type": "code",
+      "source": "# Block 3: Network topology and class switching\n# Initialize class switching matrix (identity matrix - no class change at the switch node itself)\nC = node[2].init_class_switch_matrix()\nC = np.eye(len(jobclass))  # Use number of classes for identity matrix size\nnode[2].set_class_switching_matrix(C)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:32.830055Z",
+          "start_time": "2025-07-30T22:23:32.801144Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:47.638088Z",
+          "iopub.execute_input": "2026-01-01T10:27:47.638171Z",
+          "shell.execute_reply": "2026-01-01T10:27:47.639460Z",
+          "iopub.status.idle": "2026-01-01T10:27:47.639670Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 8
+    },
+    "cell_8": {
+      "cell_type": "code",
+      "source": "# Initialize routing matrix\nP = model.init_routing_matrix()\n\n# Routing for Class A (index 0)\nP.set(jobclass[0], jobclass[0], node[0], node[1], 1.0)  # (Source 1, Class A) -> (Queue 1, Class A)\nP.set(jobclass[0], jobclass[0], node[1], node[2], 1.0)  # (Queue 1, Class A) -> (ClassSwitch 1, Class A)\nP.set(jobclass[0], jobclass[2], node[2], node[4], 1.0)  # (ClassSwitch 1, Class A) -> (Queue 2, Class C) - class switch!\nP.set(jobclass[2], jobclass[2], node[4], node[3], 1.0)  # (Queue 2, Class C) -> (Sink 1, Class C)\n\n# Routing for Class B (index 1)\nP.set(jobclass[1], jobclass[1], node[0], node[1], 1.0)  # (Source 1, Class B) -> (Queue 1, Class B)\nP.set(jobclass[1], jobclass[1], node[1], node[2], 1.0)  # (Queue 1, Class B) -> (ClassSwitch 1, Class B)\nP.set(jobclass[1], jobclass[2], node[2], node[4], 1.0)  # (ClassSwitch 1, Class B) -> (Queue 2, Class C) - class switch!\nP.set(jobclass[2], jobclass[2], node[4], node[3], 1.0)  # (Queue 2, Class C) -> (Sink 1, Class C)\n\n# Routing for Class C (index 2) - no arrivals, but define internal routing\nP.set(jobclass[2], jobclass[2], node[0], node[1], 1.0)  # (Source 1, Class C) -> (Queue 1, Class C) - not used\nP.set(jobclass[2], jobclass[2], node[1], node[2], 1.0)  # (Queue 1, Class C) -> (ClassSwitch 1, Class C) - not used\nP.set(jobclass[2], jobclass[2], node[2], node[4], 1.0)  # (ClassSwitch 1, Class C) -> (Queue 2, Class C)\nP.set(jobclass[2], jobclass[2], node[4], node[3], 1.0)  # (Queue 2, Class C) -> (Sink 1, Class C)\n\nmodel.link(P)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:32.864024Z",
+          "start_time": "2025-07-30T22:23:32.850403Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:47.640370Z",
+          "iopub.execute_input": "2026-01-01T10:27:47.640450Z",
+          "shell.execute_reply": "2026-01-01T10:27:47.642587Z",
+          "iopub.status.idle": "2026-01-01T10:27:47.642796Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 9
+    },
+    "cell_9": {
+      "cell_type": "code",
+      "source": "# Solver options\noptions = Solver.default_options()\noptions['keep'] = True\noptions['verbose'] = 1\noptions['cutoff'] = np.array([[1,1,0],[3,3,0],[0,0,3]])  # 5 nodes x 3 classes cutoff matrix\noptions['seed'] = 23000\noptions['samples'] = int(1e5)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:32.935342Z",
+          "start_time": "2025-07-30T22:23:32.902411Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:47.643630Z",
+          "iopub.execute_input": "2026-01-01T10:27:47.643714Z",
+          "shell.execute_reply": "2026-01-01T10:27:47.644960Z",
+          "iopub.status.idle": "2026-01-01T10:27:47.645157Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 10
+    },
+    "cell_10": {
+      "cell_type": "code",
+      "source": "# Aligned with JAR test scenarios for oqn_cs_routing\n# JAR tests: CTMC(cutoff=[[1,1,0],[3,3,0],[0,0,3]]), MVA(), MAM(), NC(), Fluid(), \n#           JMT(seed=23000, samples=100000), SSA(seed=23000, samples=100000, @Disabled)\n\nsolver = np.array([], dtype=object)\n\n# CTMC with specific cutoff matrix (matches JAR)  \nsolver = np.append(solver, CTMC(model, cutoff=np.array([[1,1,0],[3,3,0],[0,0,3]])))\n\n# MVA with default settings (matches JAR)\nsolver = np.append(solver, MVA(model))\n\n# MAM with default settings (matches JAR)\nsolver = np.append(solver, MAM(model))\n\n# NC with default settings (matches JAR)\nsolver = np.append(solver, NC(model))\n\n# Fluid with default settings (matches JAR)\nsolver = np.append(solver, FLD(model))\n\n# JMT with seed=23000, samples=100000 (matches JAR)\n# Commented out: Python native JMT handler doesn't support ClassSwitch nodes\n# solver = np.append(solver, JMT(model, seed=23000, samples=100000))\n\n# DES with seed=23000, samples=100000 (matches MATLAB)\nsolver = np.append(solver, DES(model, seed=23000, samples=100000))\n\n# SSA with seed=23000, samples=100000 (matches JAR, but disabled in JAR tests)\n# Commented out per JAR @Disabled annotation\n# solver = np.append(solver, SSA(model, seed=23000, samples=100000))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:33.090886Z",
+          "start_time": "2025-07-30T22:23:32.959905Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:47.645832Z",
+          "iopub.execute_input": "2026-01-01T10:27:47.645905Z",
+          "iopub.status.idle": "2026-01-01T10:27:47.688787Z",
+          "shell.execute_reply": "2026-01-01T10:27:47.688391Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 11
+    },
+    "cell_11": {
+      "cell_type": "code",
+      "source": "# Execute all solvers and collect results\nAvgTable = np.empty(len(solver), dtype=object)\n\nfor s in range(len(solver)):\n    AvgTable[s] = solver[s].avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:47.852497Z",
+          "start_time": "2025-07-30T22:23:33.099174Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:47.690011Z",
+          "iopub.execute_input": "2026-01-01T10:27:47.690108Z",
+          "iopub.status.idle": "2026-01-01T10:27:49.406268Z",
+          "shell.execute_reply": "2026-01-01T10:27:49.405899Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": " Station JobClass   QLen   Util  RespT  ResidT  ArvR  Tput\nSource 1  Class A 0.0000 0.0000 0.0000  0.0000   0.0   1.0\nSource 1  Class B 0.0000 0.0000 0.0000  0.0000   0.0   0.5\nSource 1  Class C 0.0000 0.0000 0.0000  0.0000   0.0   0.5\n Queue 1  Class A 0.2500 0.2000 0.2500  0.2500   1.0   1.0\n Queue 1  Class B 0.1765 0.1500 0.3529  0.3529   0.5   0.5\n Queue 1  Class C 0.2000 0.1667 0.4000  0.4000   0.5   0.5\n Queue 2  Class A    inf 1.0000    inf     inf   1.0   1.0\n Queue 2  Class B 1.0000 0.5000 2.0000  2.0000   0.5   0.5\n Queue 2  Class C 0.0811 0.0750 0.1622  0.1622   0.5   0.5\n Station JobClass  QLen  Util  RespT  ResidT   ArvR   Tput\nSource 1  Class A   0.0   0.0    0.0     0.0 2.0000 2.0000\nSource 1  Class B   0.0   0.0    0.0     0.0 1.0000 1.0000\n Queue 1  Class A   0.4   0.4    0.2     0.2 2.0001 2.0001\n Queue 1  Class B   0.3   0.3    0.3     0.3 1.0000 1.0000\n",
+            "numerical_values": [
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.5,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.5,
+              1.0,
+              0.25,
+              0.2,
+              0.25,
+              0.25,
+              1.0,
+              1.0,
+              1.0,
+              0.1765,
+              0.15,
+              0.3529,
+              0.3529,
+              0.5,
+              0.5,
+              1.0,
+              0.2,
+              0.1667,
+              0.4,
+              0.4,
+              0.5,
+              0.5,
+              2.0,
+              1.0,
+              1.0,
+              1.0,
+              2.0,
+              1.0,
+              0.5,
+              2.0,
+              2.0,
+              0.5,
+              0.5,
+              2.0,
+              0.0811,
+              0.075,
+              0.1622,
+              0.1622,
+              0.5,
+              0.5,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              2.0,
+              2.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              1.0,
+              0.4,
+              0.4,
+              0.2,
+              0.2,
+              2.0001,
+              2.0001,
+              1.0,
+              0.3,
+              0.3,
+              0.3,
+              0.3,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/solvers/ctmc/handler.py:518: RuntimeWarning: invalid value encountered in scalar multiply\n  TN[ist, k] = UN[ist, k] * c * mu\n/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/pfqn/nc.py:125: RuntimeWarning: invalid value encountered in cast\n  N = np.ceil(N).astype(int)\n",
+            "numerical_values": [
+              518.0,
+              125.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 12
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      2.0,
+      3.0
+    ],
+    "cell_3": [
+      2.0,
+      3.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      2.0,
+      0.0
+    ],
+    "cell_7": [
+      3.0,
+      2.0,
+      2.0
+    ],
+    "cell_11": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.5,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.5,
+      1.0,
+      0.25,
+      0.2,
+      0.25,
+      0.25,
+      1.0,
+      1.0,
+      1.0,
+      0.1765,
+      0.15,
+      0.3529,
+      0.3529,
+      0.5,
+      0.5,
+      1.0,
+      0.2,
+      0.1667,
+      0.4,
+      0.4,
+      0.5,
+      0.5,
+      2.0,
+      1.0,
+      1.0,
+      1.0,
+      2.0,
+      1.0,
+      0.5,
+      2.0,
+      2.0,
+      0.5,
+      0.5,
+      2.0,
+      0.0811,
+      0.075,
+      0.1622,
+      0.1622,
+      0.5,
+      0.5,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      2.0,
+      2.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0,
+      0.4,
+      0.4,
+      0.2,
+      0.2,
+      2.0001,
+      2.0001,
+      1.0,
+      0.3,
+      0.3,
+      0.3,
+      0.3,
+      1.0,
+      1.0,
+      518.0,
+      125.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "openQN/oqn_cs_routing.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 12,
+    "code_cells": 12,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

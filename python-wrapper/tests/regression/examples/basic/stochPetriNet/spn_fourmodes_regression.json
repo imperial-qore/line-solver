@@ -1,0 +1,215 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:39.111865Z",
+          "start_time": "2025-07-30T22:26:38.277879Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:03.163535Z",
+          "iopub.execute_input": "2026-01-02T14:14:03.163630Z",
+          "iopub.status.idle": "2026-01-02T14:14:03.897291Z",
+          "shell.execute_reply": "2026-01-02T14:14:03.896983Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('model')\n\nP1 = Place(model, 'P1')\nP2 = Place(model, 'P2')\nP3 = Place(model, 'P3')\n\nT1 = Transition(model, 'T1')\nT2 = Transition(model, 'T2')\nT3 = Transition(model, 'T3')\nT4 = Transition(model, 'T4')\n\njobclass = ClosedClass(model, 'Class1', 8, P1, 0)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:39.124955Z",
+          "start_time": "2025-07-30T22:26:39.114919Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:03.898361Z",
+          "iopub.execute_input": "2026-01-02T14:14:03.898509Z",
+          "iopub.status.idle": "2026-01-02T14:14:03.907368Z",
+          "shell.execute_reply": "2026-01-02T14:14:03.907017Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# T1 - Competes for tokens: requires 2 tokens from P1, produces 2 to P2\nmode1 = T1.add_mode('Mode1')\nT1.set_distribution(mode1, Exp(2))\nT1.set_enabling_conditions(mode1, jobclass, P1, 2)\nT1.set_firing_outcome(mode1, jobclass, P2, 2)\n\n# T2 - Competes for tokens: requires 3 tokens from P1, produces 3 to P3\nmode2 = T2.add_mode('Mode2')\nT2.set_distribution(mode2, Exp(1))\nT2.set_enabling_conditions(mode2, jobclass, P1, 3)\nT2.set_firing_outcome(mode2, jobclass, P3, 3)\n\n# T3 - Returns tokens: takes 1 from P2, returns 1 to P1\nmode3 = T3.add_mode('Mode3')\nT3.set_distribution(mode3, Exp(4))\nT3.set_enabling_conditions(mode3, jobclass, P2, 1)\nT3.set_firing_outcome(mode3, jobclass, P1, 1)\n\n# T4 - Returns tokens: takes 2 from P3, returns 2 to P1\nmode4 = T4.add_mode('Mode4')\nT4.set_distribution(mode4, Exp(2))\nT4.set_enabling_conditions(mode4, jobclass, P3, 2)\nT4.set_firing_outcome(mode4, jobclass, P1, 2)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:39.184479Z",
+          "start_time": "2025-07-30T22:26:39.177698Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:03.908484Z",
+          "iopub.execute_input": "2026-01-02T14:14:03.908599Z",
+          "shell.execute_reply": "2026-01-02T14:14:03.914814Z",
+          "iopub.status.idle": "2026-01-02T14:14:03.915256Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Set up routing matrix\nroutingMatrix = model.init_routing_matrix()\n\n# Place to transition routing (competing transitions from P1)\nroutingMatrix.set(jobclass, jobclass, P1, T1, 1.0)  # P1 -> T1\nroutingMatrix.set(jobclass, jobclass, P1, T2, 1.0)  # P1 -> T2 (competing)\nroutingMatrix.set(jobclass, jobclass, P2, T3, 1.0)  # P2 -> T3\nroutingMatrix.set(jobclass, jobclass, P3, T4, 1.0)  # P3 -> T4\n\n# Transition to place routing\nroutingMatrix.set(jobclass, jobclass, T1, P2, 1.0)  # T1 -> P2\nroutingMatrix.set(jobclass, jobclass, T2, P3, 1.0)  # T2 -> P3\nroutingMatrix.set(jobclass, jobclass, T3, P1, 1.0)  # T3 -> P1\nroutingMatrix.set(jobclass, jobclass, T4, P1, 1.0)  # T4 -> P1\n\nmodel.link(routingMatrix)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:39.238542Z",
+          "start_time": "2025-07-30T22:26:39.229363Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:03.916559Z",
+          "iopub.execute_input": "2026-01-02T14:14:03.916735Z",
+          "shell.execute_reply": "2026-01-02T14:14:03.923823Z",
+          "iopub.status.idle": "2026-01-02T14:14:03.924201Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# Set initial state - all 8 tokens start in P1\nP1.set_state([jobclass.get_population()])\nP2.set_state([0])\nP3.set_state([0])",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:39.328782Z",
+          "start_time": "2025-07-30T22:26:39.288127Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:03.925364Z",
+          "iopub.execute_input": "2026-01-02T14:14:03.925517Z",
+          "iopub.status.idle": "2026-01-02T14:14:03.936426Z",
+          "shell.execute_reply": "2026-01-02T14:14:03.936158Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# Solve the model\nsolver = JMT(model, seed=23000)\navgTable = solver.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:40.801968Z",
+          "start_time": "2025-07-30T22:26:39.349411Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:03.937371Z",
+          "iopub.execute_input": "2026-01-02T14:14:03.937460Z",
+          "iopub.status.idle": "2026-01-02T14:14:05.046423Z",
+          "shell.execute_reply": "2026-01-02T14:14:05.046147Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "JMT Model: /tmp/workspace/jsim/2806766390943464056/jmodel.jsim\n",
+            "numerical_values": [
+              2.806766390943464e+18
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass    QLen  Util   RespT  ResidT    ArvR    Tput\n0      P1   Class1  3.4344   0.0  0.7203  0.7203  4.7960  4.7866\n1      P2   Class1  2.5589   0.0  0.8665  0.8665  2.9984  3.0006\n2      P3   Class1  1.9935   0.0  1.1405  1.1405  1.8044  1.7420\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              1.0,
+              3.4344,
+              0.0,
+              0.7203,
+              0.7203,
+              4.796,
+              4.7866,
+              1.0,
+              2.0,
+              1.0,
+              2.5589,
+              0.0,
+              0.8665,
+              0.8665,
+              2.9984,
+              3.0006,
+              2.0,
+              3.0,
+              1.0,
+              1.9935,
+              0.0,
+              1.1405,
+              1.1405,
+              1.8044,
+              1.742
+            ]
+          }
+        }
+      ],
+      "execution_count": 6
+    }
+  },
+  "numerical_summary": {
+    "cell_4": [
+      8.0,
+      1.0,
+      1.0,
+      2.0,
+      0.0,
+      3.0,
+      0.0
+    ],
+    "cell_5": [
+      2.806766390943464e+18,
+      0.0,
+      1.0,
+      1.0,
+      3.4344,
+      0.0,
+      0.7203,
+      0.7203,
+      4.796,
+      4.7866,
+      1.0,
+      2.0,
+      1.0,
+      2.5589,
+      0.0,
+      0.8665,
+      0.8665,
+      2.9984,
+      3.0006,
+      2.0,
+      3.0,
+      1.0,
+      1.9935,
+      0.0,
+      1.1405,
+      1.1405,
+      1.8044,
+      1.742,
+      23000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "stochPetriNet/spn_fourmodes.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 6,
+    "code_cells": 6,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

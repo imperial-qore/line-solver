@@ -1,0 +1,237 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-09-10T15:47:29.949288Z",
+          "start_time": "2025-09-10T15:47:29.058993Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:58.985084Z",
+          "iopub.execute_input": "2026-01-02T14:14:58.985214Z",
+          "shell.execute_reply": "2026-01-02T14:14:59.892107Z",
+          "iopub.status.idle": "2026-01-02T14:14:59.892437Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('M[2]/M[2]/1-Exhaustive')\n## Block 1: nodes\nsource = Source(model, 'mySource')\nqueue = Queue(model, 'myQueue', SchedStrategy.POLLING)\nsink = Sink(model, 'mySink')",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-09-10T15:47:29.962488Z",
+          "start_time": "2025-09-10T15:47:29.952875Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:59.893598Z",
+          "iopub.execute_input": "2026-01-02T14:14:59.893778Z",
+          "shell.execute_reply": "2026-01-02T14:14:59.905591Z",
+          "iopub.status.idle": "2026-01-02T14:14:59.905922Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "## Block 2: classes\noclass1 = OpenClass(model, 'myClass1')\nsource.set_arrival(oclass1, Exp(1.0))\nqueue.set_service(oclass1, Exp(4.0))\n\noclass2 = OpenClass(model, 'myClass2')\nsource.set_arrival(oclass2, Exp(0.8))\nqueue.set_service(oclass2, Exp(1.5))\n\nqueue.set_polling_type(PollingType.GATED)\nqueue.set_switchover(oclass1, Exp(1.0))\nqueue.set_switchover(oclass2, Exp(0.5))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-09-10T15:47:30.042021Z",
+          "start_time": "2025-09-10T15:47:30.004362Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:59.907249Z",
+          "iopub.execute_input": "2026-01-02T14:14:59.907367Z",
+          "shell.execute_reply": "2026-01-02T14:14:59.932346Z",
+          "iopub.status.idle": "2026-01-02T14:14:59.932646Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "## Block 3: topology\nP = model.init_routing_matrix()\nP.add_route(oclass1, source, queue, sink)\nP.add_route(oclass2, source, queue, sink)\nmodel.link(P)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-09-10T15:47:30.100581Z",
+          "start_time": "2025-09-10T15:47:30.053785Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:59.933863Z",
+          "iopub.execute_input": "2026-01-02T14:14:59.933965Z",
+          "shell.execute_reply": "2026-01-02T14:14:59.939602Z",
+          "iopub.status.idle": "2026-01-02T14:14:59.939887Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "MVA(model).avg_table()  # solution is exact",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-09-10T15:47:30.228389Z",
+          "start_time": "2025-09-10T15:47:30.115829Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:59.940951Z",
+          "iopub.execute_input": "2026-01-02T14:14:59.941095Z",
+          "shell.execute_reply": "2026-01-02T14:14:59.970660Z",
+          "iopub.status.idle": "2026-01-02T14:14:59.970960Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "    Station  JobClass     QLen  Util    RespT   ResidT  ArvR  Tput\n0  mySource  myClass1   0.0000  0.00   0.0000   0.0000   0.0   1.0\n1   myQueue  myClass1  11.2203  0.25  11.2203  11.2203   1.0   1.0\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              1.0,
+              11.2203,
+              0.25,
+              11.2203,
+              11.2203,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "output_type": "execute_result",
+          "execution_count": 5,
+          "metadata": {},
+          "content": {
+            "text/plain": "    Station  JobClass     QLen  Util    RespT   ResidT  ArvR  Tput\n0  mySource  myClass1   0.0000  0.00   0.0000   0.0000   0.0   1.0\n1   myQueue  myClass1  11.2203  0.25  11.2203  11.2203   1.0   1.0",
+            "numerical_values": [
+              0.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              1.0,
+              11.2203,
+              0.25,
+              11.2203,
+              11.2203,
+              1.0,
+              1.0
+            ],
+            "text/html": "<div>\n<style scoped>\n    .dataframe tbody tr th:only-of-type {\n        vertical-align: middle;\n    }\n\n    .dataframe tbody tr th {\n        vertical-align: top;\n    }\n\n    .dataframe thead th {\n        text-align: right;\n    }\n</style>\n<table border=\"1\" class=\"dataframe\">\n  <thead>\n    <tr style=\"text-align: right;\">\n      <th></th>\n      <th>Station</th>\n      <th>JobClass</th>\n      <th>QLen</th>\n      <th>Util</th>\n      <th>RespT</th>\n      <th>ResidT</th>\n      <th>ArvR</th>\n      <th>Tput</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <th>0</th>\n      <td>mySource</td>\n      <td>myClass1</td>\n      <td>0.0000</td>\n      <td>0.00</td>\n      <td>0.0000</td>\n      <td>0.0000</td>\n      <td>0.0</td>\n      <td>1.0</td>\n    </tr>\n    <tr>\n      <th>1</th>\n      <td>myQueue</td>\n      <td>myClass1</td>\n      <td>11.2203</td>\n      <td>0.25</td>\n      <td>11.2203</td>\n      <td>11.2203</td>\n      <td>1.0</td>\n      <td>1.0</td>\n    </tr>\n  </tbody>\n</table>\n</div>"
+          }
+        }
+      ],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# Note: JMT solver may have issues with polling models\n# JMT(model, samples=1000000).avg_table()\nprint(\"JMT solver skipped - polling models may not be fully supported\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-09-10T15:47:37.301750Z",
+          "start_time": "2025-09-10T15:47:30.292010Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:59.971811Z",
+          "iopub.execute_input": "2026-01-02T14:14:59.971942Z",
+          "iopub.status.idle": "2026-01-02T14:14:59.973598Z",
+          "shell.execute_reply": "2026-01-02T14:14:59.973367Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "JMT solver skipped - polling models may not be fully supported\n"
+          }
+        }
+      ],
+      "execution_count": 6
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      2.0,
+      2.0,
+      1.0,
+      1.0
+    ],
+    "cell_3": [
+      3.0,
+      1.0,
+      2.0
+    ],
+    "cell_4": [
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0,
+      11.2203,
+      0.25,
+      11.2203,
+      11.2203,
+      1.0,
+      1.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0,
+      11.2203,
+      0.25,
+      11.2203,
+      11.2203,
+      1.0,
+      1.0
+    ],
+    "cell_5": [
+      1000000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "cyclicPolling/polling_gated.ipynb",
+    "source_dir": "examples/advanced",
+    "total_cells": 6,
+    "code_cells": 6,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

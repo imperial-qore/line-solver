@@ -1,0 +1,251 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:43:16.254404Z",
+          "start_time": "2025-07-15T22:43:04.666233Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:16:29.869127Z",
+          "iopub.execute_input": "2026-01-02T14:16:29.869237Z",
+          "iopub.status.idle": "2026-01-02T14:16:31.310849Z",
+          "shell.execute_reply": "2026-01-02T14:16:31.309431Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('SOQueue')\n## Block 1: nodes\nsource = Source(model, 'mySource')\nqueue = Queue(model, 'myQueue', SchedStrategy.FCFS)\nsink = Sink(model, 'mySink')",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:43:16.665004Z",
+          "start_time": "2025-07-15T22:43:16.485124Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:16:31.312759Z",
+          "iopub.execute_input": "2026-01-02T14:16:31.318868Z",
+          "iopub.status.idle": "2026-01-02T14:16:31.382297Z",
+          "shell.execute_reply": "2026-01-02T14:16:31.381650Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "## Block 2: classes\noclass1 = OpenClass(model, 'myClass1')\nsource.set_arrival(oclass1, Exp(0.2))\nqueue.set_service(oclass1, Exp(0.1))\n\noclass2 = OpenClass(model, 'myClass2')\nsource.set_arrival(oclass2, Exp(0.8))\nqueue.set_service(oclass2, Exp(1.5))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:43:17.322876Z",
+          "start_time": "2025-07-15T22:43:17.263303Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:16:31.388821Z",
+          "iopub.execute_input": "2026-01-02T14:16:31.389057Z",
+          "iopub.status.idle": "2026-01-02T14:16:31.408036Z",
+          "shell.execute_reply": "2026-01-02T14:16:31.407484Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Here we set an overhead for switching from a job of class 1 to a job of class 2\nqueue.set_switchover(oclass1, oclass2, Exp(1))\nqueue.set_switchover(oclass2, oclass1, Erlang(1, 2))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:43:17.441711Z",
+          "start_time": "2025-07-15T22:43:17.418329Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:16:31.410221Z",
+          "iopub.execute_input": "2026-01-02T14:16:31.410480Z",
+          "iopub.status.idle": "2026-01-02T14:16:31.414471Z",
+          "shell.execute_reply": "2026-01-02T14:16:31.413915Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "## Block 3: topology\nP = model.init_routing_matrix()\nP.add_route(oclass1, source, queue, sink)\nP.add_route(oclass2, source, queue, sink)\nmodel.link(P)\n#model.jsimgView()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:44:39.173223Z",
+          "start_time": "2025-07-15T22:43:49.192452Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:16:31.416430Z",
+          "iopub.execute_input": "2026-01-02T14:16:31.416632Z",
+          "shell.execute_reply": "2026-01-02T14:16:31.428526Z",
+          "iopub.status.idle": "2026-01-02T14:16:31.428990Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "avg_table = JMT(model, keep=True).avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:43:32.789614Z",
+          "start_time": "2025-07-15T22:43:19.025353Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:16:31.430416Z",
+          "iopub.execute_input": "2026-01-02T14:16:31.430620Z",
+          "shell.execute_reply": "2026-01-02T14:16:32.604420Z",
+          "iopub.status.idle": "2026-01-02T14:16:32.605064Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "JMT Model: /tmp/workspace/jsim/9108562806920387819/jmodel.jsim\n",
+            "numerical_values": [
+              9.108562806920388e+18
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "    Station  JobClass       QLen    Util       RespT      ResidT    ArvR  \\\n0  mySource  myClass1     0.0000  0.0000      0.0000      0.0000  0.0000   \n1  mySource  myClass2     0.0000  0.0000      0.0000      0.0000  0.0000   \n2   myQueue  myClass1  2129.1166  0.7858  38096.3573  38096.3573  0.2002   \n3   myQueue  myClass2  2067.2042  0.2223   9378.0471   9378.0471  0.7762   \n\n     Tput  \n0  0.2002  \n1  0.7762  \n2  0.0788  \n3  0.3205  \n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              2.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              2.0,
+              1.0,
+              2129.1166,
+              0.7858,
+              38096.3573,
+              38096.3573,
+              0.2002,
+              3.0,
+              2.0,
+              2067.2042,
+              0.2223,
+              9378.0471,
+              9378.0471,
+              0.7762,
+              0.0,
+              0.2002,
+              1.0,
+              0.7762,
+              2.0,
+              0.0788,
+              3.0,
+              0.3205
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "WARNING: [getAvg] The model has unstable queues, performance metrics may grow unbounded.\n"
+          }
+        }
+      ],
+      "execution_count": 6
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      1.0
+    ],
+    "cell_3": [
+      1.0,
+      2.0,
+      1.0,
+      2.0,
+      1.0,
+      2.0,
+      1.0,
+      1.0,
+      2.0
+    ],
+    "cell_4": [
+      3.0,
+      1.0,
+      2.0
+    ],
+    "cell_5": [
+      9.108562806920388e+18,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      2.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      2.0,
+      1.0,
+      2129.1166,
+      0.7858,
+      38096.3573,
+      38096.3573,
+      0.2002,
+      3.0,
+      2.0,
+      2067.2042,
+      0.2223,
+      9378.0471,
+      9378.0471,
+      0.7762,
+      0.0,
+      0.2002,
+      1.0,
+      0.7762,
+      2.0,
+      0.0788,
+      3.0,
+      0.3205
+    ]
+  },
+  "metadata": {
+    "notebook_path": "switchoverTimes/switchover_basic.ipynb",
+    "source_dir": "examples/advanced",
+    "total_cells": 6,
+    "code_cells": 6,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

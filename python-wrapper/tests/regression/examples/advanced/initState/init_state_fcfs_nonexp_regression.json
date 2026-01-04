@@ -1,0 +1,368 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "jupyter": {
+          "is_executing": true
+        },
+        "ExecuteTime": {
+          "start_time": "2025-07-15T04:54:25.253490Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:15:04.716064Z",
+          "iopub.execute_input": "2026-01-02T14:15:04.716166Z",
+          "shell.execute_reply": "2026-01-02T14:15:05.509884Z",
+          "iopub.status.idle": "2026-01-02T14:15:05.510283Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('model')\n\nnode = [None] * 2  # Using 0-based indexing\nnode[0] = Delay(model, 'Delay') \nnode[1] = Queue(model, 'Queue1', SchedStrategy.FCFS)\njobclass = [None] * 2  # Using 0-based indexing\njobclass[0] = ClosedClass(model, 'Class1', 3, node[1], 0)\njobclass[1] = ClosedClass(model, 'Class2', 2, node[1], 0)\nnode[1].set_number_of_servers(3)\n\nnode[0].set_service(jobclass[0], Exp(1))\nnode[0].set_service(jobclass[1], Exp(1))\nnode[1].set_service(jobclass[0], Exp(1.2))\nnode[1].set_service(jobclass[1], Erlang.fit_mean_and_scv(1.0, 0.5))\n\nM = model.get_number_of_stations()\nK = model.get_number_of_classes()\n\nP = model.init_routing_matrix()\n# Class 1 to Class 1 routing matrix\nP.set(jobclass[0], jobclass[0], node[0], node[0], 0.3)\nP.set(jobclass[0], jobclass[0], node[0], node[1], 0.7)  # 0.1 + 0.6\nP.set(jobclass[0], jobclass[0], node[1], node[0], 0.2)\nP.set(jobclass[0], jobclass[0], node[1], node[1], 0.0)\n\n# Class 1 to Class 2 routing matrix \nP.set(jobclass[0], jobclass[1], node[0], node[0], 0.0)\nP.set(jobclass[0], jobclass[1], node[0], node[1], 0.0)\nP.set(jobclass[0], jobclass[1], node[1], node[0], 0.8)\nP.set(jobclass[0], jobclass[1], node[1], node[1], 0.0)\n\n# Class 2 to Class 2 routing matrix\nP.set(jobclass[1], jobclass[1], node[0], node[0], 0.0)\nP.set(jobclass[1], jobclass[1], node[0], node[1], 1.0)\nP.set(jobclass[1], jobclass[1], node[1], node[0], 0.0)\nP.set(jobclass[1], jobclass[1], node[1], node[1], 0.0)\n\n# Class 2 to Class 1 routing matrix\nP.set(jobclass[1], jobclass[0], node[0], node[0], 0.0) \nP.set(jobclass[1], jobclass[0], node[0], node[1], 0.0)\nP.set(jobclass[1], jobclass[0], node[1], node[0], 1.0)\nP.set(jobclass[1], jobclass[0], node[1], node[1], 0.0)\n\nmodel.link(P)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:34:59.802215Z",
+          "start_time": "2025-07-01T07:34:59.799826Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:15:05.511500Z",
+          "iopub.execute_input": "2026-01-02T14:15:05.511675Z",
+          "iopub.status.idle": "2026-01-02T14:15:05.536140Z",
+          "shell.execute_reply": "2026-01-02T14:15:05.535799Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Note: Advanced transient analysis features are not yet available in Python LINE\n# This example demonstrates the multi-class model setup\nsolver_mva = MVA(model)\navg_table_mva = solver_mva.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:34:59.849612Z",
+          "start_time": "2025-07-01T07:34:59.847224Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:15:05.537241Z",
+          "iopub.execute_input": "2026-01-02T14:15:05.537381Z",
+          "shell.execute_reply": "2026-01-02T14:15:05.648763Z",
+          "iopub.status.idle": "2026-01-02T14:15:05.648990Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0   Delay   Class1  1.6257  1.6257  1.0000  0.7937  1.6257  1.6257\n1   Delay   Class2  0.9104  0.9104  1.0000  0.4444  0.9104  0.9104\n2  Queue1   Class1  1.2571  0.3161  1.1047  0.6137  1.1380  1.1380\n3  Queue1   Class2  1.2068  0.3035  1.3257  0.5892  0.9104  0.9104\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              1.6257,
+              1.6257,
+              1.0,
+              0.7937,
+              1.6257,
+              1.6257,
+              1.0,
+              2.0,
+              0.9104,
+              0.9104,
+              1.0,
+              0.4444,
+              0.9104,
+              0.9104,
+              2.0,
+              1.0,
+              1.0,
+              1.2571,
+              0.3161,
+              1.1047,
+              0.6137,
+              1.138,
+              1.138,
+              3.0,
+              1.0,
+              2.0,
+              1.2068,
+              0.3035,
+              1.3257,
+              0.5892,
+              0.9104,
+              0.9104
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "solver_nc = NC(model)\navg_table_nc = solver_nc.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:34:59.849612Z",
+          "start_time": "2025-07-01T07:34:59.847224Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:15:05.649841Z",
+          "iopub.execute_input": "2026-01-02T14:15:05.649938Z",
+          "shell.execute_reply": "2026-01-02T14:15:05.679206Z",
+          "iopub.status.idle": "2026-01-02T14:15:05.679504Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0   Delay   Class1  1.7954  1.7954  1.0000  0.7937  1.7954  1.7954\n1   Delay   Class2  1.0054  1.0054  1.0000  0.4444  1.0054  1.0054\n2  Queue1   Class1  1.1252  0.3460  0.8953  0.4974  1.2568  1.2568\n3  Queue1   Class2  1.0739  0.3302  1.0681  0.4747  1.0054  1.0054\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              1.7954,
+              1.7954,
+              1.0,
+              0.7937,
+              1.7954,
+              1.7954,
+              1.0,
+              2.0,
+              1.0054,
+              1.0054,
+              1.0,
+              0.4444,
+              1.0054,
+              1.0054,
+              2.0,
+              1.0,
+              1.0,
+              1.1252,
+              0.346,
+              0.8953,
+              0.4974,
+              1.2568,
+              1.2568,
+              3.0,
+              1.0,
+              2.0,
+              1.0739,
+              0.3302,
+              1.0681,
+              0.4747,
+              1.0054,
+              1.0054
+            ]
+          }
+        }
+      ],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "solver_jmt = JMT(model, samples=10000)\navg_table_jmt = solver_jmt.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:34:59.849612Z",
+          "start_time": "2025-07-01T07:34:59.847224Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:15:05.680407Z",
+          "iopub.execute_input": "2026-01-02T14:15:05.680511Z",
+          "iopub.status.idle": "2026-01-02T14:15:06.424999Z",
+          "shell.execute_reply": "2026-01-02T14:15:06.424731Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "JMT Model: /tmp/workspace/jsim/14149692773293416803/jmodel.jsim\n",
+            "numerical_values": [
+              1.4149692773293416e+19
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0   Delay   Class1  1.7738  1.7738  1.0095  0.8012  1.7721  1.7841\n1   Delay   Class2  0.9595  0.9595  0.9881  0.4392  0.9984  1.0030\n2  Queue1   Class1  1.1658  0.3531  0.9268  0.5149  1.2495  1.2546\n3  Queue1   Class2  1.0630  0.3302  1.0791  0.4796  1.0026  1.0030\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              1.7738,
+              1.7738,
+              1.0095,
+              0.8012,
+              1.7721,
+              1.7841,
+              1.0,
+              2.0,
+              0.9595,
+              0.9595,
+              0.9881,
+              0.4392,
+              0.9984,
+              1.003,
+              2.0,
+              1.0,
+              1.0,
+              1.1658,
+              0.3531,
+              0.9268,
+              0.5149,
+              1.2495,
+              1.2546,
+              3.0,
+              1.0,
+              2.0,
+              1.063,
+              0.3302,
+              1.0791,
+              0.4796,
+              1.0026,
+              1.003
+            ]
+          }
+        }
+      ],
+      "execution_count": 5
+    }
+  },
+  "numerical_summary": {
+    "cell_2": [
+      0.0,
+      1.0,
+      1.6257,
+      1.6257,
+      1.0,
+      0.7937,
+      1.6257,
+      1.6257,
+      1.0,
+      2.0,
+      0.9104,
+      0.9104,
+      1.0,
+      0.4444,
+      0.9104,
+      0.9104,
+      2.0,
+      1.0,
+      1.0,
+      1.2571,
+      0.3161,
+      1.1047,
+      0.6137,
+      1.138,
+      1.138,
+      3.0,
+      1.0,
+      2.0,
+      1.2068,
+      0.3035,
+      1.3257,
+      0.5892,
+      0.9104,
+      0.9104
+    ],
+    "cell_3": [
+      0.0,
+      1.0,
+      1.7954,
+      1.7954,
+      1.0,
+      0.7937,
+      1.7954,
+      1.7954,
+      1.0,
+      2.0,
+      1.0054,
+      1.0054,
+      1.0,
+      0.4444,
+      1.0054,
+      1.0054,
+      2.0,
+      1.0,
+      1.0,
+      1.1252,
+      0.346,
+      0.8953,
+      0.4974,
+      1.2568,
+      1.2568,
+      3.0,
+      1.0,
+      2.0,
+      1.0739,
+      0.3302,
+      1.0681,
+      0.4747,
+      1.0054,
+      1.0054
+    ],
+    "cell_4": [
+      1.4149692773293416e+19,
+      0.0,
+      1.0,
+      1.7738,
+      1.7738,
+      1.0095,
+      0.8012,
+      1.7721,
+      1.7841,
+      1.0,
+      2.0,
+      0.9595,
+      0.9595,
+      0.9881,
+      0.4392,
+      0.9984,
+      1.003,
+      2.0,
+      1.0,
+      1.0,
+      1.1658,
+      0.3531,
+      0.9268,
+      0.5149,
+      1.2495,
+      1.2546,
+      3.0,
+      1.0,
+      2.0,
+      1.063,
+      0.3302,
+      1.0791,
+      0.4796,
+      1.0026,
+      1.003,
+      10000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "initState/init_state_fcfs_nonexp.ipynb",
+    "source_dir": "examples/advanced",
+    "total_cells": 5,
+    "code_cells": 5,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

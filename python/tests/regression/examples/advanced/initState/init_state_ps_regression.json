@@ -1,0 +1,358 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:35:45.368660Z",
+          "start_time": "2025-07-01T07:35:44.129834Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:41.666981Z",
+          "iopub.execute_input": "2026-01-01T10:31:41.667057Z",
+          "shell.execute_reply": "2026-01-01T10:31:42.146168Z",
+          "iopub.status.idle": "2026-01-01T10:31:42.146525Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('model')\n\nnode = [None] * 2  # Using 0-based indexing\nnode[0] = Delay(model, 'InfiniteServer')\nnode[1] = Queue(model, 'Queue1', SchedStrategy.PS)\nnode[1].set_number_of_servers(2)\n\njobclass = [None] * 2  # Using 0-based indexing\njobclass[0] = ClosedClass(model, 'Class1', 3, node[0], 0)\njobclass[1] = ClosedClass(model, 'Class2', 1, node[0], 0)\n\nnode[0].set_service(jobclass[0], Exp(3))\nnode[0].set_service(jobclass[1], Exp(0.5))\n\nnode[1].set_service(jobclass[0], Exp(0.1))\nnode[1].set_service(jobclass[1], Exp(1))\n\nM = model.get_number_of_stations()\nK = model.get_number_of_classes()\n\nP = model.init_routing_matrix()\n# Class 1 to Class 1 routing matrix\nP.set(jobclass[0], jobclass[0], node[0], node[0], 0.3)\nP.set(jobclass[0], jobclass[0], node[0], node[1], 0.1)  \nP.set(jobclass[0], jobclass[0], node[1], node[0], 0.2)\nP.set(jobclass[0], jobclass[0], node[1], node[1], 0.0)\n\n# Class 1 to Class 2 routing matrix\nP.set(jobclass[0], jobclass[1], node[0], node[0], 0.6)\nP.set(jobclass[0], jobclass[1], node[0], node[1], 0.0)\nP.set(jobclass[0], jobclass[1], node[1], node[0], 0.8)\nP.set(jobclass[0], jobclass[1], node[1], node[1], 0.0)\n\n# Class 2 to Class 2 routing matrix  \nP.set(jobclass[1], jobclass[1], node[0], node[0], 0.0)\nP.set(jobclass[1], jobclass[1], node[0], node[1], 1.0)\nP.set(jobclass[1], jobclass[1], node[1], node[0], 0.0)\nP.set(jobclass[1], jobclass[1], node[1], node[1], 0.0)\n\n# Class 2 to Class 1 routing matrix\nP.set(jobclass[1], jobclass[0], node[0], node[0], 0.0)\nP.set(jobclass[1], jobclass[0], node[0], node[1], 0.0)\nP.set(jobclass[1], jobclass[0], node[1], node[0], 1.0)\nP.set(jobclass[1], jobclass[0], node[1], node[1], 0.0)\n\nmodel.link(P)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:35:45.444478Z",
+          "start_time": "2025-07-01T07:35:45.440445Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:42.147582Z",
+          "iopub.execute_input": "2026-01-01T10:31:42.147730Z",
+          "iopub.status.idle": "2026-01-01T10:31:42.151511Z",
+          "shell.execute_reply": "2026-01-01T10:31:42.151235Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Note: The initFromMarginalAndStarted method is not yet available in Python LINE\n# This example demonstrates the 2-class 2-node class-switching model setup\n\n# CTMC is available in the Python wrapper but may not be imported by default\ntry:\n    from line_solver.solvers import CTMC\n    solver_ctmc = CTMC(model)\n    avg_table_ctmc = solver_ctmc.avg_table()\nexcept (ImportError, Exception) as e:\n    print(f\"CTMC not available or failed: {e}\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-14T23:50:57.699900Z",
+          "start_time": "2025-07-14T23:50:56.634570Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:42.152325Z",
+          "iopub.execute_input": "2026-01-01T10:31:42.152442Z",
+          "iopub.status.idle": "2026-01-01T10:31:42.196207Z",
+          "shell.execute_reply": "2026-01-01T10:31:42.195934Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/solvers/ctmc/handler.py:518: RuntimeWarning: invalid value encountered in scalar multiply\n  TN[ist, k] = UN[ist, k] * c * mu\n",
+            "numerical_values": [
+              518.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "solver_jmt = JMT(model, samples=100000, seed=23000)\navg_table_jmt = solver_jmt.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:35:45.507930Z",
+          "start_time": "2025-07-01T07:35:45.497508Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:42.197079Z",
+          "iopub.execute_input": "2026-01-01T10:31:42.197164Z",
+          "shell.execute_reply": "2026-01-01T10:31:42.478196Z",
+          "iopub.status.idle": "2026-01-01T10:31:42.478506Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "solver_ssa = SSA(model, samples=100000, seed=23000)\navg_table_ssa = solver_ssa.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:35:45.507930Z",
+          "start_time": "2025-07-01T07:35:45.497508Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:42.479520Z",
+          "iopub.execute_input": "2026-01-01T10:31:42.479627Z",
+          "shell.execute_reply": "2026-01-01T10:31:44.487664Z",
+          "iopub.status.idle": "2026-01-01T10:31:44.487977Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "solver_fluid = FLD(model)\navg_table_fluid = solver_fluid.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:35:45.507930Z",
+          "start_time": "2025-07-01T07:35:45.497508Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:44.489176Z",
+          "iopub.execute_input": "2026-01-01T10:31:44.489259Z",
+          "iopub.status.idle": "2026-01-01T10:31:44.499236Z",
+          "shell.execute_reply": "2026-01-01T10:31:44.498997Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "       Station JobClass   QLen   Util   RespT  ResidT   ArvR   Tput\nInfiniteServer   Class1 0.3865 0.3865  0.3333  0.3333 1.1595 1.1595\nInfiniteServer   Class2 1.5769 1.5769  2.0000  2.0000 0.7884 0.7884\n        Queue1   Class1 1.2123 0.5952 10.1832 10.1832 0.1190 0.1190\n        Queue1   Class2 0.8244 0.4048  1.0183  1.0183 0.8095 0.8095\n",
+            "numerical_values": [
+              1.0,
+              0.3865,
+              0.3865,
+              0.3333,
+              0.3333,
+              1.1595,
+              1.1595,
+              2.0,
+              1.5769,
+              1.5769,
+              2.0,
+              2.0,
+              0.7884,
+              0.7884,
+              1.0,
+              1.0,
+              1.2123,
+              0.5952,
+              10.1832,
+              10.1832,
+              0.119,
+              0.119,
+              1.0,
+              2.0,
+              0.8244,
+              0.4048,
+              1.0183,
+              1.0183,
+              0.8095,
+              0.8095
+            ]
+          }
+        }
+      ],
+      "execution_count": 6
+    },
+    "cell_6": {
+      "cell_type": "code",
+      "source": "solver_mva = MVA(model)\navg_table_mva = solver_mva.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:35:45.507930Z",
+          "start_time": "2025-07-01T07:35:45.497508Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:44.500021Z",
+          "iopub.execute_input": "2026-01-01T10:31:44.500098Z",
+          "shell.execute_reply": "2026-01-01T10:31:44.502869Z",
+          "iopub.status.idle": "2026-01-01T10:31:44.503262Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/solvers_native/solver_mva.py:378: RuntimeWarning: invalid value encountered in cast\n  result = pfqn_mvams(lambda_arr, L, N, Z, mi=None, S=mi.astype(int))\n",
+            "numerical_values": [
+              378.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 7
+    },
+    "cell_7": {
+      "cell_type": "code",
+      "source": "# NC solver has limitations on multi-station load-dependent models\ntry:\n    solver_nc = NC(model)\n    avg_table_nc = solver_nc.avg_table()\n    print(avg_table_nc)\nexcept Exception as e:\n    print(f\"NC solver limitation: {type(e).__name__} - This model exceeds NC solver capabilities\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:35:45.507930Z",
+          "start_time": "2025-07-01T07:35:45.497508Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:44.504000Z",
+          "iopub.execute_input": "2026-01-01T10:31:44.504081Z",
+          "iopub.status.idle": "2026-01-01T10:31:44.508275Z",
+          "shell.execute_reply": "2026-01-01T10:31:44.507946Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "          Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0  InfiniteServer   Class1  0.9505  0.3143  1.0079  1.0079  0.9430  0.9430\n1  InfiniteServer   Class2  0.6463  1.2825  1.0079  1.0079  0.6412  0.6412\n2          Queue1   Class1  0.3081  0.4715  3.2672  3.2672  0.0943  0.0943\n3          Queue1   Class2  2.0951  0.3206  3.2672  3.2672  0.6412  0.6412\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              0.9505,
+              0.3143,
+              1.0079,
+              1.0079,
+              0.943,
+              0.943,
+              1.0,
+              2.0,
+              0.6463,
+              1.2825,
+              1.0079,
+              1.0079,
+              0.6412,
+              0.6412,
+              2.0,
+              1.0,
+              1.0,
+              0.3081,
+              0.4715,
+              3.2672,
+              3.2672,
+              0.0943,
+              0.0943,
+              3.0,
+              1.0,
+              2.0,
+              2.0951,
+              0.3206,
+              3.2672,
+              3.2672,
+              0.6412,
+              0.6412
+            ]
+          }
+        }
+      ],
+      "execution_count": 8
+    }
+  },
+  "numerical_summary": {
+    "cell_2": [
+      518.0,
+      2.0,
+      2.0
+    ],
+    "cell_3": [
+      100000.0,
+      23000.0
+    ],
+    "cell_4": [
+      100000.0,
+      23000.0
+    ],
+    "cell_5": [
+      1.0,
+      0.3865,
+      0.3865,
+      0.3333,
+      0.3333,
+      1.1595,
+      1.1595,
+      2.0,
+      1.5769,
+      1.5769,
+      2.0,
+      2.0,
+      0.7884,
+      0.7884,
+      1.0,
+      1.0,
+      1.2123,
+      0.5952,
+      10.1832,
+      10.1832,
+      0.119,
+      0.119,
+      1.0,
+      2.0,
+      0.8244,
+      0.4048,
+      1.0183,
+      1.0183,
+      0.8095,
+      0.8095
+    ],
+    "cell_6": [
+      378.0
+    ],
+    "cell_7": [
+      0.0,
+      1.0,
+      0.9505,
+      0.3143,
+      1.0079,
+      1.0079,
+      0.943,
+      0.943,
+      1.0,
+      2.0,
+      0.6463,
+      1.2825,
+      1.0079,
+      1.0079,
+      0.6412,
+      0.6412,
+      2.0,
+      1.0,
+      1.0,
+      0.3081,
+      0.4715,
+      3.2672,
+      3.2672,
+      0.0943,
+      0.0943,
+      3.0,
+      1.0,
+      2.0,
+      2.0951,
+      0.3206,
+      3.2672,
+      3.2672,
+      0.6412,
+      0.6412
+    ]
+  },
+  "metadata": {
+    "notebook_path": "initState/init_state_ps.ipynb",
+    "source_dir": "examples/advanced",
+    "total_cells": 8,
+    "code_cells": 8,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

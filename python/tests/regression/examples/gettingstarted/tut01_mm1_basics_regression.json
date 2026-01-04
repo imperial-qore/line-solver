@@ -1,0 +1,270 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:30:50.738242Z",
+          "iopub.execute_input": "2026-01-03T15:30:50.738364Z",
+          "shell.execute_reply": "2026-01-03T15:30:51.309412Z",
+          "iopub.status.idle": "2026-01-03T15:30:51.309848Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('M/M/1')\n# Block 1: nodes\nsource = Source(model, 'mySource')\nqueue = Queue(model, 'myQueue', SchedStrategy.FCFS)\nsink = Sink(model, 'mySink')\n# Block 2: classes\njobclass = OpenClass(model, 'myClass')\nsource.set_arrival(jobclass, Exp(1))\nqueue.set_service(jobclass, Exp(2))\n# Block 3: topology\nmodel.link(Network.serial_routing(source, queue, sink))",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:30:51.310869Z",
+          "iopub.execute_input": "2026-01-03T15:30:51.311034Z",
+          "shell.execute_reply": "2026-01-03T15:30:51.312942Z",
+          "iopub.status.idle": "2026-01-03T15:30:51.313333Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Block 4: solution\nAvgTable = JMT(model, seed=23000, verbose=VerboseLevel.SILENT).avg_table()",
+      "metadata": {
+        "collapsed": false,
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:30:51.314236Z",
+          "iopub.execute_input": "2026-01-03T15:30:51.314336Z",
+          "shell.execute_reply": "2026-01-03T15:30:51.806472Z",
+          "iopub.status.idle": "2026-01-03T15:30:51.806944Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "SolverJMT command: java -cp /home/gcasale/Dropbox/code/line-dev.git/common/JMT.jar jmt.commandline.Jmt sim /tmp/jmt_xy8xaj2j/model.jsimg\n",
+            "numerical_values": [
+              8.0,
+              2.0
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": " Station JobClass   QLen   Util  RespT  ResidT   ArvR   Tput\nmySource  myClass 0.0000 0.0000 0.0000  0.0000 0.0000 1.0000\n myQueue  myClass 0.9505 0.5028 1.0092  1.0092 1.0119 1.0119\n",
+            "numerical_values": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              0.9505,
+              0.5028,
+              1.0092,
+              1.0092,
+              1.0119,
+              1.0119
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# select a particular table row\nprint(tget(AvgTable, queue, jobclass))",
+      "metadata": {
+        "collapsed": false,
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:30:51.808025Z",
+          "iopub.execute_input": "2026-01-03T15:30:51.808142Z",
+          "shell.execute_reply": "2026-01-03T15:30:51.813469Z",
+          "iopub.status.idle": "2026-01-03T15:30:51.813939Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "   Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n1  myQueue  myClass  0.9505  0.5028  1.0092  1.0092  1.0119  1.0119\n",
+            "numerical_values": [
+              1.0,
+              0.9505,
+              0.5028,
+              1.0092,
+              1.0092,
+              1.0119,
+              1.0119
+            ]
+          }
+        }
+      ],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# select a particular table row by node and class label\nprint(tget(AvgTable, 'myQueue', 'myClass'))",
+      "metadata": {
+        "collapsed": false,
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:30:51.814956Z",
+          "iopub.execute_input": "2026-01-03T15:30:51.815094Z",
+          "shell.execute_reply": "2026-01-03T15:30:51.820608Z",
+          "iopub.status.idle": "2026-01-03T15:30:51.821161Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "   Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n1  myQueue  myClass  0.9505  0.5028  1.0092  1.0092  1.0119  1.0119\n",
+            "numerical_values": [
+              1.0,
+              0.9505,
+              0.5028,
+              1.0092,
+              1.0092,
+              1.0119,
+              1.0119
+            ]
+          }
+        }
+      ],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "print(AvgTable['RespT'].tolist())",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:30:51.822445Z",
+          "iopub.execute_input": "2026-01-03T15:30:51.822574Z",
+          "shell.execute_reply": "2026-01-03T15:30:51.824348Z",
+          "iopub.status.idle": "2026-01-03T15:30:51.824828Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "[0.0, 1.0092141100847152]\n",
+            "numerical_values": [
+              0.0,
+              1.0092141100847152
+            ]
+          }
+        }
+      ],
+      "execution_count": 6
+    },
+    "cell_6": {
+      "cell_type": "code",
+      "source": "print(tget(AvgTable,'myQueue','myClass')['RespT'].tolist())",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:30:51.825756Z",
+          "iopub.execute_input": "2026-01-03T15:30:51.825879Z",
+          "shell.execute_reply": "2026-01-03T15:30:51.829934Z",
+          "iopub.status.idle": "2026-01-03T15:30:51.830381Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "[1.0092141100847152]\n",
+            "numerical_values": [
+              1.0092141100847152
+            ]
+          }
+        }
+      ],
+      "execution_count": 7
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      1.0,
+      1.0,
+      2.0,
+      1.0,
+      2.0,
+      3.0
+    ],
+    "cell_2": [
+      8.0,
+      2.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.9505,
+      0.5028,
+      1.0092,
+      1.0092,
+      1.0119,
+      1.0119,
+      4.0,
+      23000.0
+    ],
+    "cell_3": [
+      1.0,
+      0.9505,
+      0.5028,
+      1.0092,
+      1.0092,
+      1.0119,
+      1.0119
+    ],
+    "cell_4": [
+      1.0,
+      0.9505,
+      0.5028,
+      1.0092,
+      1.0092,
+      1.0119,
+      1.0119
+    ],
+    "cell_5": [
+      0.0,
+      1.0092141100847152
+    ],
+    "cell_6": [
+      1.0092141100847152
+    ]
+  },
+  "metadata": {
+    "notebook_path": "tut01_mm1_basics.ipynb",
+    "source_dir": "examples/gettingstarted",
+    "total_cells": 7,
+    "code_cells": 7,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

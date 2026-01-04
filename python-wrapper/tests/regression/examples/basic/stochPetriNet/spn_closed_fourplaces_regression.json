@@ -1,0 +1,235 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:56.560576Z",
+          "start_time": "2025-07-30T22:26:55.659272Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:57.549194Z",
+          "iopub.execute_input": "2026-01-02T14:13:57.549280Z",
+          "shell.execute_reply": "2026-01-02T14:13:58.336507Z",
+          "iopub.status.idle": "2026-01-02T14:13:58.336872Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('model')\n\nP1 = Place(model, 'P1')\nP2 = Place(model, 'P2')\nP3 = Place(model, 'P3')\nP4 = Place(model, 'P4')\n\nT1 = Transition(model, 'T1')\nT2 = Transition(model, 'T2')\nT3 = Transition(model, 'T3')\nT4 = Transition(model, 'T4')\n\njobclass = ClosedClass(model, 'Class1', 2, P1, 0)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:56.624396Z",
+          "start_time": "2025-07-30T22:26:56.616933Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:58.338239Z",
+          "iopub.execute_input": "2026-01-02T14:13:58.338373Z",
+          "iopub.status.idle": "2026-01-02T14:13:58.346509Z",
+          "shell.execute_reply": "2026-01-02T14:13:58.346237Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# T1 - Exponential distribution\nmode1 = T1.add_mode('Mode1')\nT1.set_distribution(mode1, Exp(2))\nT1.set_enabling_conditions(mode1, jobclass, P1, 2)\nT1.set_firing_outcome(mode1, jobclass, P2, 2)\n\n# T2 - Erlang distribution (shape=3, rate=4)\nmode2 = T2.add_mode('Mode2')\nT2.set_distribution(mode2, Erlang(3, 4))\nT2.set_enabling_conditions(mode2, jobclass, P2, 2)\nT2.set_firing_outcome(mode2, jobclass, P3, 2)\n\n# T3 - Hyperexponential distribution (p=0.7, lambda1=3, lambda2=1.5)\nmode3 = T3.add_mode('Mode3')\nT3.set_distribution(mode3, HyperExp(0.7, 3, 1.5))\nT3.set_enabling_conditions(mode3, jobclass, P3, 2)\nT3.set_firing_outcome(mode3, jobclass, P4, 2)\n\n# T4 - Coxian distribution with custom parameters\n# Define Coxian parameters: mu (service rates) and phi (transition probabilities)\nmu0 = np.array([[1.0], [2.0]])  # Service rates for each phase\nphi0 = np.array([[0.6], [1.0]]) # Transition probabilities\n\nmode4 = T4.add_mode('Mode4')\nT4.set_distribution(mode4, Coxian(mu0, phi0))\nT4.set_enabling_conditions(mode4, jobclass, P4, 2)\nT4.set_firing_outcome(mode4, jobclass, P1, 2)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:56.695714Z",
+          "start_time": "2025-07-30T22:26:56.669702Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:58.347532Z",
+          "iopub.execute_input": "2026-01-02T14:13:58.347616Z",
+          "shell.execute_reply": "2026-01-02T14:13:58.360510Z",
+          "iopub.status.idle": "2026-01-02T14:13:58.360857Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Set up routing matrix for serial flow\nroutingMatrix = model.init_routing_matrix()\nroutingMatrix.set(jobclass, jobclass, P1, T1, 1.0)  # P1 -> T1\nroutingMatrix.set(jobclass, jobclass, P2, T2, 1.0)  # P2 -> T2\nroutingMatrix.set(jobclass, jobclass, P3, T3, 1.0)  # P3 -> T3\nroutingMatrix.set(jobclass, jobclass, P4, T4, 1.0)  # P4 -> T4\n\nroutingMatrix.set(jobclass, jobclass, T1, P2, 1.0)  # T1 -> P2\nroutingMatrix.set(jobclass, jobclass, T2, P3, 1.0)  # T2 -> P3\nroutingMatrix.set(jobclass, jobclass, T3, P4, 1.0)  # T3 -> P4\nroutingMatrix.set(jobclass, jobclass, T4, P1, 1.0)  # T4 -> P1 (back to start)\n\nmodel.link(routingMatrix)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:56.742386Z",
+          "start_time": "2025-07-30T22:26:56.734942Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:58.361952Z",
+          "iopub.execute_input": "2026-01-02T14:13:58.362150Z",
+          "shell.execute_reply": "2026-01-02T14:13:58.366884Z",
+          "iopub.status.idle": "2026-01-02T14:13:58.367179Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# Set initial state - all 2 tokens start in P1\nP1.set_state(np.array([[jobclass.get_population()]]))\nP2.set_state(np.array([[0]]))\nP3.set_state(np.array([[0]]))\nP4.set_state(np.array([[0]]))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:56.802304Z",
+          "start_time": "2025-07-30T22:26:56.800221Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:58.368308Z",
+          "iopub.execute_input": "2026-01-02T14:13:58.368416Z",
+          "shell.execute_reply": "2026-01-02T14:13:58.370129Z",
+          "iopub.status.idle": "2026-01-02T14:13:58.370392Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# Solve the model\nsolver = JMT(model, seed=23000)\navgTable = solver.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:58.146521Z",
+          "start_time": "2025-07-30T22:26:56.850830Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:58.371195Z",
+          "iopub.execute_input": "2026-01-02T14:13:58.371295Z",
+          "shell.execute_reply": "2026-01-02T14:13:59.326340Z",
+          "iopub.status.idle": "2026-01-02T14:13:59.326612Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "JMT Model: /tmp/workspace/jsim/15412685290010049463/jmodel.jsim\n",
+            "numerical_values": [
+              1.5412685290010049e+19
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass    QLen  Util   RespT  ResidT    ArvR    Tput\n0      P1   Class1  0.2775   0.0  0.4822  0.4822  0.5746  0.5743\n1      P2   Class1  0.7768   0.0  1.3441  1.3441  0.5743  0.5727\n2      P3   Class1  0.2516   0.0  0.4304  0.4304  0.5727  0.5729\n3      P4   Class1  0.6939   0.0  1.2301  1.2301  0.5729  0.5744\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              1.0,
+              0.2775,
+              0.0,
+              0.4822,
+              0.4822,
+              0.5746,
+              0.5743,
+              1.0,
+              2.0,
+              1.0,
+              0.7768,
+              0.0,
+              1.3441,
+              1.3441,
+              0.5743,
+              0.5727,
+              2.0,
+              3.0,
+              1.0,
+              0.2516,
+              0.0,
+              0.4304,
+              0.4304,
+              0.5727,
+              0.5729,
+              3.0,
+              4.0,
+              1.0,
+              0.6939,
+              0.0,
+              1.2301,
+              1.2301,
+              0.5729,
+              0.5744
+            ]
+          }
+        }
+      ],
+      "execution_count": 6
+    }
+  },
+  "numerical_summary": {
+    "cell_4": [
+      2.0,
+      1.0,
+      1.0,
+      2.0,
+      0.0,
+      3.0,
+      0.0,
+      4.0,
+      0.0
+    ],
+    "cell_5": [
+      1.5412685290010049e+19,
+      0.0,
+      1.0,
+      1.0,
+      0.2775,
+      0.0,
+      0.4822,
+      0.4822,
+      0.5746,
+      0.5743,
+      1.0,
+      2.0,
+      1.0,
+      0.7768,
+      0.0,
+      1.3441,
+      1.3441,
+      0.5743,
+      0.5727,
+      2.0,
+      3.0,
+      1.0,
+      0.2516,
+      0.0,
+      0.4304,
+      0.4304,
+      0.5727,
+      0.5729,
+      3.0,
+      4.0,
+      1.0,
+      0.6939,
+      0.0,
+      1.2301,
+      1.2301,
+      0.5729,
+      0.5744,
+      23000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "stochPetriNet/spn_closed_fourplaces.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 6,
+    "code_cells": 6,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

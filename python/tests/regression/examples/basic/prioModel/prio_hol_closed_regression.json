@@ -1,0 +1,171 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:59.014062Z",
+          "start_time": "2025-07-30T22:23:57.958062Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:30:59.298434Z",
+          "iopub.execute_input": "2026-01-01T10:30:59.298529Z",
+          "shell.execute_reply": "2026-01-01T10:30:59.772128Z",
+          "iopub.status.idle": "2026-01-01T10:30:59.772553Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "# Create network\nmodel = Network('MyNetwork')\n\n# Block 1: nodes\nnode1 = Delay(model, 'SlowDelay')\nnode2 = Queue(model, 'FCFSQueue', SchedStrategy.FCFS)\nnode3 = Queue(model, 'SIROQueue', SchedStrategy.SIRO)  # Service In Random Order\nnode4 = Queue(model, 'PSQueue', SchedStrategy.PS)      # Processor Sharing\nnode5 = Queue(model, 'HOLQueue', SchedStrategy.HOL)    # Head-of-Line priority\nnode6 = Delay(model, 'FastDelay')",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:59.110347Z",
+          "start_time": "2025-07-30T22:23:59.100239Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:30:59.773830Z",
+          "iopub.execute_input": "2026-01-01T10:30:59.773964Z",
+          "iopub.status.idle": "2026-01-01T10:30:59.775699Z",
+          "shell.execute_reply": "2026-01-01T10:30:59.775489Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Block 2: classes with priorities\n# Priority: 0=low, 1=high - Class2 has higher priority\njobclass1 = ClosedClass(model, 'Class1', 18, node1, 0)  # Low priority\njobclass2 = ClosedClass(model, 'Class2', 18, node1, 1)  # High priority\njobclass3 = ClosedClass(model, 'Class3', 18, node1, 0)  # Low priority",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:59.155819Z",
+          "start_time": "2025-07-30T22:23:59.150698Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:30:59.776584Z",
+          "iopub.execute_input": "2026-01-01T10:30:59.776671Z",
+          "iopub.status.idle": "2026-01-01T10:30:59.778151Z",
+          "shell.execute_reply": "2026-01-01T10:30:59.777933Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Set service times - identical at delay stations for fair comparison\n# SlowDelay: all classes same service time\nnode1.set_service(jobclass1, Exp.fit_mean(10.0))\nnode1.set_service(jobclass2, Exp.fit_mean(10.0))\nnode1.set_service(jobclass3, Exp.fit_mean(10.0))\n\n# FCFSQueue: different service times per class\nnode2.set_service(jobclass1, Exp.fit_mean(0.3))\nnode2.set_service(jobclass2, Exp.fit_mean(0.5))\nnode2.set_service(jobclass3, Exp.fit_mean(0.6))\n\n# SIROQueue: different service times per class\nnode3.set_service(jobclass1, Exp.fit_mean(1.1))\nnode3.set_service(jobclass2, Exp.fit_mean(1.3))\nnode3.set_service(jobclass3, Exp.fit_mean(1.5))\n\n# PSQueue: different service times per class\nnode4.set_service(jobclass1, Exp.fit_mean(1.0))\nnode4.set_service(jobclass2, Exp.fit_mean(1.1))\nnode4.set_service(jobclass3, Exp.fit_mean(1.9))\n\n# HOLQueue: different service times per class - priority will matter here\nnode5.set_service(jobclass1, Exp.fit_mean(2.5))\nnode5.set_service(jobclass2, Exp.fit_mean(1.9))\nnode5.set_service(jobclass3, Exp.fit_mean(4.3))\n\n# FastDelay: all classes same service time\nnode6.set_service(jobclass1, Exp.fit_mean(1.0))\nnode6.set_service(jobclass2, Exp.fit_mean(1.0))\nnode6.set_service(jobclass3, Exp.fit_mean(1.0))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:59.215204Z",
+          "start_time": "2025-07-30T22:23:59.209091Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:30:59.778881Z",
+          "iopub.execute_input": "2026-01-01T10:30:59.778962Z",
+          "shell.execute_reply": "2026-01-01T10:30:59.781277Z",
+          "iopub.status.idle": "2026-01-01T10:30:59.781519Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# Create cyclic routing: SlowDelay -> FCFS -> SIRO -> PS -> HOL -> FastDelay -> SlowDelay\nP = model.init_routing_matrix()\n\n# All classes follow the same cyclic route\nfor jobclass in [jobclass1, jobclass2, jobclass3]:\n    P.set(jobclass, jobclass, node1, node2, 1.0)  # SlowDelay -> FCFSQueue\n    P.set(jobclass, jobclass, node2, node3, 1.0)  # FCFSQueue -> SIROQueue\n    P.set(jobclass, jobclass, node3, node4, 1.0)  # SIROQueue -> PSQueue\n    P.set(jobclass, jobclass, node4, node5, 1.0)  # PSQueue -> HOLQueue\n    P.set(jobclass, jobclass, node5, node6, 1.0)  # HOLQueue -> FastDelay\n    P.set(jobclass, jobclass, node6, node1, 1.0)  # FastDelay -> SlowDelay\n\nmodel.link(P)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:59.269113Z",
+          "start_time": "2025-07-30T22:23:59.259973Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:30:59.782244Z",
+          "iopub.execute_input": "2026-01-01T10:30:59.782327Z",
+          "iopub.status.idle": "2026-01-01T10:30:59.784010Z",
+          "shell.execute_reply": "2026-01-01T10:30:59.783835Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# MVA with seed=23000 to match JAR test\nsolver = MVA(model, seed=23000, verbose=VerboseLevel.SILENT)\navg_table = solver.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:59.417684Z",
+          "start_time": "2025-07-30T22:23:59.311481Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:30:59.784822Z",
+          "iopub.execute_input": "2026-01-01T10:30:59.784893Z",
+          "shell.execute_reply": "2026-01-01T10:31:00.128528Z",
+          "iopub.status.idle": "2026-01-01T10:31:00.128891Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/solvers_native/solver_mva.py:378: RuntimeWarning: invalid value encountered in cast\n  result = pfqn_mvams(lambda_arr, L, N, Z, mi=None, S=mi.astype(int))\n",
+            "numerical_values": [
+              378.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 6
+    },
+    "cell_6": {
+      "cell_type": "code",
+      "source": "# SSA with seed=23000, samples=10000 to match JAR test\nsolver = SSA(model, seed=23000, samples=10000, verbose=VerboseLevel.SILENT)\navg_table = solver.avg_table()",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:00.130218Z",
+          "iopub.execute_input": "2026-01-01T10:31:00.130364Z",
+          "shell.execute_reply": "2026-01-01T10:31:00.758007Z",
+          "iopub.status.idle": "2026-01-01T10:31:00.758341Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 7
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      1.0,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0,
+      6.0
+    ],
+    "cell_5": [
+      378.0,
+      23000.0,
+      23000.0
+    ],
+    "cell_6": [
+      23000.0,
+      10000.0,
+      23000.0,
+      10000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "prioModel/prio_hol_closed.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 7,
+    "code_cells": 7,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

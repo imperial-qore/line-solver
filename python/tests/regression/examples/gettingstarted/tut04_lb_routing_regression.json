@@ -1,0 +1,228 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:23:30.835642Z",
+          "start_time": "2025-07-27T17:23:29.896781Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:30:56.434686Z",
+          "iopub.execute_input": "2026-01-03T15:30:56.434818Z",
+          "shell.execute_reply": "2026-01-03T15:30:56.978998Z",
+          "iopub.status.idle": "2026-01-03T15:30:56.979439Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('RRLB')\nsource = Source(model, 'Source')\nlb = Router(model, 'LB')\nqueue1 = Queue(model, 'Queue1', SchedStrategy.PS)\nqueue2 = Queue(model, 'Queue2', SchedStrategy.PS)\nsink = Sink(model, 'Sink')\noclass = OpenClass(model, 'Class1')\nsource.set_arrival(oclass, Exp(1))\nqueue1.set_service(oclass, Exp(2))\nqueue2.set_service(oclass, Exp(2))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:23:30.901408Z",
+          "start_time": "2025-07-27T17:23:30.885319Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:30:56.980547Z",
+          "iopub.execute_input": "2026-01-03T15:30:56.980744Z",
+          "shell.execute_reply": "2026-01-03T15:30:56.982482Z",
+          "iopub.status.idle": "2026-01-03T15:30:56.982828Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "model.add_link(source, lb)\nmodel.add_link(lb, queue1)\nmodel.add_link(lb, queue2)\nmodel.add_link(queue1, sink)\nmodel.add_link(queue2, sink)\nlb.set_routing(oclass, RoutingStrategy.RAND)\njmtAvgTable = JMT(model, seed=23000).avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:23:31.884254Z",
+          "start_time": "2025-07-27T17:23:30.935051Z"
+        },
+        "collapsed": false,
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:30:56.983691Z",
+          "iopub.execute_input": "2026-01-03T15:30:56.983787Z",
+          "shell.execute_reply": "2026-01-03T15:30:57.634774Z",
+          "iopub.status.idle": "2026-01-03T15:30:57.635283Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Station JobClass   QLen   Util  RespT  ResidT   ArvR   Tput\n Source   Class1 0.0000 0.0000 0.0000  0.0000 0.0000 1.0000\n Queue1   Class1 0.3226 0.2451 0.6346  0.6346 0.4977 0.4977\n Queue2   Class1 0.3322 0.2506 0.6609  0.6609 0.4942 0.4942\n",
+            "numerical_values": [
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              1.0,
+              0.3226,
+              0.2451,
+              0.6346,
+              0.6346,
+              0.4977,
+              0.4977,
+              2.0,
+              1.0,
+              0.3322,
+              0.2506,
+              0.6609,
+              0.6609,
+              0.4942,
+              0.4942
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "model.reset()\nlb.set_routing(oclass, RoutingStrategy.RROBIN)\njmtAvgTableRR = JMT(model, seed=23000).avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:23:32.716305Z",
+          "start_time": "2025-07-27T17:23:31.920755Z"
+        },
+        "collapsed": false,
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:30:57.636176Z",
+          "iopub.execute_input": "2026-01-03T15:30:57.636289Z",
+          "shell.execute_reply": "2026-01-03T15:30:58.181691Z",
+          "iopub.status.idle": "2026-01-03T15:30:58.182135Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Station JobClass   QLen   Util  RespT  ResidT   ArvR   Tput\n Source   Class1 0.0000 0.0000 0.0000  0.0000 0.0000 1.0000\n Queue1   Class1 0.2882 0.2557 0.5763  0.5763 0.4988 0.4988\n Queue2   Class1 0.3017 0.2546 0.5647  0.5647 0.5017 0.5017\n",
+            "numerical_values": [
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              1.0,
+              0.2882,
+              0.2557,
+              0.5763,
+              0.5763,
+              0.4988,
+              0.4988,
+              2.0,
+              1.0,
+              0.3017,
+              0.2546,
+              0.5647,
+              0.5647,
+              0.5017,
+              0.5017
+            ]
+          }
+        }
+      ],
+      "execution_count": 4
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      1.0,
+      1.0,
+      2.0,
+      2.0,
+      1.0,
+      1.0,
+      1.0,
+      2.0,
+      2.0,
+      2.0
+    ],
+    "cell_2": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0,
+      0.3226,
+      0.2451,
+      0.6346,
+      0.6346,
+      0.4977,
+      0.4977,
+      2.0,
+      1.0,
+      0.3322,
+      0.2506,
+      0.6609,
+      0.6609,
+      0.4942,
+      0.4942,
+      1.0,
+      2.0,
+      1.0,
+      2.0,
+      23000.0
+    ],
+    "cell_3": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0,
+      0.2882,
+      0.2557,
+      0.5763,
+      0.5763,
+      0.4988,
+      0.4988,
+      2.0,
+      1.0,
+      0.3017,
+      0.2546,
+      0.5647,
+      0.5647,
+      0.5017,
+      0.5017,
+      23000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "tut04_lb_routing.ipynb",
+    "source_dir": "examples/gettingstarted",
+    "total_cells": 4,
+    "code_cells": 4,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

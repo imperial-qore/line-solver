@@ -1,0 +1,268 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:49:29.343714Z",
+          "start_time": "2025-07-15T22:49:25.074681Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:01.668129Z",
+          "iopub.execute_input": "2026-01-01T10:32:01.668211Z",
+          "shell.execute_reply": "2026-01-01T10:32:02.154142Z",
+          "iopub.status.idle": "2026-01-01T10:32:02.154455Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('model')\n\nnode = np.empty(3, dtype=object)\nnode[0] = Delay(model, 'Delay')\nnode[1] = Queue(model, 'Queue1', SchedStrategy.PS)\nnode[2] = Queue(model, 'Queue2', SchedStrategy.PS)\n\njobclass = ClosedClass(model, 'Class1', 1, node[0], 0)\n\nnode[0].set_service(jobclass, HyperExp.fit_mean_and_scv(1.0, 25.0))\nnode[1].set_service(jobclass, Exp(1.0))\nnode[2].set_service(jobclass, Exp(2.0))\n\nmodel.add_link(node[0], node[0])\nmodel.add_link(node[0], node[1])\nmodel.add_link(node[0], node[2])\nmodel.add_link(node[1], node[0])\nmodel.add_link(node[2], node[0])\n\nnode[0].set_routing(jobclass, RoutingStrategy.RROBIN)\nnode[1].set_prob_routing(jobclass, node[0], 1.0)\nnode[2].set_prob_routing(jobclass, node[0], 1.0)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:49:30.007863Z",
+          "start_time": "2025-07-15T22:49:29.604093Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:02.155507Z",
+          "iopub.execute_input": "2026-01-01T10:32:02.155638Z",
+          "shell.execute_reply": "2026-01-01T10:32:02.157874Z",
+          "iopub.status.idle": "2026-01-01T10:32:02.158174Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "solver = np.array([], dtype=object)\nsolver = np.append(solver, CTMC(model, keep=True))\nsolver = np.append(solver, JMT(model, samples=100000, seed=23000))\nsolver = np.append(solver, SSA(model, verbose=True, samples=10000, seed=23000))\n\nAvgTable = np.empty(len(solver), dtype=object)\nfor s in range(len(solver)):\n    print(f'\\nSOLVER: {solver[s].get_name()}')\n    AvgTable[s] = solver[s].avg_table()\n    print(AvgTable[s])",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-15T22:49:30.888102Z",
+          "start_time": "2025-07-15T22:49:30.028160Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:02.159038Z",
+          "iopub.execute_input": "2026-01-01T10:32:02.159118Z",
+          "shell.execute_reply": "2026-01-01T10:32:02.681572Z",
+          "iopub.status.idle": "2026-01-01T10:32:02.681871Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "\nSOLVER: CTMC\n  Station JobClass  QLen  Util  RespT  ResidT  ArvR  Tput\n0   Delay   Class1   0.4   0.0    0.0     0.0   0.0   0.0\n1  Queue1   Class1   0.4   0.4    1.0     1.0   0.4   0.4\n2  Queue2   Class1   0.2   0.2    0.5     0.5   0.4   0.4\n\nSOLVER: JMT\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              0.4,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              1.0,
+              0.4,
+              0.4,
+              1.0,
+              1.0,
+              0.4,
+              0.4,
+              2.0,
+              2.0,
+              1.0,
+              0.2,
+              0.2,
+              0.5,
+              0.5,
+              0.4,
+              0.4
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/solvers/ctmc/handler.py:518: RuntimeWarning: invalid value encountered in scalar multiply\n  TN[ist, k] = UN[ist, k] * c * mu\n",
+            "numerical_values": [
+              518.0
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass  QLen  Util  RespT  ResidT  ArvR  Tput\n0   Delay   Class1   0.0   0.0    0.0     0.0   0.0   0.0\n1  Queue1   Class1   0.0   0.0    0.0     0.0   0.0   0.0\n2  Queue2   Class1   0.0   0.0    0.0     0.0   0.0   0.0\n\nSOLVER: SSA\n  Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0   Delay   Class1  0.4010  0.4010  0.3334  0.3334  1.2028  1.2028\n1  Queue1   Class1  0.4119  0.4119  1.0041  1.0041  0.4102  0.4102\n2  Queue2   Class1  0.1871  0.1871  0.4777  0.4777  0.3917  0.3917\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              2.0,
+              2.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              0.401,
+              0.401,
+              0.3334,
+              0.3334,
+              1.2028,
+              1.2028,
+              1.0,
+              1.0,
+              1.0,
+              0.4119,
+              0.4119,
+              1.0041,
+              1.0041,
+              0.4102,
+              0.4102,
+              2.0,
+              2.0,
+              1.0,
+              0.1871,
+              0.1871,
+              0.4777,
+              0.4777,
+              0.3917,
+              0.3917
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    }
+  },
+  "numerical_summary": {
+    "cell_2": [
+      0.0,
+      1.0,
+      0.4,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0,
+      0.4,
+      0.4,
+      1.0,
+      1.0,
+      0.4,
+      0.4,
+      2.0,
+      2.0,
+      1.0,
+      0.2,
+      0.2,
+      0.5,
+      0.5,
+      0.4,
+      0.4,
+      518.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      2.0,
+      2.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.401,
+      0.401,
+      0.3334,
+      0.3334,
+      1.2028,
+      1.2028,
+      1.0,
+      1.0,
+      1.0,
+      0.4119,
+      0.4119,
+      1.0041,
+      1.0041,
+      0.4102,
+      0.4102,
+      2.0,
+      2.0,
+      1.0,
+      0.1871,
+      0.1871,
+      0.4777,
+      0.4777,
+      0.3917,
+      0.3917,
+      100000.0,
+      23000.0,
+      10000.0,
+      23000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "stateDepRouting/sdroute_closed.ipynb",
+    "source_dir": "examples/advanced",
+    "total_cells": 3,
+    "code_cells": 3,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

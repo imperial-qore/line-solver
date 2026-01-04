@@ -1,0 +1,127 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "jupyter": {
+          "is_executing": true
+        },
+        "ExecuteTime": {
+          "start_time": "2025-07-15T04:54:25.253490Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:39.976208Z",
+          "iopub.execute_input": "2026-01-01T10:31:39.976329Z",
+          "iopub.status.idle": "2026-01-01T10:31:40.458899Z",
+          "shell.execute_reply": "2026-01-01T10:31:40.458509Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('model')\n\nnode = [None] * 2  # Using 0-based indexing\nnode[0] = Delay(model, 'Delay') \nnode[1] = Queue(model, 'Queue1', SchedStrategy.FCFS)\njobclass = [None] * 2  # Using 0-based indexing\njobclass[0] = ClosedClass(model, 'Class1', 3, node[1], 0)\njobclass[1] = ClosedClass(model, 'Class2', 2, node[1], 0)\nnode[1].set_number_of_servers(3)\n\nnode[0].set_service(jobclass[0], Exp(1))\nnode[0].set_service(jobclass[1], Exp(1))\nnode[1].set_service(jobclass[0], Exp(1.2))\nnode[1].set_service(jobclass[1], Erlang.fit_mean_and_scv(1.0, 0.5))\n\nM = model.get_number_of_stations()\nK = model.get_number_of_classes()\n\nP = model.init_routing_matrix()\n# Class 1 to Class 1 routing matrix\nP.set(jobclass[0], jobclass[0], node[0], node[0], 0.3)\nP.set(jobclass[0], jobclass[0], node[0], node[1], 0.7)  # 0.1 + 0.6\nP.set(jobclass[0], jobclass[0], node[1], node[0], 0.2)\nP.set(jobclass[0], jobclass[0], node[1], node[1], 0.0)\n\n# Class 1 to Class 2 routing matrix \nP.set(jobclass[0], jobclass[1], node[0], node[0], 0.0)\nP.set(jobclass[0], jobclass[1], node[0], node[1], 0.0)\nP.set(jobclass[0], jobclass[1], node[1], node[0], 0.8)\nP.set(jobclass[0], jobclass[1], node[1], node[1], 0.0)\n\n# Class 2 to Class 2 routing matrix\nP.set(jobclass[1], jobclass[1], node[0], node[0], 0.0)\nP.set(jobclass[1], jobclass[1], node[0], node[1], 1.0)\nP.set(jobclass[1], jobclass[1], node[1], node[0], 0.0)\nP.set(jobclass[1], jobclass[1], node[1], node[1], 0.0)\n\n# Class 2 to Class 1 routing matrix\nP.set(jobclass[1], jobclass[0], node[0], node[0], 0.0) \nP.set(jobclass[1], jobclass[0], node[0], node[1], 0.0)\nP.set(jobclass[1], jobclass[0], node[1], node[0], 1.0)\nP.set(jobclass[1], jobclass[0], node[1], node[1], 0.0)\n\nmodel.link(P)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:34:59.802215Z",
+          "start_time": "2025-07-01T07:34:59.799826Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:40.459936Z",
+          "iopub.execute_input": "2026-01-01T10:31:40.460118Z",
+          "shell.execute_reply": "2026-01-01T10:31:40.463995Z",
+          "iopub.status.idle": "2026-01-01T10:31:40.464297Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Note: Advanced transient analysis features are not yet available in Python LINE\n# This example demonstrates the multi-class model setup\nsolver_mva = MVA(model)\navg_table_mva = solver_mva.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:34:59.849612Z",
+          "start_time": "2025-07-01T07:34:59.847224Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:40.465055Z",
+          "iopub.execute_input": "2026-01-01T10:31:40.465135Z",
+          "shell.execute_reply": "2026-01-01T10:31:40.507602Z",
+          "iopub.status.idle": "2026-01-01T10:31:40.507922Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/solvers_native/solver_mva.py:378: RuntimeWarning: invalid value encountered in cast\n  result = pfqn_mvams(lambda_arr, L, N, Z, mi=None, S=mi.astype(int))\n",
+            "numerical_values": [
+              378.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "solver_nc = NC(model)\navg_table_nc = solver_nc.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:34:59.849612Z",
+          "start_time": "2025-07-01T07:34:59.847224Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:40.508729Z",
+          "iopub.execute_input": "2026-01-01T10:31:40.508819Z",
+          "shell.execute_reply": "2026-01-01T10:31:40.511467Z",
+          "iopub.status.idle": "2026-01-01T10:31:40.511701Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "solver_jmt = JMT(model, samples=10000)\navg_table_jmt = solver_jmt.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-01T07:34:59.849612Z",
+          "start_time": "2025-07-01T07:34:59.847224Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:40.512399Z",
+          "iopub.execute_input": "2026-01-01T10:31:40.512481Z",
+          "iopub.status.idle": "2026-01-01T10:31:40.795898Z",
+          "shell.execute_reply": "2026-01-01T10:31:40.795631Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    }
+  },
+  "numerical_summary": {
+    "cell_2": [
+      378.0
+    ],
+    "cell_4": [
+      10000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "initState/init_state_fcfs_nonexp.ipynb",
+    "source_dir": "examples/advanced",
+    "total_cells": 5,
+    "code_cells": 5,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

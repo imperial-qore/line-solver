@@ -1,0 +1,339 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:15.064318Z",
+          "start_time": "2025-07-30T22:26:14.230002Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:10.281622Z",
+          "iopub.execute_input": "2026-01-02T14:14:10.281751Z",
+          "iopub.status.idle": "2026-01-02T14:14:11.060617Z",
+          "shell.execute_reply": "2026-01-02T14:14:11.060241Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('model')\nsource = Source(model, 'Source')\nsink = Sink(model, 'Sink')\n\n# Create 7 places\nP = []\nfor i in range(7):\n    P.append(Place(model, f'P{i+1}'))\n\n# Create 8 transitions\nT = []\nfor i in range(8):\n    T.append(Transition(model, f'T{i+1}'))\n\njobclass = OpenClass(model, 'Class1', 0)\nsource.set_arrival(jobclass, Exp.fit_mean(1.0))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:15.081046Z",
+          "start_time": "2025-07-30T22:26:15.067041Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:11.061793Z",
+          "iopub.execute_input": "2026-01-02T14:14:11.061957Z",
+          "iopub.status.idle": "2026-01-02T14:14:11.075437Z",
+          "shell.execute_reply": "2026-01-02T14:14:11.075077Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# T1 - Timed transition with exponential distribution\nmode1 = T[0].add_mode('Mode1')\nT[0].set_number_of_servers(mode1, GlobalConstants.MaxInt)\nT[0].set_distribution(mode1, Exp(4))\nT[0].set_enabling_conditions(mode1, jobclass, P[0], 1)\nT[0].set_firing_outcome(mode1, jobclass, P[1], 1)\n\n# T2 - Immediate transition\nmode2 = T[1].add_mode('Mode1')\nT[1].set_number_of_servers(mode2, GlobalConstants.MaxInt)\nT[1].set_enabling_conditions(mode2, jobclass, P[1], 1)\nT[1].set_firing_outcome(mode2, jobclass, P[2], 1)\nT[1].setTimingStrategy(mode2, TimingStrategy.IMMEDIATE)\nT[1].setFiringPriorities(mode2, 1)\nT[1].setFiringWeights(mode2, 1.0)\n\n# T3 - Immediate transition\nmode3 = T[2].add_mode('Mode1')\nT[2].set_number_of_servers(mode3, GlobalConstants.MaxInt)\nT[2].set_enabling_conditions(mode3, jobclass, P[1], 1)\nT[2].set_firing_outcome(mode3, jobclass, P[3], 1)\nT[2].setTimingStrategy(mode3, TimingStrategy.IMMEDIATE)\nT[2].setFiringPriorities(mode3, 1)\nT[2].setFiringWeights(mode3, 0.6)\n\n# T4 - Immediate transition with multiple enabling/firing conditions\nmode4 = T[3].add_mode('Mode1')\nT[3].set_number_of_servers(mode4, GlobalConstants.MaxInt)\nT[3].set_enabling_conditions(mode4, jobclass, P[2], 1)\nT[3].set_enabling_conditions(mode4, jobclass, P[4], 1)\nT[3].set_firing_outcome(mode4, jobclass, P[4], 1)\nT[3].set_firing_outcome(mode4, jobclass, P[5], 1)\nT[3].setTimingStrategy(mode4, TimingStrategy.IMMEDIATE)\nT[3].setFiringPriorities(mode4, 1)\n\n# T5 - Immediate transition with inhibiting conditions\nmode5 = T[4].add_mode('Mode1')\nT[4].set_number_of_servers(mode5, GlobalConstants.MaxInt)\nT[4].set_enabling_conditions(mode5, jobclass, P[3], 1)\nT[4].set_enabling_conditions(mode5, jobclass, P[4], 1)\nT[4].set_firing_outcome(mode5, jobclass, P[6], 1)\nT[4].setInhibitingConditions(mode5, jobclass, P[5], 1)  # Inhibited by P6\nT[4].setTimingStrategy(mode5, TimingStrategy.IMMEDIATE)\nT[4].setFiringPriorities(mode5, 1)\n\n# T6 - Timed transition with Erlang distribution\nmode6 = T[5].add_mode('Mode1')\nT[5].set_number_of_servers(mode6, GlobalConstants.MaxInt)\nT[5].set_distribution(mode6, Erlang(2, 2))\nT[5].set_enabling_conditions(mode6, jobclass, P[5], 1)\nT[5].set_firing_outcome(mode6, jobclass, P[0], 1)\n\n# T7 - Timed transition with multiple firing outcomes\nmode7 = T[6].add_mode('Mode1')\nT[6].set_number_of_servers(mode7, GlobalConstants.MaxInt)\nT[6].set_distribution(mode7, Exp(2))\nT[6].set_enabling_conditions(mode7, jobclass, P[6], 1)\nT[6].set_firing_outcome(mode7, jobclass, P[0], 1)\nT[6].set_firing_outcome(mode7, jobclass, P[4], 1)\n\n# T8 - Timed transition to sink\nmode8 = T[7].add_mode('Mode1')\nT[7].set_number_of_servers(mode8, GlobalConstants.MaxInt)\nT[7].set_distribution(mode8, Exp(2))\nT[7].set_enabling_conditions(mode8, jobclass, P[3], 1)\nT[7].set_firing_outcome(mode8, jobclass, sink, 1)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:15.147513Z",
+          "start_time": "2025-07-30T22:26:15.139312Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:11.076683Z",
+          "iopub.execute_input": "2026-01-02T14:14:11.076794Z",
+          "shell.execute_reply": "2026-01-02T14:14:11.088404Z",
+          "iopub.status.idle": "2026-01-02T14:14:11.088754Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Set up routing matrix\nroutingMatrix = model.init_routing_matrix()\n\n# Source routing\nroutingMatrix.set(jobclass, jobclass, source, P[0], 1.0)\n\n# Place to transition routing\nroutingMatrix.set(jobclass, jobclass, P[0], T[0], 1.0)  # P1 -> T1\nroutingMatrix.set(jobclass, jobclass, P[1], T[1], 1.0)  # P2 -> T2\nroutingMatrix.set(jobclass, jobclass, P[1], T[2], 1.0)  # P2 -> T3\nroutingMatrix.set(jobclass, jobclass, P[2], T[3], 1.0)  # P3 -> T4\nroutingMatrix.set(jobclass, jobclass, P[3], T[4], 1.0)  # P4 -> T5\nroutingMatrix.set(jobclass, jobclass, P[4], T[3], 1.0)  # P5 -> T4\nroutingMatrix.set(jobclass, jobclass, P[4], T[4], 1.0)  # P5 -> T5\nroutingMatrix.set(jobclass, jobclass, P[5], T[4], 1.0)  # P6 -> T5\nroutingMatrix.set(jobclass, jobclass, P[5], T[5], 1.0)  # P6 -> T6\nroutingMatrix.set(jobclass, jobclass, P[6], T[6], 1.0)  # P7 -> T7\nroutingMatrix.set(jobclass, jobclass, P[3], T[7], 1.0)  # P4 -> T8\n\n# Transition to place/sink routing\nroutingMatrix.set(jobclass, jobclass, T[0], P[1], 1.0)  # T1 -> P2\nroutingMatrix.set(jobclass, jobclass, T[1], P[2], 1.0)  # T2 -> P3\nroutingMatrix.set(jobclass, jobclass, T[2], P[3], 1.0)  # T3 -> P4\nroutingMatrix.set(jobclass, jobclass, T[3], P[4], 1.0)  # T4 -> P5\nroutingMatrix.set(jobclass, jobclass, T[3], P[5], 1.0)  # T4 -> P6\nroutingMatrix.set(jobclass, jobclass, T[4], P[6], 1.0)  # T5 -> P7\nroutingMatrix.set(jobclass, jobclass, T[5], P[0], 1.0)  # T6 -> P1\nroutingMatrix.set(jobclass, jobclass, T[6], sink, 1.0)  # T7 -> Sink\nroutingMatrix.set(jobclass, jobclass, T[6], P[0], 1.0)  # T7 -> P1\nroutingMatrix.set(jobclass, jobclass, T[6], P[4], 1.0)  # T7 -> P5\nroutingMatrix.set(jobclass, jobclass, T[7], sink, 1.0)  # T8 -> Sink\n\nmodel.link(routingMatrix)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:15.199930Z",
+          "start_time": "2025-07-30T22:26:15.189133Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:11.090002Z",
+          "iopub.execute_input": "2026-01-02T14:14:11.090121Z",
+          "shell.execute_reply": "2026-01-02T14:14:11.099282Z",
+          "iopub.status.idle": "2026-01-02T14:14:11.099669Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# Set initial state\nP[0].set_state([2])        # 2 tokens at P1\nP[1].set_state([0])   # 0 tokens at P2\nP[2].set_state([0])   # 0 tokens at P3\nP[3].set_state([0])   # 0 tokens at P4\nP[4].set_state([1])    # 1 token at P5\nP[5].set_state([0])   # 0 tokens at P6\nP[6].set_state([0])   # 0 tokens at P7\n\nprint(\"Initial state set:\")\nprint(\"P1: 2 tokens, P2-P4: 0 tokens, P5: 1 token, P6-P7: 0 tokens\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:15.255851Z",
+          "start_time": "2025-07-30T22:26:15.238359Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:11.101006Z",
+          "iopub.execute_input": "2026-01-02T14:14:11.101182Z",
+          "shell.execute_reply": "2026-01-02T14:14:11.110481Z",
+          "iopub.status.idle": "2026-01-02T14:14:11.110716Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Initial state set:\nP1: 2 tokens, P2-P4: 0 tokens, P5: 1 token, P6-P7: 0 tokens\n",
+            "numerical_values": [
+              1.0,
+              2.0,
+              2.0,
+              4.0,
+              0.0,
+              5.0,
+              1.0,
+              6.0,
+              7.0,
+              0.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# Solve the model\nsolver = JMT(model, seed=23000)\navgTable = solver.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:19.395445Z",
+          "start_time": "2025-07-30T22:26:15.296689Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:11.111584Z",
+          "iopub.execute_input": "2026-01-02T14:14:11.111685Z",
+          "shell.execute_reply": "2026-01-02T14:14:14.777547Z",
+          "iopub.status.idle": "2026-01-02T14:14:14.777777Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "JMT Model: /tmp/workspace/jsim/6006582904994604129/jmodel.jsim\n",
+            "numerical_values": [
+              6.006582904994604e+18
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass    QLen  Util   RespT  ResidT    ArvR    Tput\n0  Source   Class1  0.0000   0.0  0.0000  0.0000  0.0000  1.0161\n1      P1   Class1  0.8524   0.0  0.2550  0.4911  3.3732  3.3769\n2      P2   Class1  0.0000   0.0  0.0000  0.0000  3.3769  3.3769\n3      P3   Class1  0.0995   0.0  0.0451  0.0434  2.1128  2.1129\n4      P4   Class1  0.5152   0.0  0.4132  0.1990  1.2609  1.2589\n5      P5   Class1  0.8908   0.0  0.3802  0.2535  2.3421  2.3432\n6      P6   Class1  2.0874   0.0  0.9921  0.4042  2.1129  2.1083\n7      P7   Class1  0.1124   0.0  0.4965  0.7724  0.2279  0.2278\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0161,
+              1.0,
+              1.0,
+              1.0,
+              0.8524,
+              0.0,
+              0.255,
+              0.4911,
+              3.3732,
+              3.3769,
+              2.0,
+              2.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              3.3769,
+              3.3769,
+              3.0,
+              3.0,
+              1.0,
+              0.0995,
+              0.0,
+              0.0451,
+              0.0434,
+              2.1128,
+              2.1129,
+              4.0,
+              4.0,
+              1.0,
+              0.5152,
+              0.0,
+              0.4132,
+              0.199,
+              1.2609,
+              1.2589,
+              5.0,
+              5.0,
+              1.0,
+              0.8908,
+              0.0,
+              0.3802,
+              0.2535,
+              2.3421,
+              2.3432,
+              6.0,
+              6.0,
+              1.0,
+              2.0874,
+              0.0,
+              0.9921,
+              0.4042,
+              2.1129,
+              2.1083,
+              7.0,
+              7.0,
+              1.0,
+              0.1124,
+              0.0,
+              0.4965,
+              0.7724,
+              0.2279,
+              0.2278
+            ]
+          }
+        }
+      ],
+      "execution_count": 6
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      7.0,
+      7.0,
+      1.0,
+      8.0,
+      8.0,
+      1.0,
+      1.0,
+      0.0,
+      1.0
+    ],
+    "cell_4": [
+      1.0,
+      2.0,
+      2.0,
+      4.0,
+      0.0,
+      5.0,
+      1.0,
+      6.0,
+      7.0,
+      0.0
+    ],
+    "cell_5": [
+      6.006582904994604e+18,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0161,
+      1.0,
+      1.0,
+      1.0,
+      0.8524,
+      0.0,
+      0.255,
+      0.4911,
+      3.3732,
+      3.3769,
+      2.0,
+      2.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      3.3769,
+      3.3769,
+      3.0,
+      3.0,
+      1.0,
+      0.0995,
+      0.0,
+      0.0451,
+      0.0434,
+      2.1128,
+      2.1129,
+      4.0,
+      4.0,
+      1.0,
+      0.5152,
+      0.0,
+      0.4132,
+      0.199,
+      1.2609,
+      1.2589,
+      5.0,
+      5.0,
+      1.0,
+      0.8908,
+      0.0,
+      0.3802,
+      0.2535,
+      2.3421,
+      2.3432,
+      6.0,
+      6.0,
+      1.0,
+      2.0874,
+      0.0,
+      0.9921,
+      0.4042,
+      2.1129,
+      2.1083,
+      7.0,
+      7.0,
+      1.0,
+      0.1124,
+      0.0,
+      0.4965,
+      0.7724,
+      0.2279,
+      0.2278,
+      23000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "stochPetriNet/spn_open_sevenplaces.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 6,
+    "code_cells": 6,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

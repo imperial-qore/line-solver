@@ -1,0 +1,181 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.SILENT)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:20:08.854929Z",
+          "start_time": "2025-07-30T22:20:07.874691Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:09:59.930726Z",
+          "iopub.execute_input": "2026-01-02T14:09:59.930821Z",
+          "iopub.status.idle": "2026-01-02T14:10:00.734700Z",
+          "shell.execute_reply": "2026-01-02T14:10:00.734293Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "print('Example of layered model with a function task (FaaS)')\n\nmodel = LayeredNetwork('faas_test_example')\n\n# definition of processors, tasks and entries\nP1 = Processor(model, 'P1', GlobalConstants.MaxInt, SchedStrategy.INF)\nT1 = Task(model, 'T1', 1, SchedStrategy.REF).on(P1)\nE1 = Entry(model, 'E1').on(T1)\n\nP2 = Processor(model, 'P2', 4, SchedStrategy.FCFS)\n# Function task with capacity, scheduling strategy, think time, setup time, and delay-off time\nT2 = FunctionTask(model, 'F2', 6, SchedStrategy.FCFS).on(P2).set_think_time(Exp.fit_mean(8.0))\nT2.setSetupTime(Exp(1.0))      # Cold start time\nT2.setDelayOffTime(Exp(2.0))   # Time before function instance is removed\n\nE2 = Entry(model, 'E2').on(T2)\n\n# definition of activities\nA1 = Activity(model, 'A1', Exp(1.0)).on(T1).bound_to(E1).synch_call(E2, 1)\nA2 = Activity(model, 'A2', Exp(3.0)).on(T2).bound_to(E2).replies_to(E2)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:20:08.935238Z",
+          "start_time": "2025-07-30T22:20:08.915805Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:10:00.736049Z",
+          "iopub.execute_input": "2026-01-02T14:10:00.736260Z",
+          "iopub.status.idle": "2026-01-02T14:10:00.746698Z",
+          "shell.execute_reply": "2026-01-02T14:10:00.746393Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Example of layered model with a function task (FaaS)\n"
+          }
+        }
+      ],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Define a helper function for solver selection (as in original MATLAB)\ndef myFunction(model):\n    \"\"\"Helper function to select appropriate solver for the model\"\"\"\n    # This could implement logic to choose between MVA, MAM, etc.\n    # For now, use MVA as default\n    options = MVA.default_options()\n    options.verbose = 0\n    return MVA(model, options)\n\n# Solve with LN solver using custom function\nlnoptions = LN.default_options()\nlnoptions.verbose = 0\nlnoptions.seed = 2300\n\nsolver = LN(model, myFunction, lnoptions)\navg_table = solver.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:20:09.092746Z",
+          "start_time": "2025-07-30T22:20:08.972953Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:10:00.747829Z",
+          "iopub.execute_input": "2026-01-02T14:10:00.747948Z",
+          "iopub.status.idle": "2026-01-02T14:10:00.999931Z",
+          "shell.execute_reply": "2026-01-02T14:10:00.999552Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Node   NodeType  QLen  Util   RespT  ResidT  ArvR  Tput\n0   P1  Processor   NaN  0.75     NaN     NaN   NaN   NaN\n1   P2  Processor   NaN  0.04     NaN     NaN   NaN   NaN\n2   T1       Task  1.00  0.75     NaN  1.0000   NaN  0.75\n3   F2       Task  0.04  0.04     NaN  0.3333   NaN  0.12\n4   E1      Entry  1.00   NaN  1.3333     NaN   NaN  0.75\n5   E2      Entry  0.04   NaN  0.3333     NaN   NaN  0.12\n6   A1   Activity  1.00  0.75  1.3333  1.0000   NaN  0.75\n7   A2   Activity  0.04  0.04  0.3333  0.3333   NaN  0.12\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              0.75,
+              1.0,
+              2.0,
+              0.04,
+              2.0,
+              1.0,
+              1.0,
+              0.75,
+              1.0,
+              0.75,
+              3.0,
+              2.0,
+              0.04,
+              0.04,
+              0.3333,
+              0.12,
+              4.0,
+              1.0,
+              1.0,
+              1.3333,
+              0.75,
+              5.0,
+              2.0,
+              0.04,
+              0.3333,
+              0.12,
+              6.0,
+              1.0,
+              1.0,
+              0.75,
+              1.3333,
+              1.0,
+              0.75,
+              7.0,
+              2.0,
+              0.04,
+              0.04,
+              0.3333,
+              0.3333,
+              0.12
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    }
+  },
+  "numerical_summary": {
+    "cell_2": [
+      0.0,
+      1.0,
+      0.75,
+      1.0,
+      2.0,
+      0.04,
+      2.0,
+      1.0,
+      1.0,
+      0.75,
+      1.0,
+      0.75,
+      3.0,
+      2.0,
+      0.04,
+      0.04,
+      0.3333,
+      0.12,
+      4.0,
+      1.0,
+      1.0,
+      1.3333,
+      0.75,
+      5.0,
+      2.0,
+      0.04,
+      0.3333,
+      0.12,
+      6.0,
+      1.0,
+      1.0,
+      0.75,
+      1.3333,
+      1.0,
+      0.75,
+      7.0,
+      2.0,
+      0.04,
+      0.04,
+      0.3333,
+      0.3333,
+      0.12,
+      0.0,
+      0.0,
+      2300.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "layeredModel/lqn_function.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 3,
+    "code_cells": 3,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

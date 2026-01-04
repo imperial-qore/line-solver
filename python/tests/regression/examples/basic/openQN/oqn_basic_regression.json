@@ -1,0 +1,232 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "collapsed": true,
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:42.407148Z",
+          "start_time": "2025-07-30T22:23:41.480467Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:42.629005Z",
+          "iopub.execute_input": "2026-01-01T10:27:42.629092Z",
+          "iopub.status.idle": "2026-01-01T10:27:43.101464Z",
+          "shell.execute_reply": "2026-01-01T10:27:43.101149Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('model')\n\nnode = np.empty(4, dtype=object)\nnode[0] = Delay(model, 'Delay')\nnode[1] = Queue(model, 'Queue1', SchedStrategy.FCFS)\nnode[2] = Source(model,'Source')\nnode[3] = Sink(model,'Sink')\n\njobclass = OpenClass(model, 'Class1', 0)\n\nnode[0].set_service(jobclass, HyperExp(0.5,3.0,10.0))\nnode[1].set_service(jobclass, Exp(1))\nnode[2].set_arrival(jobclass, Exp(0.1))\n\nM = model.get_number_of_stations()\nK = model.get_number_of_classes()\n\nP = model.init_routing_matrix()\nP.set(jobclass, jobclass, [[0,1,0,0],[0,0,0,1],[1,0,0,0],[0,0,0,0]])\n\nmodel.link(P)",
+      "metadata": {
+        "collapsed": false,
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:42.499900Z",
+          "start_time": "2025-07-30T22:23:42.468489Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:43.102750Z",
+          "iopub.execute_input": "2026-01-01T10:27:43.102914Z",
+          "shell.execute_reply": "2026-01-01T10:27:43.105063Z",
+          "iopub.status.idle": "2026-01-01T10:27:43.105301Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "markdown",
+      "source": "This example shows the execution of the solver on a 1-class 2-node open model.",
+      "metadata": {
+        "collapsed": false
+      },
+      "outputs": [],
+      "execution_count": null
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Aligned with JAR test scenarios for oqn_basic\n# JAR tests: CTMC(cutoff=10), JMT(seed=23000), SSA(seed=23000, samples=10000), \n#           MVA(), NC(), MAM(), Fluid()\n\nsolver = np.array([], dtype=object)\n\n# CTMC with cutoff=10 (matches JAR)\nsolver = np.append(solver, CTMC(model, cutoff=10))\n\n# JMT with seed=23000 (matches JAR) \nsolver = np.append(solver, JMT(model, seed=23000))\n\n# DES with seed=23000 (matches JAR/MATLAB)\nsolver = np.append(solver, DES(model, seed=23000))\n\n# MVA with default settings (matches JAR)\nsolver = np.append(solver, MVA(model))\n\n# Fluid with default settings (matches JAR)\nsolver = np.append(solver, FLD(model))\n\n# NC with default settings (matches JAR)\nsolver = np.append(solver, NC(model))\n\n# MAM with default settings (matches JAR)\nsolver = np.append(solver, MAM(model))\n\n# SSA with seed=23000, samples=10000 (matches JAR)\n# solver = np.append(solver, SSA(model, seed=23000, samples=10000))\n\nAvgTable = np.empty(len(solver), dtype=object)\nfor s in range(len(solver)):\n    print(f'\\nSOLVER: {solver[s].get_name()}')\n    AvgTable[s] = solver[s].avg_table()",
+      "metadata": {
+        "collapsed": false,
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:44.407401Z",
+          "start_time": "2025-07-30T22:23:42.522341Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:43.106314Z",
+          "iopub.execute_input": "2026-01-01T10:27:43.106402Z",
+          "shell.execute_reply": "2026-01-01T10:27:46.083248Z",
+          "iopub.status.idle": "2026-01-01T10:27:46.083550Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "\nSOLVER: CTMC\n\nSOLVER: JMT\n"
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/solvers/ctmc/handler.py:518: RuntimeWarning: invalid value encountered in scalar multiply\n  TN[ist, k] = UN[ist, k] * c * mu\n",
+            "numerical_values": [
+              518.0
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "\nSOLVER: DES\n"
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "\nSOLVER: MVA\n\nSOLVER: Fluid\nStation JobClass   QLen   Util  RespT  ResidT  ArvR  Tput\n  Delay   Class1 0.0217 0.0217 0.2167  0.2167   0.1   0.1\n Queue1   Class1 0.1000 0.1000 1.0000  1.0000   0.1   0.1\n Source   Class1 0.0000 0.0000 0.0000  0.0000   0.1   0.1\n\nSOLVER: NC\n\nSOLVER: MAM\nStation JobClass   QLen  Util  RespT  ResidT  ArvR  Tput\n  Delay   Class1 0.0217   0.0 0.2167  0.2167   0.1   0.1\n Queue1   Class1 0.1111   0.1 1.1111  1.1111   0.1   0.1\n Source   Class1 0.0000   0.0 0.0000  0.0000   0.0   0.1\n",
+            "numerical_values": [
+              1.0,
+              0.0217,
+              0.0217,
+              0.2167,
+              0.2167,
+              0.1,
+              0.1,
+              1.0,
+              1.0,
+              0.1,
+              0.1,
+              1.0,
+              1.0,
+              0.1,
+              0.1,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.1,
+              0.1,
+              1.0,
+              0.0217,
+              0.0,
+              0.2167,
+              0.2167,
+              0.1,
+              0.1,
+              1.0,
+              1.0,
+              0.1111,
+              0.1,
+              1.1111,
+              1.1111,
+              0.1,
+              0.1,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.1
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/pfqn/nc.py:125: RuntimeWarning: invalid value encountered in cast\n  N = np.ceil(N).astype(int)\n",
+            "numerical_values": [
+              125.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    }
+  },
+  "numerical_summary": {
+    "cell_2": [
+      1.0,
+      2.0
+    ],
+    "cell_3": [
+      518.0,
+      1.0,
+      0.0217,
+      0.0217,
+      0.2167,
+      0.2167,
+      0.1,
+      0.1,
+      1.0,
+      1.0,
+      0.1,
+      0.1,
+      1.0,
+      1.0,
+      0.1,
+      0.1,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.1,
+      0.1,
+      1.0,
+      0.0217,
+      0.0,
+      0.2167,
+      0.2167,
+      0.1,
+      0.1,
+      1.0,
+      1.0,
+      0.1111,
+      0.1,
+      1.1111,
+      1.1111,
+      0.1,
+      0.1,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.1,
+      125.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "openQN/oqn_basic.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 4,
+    "code_cells": 3,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

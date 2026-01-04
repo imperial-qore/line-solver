@@ -1,0 +1,373 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nimport os\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:02.638676Z",
+          "start_time": "2025-07-30T22:23:02.636869Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:18.828521Z",
+          "iopub.execute_input": "2026-01-02T14:13:18.828634Z",
+          "iopub.status.idle": "2026-01-02T14:13:19.758489Z",
+          "shell.execute_reply": "2026-01-02T14:13:19.758051Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "# Create the model\nmodel = Network('model')",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:02.693128Z",
+          "start_time": "2025-07-30T22:23:02.691457Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:19.759865Z",
+          "iopub.execute_input": "2026-01-02T14:13:19.760094Z",
+          "iopub.status.idle": "2026-01-02T14:13:19.767783Z",
+          "shell.execute_reply": "2026-01-02T14:13:19.767368Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Define network nodes\nsource = Source(model, 'Source')\nqueue = Queue(model, 'Queue', SchedStrategy.FCFS)\nsink = Sink(model, 'Sink')",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:02.744434Z",
+          "start_time": "2025-07-30T22:23:02.740912Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:19.769105Z",
+          "iopub.execute_input": "2026-01-02T14:13:19.769269Z",
+          "shell.execute_reply": "2026-01-02T14:13:19.777377Z",
+          "iopub.status.idle": "2026-01-02T14:13:19.777725Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Define job class\njobclass = OpenClass(model, 'OpenClass', 0)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:02.793363Z",
+          "start_time": "2025-07-30T22:23:02.790927Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:19.778918Z",
+          "iopub.execute_input": "2026-01-02T14:13:19.779054Z",
+          "iopub.status.idle": "2026-01-02T14:13:19.781875Z",
+          "shell.execute_reply": "2026-01-02T14:13:19.781598Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# Set arrival process\nsource.set_arrival(jobclass, Exp(1))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:02.843167Z",
+          "start_time": "2025-07-30T22:23:02.841304Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:19.782978Z",
+          "iopub.execute_input": "2026-01-02T14:13:19.783139Z",
+          "shell.execute_reply": "2026-01-02T14:13:19.787834Z",
+          "iopub.status.idle": "2026-01-02T14:13:19.788185Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# Set service process using trace file\n# Find the directory containing this notebook\ncurrent_dir = os.path.dirname(os.path.abspath(''))\ntrace_file_path = os.path.join(current_dir, 'example_trace.txt')\n\n# Check if trace file exists\nif os.path.exists('example_trace.txt'):\n    trace_file_path = 'example_trace.txt'\n    print(f\"Found trace file: {trace_file_path}\")\nelif os.path.exists(trace_file_path):\n    print(f\"Found trace file: {trace_file_path}\")\nelse:\n    print(f\"Warning: Trace file not found at {trace_file_path}\")\n    print(\"Using current directory path: example_trace.txt\")\n    trace_file_path = 'example_trace.txt'\n\n# Set service process using Replayer with the trace file\nqueue.set_service(jobclass, Replayer(trace_file_path))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:02.914649Z",
+          "start_time": "2025-07-30T22:23:02.890740Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:19.789311Z",
+          "iopub.execute_input": "2026-01-02T14:13:19.789425Z",
+          "shell.execute_reply": "2026-01-02T14:13:19.829560Z",
+          "iopub.status.idle": "2026-01-02T14:13:19.829991Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Found trace file: example_trace.txt\n"
+          }
+        }
+      ],
+      "execution_count": 6
+    },
+    "cell_6": {
+      "cell_type": "code",
+      "source": "# Define network topology using serial routing\nmodel.link(Network.serial_routing(source, queue, sink))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:02.949085Z",
+          "start_time": "2025-07-30T22:23:02.946714Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:19.831361Z",
+          "iopub.execute_input": "2026-01-02T14:13:19.831522Z",
+          "iopub.status.idle": "2026-01-02T14:13:19.836547Z",
+          "shell.execute_reply": "2026-01-02T14:13:19.836272Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 7
+    },
+    "cell_7": {
+      "cell_type": "code",
+      "source": "# Aligned with JAR test scenarios for oqn_trace_driven\n# JAR tests: JMT(seed=23000), DES(seed=23000)\n\n# Solve using JMT solver with seed=23000 (matches JAR)\nsolver_jmt = JMT(model, seed=23000)\nAvgTable_jmt = solver_jmt.avg_table()\n\n# Solve using DES solver with seed=23000 (matches MATLAB)\nsolver_des = DES(model, seed=23000)\nAvgTable_des = solver_des.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:23:03.763915Z",
+          "start_time": "2025-07-30T22:23:02.999958Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:13:19.837741Z",
+          "iopub.execute_input": "2026-01-02T14:13:19.837896Z",
+          "iopub.status.idle": "2026-01-02T14:13:20.591612Z",
+          "shell.execute_reply": "2026-01-02T14:13:20.591234Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "JMT Model: /tmp/workspace/jsim/16707845115416578711/jmodel.jsim\n",
+            "numerical_values": [
+              1.6707845115416578e+19
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station   JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0  Source  OpenClass  0.0000  0.0000  0.0000  0.0000  0.0000  1.0205\n1   Queue  OpenClass  0.1128  0.1028  0.1127  0.1127  1.0205  1.0211\nDES: Transient filter = mser5 (batch size = 5)\nDES: CI method = obm (overlap = 0.5)\nDES events:    200 \b\b\b\b\b\b\b    400\b\b\b\b\b\b\b    600\b\b\b\b\b\b\b    800\b\b\b\b\b\b\b   1000\b\b\b\b\b\b\b   1200\b\b\b\b\b\b\b   1400\b\b\b\b\b\b\b   1600\b\b\b\b\b\b\b   1800\b\b\b\b\b\b\b   2000\b\b\b\b\b\b\b   2200\b\b\b\b\b\b\b   2400\b\b\b\b\b\b\b   2600\b\b\b\b\b\b\b   2800\b\b\b\b\b\b\b   3000\b\b\b\b\b\b\b   3200\b\b\b\b\b\b\b   3400\b\b\b\b\b\b\b   3600\b\b\b\b\b\b\b   3800\b\b\b\b\b\b\b   4000\b\b\b\b\b\b\b   4200\b\b\b\b\b\b\b   4400\b\b\b\b\b\b\b   4600\b\b\b\b\b\b\b   4800\b\b\b\b\b\b\b   5000\b\b\b\b\b\b\b   5200\b\b\b\b\b\b\b   5400\b\b\b\b\b\b\b   5600\b\b\b\b\b\b\b   5800\b\b\b\b\b\b\b   6000\b\b\b\b\b\b\b   6200\b\b\b\b\b\b\b   6400\b\b\b\b\b\b\b   6600\b\b\b\b\b\b\b   6800\b\b\b\b\b\b\b   7000\b\b\b\b\b\b\b   7200\b\b\b\b\b\b\b   7400\b\b\b\b\b\b\b   7600\b\b\b\b\b\b\b   7800\b\b\b\b\b\b\b   8000\b\b\b\b\b\b\b   8200\b\b\b\b\b\b\b   8400\b\b\b\b\b\b\b   8600\b\b\b\b\b\b\b   8800\b\b\b\b\b\b\b   9000\b\b\b\b\b\b\b   9200\b\b\b\b\b\b\b   9400\b\b\b\b\b\b\b   9600\b\b\b\b\b\b\b   9800\b\b\b\b\b\b\b  10000\b\b\b\b\b\b\b  10000\n  Station   JobClass    QLen    Util   RespT  ResidT  ArvR    Tput\n0  Source  OpenClass  0.0000  0.0000  0.0000  0.0000   0.0  1.0000\n1   Queue  OpenClass  0.1248  0.1004  0.1124  0.1124   1.0  0.9938\n",
+            "numerical_values": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0205,
+              1.0,
+              0.1128,
+              0.1028,
+              0.1127,
+              0.1127,
+              1.0205,
+              1.0211,
+              5.0,
+              5.0,
+              0.5,
+              200.0,
+              400.0,
+              600.0,
+              800.0,
+              1000.0,
+              1200.0,
+              1400.0,
+              1600.0,
+              1800.0,
+              2000.0,
+              2200.0,
+              2400.0,
+              2600.0,
+              2800.0,
+              3000.0,
+              3200.0,
+              3400.0,
+              3600.0,
+              3800.0,
+              4000.0,
+              4200.0,
+              4400.0,
+              4600.0,
+              4800.0,
+              5000.0,
+              5200.0,
+              5400.0,
+              5600.0,
+              5800.0,
+              6000.0,
+              6200.0,
+              6400.0,
+              6600.0,
+              6800.0,
+              7000.0,
+              7200.0,
+              7400.0,
+              7600.0,
+              7800.0,
+              8000.0,
+              8200.0,
+              8400.0,
+              8600.0,
+              8800.0,
+              9000.0,
+              9200.0,
+              9400.0,
+              9600.0,
+              9800.0,
+              10000.0,
+              10000.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              0.1248,
+              0.1004,
+              0.1124,
+              0.1124,
+              1.0,
+              0.9938
+            ]
+          }
+        }
+      ],
+      "execution_count": 8
+    }
+  },
+  "numerical_summary": {
+    "cell_3": [
+      0.0
+    ],
+    "cell_4": [
+      1.0
+    ],
+    "cell_7": [
+      1.6707845115416578e+19,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0205,
+      1.0,
+      0.1128,
+      0.1028,
+      0.1127,
+      0.1127,
+      1.0205,
+      1.0211,
+      5.0,
+      5.0,
+      0.5,
+      200.0,
+      400.0,
+      600.0,
+      800.0,
+      1000.0,
+      1200.0,
+      1400.0,
+      1600.0,
+      1800.0,
+      2000.0,
+      2200.0,
+      2400.0,
+      2600.0,
+      2800.0,
+      3000.0,
+      3200.0,
+      3400.0,
+      3600.0,
+      3800.0,
+      4000.0,
+      4200.0,
+      4400.0,
+      4600.0,
+      4800.0,
+      5000.0,
+      5200.0,
+      5400.0,
+      5600.0,
+      5800.0,
+      6000.0,
+      6200.0,
+      6400.0,
+      6600.0,
+      6800.0,
+      7000.0,
+      7200.0,
+      7400.0,
+      7600.0,
+      7800.0,
+      8000.0,
+      8200.0,
+      8400.0,
+      8600.0,
+      8800.0,
+      9000.0,
+      9200.0,
+      9400.0,
+      9600.0,
+      9800.0,
+      10000.0,
+      10000.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      0.1248,
+      0.1004,
+      0.1124,
+      0.1124,
+      1.0,
+      0.9938,
+      23000.0,
+      23000.0,
+      23000.0,
+      23000.0,
+      23000.0,
+      23000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "openQN/oqn_trace_driven.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 8,
+    "code_cells": 8,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

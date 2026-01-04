@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="ISO-8859-1" standalone="no"?>
+<archive xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="open_1class_1stat_mm1k.jsimg"
+    timestamp="Tue Sep 19 03:08:35 BST 2017" xsi:noNamespaceSchemaLocation="Archive.xsd">
+    <sim disableStatisticStop="true" logDecimalSeparator="." logDelimiter="," logPath=""
+        logReplaceMode="0" maxSamples="4000000" name="open_1class_1stat_mm1k.jsimg" polling="2.0"
+        xsi:noNamespaceSchemaLocation="SIMmodeldefinition.xsd">
+        <userClass name="Class0" priority="0" referenceSource="Source 0" type="open" />
+        <node name="M/M/1/11">
+            <section className="Queue">
+                <parameter classPath="java.lang.Integer" name="size">
+                    <value>11</value>
+                </parameter>
+                <parameter array="true" classPath="java.lang.String" name="dropStrategies">
+                    <refClass>Class0</refClass>
+                    <subParameter classPath="java.lang.String" name="dropStrategy">
+                        <value>drop</value>
+                    </subParameter>
+                </parameter>
+                <parameter classPath="jmt.engine.NetStrategies.QueueGetStrategies.FCFSstrategy"
+                    name="FCFSstrategy" />
+                <parameter array="true" classPath="jmt.engine.NetStrategies.QueuePutStrategy"
+                    name="QueuePutStrategy">
+                    <refClass>Class0</refClass>
+                    <subParameter
+                        classPath="jmt.engine.NetStrategies.QueuePutStrategies.TailStrategy"
+                        name="TailStrategy" />
+                </parameter>
+            </section>
+            <section className="Server">
+                <parameter classPath="java.lang.Integer" name="maxJobs">
+                    <value>1</value>
+                </parameter>
+                <parameter array="true" classPath="java.lang.Integer" name="numberOfVisits">
+                    <refClass>Class0</refClass>
+                    <subParameter classPath="java.lang.Integer" name="numberOfVisits">
+                        <value>1</value>
+                    </subParameter>
+                </parameter>
+                <parameter array="true" classPath="jmt.engine.NetStrategies.ServiceStrategy"
+                    name="ServiceStrategy">
+                    <refClass>Class0</refClass>
+                    <subParameter
+                        classPath="jmt.engine.NetStrategies.ServiceStrategies.ServiceTimeStrategy"
+                        name="ServiceTimeStrategy">
+                        <subParameter classPath="jmt.engine.random.Exponential" name="Exponential" />
+                        <subParameter classPath="jmt.engine.random.ExponentialPar" name="distrPar">
+                            <subParameter classPath="java.lang.Double" name="lambda">
+                                <value>10.0</value>
+                            </subParameter>
+                        </subParameter>
+                    </subParameter>
+                </parameter>
+            </section>
+            <section className="Router">
+                <parameter array="true" classPath="jmt.engine.NetStrategies.RoutingStrategy"
+                    name="RoutingStrategy">
+                    <refClass>Class0</refClass>
+                    <subParameter
+                        classPath="jmt.engine.NetStrategies.RoutingStrategies.RandomStrategy"
+                        name="Random" />
+                </parameter>
+            </section>
+        </node>
+        <node name="Sink 0">
+            <section className="JobSink" />
+        </node>
+        <node name="Source 0">
+            <section className="RandomSource">
+                <parameter array="true" classPath="jmt.engine.NetStrategies.ServiceStrategy"
+                    name="ServiceStrategy">
+                    <refClass>Class0</refClass>
+                    <subParameter
+                        classPath="jmt.engine.NetStrategies.ServiceStrategies.ServiceTimeStrategy"
+                        name="ServiceTimeStrategy">
+                        <subParameter classPath="jmt.engine.random.Exponential" name="Exponential" />
+                        <subParameter classPath="jmt.engine.random.ExponentialPar" name="distrPar">
+                            <subParameter classPath="java.lang.Double" name="lambda">
+                                <value>9.0</value>
+                            </subParameter>
+                        </subParameter>
+                    </subParameter>
+                </parameter>
+            </section>
+            <section className="ServiceTunnel" />
+            <section className="Router">
+                <parameter array="true" classPath="jmt.engine.NetStrategies.RoutingStrategy"
+                    name="RoutingStrategy">
+                    <refClass>Class0</refClass>
+                    <subParameter
+                        classPath="jmt.engine.NetStrategies.RoutingStrategies.RandomStrategy"
+                        name="Random" />
+                </parameter>
+            </section>
+        </node>
+        <measure alpha="0.01" name="M/M/1/11_Number of Customers" nodeType="station"
+            precision="0.03" referenceNode="M/M/1/11" referenceUserClass=""
+            type="Number of Customers" verbose="false" />
+        <connection source="M/M/1/11" target="Sink 0" />
+        <connection source="Source 0" target="M/M/1/11" />
+    </sim>
+    <jmodel xsi:noNamespaceSchemaLocation="JModelGUI.xsd">
+        <userClass color="#FF0000FF" name="Class0" />
+        <station name="M/M/1/11">
+            <position rotate="false" x="298.0" y="191.0" />
+        </station>
+        <station name="Sink 0">
+            <position rotate="false" x="549.0" y="194.0" />
+        </station>
+        <station name="Source 0">
+            <position rotate="false" x="160.0" y="194.0" />
+        </station>
+    </jmodel>
+    <results elapsedTime="6084" logDecimalSeparator="." logDelimiter="," pollingInterval="2.0"
+        xsi:noNamespaceSchemaLocation="Results.xsd">
+        <measure alpha="0.99" analyzedSamples="4000000" discardedSamples="1675"
+            finalValue="4.2899441115975465" name="M/M/1/11_Number of Customers" nodeType="station"
+            precision="0.03" referenceClass="" referenceStation="M/M/1/11" state="1" type="0">
+            <sample lastIntervalAvgValue="4.3443747356186915" lowerBound="4.213131879146273"
+                meanValue="4.327707425473218" simulationTime="18194.726651587574"
+                upperBound="4.442282971800163" />
+            <sample lastIntervalAvgValue="4.2934200989768225" lowerBound="4.2127492974753595"
+                meanValue="4.275668218902787" simulationTime="93038.35651039328"
+                upperBound="4.3385871403302145" />
+            <sample lastIntervalAvgValue="4.284069774881317" lowerBound="4.246545196257332"
+                meanValue="4.2899441115975465" simulationTime="168891.28175427963"
+                upperBound="4.333343026937761" />
+            <sample lastIntervalAvgValue="4.237211352437864" lowerBound="4.246545196257332"
+                meanValue="4.2899441115975465" simulationTime="227221.0748790053"
+                upperBound="4.333343026937761" />
+        </measure>
+    </results>
+</archive>

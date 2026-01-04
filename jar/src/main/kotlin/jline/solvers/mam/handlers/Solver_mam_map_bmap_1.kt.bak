@@ -1,0 +1,387 @@
+/**
+ * MAP/BMAP/1 Queue Solver using GI/M/1 type analysis with ETAQA.
+ *
+ * Solves a MAP/BMAP/1 queue where:
+ * - Arrivals follow a Markovian Arrival Process (MAP)
+ * - Service follows a Batch Markovian Arrival Process (BMAP) for batch service
+ * - Single server
+ *
+ * The queue is modeled as a GI/M/1-type Markov chain because:
+ * - MAP arrivals increase level by exactly 1
+ * - BMAP service can decrease level by 1, 2, 3, ... (batch sizes)
+ *
+ * @since LINE 3.1.0
+ */
+package jline.solvers.mam.handlers
+
+import jline.util.matrix.Matrix
+import jline.api.mam.map_prob
+
+/**
+ * Result of MAP/BMAP/1 queue analysis.
+ */
+data class MAPBMAP1Result(
+    /** Mean queue length E[N] */
+    val meanQueueLength: Double,
+    /** Server utilization rho */
+    val utilization: Double,
+    /** Mean response time E[R] */
+    val meanResponseTime: Double,
+    /** Throughput (arrival rate) */
+    val throughput: Double,
+    /** Aggregated stationary probabilities [pi0, pi1, piStar] */
+    val pi: Matrix,
+    /** R matrix */
+    val R: Matrix,
+    /** Mean batch size of service */
+    val meanBatchSize: Double
+)
+
+/**
+ * Solves a MAP/BMAP/1 queue using GI/M/1-type matrix-analytic methods.
+ *
+ * The MAP is specified by matrices (C0, C1) where:
+ * - C0: transitions without arrivals
+ * - C1: transitions triggering arrivals
+ *
+ * The BMAP for service is specified by matrices {D0, D1, D2, ..., DK} where:
+ * - D0: transitions without service completions
+ * - Dk: transitions triggering batch service of k customers (k >= 1)
+ *
+ * The GI/M/1-type structure for MAP/BMAP/1 is:
+ * ```
+ *       B1  A0  0   0   ...
+ *       B2  A1  A0  0   ...
+ *   Q = B3  A2  A1  A0  ...
+ *       ...
+ * ```
+ *
+ * Where:
+ *   A0 = C1 \otimes I_ms           (MAP arrival, level +1)
+ *   A1 = C0 \otimes I_ms + I_ma \otimes D0  (phase changes, level 0)
+ *   A_{k+1} = I_ma \otimes D_k     (batch size k service, level -k)
+ *
+ * @param C0 MAP matrix for transitions without arrivals
+ * @param C1 MAP matrix for arrivals
+ * @param D BMAP service matrices as list [D0, D1, D2, ..., DK]
+ * @return MAPBMAP1Result with performance metrics
+ */
+fun solver_mam_map_bmap_1(C0: Matrix, C1: Matrix, D: List<Matrix>): MAPBMAP1Result {
+    require(D.isNotEmpty()) { "BMAP must have at least D0 matrix" }
+    require(D.size >= 2) { "BMAP must have at least D0 and D1 matrices" }
+
+    val K = D.size - 1  // Maximum batch size
+    val ma = C0.numRows  // Number of MAP phases
+    val ms = D[0].numRows  // Number of BMAP phases
+    val m = ma * ms  // Combined phases per level
+
+    // Validate MAP matrices are square
+    require(C0.numRows == ma && C0.numCols == ma) { "C0 must be ${ma}x${ma}" }
+    require(C1.numRows == ma && C1.numCols == ma) { "C1 must be ${ma}x${ma}" }
+
+    // Validate BMAP matrices are square and same size
+    for (i in D.indices) {
+        require(D[i].numRows == ms && D[i].numCols == ms) {
+            "All BMAP matrices must be ${ms}x${ms}"
+        }
+    }
+
+    // Compute arrival rate from MAP
+    val piC = map_prob(C0, C1)
+    val eA = Matrix.ones(ma, 1)
+    val lambdaArr = piC.mult(C1).mult(eA)[0, 0]
+
+    // Compute total service rate from BMAP
+    var D1Total = Matrix(ms, ms)
+    for (k in 1..K) {
+        D1Total = D1Total.add(D[k])
+    }
+    val piD = map_prob(D[0], D1Total)
+    val eS = Matrix.ones(ms, 1)
+
+    var muTotal = 0.0
+    for (k in 1..K) {
+        val rateK = piD.mult(D[k]).mult(eS)[0, 0]
+        muTotal += k * rateK
+    }
+
+    // Mean batch size
+    val batchRate = piD.mult(D1Total).mult(eS)[0, 0]
+    val meanBatchSize = if (batchRate > 0) muTotal / batchRate else 0.0
+
+    // Utilization
+    val rho = lambdaArr / muTotal
+
+    if (rho >= 1.0) {
+        System.err.println("Warning: System is unstable (rho = $rho >= 1). Results may be invalid.")
+    }
+
+    // Construct A matrix for GI/M/1-type (repeating part)
+    // A = [A0; A1; A2; ...; A_{K+1}] with (K+2) blocks of size m x m
+    val A = Matrix(m * (K + 2), m)
+
+    // A0 = C1 \otimes I_ms (MAP arrival, level +1)
+    val Ims = Matrix.eye(ms)
+    val A0 = C1.kron(Ims)
+    for (i in 0 until m) {
+        for (j in 0 until m) {
+            A[i, j] = A0[i, j]
+        }
+    }
+
+    // A1 = C0 \otimes I_ms + I_ma \otimes D0 (phase changes, level 0)
+    val Ima = Matrix.eye(ma)
+    val A1 = C0.kron(Ims).add(Ima.kron(D[0]))
+    for (i in 0 until m) {
+        for (j in 0 until m) {
+            A[m + i, j] = A1[i, j]
+        }
+    }
+
+    // A_{k+1} = I_ma \otimes D_k for k = 1, ..., K (batch service of size k)
+    for (k in 1..K) {
+        val Ak = Ima.kron(D[k])
+        for (i in 0 until m) {
+            for (j in 0 until m) {
+                A[(k + 1) * m + i, j] = Ak[i, j]
+            }
+        }
+    }
+
+    // Construct B matrix for boundary levels
+    val B = Matrix(m * (K + 2), m)
+
+    // B1: Level 0 transitions (no service from empty queue)
+    val B1 = C0.kron(Ims).add(Ima.kron(D[0]))
+    // Add all service transitions back to level 0 (they can't decrease below 0)
+    for (k in 1..K) {
+        val Dk = Ima.kron(D[k])
+        for (i in 0 until m) {
+            for (j in 0 until m) {
+                B1[i, j] = B1[i, j] + Dk[i, j]
+            }
+        }
+    }
+    for (i in 0 until m) {
+        for (j in 0 until m) {
+            B[i, j] = B1[i, j]
+        }
+    }
+
+    // B_{j+1} for j = 1, ..., K: Transitions to level 0 from level j
+    for (j in 1..K) {
+        val Bj = Matrix(m, m)
+        // From level j, batch sizes > j go to level 0
+        for (k in j..K) {
+            val Dk = Ima.kron(D[k])
+            for (i in 0 until m) {
+                for (jj in 0 until m) {
+                    Bj[i, jj] = Bj[i, jj] + Dk[i, jj]
+                }
+            }
+        }
+        for (i in 0 until m) {
+            for (jj in 0 until m) {
+                B[m + (j - 1) * m + i, jj] = Bj[i, jj]
+            }
+        }
+    }
+
+    // Compute R matrix using GI/M/1 algorithm
+    val R = gim1_r_etaqa(A)
+
+    // Compute stationary probabilities using GI/M/1 ETAQA
+    val pi = gim1_pi_etaqa(B, A, R, A0)
+
+    // Compute mean queue length
+    val meanQueueLength = gim1_qlen_etaqa(B, A, R, pi, 1)
+
+    // Performance metrics
+    val meanResponseTime = if (lambdaArr > 0) meanQueueLength / lambdaArr else 0.0
+
+    return MAPBMAP1Result(
+        meanQueueLength = meanQueueLength,
+        utilization = rho,
+        meanResponseTime = meanResponseTime,
+        throughput = lambdaArr,
+        pi = pi,
+        R = R,
+        meanBatchSize = meanBatchSize
+    )
+}
+
+/**
+ * Compute R matrix for GI/M/1-type Markov chains.
+ *
+ * R is the minimal nonnegative solution to:
+ *   R = A0 + R*A1 + R^2*A2 + ... + R^K*A_K
+ */
+private fun gim1_r_etaqa(A: Matrix): Matrix {
+    val m = A.numCols
+    val numBlocks = A.numRows / m
+
+    // Extract A blocks
+    val blocks = Array(numBlocks) { i ->
+        A.extractRows(i * m, (i + 1) * m)
+    }
+
+    // Check if continuous time (row sums = 0) and uniformize if needed
+    val A1 = blocks[1]
+    var minDiag = Double.MAX_VALUE
+    for (i in 0 until m) {
+        if (A1[i, i] < minDiag) minDiag = A1[i, i]
+    }
+
+    val uniformized = if (minDiag < 0) {
+        val lamb = -minDiag
+        Array(numBlocks) { i ->
+            val scaled = blocks[i].scale(1.0 / lamb)
+            if (i == 1) {
+                for (j in 0 until m) {
+                    scaled[j, j] = scaled[j, j] + 1.0
+                }
+            }
+            scaled
+        }
+    } else {
+        blocks
+    }
+
+    // Functional iteration for R
+    var R = Matrix(m, m)
+    val maxIter = 200
+    val tol = 1e-14
+
+    for (iter in 0 until maxIter) {
+        // R_new = A0 + A1*R + A2*R^2 + ...
+        var Rnew = uniformized[0].copy()
+        var Rpow = R.copy()
+        for (k in 1 until numBlocks) {
+            Rnew = Rnew.add(uniformized[k].mult(Rpow))
+            Rpow = Rpow.mult(R)
+        }
+
+        val diff = Rnew.sub(R).normFrobenius()
+        if (diff < tol) {
+            return Rnew
+        }
+        R = Rnew
+    }
+
+    return R
+}
+
+/**
+ * Compute aggregated stationary probabilities for GI/M/1-type Markov chain.
+ */
+private fun gim1_pi_etaqa(B: Matrix, A: Matrix, R: Matrix, B0: Matrix): Matrix {
+    val m = R.numRows
+    val numBlocksA = A.numRows / m
+    val numBlocksB = B.numRows / m
+
+    // Simple aggregation: [pi0, pi1, piStar]
+    // Use the structure to compute aggregated probabilities
+
+    // Compute g = stationary distribution of R
+    val g = stat(R)
+
+    // Extract A1
+    val A1 = A.extractRows(m, 2 * m)
+
+    // Compute pi0 using boundary equations
+    // Simplified: use geometric approximation
+    val Iminr = Matrix.eye(m).sub(R)
+    val IminrInv = Iminr.inv()
+
+    // Extract B1
+    val B1 = B.extractRows(0, m)
+
+    // Compute pi0 from B1 + B0 * R * (I-R)^{-1}
+    val temp = B1.add(B0.mult(R).mult(IminrInv))
+    val pi0 = stat(temp)
+
+    // Normalize
+    val norm = pi0.mult(IminrInv).mult(Matrix.ones(m, 1))[0, 0]
+    val pi0Norm = if (norm > 0) pi0.scale(1.0 / norm) else pi0
+
+    // pi1 = pi0 * R
+    val pi1 = pi0Norm.mult(R)
+
+    // piStar = pi1 * R
+    val piStar = pi1.mult(R)
+
+    // Concatenate
+    val result = Matrix(1, 3 * m)
+    for (i in 0 until m) {
+        result[0, i] = pi0Norm[0, i]
+        result[0, m + i] = pi1[0, i]
+        result[0, 2 * m + i] = piStar[0, i]
+    }
+
+    return result
+}
+
+/**
+ * Compute queue length moments for GI/M/1-type Markov chain.
+ */
+private fun gim1_qlen_etaqa(B: Matrix, A: Matrix, R: Matrix, pi: Matrix, n: Int): Double {
+    val m = R.numRows
+
+    // Extract probability components
+    val pi0 = pi.extractCols(0, m)
+    val pi1 = pi.extractCols(m, 2 * m)
+    val piStar = pi.extractCols(2 * m, 3 * m)
+
+    val e = Matrix.ones(m, 1)
+
+    if (n == 1) {
+        // Mean queue length
+        val mean = pi1.mult(e)[0, 0] + 2.0 * piStar.mult(e)[0, 0]
+        return mean
+    }
+
+    // Higher moments - approximate
+    var moment = pi1.mult(e)[0, 0]
+    val piStarSum = piStar.mult(e)[0, 0]
+    for (k in 2 until 100) {
+        val levelProb = piStarSum * kotlin.math.pow(1.0 - piStarSum, (k - 2).toDouble())
+        moment += kotlin.math.pow(k.toDouble(), n.toDouble()) * levelProb
+        if (levelProb < 1e-15) break
+    }
+
+    return moment
+}
+
+/**
+ * Compute stationary distribution of a stochastic/generator matrix.
+ */
+private fun stat(A: Matrix): Matrix {
+    val n = A.numRows
+
+    // Solve pi * (A - I) = 0 with sum(pi) = 1
+    val B = Matrix(n, n + 1)
+    for (i in 0 until n) {
+        for (j in 0 until n) {
+            B[i, j] = A[j, i]  // Transpose
+        }
+        B[i, n] = 1.0
+    }
+
+    val y = Matrix(1, n + 1)
+    y[0, n] = 1.0
+
+    val pi = y.mult(B.pinv())
+
+    // Ensure non-negative and normalized
+    for (i in 0 until n) {
+        if (pi[0, i] < 0) pi[0, i] = 0.0
+    }
+    val sum = pi.elementSum()
+    if (sum > 0) {
+        for (i in 0 until n) {
+            pi[0, i] = pi[0, i] / sum
+        }
+    }
+
+    return pi
+}

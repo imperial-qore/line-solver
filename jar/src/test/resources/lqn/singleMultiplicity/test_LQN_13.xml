@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<lqn-model description="test_LQN_12" name="test_LQN_12" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="lqn.xsd">
+    <processor name="P1" scheduling="inf">
+        <task name="T1" scheduling="ref"  think-time="100" multiplicity="1">  <!-- reference task T1 -->
+            <entry name="E1" type="Graph" />
+            <task-activities>
+                <activity name="AS1" host-demand-mean="0.0"  bound-to-entry="E1">
+                    <synch-call calls-mean="0.1" dest="E21" />
+                </activity>
+                <activity name="AS2" host-demand-mean="0.1">
+                    <synch-call calls-mean="1" dest="E22" />
+                </activity>
+                <activity name="AS3" host-demand-mean="0.1">
+                    <synch-call calls-mean="2" dest="E21" />
+                </activity>
+                <precedence>
+                    <pre>
+                        <activity name="AS1"/>
+                    </pre>
+                    <post>
+                        <activity name="AS2"/>
+                    </post>
+                </precedence>               
+                <precedence>
+                    <pre>
+                        <activity name="AS2"/>
+                    </pre>
+                    <post>
+                        <activity name="AS3"/>
+                    </post>
+                </precedence>               
+            </task-activities>
+        </task>
+    </processor>
+   <processor name="P2" scheduling="inf">
+        <task name="T2" scheduling="inf"> 
+            <entry name="E21" type="Graph" />
+            <entry name="E22" type="Graph" />
+            <task-activities>
+                <activity name="AS21" host-demand-mean="1.0"  bound-to-entry="E21">
+                    <synch-call calls-mean="1" dest="E31" />
+                </activity>                        
+                <activity name="AS22" host-demand-mean="3.0"  bound-to-entry="E22">
+                    <synch-call calls-mean="1" dest="E32" />
+                </activity>                        
+                <activity name="AS23" host-demand-mean="2.0">
+                    <synch-call calls-mean="1" dest="E41" />
+                </activity>                        
+                <activity name="AS24" host-demand-mean="4.0" >
+                    <synch-call calls-mean="1" dest="E42" />
+                </activity>                        
+                    
+                <precedence>
+                    <pre>
+                        <activity name="AS21"/>
+                    </pre>
+                    <post>
+                        <activity name="AS23"/>
+                    </post>
+                </precedence>               
+                <precedence>
+                    <pre>
+                        <activity name="AS22"/>
+                    </pre>
+                    <post>
+                        <activity name="AS24"/>
+                    </post>
+                </precedence>               
+                <reply-entry name="E21">
+                    <reply-activity name="AS23"/>
+                </reply-entry>
+                <reply-entry name="E22">
+                    <reply-activity name="AS24"/>
+                </reply-entry>
+            </task-activities>
+        </task>
+    </processor>    
+    <processor name="P3" scheduling="inf">
+        <task name="T3" scheduling="inf"> 
+            <entry name="E31" type="Graph" />
+            <entry name="E32" type="Graph" />
+            <task-activities>
+                <activity name="AS31" host-demand-mean="1.0"  bound-to-entry="E31" />
+                <activity name="AS32" host-demand-mean="3.0"  bound-to-entry="E32" />
+                <activity name="AS33" host-demand-mean="2.0" />
+                <activity name="AS34" host-demand-mean="4.0" />
+                <precedence>
+                    <pre>
+                        <activity name="AS31"/>
+                    </pre>
+                    <post>
+                        <activity name="AS33"/>
+                    </post>
+                </precedence>               
+                <precedence>
+                    <pre>
+                        <activity name="AS32"/>
+                    </pre>
+                    <post>
+                        <activity name="AS34"/>
+                    </post>
+                </precedence>               
+                <reply-entry name="E31">
+                    <reply-activity name="AS33"/>
+                </reply-entry>
+                <reply-entry name="E32">
+                    <reply-activity name="AS34"/>
+                </reply-entry>
+            </task-activities>
+        </task>
+    </processor>
+       <processor name="P4" scheduling="inf">
+        <task name="T4" scheduling="fcfs" multiplicity="1"> 
+            <entry name="E41" type="Graph" />
+            <entry name="E42" type="Graph" />
+            <task-activities>
+                <activity name="AS41" host-demand-mean="1.0"  bound-to-entry="E41" />
+                <activity name="AS42" host-demand-mean="3.0"  bound-to-entry="E42" />
+                <activity name="AS43" host-demand-mean="2.0" />
+                <activity name="AS44" host-demand-mean="4.0" />
+                <precedence>
+                    <pre>
+                        <activity name="AS41"/>
+                    </pre>
+                    <post>
+                        <activity name="AS43"/>
+                    </post>
+                </precedence>               
+                <precedence>
+                    <pre>
+                        <activity name="AS42"/>
+                    </pre>
+                    <post>
+                        <activity name="AS44"/>
+                    </post>
+                </precedence>               
+                <reply-entry name="E41">
+                    <reply-activity name="AS43"/>
+                </reply-entry>
+                <reply-entry name="E42">
+                    <reply-activity name="AS44"/>
+                </reply-entry>
+            </task-activities>
+        </task>
+    </processor>
+</lqn-model>

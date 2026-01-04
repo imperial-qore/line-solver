@@ -1,0 +1,195 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:07.955514Z",
+          "start_time": "2025-07-30T22:26:07.067222Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:15.702901Z",
+          "iopub.execute_input": "2026-01-02T14:14:15.703023Z",
+          "iopub.status.idle": "2026-01-02T14:14:16.655977Z",
+          "shell.execute_reply": "2026-01-02T14:14:16.654285Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('model')\n\nP1 = Place(model, 'P1')\nP2 = Place(model, 'P2')\nT1 = Transition(model, 'T1')\nT2 = Transition(model, 'T2')\n\njobclass = ClosedClass(model, 'Class1', 10, P1, 0)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:08.024514Z",
+          "start_time": "2025-07-30T22:26:08.014877Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:16.657566Z",
+          "iopub.execute_input": "2026-01-02T14:14:16.657794Z",
+          "shell.execute_reply": "2026-01-02T14:14:16.668347Z",
+          "iopub.status.idle": "2026-01-02T14:14:16.668855Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# T1 - Batch processing: requires 4 tokens, produces 4 tokens\nmode1 = T1.add_mode('Mode1')\nT1.set_distribution(mode1, Exp(2))\nT1.set_enabling_conditions(mode1, jobclass, P1, 4)  # Requires 4 tokens from P1\nT1.set_firing_outcome(mode1, jobclass, P2, 4)       # Produces 4 tokens to P2\n\n# T2 - Batch processing: requires 2 tokens, produces 2 tokens\nmode2 = T2.add_mode('Mode2')\nT2.set_distribution(mode2, Exp(3))\nT2.set_enabling_conditions(mode2, jobclass, P2, 2)  # Requires 2 tokens from P2\nT2.set_firing_outcome(mode2, jobclass, P1, 2)       # Produces 2 tokens to P1",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:08.076936Z",
+          "start_time": "2025-07-30T22:26:08.070395Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:16.670209Z",
+          "iopub.execute_input": "2026-01-02T14:14:16.670348Z",
+          "iopub.status.idle": "2026-01-02T14:14:16.677950Z",
+          "shell.execute_reply": "2026-01-02T14:14:16.677372Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Set up routing matrix\nroutingMatrix = model.init_routing_matrix()\nroutingMatrix.set(jobclass, jobclass, P1, T1, 1.0)  # P1 -> T1\nroutingMatrix.set(jobclass, jobclass, P2, T2, 1.0)  # P2 -> T2\nroutingMatrix.set(jobclass, jobclass, T1, P2, 1.0)  # T1 -> P2\nroutingMatrix.set(jobclass, jobclass, T2, P1, 1.0)  # T2 -> P1\n\nmodel.link(routingMatrix)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:08.127110Z",
+          "start_time": "2025-07-30T22:26:08.119528Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:16.679171Z",
+          "iopub.execute_input": "2026-01-02T14:14:16.679303Z",
+          "iopub.status.idle": "2026-01-02T14:14:16.687004Z",
+          "shell.execute_reply": "2026-01-02T14:14:16.686595Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# Set initial state - all 10 tokens start in P1\nP1.set_state([jobclass.get_population()])\nP2.set_state([0])",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:08.185243Z",
+          "start_time": "2025-07-30T22:26:08.168760Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:16.688336Z",
+          "iopub.execute_input": "2026-01-02T14:14:16.688721Z",
+          "iopub.status.idle": "2026-01-02T14:14:16.704342Z",
+          "shell.execute_reply": "2026-01-02T14:14:16.703913Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# Solve the model\nsolver = JMT(model, seed=23000)\navgTable = solver.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:26:09.458623Z",
+          "start_time": "2025-07-30T22:26:08.219114Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:14:16.705696Z",
+          "iopub.execute_input": "2026-01-02T14:14:16.705869Z",
+          "shell.execute_reply": "2026-01-02T14:14:17.867893Z",
+          "iopub.status.idle": "2026-01-02T14:14:17.868272Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "JMT Model: /tmp/workspace/jsim/593842696329402243/jmodel.jsim\n",
+            "numerical_values": [
+              5.938426963294022e+17
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass    QLen  Util   RespT  ResidT    ArvR    Tput\n0      P1   Class1  4.6632   0.0  0.8976  0.8976  5.0348  4.9991\n1      P2   Class1  5.3368   0.0  1.0474  1.0474  4.9991  5.0357\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              1.0,
+              4.6632,
+              0.0,
+              0.8976,
+              0.8976,
+              5.0348,
+              4.9991,
+              1.0,
+              2.0,
+              1.0,
+              5.3368,
+              0.0,
+              1.0474,
+              1.0474,
+              4.9991,
+              5.0357
+            ]
+          }
+        }
+      ],
+      "execution_count": 6
+    }
+  },
+  "numerical_summary": {
+    "cell_4": [
+      10.0,
+      1.0,
+      1.0,
+      2.0,
+      0.0
+    ],
+    "cell_5": [
+      5.938426963294022e+17,
+      0.0,
+      1.0,
+      1.0,
+      4.6632,
+      0.0,
+      0.8976,
+      0.8976,
+      5.0348,
+      4.9991,
+      1.0,
+      2.0,
+      1.0,
+      5.3368,
+      0.0,
+      1.0474,
+      1.0474,
+      4.9991,
+      5.0357,
+      23000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "stochPetriNet/spn_twomodes.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 6,
+    "code_cells": 6,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

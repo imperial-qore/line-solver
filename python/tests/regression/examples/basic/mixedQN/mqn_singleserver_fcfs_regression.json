@@ -1,0 +1,138 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:21:44.199312Z",
+          "start_time": "2025-07-30T22:21:43.265760Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:31.312806Z",
+          "iopub.execute_input": "2026-01-01T10:27:31.312892Z",
+          "iopub.status.idle": "2026-01-01T10:27:31.780464Z",
+          "shell.execute_reply": "2026-01-01T10:27:31.780172Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('model')\n\nM = 4\n# Create 4 single-server queues with FCFS scheduling\nnode = np.empty(4, dtype=object)\nnode[0] = Queue(model, 'Queue1', SchedStrategy.FCFS)\nnode[1] = Queue(model, 'Queue2', SchedStrategy.FCFS)\nnode[2] = Queue(model, 'Queue3', SchedStrategy.FCFS)\nnode[3] = Queue(model, 'Queue4', SchedStrategy.FCFS)  # only closed classes\n\nsource = Source(model, 'Source')\nsink = Sink(model, 'Sink')\n\n# Create job classes\njobclass = np.empty(2, dtype=object)\njobclass[0] = ClosedClass(model, 'ClosedClass', 100, node[0], 0)\njobclass[1] = OpenClass(model, 'OpenClass', 0)\n\n# Set service rates\nfor i in range(M):\n    node[i].set_service(jobclass[0], Exp(i+1))\n    node[i].set_service(jobclass[1], Exp(np.sqrt(i+1)))\n\n# Set arrival rate for open class using APH distribution\nsource.set_arrival(jobclass[1], APH.fit_mean_and_scv(3, 64))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:21:44.269904Z",
+          "start_time": "2025-07-30T22:21:44.248509Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:31.781420Z",
+          "iopub.execute_input": "2026-01-01T10:27:31.781552Z",
+          "shell.execute_reply": "2026-01-01T10:27:31.783946Z",
+          "iopub.status.idle": "2026-01-01T10:27:31.784165Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Setup routing matrix\nM = model.get_number_of_stations()\nK = model.get_number_of_classes()\n\nP = model.init_routing_matrix()\n\n# Closed class routing: Queue1 -> Queue2 -> Queue3 -> Queue4 -> Queue1 (circular)\nP.set(jobclass[0], jobclass[0], node[0], node[1], 1.0)\nP.set(jobclass[0], jobclass[0], node[1], node[2], 1.0)\nP.set(jobclass[0], jobclass[0], node[2], node[3], 1.0)\nP.set(jobclass[0], jobclass[0], node[3], node[0], 1.0)\n\n# Open class routing: Source -> Queue1 -> Queue2 -> Queue3 -> Sink (excludes Queue4)\nP.set(jobclass[1], jobclass[1], source, node[0], 1.0)\nP.set(jobclass[1], jobclass[1], node[0], node[1], 1.0)\nP.set(jobclass[1], jobclass[1], node[1], node[2], 1.0)\nP.set(jobclass[1], jobclass[1], node[2], sink, 1.0)\n\nmodel.link(P)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:21:44.310416Z",
+          "start_time": "2025-07-30T22:21:44.298200Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:31.784886Z",
+          "iopub.execute_input": "2026-01-01T10:27:31.785002Z",
+          "shell.execute_reply": "2026-01-01T10:27:31.787495Z",
+          "iopub.status.idle": "2026-01-01T10:27:31.787699Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "print('This example shows the execution of the solver on a 2-class mixed model with 4 single server nodes.')\n\n# Create solvers\nsolver = np.array([], dtype=object)\n# Note: CTMC is infinite on this model due to high population so omitted CTMC and SSA\nsolver = np.append(solver, JMT(model, cutoff=3, keep=False, verbose=True, seed=23000, samples=20000))\n#solver = np.append(solver, FLD(model, keep=False, verbose=True, seed=23000)) #TODO Fluid is very slow\nsolver = np.append(solver, MVA(model, method='lin', keep=False, verbose=True, seed=23000))\nsolver = np.append(solver, NC(model, keep=False, verbose=True, seed=23000))\n# Note: MAM does not support mixed models with both open and closed classes\nsolver = np.append(solver, DES(model, cutoff=3, keep=False, verbose=True, seed=23000, samples=20000))\n\n# Solve and display results\nAvgTable = np.empty(len(solver), dtype=object)\nfor s in range(len(solver)):\n    print(f'\\nSOLVER: {solver[s].get_name()}')\n    AvgTable[s] = solver[s].avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:21:47.411672Z",
+          "start_time": "2025-07-30T22:21:44.348430Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:27:31.788311Z",
+          "iopub.execute_input": "2026-01-01T10:27:31.788389Z",
+          "shell.execute_reply": "2026-01-01T10:27:33.606095Z",
+          "iopub.status.idle": "2026-01-01T10:27:33.606445Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "This example shows the execution of the solver on a 2-class mixed model with 4 single server nodes.\n\nSOLVER: JMT\nSolverJMT command: java -cp /home/gcasale/Dropbox/code/line-dev.git/common/JMT.jar jmt.commandline.Jmt sim /tmp/jmt_zbts26ht/model.jsimg\n",
+            "numerical_values": [
+              2.0,
+              4.0,
+              26.0
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "\nSOLVER: MVA\n\nSOLVER: NC\n\nSOLVER: DES\n"
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/pfqn/mva.py:412: RuntimeWarning: invalid value encountered in scalar divide\n  X_lower = N[r] / (N[r] * D_max + Z[r])  # Heavy traffic\n/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/pfqn/mva.py:421: RuntimeWarning: invalid value encountered in scalar divide\n  RN[m, r] = L[m, r] * (1 + UN[m, r] * N[r] / max(N[r], 1))  # Simple approximation\n/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/pfqn/nc.py:125: RuntimeWarning: invalid value encountered in cast\n  N = np.ceil(N).astype(int)\n",
+            "numerical_values": [
+              412.0,
+              421.0,
+              1.0,
+              1.0,
+              125.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 4
+    }
+  },
+  "numerical_summary": {
+    "cell_3": [
+      2.0,
+      4.0,
+      26.0,
+      412.0,
+      421.0,
+      1.0,
+      1.0,
+      125.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "mixedQN/mqn_singleserver_fcfs.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 4,
+    "code_cells": 4,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

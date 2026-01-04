@@ -1,0 +1,269 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "# Cache model example 4 - Testing different replacement strategies\nfrom line_solver import *\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-12-30T13:22:18.377634100Z",
+          "start_time": "2025-12-30T13:22:16.982578600Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:15.897513Z",
+          "iopub.execute_input": "2026-01-03T15:31:15.897613Z",
+          "shell.execute_reply": "2026-01-03T15:31:16.528530Z",
+          "iopub.status.idle": "2026-01-03T15:31:16.528945Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "# Model parameters\nn = 5  # number of items\nm = [2, 1]  # cache capacity\nalpha = 1.0  # Zipf parameter\n\n# Replacement strategies to test\nreplStrat = [ReplacementStrategy.RR, ReplacementStrategy.FIFO] #, ReplacementStrategy.LRU]\n\n# Storage for results\nAvgTable = []\nsolver = []\nctmcHitRatio = []\nmvaHitRatio = []\nncHitRatio = []\n\nprint(\"repl-strategy, ctmc, mva, nc:\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:16.530192Z",
+          "iopub.execute_input": "2026-01-03T15:31:16.530370Z",
+          "shell.execute_reply": "2026-01-03T15:31:16.532279Z",
+          "iopub.status.idle": "2026-01-03T15:31:16.532598Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "repl-strategy, ctmc, mva, nc:\n"
+          }
+        }
+      ],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Test each replacement strategy\nfor s, strategy in enumerate(replStrat):\n    # Create model\n    model = Network('model')\n    source = Source(model, 'Source')\n    cacheNode = Cache(model, 'Cache', n, m, strategy)\n    sink = Sink(model, 'Sink')\n    \n    # Create classes\n    jobClass = OpenClass(model, 'InitClass', 0)\n    hitClass = OpenClass(model, 'HitClass', 0)\n    missClass = OpenClass(model, 'MissClass', 0)\n    \n    # Set arrival\n    source.set_arrival(jobClass, Exp(2))\n    \n    # Zipf-like item references\n    pAccess = Zipf(alpha, n)\n    cacheNode.set_read(jobClass, pAccess)\n    \n    # Configure cache classes\n    cacheNode.set_hit_class(jobClass, hitClass)\n    cacheNode.set_miss_class(jobClass, missClass)\n    \n    # Routing\n    P = model.init_routing_matrix()\n    P.set(jobClass, jobClass, source, cacheNode, 1.0)\n    P.set(hitClass, hitClass, cacheNode, sink, 1.0)\n    P.set(missClass, missClass, cacheNode, sink, 1.0)\n    model.link(P)\n    \n    # Solver CTMC - commented out as runs forever\n    ctmc_hr = float('nan')\n    # ctmc_solver = CTMC(model, keep=False, cutoff=1, seed=1, verbose=False)\n    # solver.append(ctmc_solver)\n    # AvgTable.append(ctmc_solver.avg_node_table())\n    # hr = cacheNode.hit_ratio()\n    # if hr is not None and len(hr) > 0:\n    #     ctmc_hr = hr[0] if hasattr(hr, '__len__') else hr\n    # else:\n    #     ctmc_hr = float('nan')\n    ctmcHitRatio.append(ctmc_hr)\n    \n    # Solver MVA\n    try:\n        mva_solver = MVA(model, seed=1, verbose=False)\n        solver.append(mva_solver)\n        model.reset()\n        AvgTable.append(mva_solver.avg_node_table())\n        hr = cacheNode.hit_ratio()\n        if hr is not None and len(hr) > 0:\n            mva_hr = hr[0][0] if hasattr(hr[0], '__len__') else hr[0]\n        else:\n            mva_hr = float('nan')\n    except Exception as e:\n        mva_hr = float('nan')\n    mvaHitRatio.append(mva_hr)\n\n    # Solver NC - try to run it, catch exception if not supported\n    try:\n        nc_solver = NC(model, seed=1, verbose=False)\n        if nc_solver.supports(model):\n            solver.append(nc_solver)\n            model.reset()\n            AvgTable.append(nc_solver.avg_node_table())\n            hr = cacheNode.hit_ratio()\n            if hr is not None and len(hr) > 0:\n                nc_hr = hr[0][0] if hasattr(hr[0], '__len__') else hr[0]\n            else:\n                nc_hr = float('nan')\n        else:\n            nc_hr = float('nan')\n    except Exception as e:\n        nc_hr = float('nan')\n    ncHitRatio.append(nc_hr)",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:16.533670Z",
+          "iopub.execute_input": "2026-01-03T15:31:16.533778Z",
+          "shell.execute_reply": "2026-01-03T15:31:16.550293Z",
+          "iopub.status.idle": "2026-01-03T15:31:16.550741Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Station  JobClass  QLen  Util  RespT  ResidT  ArvR  Tput\n Source InitClass   0.0   0.0    0.0     0.0   2.0   2.0\n Source  HitClass   0.0   0.0    0.0     0.0   1.0   1.0\n Source MissClass   0.0   0.0    0.0     0.0   1.0   1.0\nStation  JobClass  QLen  Util  RespT  ResidT  ArvR  Tput\n Source InitClass   0.0   0.0    0.0     0.0   2.0   2.0\n Source  HitClass   0.0   0.0    0.0     0.0   1.0   1.0\n Source MissClass   0.0   0.0    0.0     0.0   1.0   1.0\nStation  JobClass  QLen  Util  RespT  ResidT  ArvR  Tput\n Source InitClass   0.0   0.0    0.0     0.0   2.0   2.0\n Source  HitClass   0.0   0.0    0.0     0.0   1.0   1.0\n Source MissClass   0.0   0.0    0.0     0.0   1.0   1.0\nStation  JobClass  QLen  Util  RespT  ResidT  ArvR  Tput\n Source InitClass   0.0   0.0    0.0     0.0   2.0   2.0\n Source  HitClass   0.0   0.0    0.0     0.0   1.0   1.0\n Source MissClass   0.0   0.0    0.0     0.0   1.0   1.0\n",
+            "numerical_values": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              2.0,
+              2.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              2.0,
+              2.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              2.0,
+              2.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              2.0,
+              2.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Print results (matching MATLAB format)\nprint(\"\\\\nResults comparison:\")\nfor s, strategy in enumerate(replStrat):\n    try:\n        strategy_name = ReplacementStrategy.toText(strategy)\n    except AttributeError:\n        # Fallback if toText method not available\n        strategy_name = str(strategy).split('.')[-1].lower()\n    \n    print(f\"{strategy_name}: {ctmcHitRatio[s]:.8f}, {mvaHitRatio[s]:.8f}, {ncHitRatio[s]:.8f}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:16.551775Z",
+          "iopub.execute_input": "2026-01-03T15:31:16.551897Z",
+          "shell.execute_reply": "2026-01-03T15:31:16.553957Z",
+          "iopub.status.idle": "2026-01-03T15:31:16.554377Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "\\nResults comparison:\nrr: nan, nan, nan\nfifo: nan, nan, nan\n"
+          }
+        }
+      ],
+      "execution_count": 4
+    }
+  },
+  "numerical_summary": {
+    "cell_0": [
+      4.0
+    ],
+    "cell_1": [
+      5.0,
+      2.0,
+      1.0,
+      1.0
+    ],
+    "cell_2": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      2.0,
+      2.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      2.0,
+      2.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      2.0,
+      2.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      2.0,
+      2.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0
+    ],
+    "cell_3": [
+      -1.0,
+      0.8,
+      0.8,
+      0.8
+    ]
+  },
+  "metadata": {
+    "notebook_path": "cacheModel/cache_compare_replc.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 4,
+    "code_cells": 4,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

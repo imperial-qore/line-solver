@@ -1,0 +1,114 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nGlobalConstants.set_verbose(VerboseLevel.STD)\nimport matplotlib.pyplot as plt",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T18:22:05.402564Z",
+          "start_time": "2025-07-27T18:22:03.826034Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:02.376066Z",
+          "iopub.execute_input": "2026-01-03T15:31:02.376171Z",
+          "shell.execute_reply": "2026-01-03T15:31:03.110536Z",
+          "iopub.status.idle": "2026-01-03T15:31:03.110998Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('Model')\n\n# Block 1: nodes\nnode = np.empty(2, dtype=object)\nnode[0] = Delay(model, 'Delay')\nnode[1] = Queue(model, 'Queue1', SchedStrategy.PS)\n\n# Block 2: classes\njobclass = np.empty(2, dtype=object)\njobclass[0] = ClosedClass(model, 'Class1', 5, node[0], 0)\nnode[0].set_service(jobclass[0], Exp(1.0))\nnode[1].set_service(jobclass[0], Exp(0.5))\n\n# Block 3: topology\nmodel.link(Network.serial_routing(node[0], node[1]))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T18:22:05.432381Z",
+          "start_time": "2025-07-27T18:22:05.410774Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:03.112170Z",
+          "iopub.execute_input": "2026-01-03T15:31:03.112341Z",
+          "shell.execute_reply": "2026-01-03T15:31:03.114400Z",
+          "iopub.status.idle": "2026-01-03T15:31:03.114856Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Block 4: solution\nRDfluid = FLD(model).cdf_resp_t()\nRDsim = JMT(model, seed=23000, samples=10000).cdf_resp_t()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T18:22:06.564347Z",
+          "start_time": "2025-07-27T18:22:05.530522Z"
+        },
+        "collapsed": false,
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:03.115891Z",
+          "iopub.execute_input": "2026-01-03T15:31:03.116026Z",
+          "shell.execute_reply": "2026-01-03T15:31:03.752684Z",
+          "iopub.status.idle": "2026-01-03T15:31:03.753173Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Plot results\nimport matplotlib.pyplot as plt\n\nif RDsim[1][0] is not None and len(RDsim[1][0]) > 0:\n    plt.figure(figsize=(10, 6))\n    plt.semilogx(RDsim[1][0][:, 1], 1 - RDsim[1][0][:, 0], 'r-', label='jmt-transient')\n    plt.semilogx(RDfluid[1][0][:, 1], 1 - RDfluid[1][0][:, 0], 'k--', label='fluid-steady')\n    plt.legend(loc='best')\n    plt.ylabel('Pr(T > t)')\n    plt.xlabel('time t')\n    plt.title('Response Time Distribution and Percentiles')\n    plt.grid(True, alpha=0.3)\n    plt.show()\nelse:\n    print(\"No simulation results available for plotting\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T18:22:06.577791Z",
+          "start_time": "2025-07-27T18:22:06.575021Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:03.754389Z",
+          "iopub.execute_input": "2026-01-03T15:31:03.754478Z",
+          "shell.execute_reply": "2026-01-03T15:31:03.953402Z",
+          "iopub.status.idle": "2026-01-03T15:31:03.953790Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "text/plain": "<Figure size 1000x600 with 1 Axes>",
+            "numerical_values": [
+              1000.0,
+              600.0,
+              1.0
+            ],
+            "image/png": "<image_data_length:45116>"
+          }
+        }
+      ],
+      "execution_count": 4
+    }
+  },
+  "numerical_summary": {
+    "cell_2": [
+      4.0,
+      23000.0,
+      10000.0
+    ],
+    "cell_3": [
+      1000.0,
+      600.0,
+      1.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "tut07_respt_cdf.ipynb",
+    "source_dir": "examples/gettingstarted",
+    "total_cells": 4,
+    "code_cells": 4,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

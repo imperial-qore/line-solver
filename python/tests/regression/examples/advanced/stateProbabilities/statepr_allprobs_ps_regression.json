@@ -1,0 +1,759 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:14:04.821390Z",
+          "start_time": "2025-07-29T11:14:03.876554Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:13.225592Z",
+          "iopub.execute_input": "2026-01-01T10:32:13.225699Z",
+          "shell.execute_reply": "2026-01-01T10:32:13.703379Z",
+          "iopub.status.idle": "2026-01-01T10:32:13.703856Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "# Create network\nmodel = Network('model')\n\n# Block 1: nodes\nnode1 = Delay(model, 'Delay')\nnode2 = Queue(model, 'Queue1', SchedStrategy.PS)\nnode3 = Queue(model, 'Queue2', SchedStrategy.PS)\nnode3.set_number_of_servers(2)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:14:04.897107Z",
+          "start_time": "2025-07-29T11:14:04.886688Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:13.705329Z",
+          "iopub.execute_input": "2026-01-01T10:32:13.705488Z",
+          "iopub.status.idle": "2026-01-01T10:32:13.707500Z",
+          "shell.execute_reply": "2026-01-01T10:32:13.707278Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Block 2: classes\nN = [2, 0]  # Class1: 2 jobs, Class2: 0 jobs\njobclass1 = ClosedClass(model, 'Class1', N[0], node1, 0)\njobclass2 = ClosedClass(model, 'Class2', N[1], node1, 0)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:14:04.944158Z",
+          "start_time": "2025-07-29T11:14:04.939868Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:13.708178Z",
+          "iopub.execute_input": "2026-01-01T10:32:13.708259Z",
+          "shell.execute_reply": "2026-01-01T10:32:13.709537Z",
+          "iopub.status.idle": "2026-01-01T10:32:13.709744Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Set service times\nnode1.set_service(jobclass1, Exp.fit_mean(1.0))\nnode1.set_service(jobclass2, Exp.fit_mean(1.0))\n\nnode2.set_service(jobclass1, Exp.fit_mean(1.0/3.0))\nnode2.set_service(jobclass2, Exp.fit_mean(1.0/4.0))\n\nnode3.set_service(jobclass1, Exp.fit_mean(1.0))\nnode3.set_service(jobclass2, Exp.fit_mean(1.0/3.0))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:14:04.996482Z",
+          "start_time": "2025-07-29T11:14:04.990684Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:13.710563Z",
+          "iopub.execute_input": "2026-01-01T10:32:13.710677Z",
+          "shell.execute_reply": "2026-01-01T10:32:13.712187Z",
+          "iopub.status.idle": "2026-01-01T10:32:13.712373Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# Block 3: routing with class switching\nP = model.init_routing_matrix()\n\n# Class1 routing: Delay -> Queue1 (stay Class1), Queue2 -> Delay (switch to Class2)\nP.set(jobclass1, jobclass1, node1, node2, 1.0)  # Delay -> Queue1\nP.set(jobclass1, jobclass2, node2, node3, 1.0)  # Queue1 -> Queue2 (switch to Class2)\n\n# Class2 routing: Queue2 -> Delay (switch to Class1)\nP.set(jobclass2, jobclass1, node1, node2, 1.0)  # Delay -> Queue1 (switch to Class1)\nP.set(jobclass2, jobclass2, node2, node3, 1.0)  # Queue1 -> Queue2\nP.set(jobclass2, jobclass1, node3, node1, 1.0)  # Queue2 -> Delay (switch to Class1)\n\nmodel.link(P)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:14:05.062146Z",
+          "start_time": "2025-07-29T11:14:05.048094Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:13.713016Z",
+          "iopub.execute_input": "2026-01-01T10:32:13.713092Z",
+          "shell.execute_reply": "2026-01-01T10:32:13.714519Z",
+          "iopub.status.idle": "2026-01-01T10:32:13.714715Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# Set specific state for probability calculation\nn = np.array([[0,0],   # Delay: no jobs\n              [1,0],   # Queue1: 1 job of Class1\n              [0,1]])  # Queue2: 1 job of Class2\n\nnodes = [node1, node2, node3]\nfor i in range(len(nodes)):\n    nodes[i].set_state(n[i])\n\nstate = model.state()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:14:05.136948Z",
+          "start_time": "2025-07-29T11:14:05.099741Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:13.715327Z",
+          "iopub.execute_input": "2026-01-01T10:32:13.715400Z",
+          "iopub.status.idle": "2026-01-01T10:32:13.716808Z",
+          "shell.execute_reply": "2026-01-01T10:32:13.716651Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 6
+    },
+    "cell_6": {
+      "cell_type": "code",
+      "source": "# Solver options\noptions = Solver.defaultOptions\noptions.verbose = 1\noptions.samples = 20000\noptions.seed = 23000",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:14:05.151697Z",
+          "start_time": "2025-07-29T11:14:05.150042Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:13.717359Z",
+          "iopub.execute_input": "2026-01-01T10:32:13.717428Z",
+          "shell.execute_reply": "2026-01-01T10:32:13.718456Z",
+          "iopub.status.idle": "2026-01-01T10:32:13.718610Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 7
+    },
+    "cell_7": {
+      "cell_type": "code",
+      "source": "# Method 1: getProbAggr - Marginal probabilities for aggregated state\nresults_margaggr = {}\n\n# CTMC\ntry:\n    solver_ctmc = CTMC(model, options)\n    Pr = solver_ctmc.prob_aggr(node3)\n    results_margaggr['CTMC'] = Pr\n    print(f\"CTMC prob_aggr: {Pr}\")\nexcept Exception as e:\n    print(f\"CTMC prob_aggr failed: {type(e).__name__}\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:14:12.368064Z",
+          "start_time": "2025-07-29T11:14:12.340346Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:13.719130Z",
+          "iopub.execute_input": "2026-01-01T10:32:13.719198Z",
+          "iopub.status.idle": "2026-01-01T10:32:13.764225Z",
+          "shell.execute_reply": "2026-01-01T10:32:13.763904Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "CTMC prob_aggr: [0.66666667 0.33333333 0.        ]\n",
+            "numerical_values": [
+              0.66666667,
+              0.33333333,
+              0.0
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/solvers/ctmc/handler.py:518: RuntimeWarning: invalid value encountered in scalar multiply\n  TN[ist, k] = UN[ist, k] * c * mu\n",
+            "numerical_values": [
+              518.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 8
+    },
+    "cell_8": {
+      "cell_type": "code",
+      "source": "# NC\ntry:\n    solver_nc = NC(model, options)\n    Pr = solver_nc.prob_aggr(node3)\n    results_margaggr['NC'] = Pr\n    print(f\"NC prob_aggr: {Pr}\")\nexcept Exception as e:\n    print(f\"NC prob_aggr failed: {type(e).__name__}\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:14:19.408244Z",
+          "start_time": "2025-07-29T11:14:19.397306Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:13.764941Z",
+          "iopub.execute_input": "2026-01-01T10:32:13.765028Z",
+          "iopub.status.idle": "2026-01-01T10:32:13.767475Z",
+          "shell.execute_reply": "2026-01-01T10:32:13.767281Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "NC prob_aggr: [6.84684685e-01 2.15891567e-01 6.80739176e-02 2.14647488e-02\n 6.76816403e-03 2.13410578e-03 6.72916236e-04 2.12180795e-04\n 6.69038543e-05 2.10958099e-05 6.65183196e-06]\n",
+            "numerical_values": [
+              0.684684685,
+              0.215891567,
+              0.0680739176,
+              0.0214647488,
+              0.00676816403,
+              0.00213410578,
+              0.000672916236,
+              0.000212180795,
+              6.69038543e-05,
+              2.10958099e-05,
+              6.65183196e-06
+            ]
+          }
+        }
+      ],
+      "execution_count": 9
+    },
+    "cell_9": {
+      "cell_type": "code",
+      "source": "# SSA\ntry:\n    solver_ssa = SSA(model, options)\n    Pr = solver_ssa.prob_aggr(node3)\n    results_margaggr['SSA'] = Pr\n    print(f\"SSA prob_aggr: {Pr}\")\nexcept Exception as e:\n    print(f\"SSA prob_aggr failed: {type(e).__name__}\")",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-29T11:14:23.033643Z",
+          "start_time": "2025-07-29T11:14:23.023136Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:13.768090Z",
+          "iopub.execute_input": "2026-01-01T10:32:13.768169Z",
+          "iopub.status.idle": "2026-01-01T10:32:14.005567Z",
+          "shell.execute_reply": "2026-01-01T10:32:14.005299Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "SSA prob_aggr: [9.04515550e-01 8.63671696e-02 8.24672166e-03 7.87433679e-04\n 7.51876715e-05 7.17925344e-06 6.85507064e-07 6.54552648e-08\n 6.24995994e-09 5.96773985e-10 5.69826356e-11]\n",
+            "numerical_values": [
+              0.90451555,
+              0.0863671696,
+              0.00824672166,
+              0.000787433679,
+              7.51876715e-05,
+              7.17925344e-06,
+              6.85507064e-07,
+              6.54552648e-08,
+              6.24995994e-09,
+              5.96773985e-10,
+              5.69826356e-11
+            ]
+          }
+        }
+      ],
+      "execution_count": 10
+    },
+    "cell_10": {
+      "cell_type": "code",
+      "source": "# JMT\ntry:\n    solver_jmt = JMT(model, options)\n    Pr = solver_jmt.prob_aggr(node3)\n    results_margaggr['JMT'] = Pr\n    print(f\"JMT prob_aggr: {Pr}\")\nexcept Exception as e:\n    print(f\"JMT prob_aggr failed: {type(e).__name__}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:14.006430Z",
+          "iopub.execute_input": "2026-01-01T10:32:14.006535Z",
+          "shell.execute_reply": "2026-01-01T10:32:14.300748Z",
+          "iopub.status.idle": "2026-01-01T10:32:14.300992Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "JMT prob_aggr: []\n"
+          }
+        }
+      ],
+      "execution_count": 11
+    },
+    "cell_11": {
+      "cell_type": "code",
+      "source": "print(f\"Results: {results_margaggr}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:14.301869Z",
+          "iopub.execute_input": "2026-01-01T10:32:14.301952Z",
+          "iopub.status.idle": "2026-01-01T10:32:14.303811Z",
+          "shell.execute_reply": "2026-01-01T10:32:14.303558Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Results: {'CTMC': array([0.66666667, 0.33333333, 0.        ]), 'NC': array([6.84684685e-01, 2.15891567e-01, 6.80739176e-02, 2.14647488e-02,\n       6.76816403e-03, 2.13410578e-03, 6.72916236e-04, 2.12180795e-04,\n       6.69038543e-05, 2.10958099e-05, 6.65183196e-06]), 'SSA': array([9.04515550e-01, 8.63671696e-02, 8.24672166e-03, 7.87433679e-04,\n       7.51876715e-05, 7.17925344e-06, 6.85507064e-07, 6.54552648e-08,\n       6.24995994e-09, 5.96773985e-10, 5.69826356e-11]), 'JMT': array([], dtype=float64)}\n",
+            "numerical_values": [
+              0.66666667,
+              0.33333333,
+              0.0,
+              0.684684685,
+              0.215891567,
+              0.0680739176,
+              0.0214647488,
+              0.00676816403,
+              0.00213410578,
+              0.000672916236,
+              0.000212180795,
+              6.69038543e-05,
+              2.10958099e-05,
+              6.65183196e-06,
+              0.90451555,
+              0.0863671696,
+              0.00824672166,
+              0.000787433679,
+              7.51876715e-05,
+              7.17925344e-06,
+              6.85507064e-07,
+              6.54552648e-08,
+              6.24995994e-09,
+              5.96773985e-10,
+              5.69826356e-11,
+              64.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 12
+    },
+    "cell_12": {
+      "cell_type": "code",
+      "source": "# Method 2: getProb - Marginal probabilities for detailed state\ntry:\n    solver_ctmc = CTMC(model, options)\n    Pr = solver_ctmc.prob(node3)\n    print(f\"CTMC prob: {Pr}\")\nexcept Exception as e:\n    print(f\"CTMC prob failed: {type(e).__name__}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:14.304383Z",
+          "iopub.execute_input": "2026-01-01T10:32:14.304458Z",
+          "iopub.status.idle": "2026-01-01T10:32:14.306230Z",
+          "shell.execute_reply": "2026-01-01T10:32:14.306012Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "CTMC prob failed: TypeError\n"
+          }
+        }
+      ],
+      "execution_count": 13
+    },
+    "cell_13": {
+      "cell_type": "code",
+      "source": "# SSA\ntry:\n    solver_ssa = SSA(model, options)\n    Pr = solver_ssa.prob(node3)\n    print(f\"SSA prob: {Pr}\")\nexcept Exception as e:\n    print(f\"SSA prob failed: {type(e).__name__}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:14.306890Z",
+          "iopub.execute_input": "2026-01-01T10:32:14.306964Z",
+          "shell.execute_reply": "2026-01-01T10:32:14.308317Z",
+          "iopub.status.idle": "2026-01-01T10:32:14.308477Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "SSA prob failed: TypeError\n"
+          }
+        }
+      ],
+      "execution_count": 14
+    },
+    "cell_14": {
+      "cell_type": "code",
+      "source": "# Method 3: getProbSysAggr - Joint system probabilities for aggregated state\ntry:\n    solver_ctmc = CTMC(model, options)\n    Pr = solver_ctmc.prob_sys_aggr()\n    print(f\"CTMC prob_sys_aggr: {Pr}\")\nexcept Exception as e:\n    print(f\"CTMC prob_sys_aggr failed: {type(e).__name__}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:14.309034Z",
+          "iopub.execute_input": "2026-01-01T10:32:14.309105Z",
+          "iopub.status.idle": "2026-01-01T10:32:14.311981Z",
+          "shell.execute_reply": "2026-01-01T10:32:14.311772Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "CTMC prob_sys_aggr: (array([0.33333333, 0.        , 0.        , 0.33333333, 0.33333333,\n       0.        ]), array([[0., 0., 2.],\n       [0., 1., 1.],\n       [0., 2., 0.],\n       [1., 0., 1.],\n       [1., 1., 0.],\n       [2., 0., 0.]]))\n",
+            "numerical_values": [
+              0.33333333,
+              0.0,
+              0.0,
+              0.33333333,
+              0.33333333,
+              0.0,
+              0.0,
+              0.0,
+              2.0,
+              0.0,
+              1.0,
+              1.0,
+              0.0,
+              2.0,
+              0.0,
+              1.0,
+              0.0,
+              1.0,
+              1.0,
+              1.0,
+              0.0,
+              2.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api_native/solvers/ctmc/handler.py:518: RuntimeWarning: invalid value encountered in scalar multiply\n  TN[ist, k] = UN[ist, k] * c * mu\n",
+            "numerical_values": [
+              518.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 15
+    },
+    "cell_15": {
+      "cell_type": "code",
+      "source": "try:\n    solver_nc = NC(model, options)\n    Pr = solver_nc.prob_sys_aggr()\n    print(f\"NC prob_sys_aggr: {Pr}\")\nexcept Exception as e:\n    print(f\"NC prob_sys_aggr failed: {type(e).__name__}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:14.312649Z",
+          "iopub.execute_input": "2026-01-01T10:32:14.312727Z",
+          "shell.execute_reply": "2026-01-01T10:32:14.314703Z",
+          "iopub.status.idle": "2026-01-01T10:32:14.314905Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "NC prob_sys_aggr: [0.66524096 0.24472847 0.09003057]\n",
+            "numerical_values": [
+              0.66524096,
+              0.24472847,
+              0.09003057
+            ]
+          }
+        }
+      ],
+      "execution_count": 16
+    },
+    "cell_16": {
+      "cell_type": "code",
+      "source": "try:\n    solver_ssa = SSA(model, options)\n    Pr = solver_ssa.prob_sys_aggr()\n    print(f\"SSA prob_sys_aggr: {Pr}\")\nexcept Exception as e:\n    print(f\"SSA prob_sys_aggr failed: {type(e).__name__}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:14.315430Z",
+          "iopub.execute_input": "2026-01-01T10:32:14.315505Z",
+          "iopub.status.idle": "2026-01-01T10:32:14.556367Z",
+          "shell.execute_reply": "2026-01-01T10:32:14.556102Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "SSA prob_sys_aggr failed: AttributeError\n"
+          }
+        }
+      ],
+      "execution_count": 17
+    },
+    "cell_17": {
+      "cell_type": "code",
+      "source": "try:\n    solver_jmt = JMT(model, options)\n    Pr = solver_jmt.prob_sys_aggr()\n    print(f\"JMT prob_sys_aggr: {Pr}\")\nexcept Exception as e:\n    print(f\"JMT prob_sys_aggr failed: {type(e).__name__}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:14.557166Z",
+          "iopub.execute_input": "2026-01-01T10:32:14.557257Z",
+          "iopub.status.idle": "2026-01-01T10:32:14.849133Z",
+          "shell.execute_reply": "2026-01-01T10:32:14.848839Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "JMT prob_sys_aggr: (array([], dtype=float64), array([], dtype=float64))\n",
+            "numerical_values": [
+              64.0,
+              64.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 18
+    },
+    "cell_18": {
+      "cell_type": "code",
+      "source": "# Method 4: getProbSys - Joint system probabilities for detailed state\ntry:\n    solver_ctmc = CTMC(model, options)\n    Pr = solver_ctmc.prob_sys()\n    print(f\"CTMC prob_sys: {Pr}\")\nexcept Exception as e:\n    print(f\"CTMC prob_sys failed: {type(e).__name__}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:14.849976Z",
+          "iopub.execute_input": "2026-01-01T10:32:14.850107Z",
+          "shell.execute_reply": "2026-01-01T10:32:14.851840Z",
+          "iopub.status.idle": "2026-01-01T10:32:14.852123Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "CTMC prob_sys: None\n"
+          }
+        }
+      ],
+      "execution_count": 19
+    },
+    "cell_19": {
+      "cell_type": "code",
+      "source": "# SSA\ntry:\n    solver_ssa = SSA(model, options)\n    Pr = solver_ssa.prob_sys()\n    print(f\"SSA prob_sys: {Pr}\")\nexcept Exception as e:\n    print(f\"SSA prob_sys failed: {type(e).__name__}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:32:14.852823Z",
+          "iopub.execute_input": "2026-01-01T10:32:14.852907Z",
+          "shell.execute_reply": "2026-01-01T10:32:15.089991Z",
+          "iopub.status.idle": "2026-01-01T10:32:15.090291Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "SSA prob_sys: [7.12125421e-01 2.05002806e-01 5.90150965e-02 1.69889461e-02\n 4.89068570e-03 1.40790409e-03 4.05299797e-04 1.16675509e-04\n 3.35879130e-05 9.66910632e-06 2.78348991e-06 8.01295988e-07\n 2.30672745e-07 6.64048195e-08 1.91162595e-08 5.50308515e-09\n 1.58419832e-09 4.56050426e-10 1.31285324e-10 3.77937076e-11\n 1.08798477e-11]\n",
+            "numerical_values": [
+              0.712125421,
+              0.205002806,
+              0.0590150965,
+              0.0169889461,
+              0.0048906857,
+              0.00140790409,
+              0.000405299797,
+              0.000116675509,
+              3.3587913e-05,
+              9.66910632e-06,
+              2.78348991e-06,
+              8.01295988e-07,
+              2.30672745e-07,
+              6.64048195e-08,
+              1.91162595e-08,
+              5.50308515e-09,
+              1.58419832e-09,
+              4.56050426e-10,
+              1.31285324e-10,
+              3.77937076e-11,
+              1.08798477e-11
+            ]
+          }
+        }
+      ],
+      "execution_count": 20
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      1.0,
+      1.0,
+      2.0,
+      1.0,
+      3.0,
+      2.0,
+      3.0,
+      2.0
+    ],
+    "cell_6": [
+      1.0,
+      20000.0,
+      23000.0
+    ],
+    "cell_7": [
+      0.66666667,
+      0.33333333,
+      0.0,
+      518.0,
+      1.0,
+      3.0
+    ],
+    "cell_8": [
+      0.684684685,
+      0.215891567,
+      0.0680739176,
+      0.0214647488,
+      0.00676816403,
+      0.00213410578,
+      0.000672916236,
+      0.000212180795,
+      6.69038543e-05,
+      2.10958099e-05,
+      6.65183196e-06,
+      3.0
+    ],
+    "cell_9": [
+      0.90451555,
+      0.0863671696,
+      0.00824672166,
+      0.000787433679,
+      7.51876715e-05,
+      7.17925344e-06,
+      6.85507064e-07,
+      6.54552648e-08,
+      6.24995994e-09,
+      5.96773985e-10,
+      5.69826356e-11,
+      3.0
+    ],
+    "cell_10": [
+      3.0
+    ],
+    "cell_11": [
+      0.66666667,
+      0.33333333,
+      0.0,
+      0.684684685,
+      0.215891567,
+      0.0680739176,
+      0.0214647488,
+      0.00676816403,
+      0.00213410578,
+      0.000672916236,
+      0.000212180795,
+      6.69038543e-05,
+      2.10958099e-05,
+      6.65183196e-06,
+      0.90451555,
+      0.0863671696,
+      0.00824672166,
+      0.000787433679,
+      7.51876715e-05,
+      7.17925344e-06,
+      6.85507064e-07,
+      6.54552648e-08,
+      6.24995994e-09,
+      5.96773985e-10,
+      5.69826356e-11,
+      64.0
+    ],
+    "cell_12": [
+      2.0,
+      3.0
+    ],
+    "cell_13": [
+      3.0
+    ],
+    "cell_14": [
+      0.33333333,
+      0.0,
+      0.0,
+      0.33333333,
+      0.33333333,
+      0.0,
+      0.0,
+      0.0,
+      2.0,
+      0.0,
+      1.0,
+      1.0,
+      0.0,
+      2.0,
+      0.0,
+      1.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0,
+      0.0,
+      2.0,
+      0.0,
+      0.0,
+      518.0,
+      3.0
+    ],
+    "cell_15": [
+      0.66524096,
+      0.24472847,
+      0.09003057
+    ],
+    "cell_17": [
+      64.0,
+      64.0
+    ],
+    "cell_18": [
+      4.0
+    ],
+    "cell_19": [
+      0.712125421,
+      0.205002806,
+      0.0590150965,
+      0.0169889461,
+      0.0048906857,
+      0.00140790409,
+      0.000405299797,
+      0.000116675509,
+      3.3587913e-05,
+      9.66910632e-06,
+      2.78348991e-06,
+      8.01295988e-07,
+      2.30672745e-07,
+      6.64048195e-08,
+      1.91162595e-08,
+      5.50308515e-09,
+      1.58419832e-09,
+      4.56050426e-10,
+      1.31285324e-10,
+      3.77937076e-11,
+      1.08798477e-11
+    ]
+  },
+  "metadata": {
+    "notebook_path": "stateProbabilities/statepr_allprobs_ps.ipynb",
+    "source_dir": "examples/advanced",
+    "total_cells": 20,
+    "code_cells": 20,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

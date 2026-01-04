@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--Created by jLQNDef - Rads Lab at Carleton University--><lqn-model description="" name="16-split-interlock2301010920.lqnx">
+    <solver-params comment=" " conv_val="1e-006" it_limit="50" print_int="1" underrelax_coeff="0.9"/>
+    <processor multiplicity="1" name="server" quantum="0.0" scheduling="fcfs">
+        <task multiplicity="1" name="s0" priority="0" replication="1" scheduling="fcfs">
+            <entry name="s0" type="PH1PH2">
+                <entry-phase-activities>
+                    <activity host-demand-cvsq="1.0" host-demand-mean="1" max-service-time="0.0" name="s0_ph1" phase="1" think-time="0.0"/>
+                    <activity host-demand-cvsq="1.0" host-demand-mean="1.5" max-service-time="0.0" name="s0_ph2" phase="2" think-time="0.0"/>
+                </entry-phase-activities>
+            </entry>
+        </task>
+        <task multiplicity="1" name="s1" priority="0" replication="1" scheduling="fcfs">
+            <entry name="s1" type="PH1PH2">
+                <entry-phase-activities>
+                    <activity host-demand-cvsq="1.0" host-demand-mean="3" max-service-time="0.0" name="s1_ph1" phase="1" think-time="0.0"/>
+                </entry-phase-activities>
+            </entry>
+        </task>
+    </processor>
+    <processor multiplicity="1" name="client" quantum="0.0" scheduling="fcfs">
+        <task multiplicity="1" name="c0" priority="0" replication="1" scheduling="ref">
+            <entry name="c0" type="PH1PH2">
+                <entry-phase-activities>
+                    <activity host-demand-cvsq="1.0" host-demand-mean="0" max-service-time="0.0" name="c0_ph1" phase="1" think-time="0.0">
+                        <synch-call calls-mean="1" dest="s0"/>
+                        <synch-call calls-mean="2" dest="s1"/>
+                    </activity>
+                    <activity host-demand-cvsq="1.0" host-demand-mean="1" max-service-time="0.0" name="c0_ph2" phase="2" think-time="0.0">
+                        <synch-call calls-mean="1" dest="s0"/>
+                    </activity>
+                </entry-phase-activities>
+            </entry>
+        </task>
+    </processor>
+</lqn-model>

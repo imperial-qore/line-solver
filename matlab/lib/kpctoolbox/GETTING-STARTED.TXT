@@ -1,0 +1,10 @@
+* To initialize KPC toolbox, cd to the installation directory and type
+addpath(genpath(pwd)) 
+
+* To demonstrate the main features of the toolboox use
+demo_run 
+
+* For help
+help kpcfit_auto 
+help kpcfit_ph_auto
+

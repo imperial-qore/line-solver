@@ -1,0 +1,375 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:17:22.370585Z",
+          "start_time": "2025-07-30T22:17:21.446818Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:32:37.368355Z",
+          "iopub.execute_input": "2026-01-03T15:32:37.368446Z",
+          "shell.execute_reply": "2026-01-03T15:32:37.963351Z",
+          "iopub.status.idle": "2026-01-03T15:32:37.963829Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "# Nested Fork-Join Network\nmodel = Network('model')",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:17:22.422282Z",
+          "start_time": "2025-07-30T22:17:22.418482Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:32:37.964894Z",
+          "iopub.execute_input": "2026-01-03T15:32:37.965064Z",
+          "shell.execute_reply": "2026-01-03T15:32:37.966460Z",
+          "iopub.status.idle": "2026-01-03T15:32:37.966817Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "# Create nested fork-join structure\ndelay = Delay(model, 'Delay1')\nqueue1 = Queue(model,'Queue1',SchedStrategy.FCFS)\nqueue2 = Queue(model,'Queue2',SchedStrategy.FCFS)\nfork = Fork(model,'Fork')\njoin = Join(model,'Join', fork)\nqueue3 = Queue(model,'Queue3',SchedStrategy.FCFS)\nqueue4 = Queue(model,'Queue4',SchedStrategy.FCFS)\nfork2 = Fork(model,'Fork2')\njoin2 = Join(model,'Join2', fork2)\n\njobclass1 = ClosedClass(model, 'class1', 1, delay, 0)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:17:22.482470Z",
+          "start_time": "2025-07-30T22:17:22.472027Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:32:37.967630Z",
+          "iopub.execute_input": "2026-01-03T15:32:37.967726Z",
+          "shell.execute_reply": "2026-01-03T15:32:37.969573Z",
+          "iopub.status.idle": "2026-01-03T15:32:37.969944Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "# Service configurations\nqueue1.set_service(jobclass1, Exp(1.0))\nqueue2.set_service(jobclass1, Exp(1.0))\ndelay.set_service(jobclass1, Exp(0.5))\nqueue3.set_service(jobclass1, Exp(2.0))\nqueue4.set_service(jobclass1, Exp(2.0))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:17:22.534566Z",
+          "start_time": "2025-07-30T22:17:22.529571Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:32:37.970948Z",
+          "iopub.execute_input": "2026-01-03T15:32:37.971044Z",
+          "shell.execute_reply": "2026-01-03T15:32:37.972562Z",
+          "iopub.status.idle": "2026-01-03T15:32:37.972951Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# Nested fork-join routing\nP = model.init_routing_matrix()\n\nP.set(jobclass1, jobclass1, delay, fork, 1.0)\nP.set(jobclass1, jobclass1, fork, queue1, 1.0)\nP.set(jobclass1, jobclass1, fork, queue2, 1.0)\n# Nested structure: queue1 goes to fork2\nP.set(jobclass1, jobclass1, queue1, fork2, 1.0)\nP.set(jobclass1, jobclass1, fork2, queue3, 1.0)\nP.set(jobclass1, jobclass1, fork2, queue4, 1.0)\nP.set(jobclass1, jobclass1, queue3, join2, 1.0)\nP.set(jobclass1, jobclass1, queue4, join2, 1.0)\nP.set(jobclass1, jobclass1, join2, join, 1.0)\n# Queue2 goes directly to join\nP.set(jobclass1, jobclass1, queue2, join, 1.0)\nP.set(jobclass1, jobclass1, join, delay, 1.0)\n\nmodel.link(P)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:17:22.592494Z",
+          "start_time": "2025-07-30T22:17:22.581749Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:32:37.973852Z",
+          "iopub.execute_input": "2026-01-03T15:32:37.973945Z",
+          "shell.execute_reply": "2026-01-03T15:32:37.976453Z",
+          "iopub.status.idle": "2026-01-03T15:32:37.976817Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# Solve with multiple methods\nsolvers = [JMT(model, seed=23000)]\n# Add MVA solver\nsolvers.append(MVA(model))\n\nfor i, solver in enumerate(solvers):\n    print(f'SOLVER {i+1}: {solver.get_name()}')\n    avgTable = solver.avg_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:17:23.877618Z",
+          "start_time": "2025-07-30T22:17:22.628916Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:32:37.977836Z",
+          "iopub.execute_input": "2026-01-03T15:32:37.977931Z",
+          "shell.execute_reply": "2026-01-03T15:32:39.038858Z",
+          "iopub.status.idle": "2026-01-03T15:32:39.039293Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "SOLVER 1: JMT\n",
+            "numerical_values": [
+              1.0
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Station JobClass   QLen   Util  RespT  ResidT   ArvR   Tput\n Delay1   class1 0.5009 0.5009 1.9987  1.9987 0.2491 0.2491\n Queue1   class1 0.2450 0.2450 0.9875  0.9875 0.2473 0.2473\n Queue2   class1 0.2385 0.2385 0.9892  0.9892 0.2473 0.2473\n   Join   class1 0.3192 0.3192 0.6516  0.6516 0.2472 0.2472\n Queue3   class1 0.1222 0.1222 0.4971  0.4971 0.2481 0.2481\n Queue4   class1 0.1213 0.1213 0.5025  0.5025 0.2490 0.2490\n  Join2   class1 0.1204 0.1204 0.2474  0.2474 0.2472 0.2472\nSOLVER 2: MVA\nStation JobClass   QLen   Util  RespT  ResidT   ArvR   Tput\n Delay1   class1 0.6883 0.6883 2.0000  2.0000 0.3441 0.3441\n Queue1   class1 0.3201 0.2425 1.3201  1.3201 0.2425 0.2425\n Queue2   class1 0.3201 0.2425 1.3201  1.3201 0.2425 0.2425\n   Join   class1 1.6231 0.0000 1.1791  1.1791 0.3441 0.3441\n Queue3   class1 0.2078 0.1721 0.6039  0.6039 0.3441 0.3441\n Queue4   class1 0.2078 0.1721 0.6039  0.6039 0.3441 0.3441\n  Join2   class1 0.2078 0.0000 0.3020  0.3020 0.3441 0.3441\n",
+            "numerical_values": [
+              1.0,
+              1.0,
+              0.5009,
+              0.5009,
+              1.9987,
+              1.9987,
+              0.2491,
+              0.2491,
+              1.0,
+              1.0,
+              0.245,
+              0.245,
+              0.9875,
+              0.9875,
+              0.2473,
+              0.2473,
+              2.0,
+              1.0,
+              0.2385,
+              0.2385,
+              0.9892,
+              0.9892,
+              0.2473,
+              0.2473,
+              1.0,
+              0.3192,
+              0.3192,
+              0.6516,
+              0.6516,
+              0.2472,
+              0.2472,
+              3.0,
+              1.0,
+              0.1222,
+              0.1222,
+              0.4971,
+              0.4971,
+              0.2481,
+              0.2481,
+              4.0,
+              1.0,
+              0.1213,
+              0.1213,
+              0.5025,
+              0.5025,
+              0.249,
+              0.249,
+              2.0,
+              1.0,
+              0.1204,
+              0.1204,
+              0.2474,
+              0.2474,
+              0.2472,
+              0.2472,
+              2.0,
+              1.0,
+              1.0,
+              0.6883,
+              0.6883,
+              2.0,
+              2.0,
+              0.3441,
+              0.3441,
+              1.0,
+              1.0,
+              0.3201,
+              0.2425,
+              1.3201,
+              1.3201,
+              0.2425,
+              0.2425,
+              2.0,
+              1.0,
+              0.3201,
+              0.2425,
+              1.3201,
+              1.3201,
+              0.2425,
+              0.2425,
+              1.0,
+              1.6231,
+              0.0,
+              1.1791,
+              1.1791,
+              0.3441,
+              0.3441,
+              3.0,
+              1.0,
+              0.2078,
+              0.1721,
+              0.6039,
+              0.6039,
+              0.3441,
+              0.3441,
+              4.0,
+              1.0,
+              0.2078,
+              0.1721,
+              0.6039,
+              0.6039,
+              0.3441,
+              0.3441,
+              2.0,
+              1.0,
+              0.2078,
+              0.0,
+              0.302,
+              0.302,
+              0.3441,
+              0.3441
+            ]
+          }
+        }
+      ],
+      "execution_count": 6
+    }
+  },
+  "numerical_summary": {
+    "cell_5": [
+      1.0,
+      1.0,
+      1.0,
+      0.5009,
+      0.5009,
+      1.9987,
+      1.9987,
+      0.2491,
+      0.2491,
+      1.0,
+      1.0,
+      0.245,
+      0.245,
+      0.9875,
+      0.9875,
+      0.2473,
+      0.2473,
+      2.0,
+      1.0,
+      0.2385,
+      0.2385,
+      0.9892,
+      0.9892,
+      0.2473,
+      0.2473,
+      1.0,
+      0.3192,
+      0.3192,
+      0.6516,
+      0.6516,
+      0.2472,
+      0.2472,
+      3.0,
+      1.0,
+      0.1222,
+      0.1222,
+      0.4971,
+      0.4971,
+      0.2481,
+      0.2481,
+      4.0,
+      1.0,
+      0.1213,
+      0.1213,
+      0.5025,
+      0.5025,
+      0.249,
+      0.249,
+      2.0,
+      1.0,
+      0.1204,
+      0.1204,
+      0.2474,
+      0.2474,
+      0.2472,
+      0.2472,
+      2.0,
+      1.0,
+      1.0,
+      0.6883,
+      0.6883,
+      2.0,
+      2.0,
+      0.3441,
+      0.3441,
+      1.0,
+      1.0,
+      0.3201,
+      0.2425,
+      1.3201,
+      1.3201,
+      0.2425,
+      0.2425,
+      2.0,
+      1.0,
+      0.3201,
+      0.2425,
+      1.3201,
+      1.3201,
+      0.2425,
+      0.2425,
+      1.0,
+      1.6231,
+      0.0,
+      1.1791,
+      1.1791,
+      0.3441,
+      0.3441,
+      3.0,
+      1.0,
+      0.2078,
+      0.1721,
+      0.6039,
+      0.6039,
+      0.3441,
+      0.3441,
+      4.0,
+      1.0,
+      0.2078,
+      0.1721,
+      0.6039,
+      0.6039,
+      0.3441,
+      0.3441,
+      2.0,
+      1.0,
+      0.2078,
+      0.0,
+      0.302,
+      0.302,
+      0.3441,
+      0.3441,
+      23000.0,
+      1.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "forkJoin/fj_deep_nesting.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 6,
+    "code_cells": 6,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

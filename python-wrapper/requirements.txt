@@ -1,0 +1,11 @@
+
+enum_tools
+jpype1
+numpy
+pandas
+scipy
+twisted
+nbformat
+nbconvert
+matplotlib
+networkx

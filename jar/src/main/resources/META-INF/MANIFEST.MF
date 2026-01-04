@@ -1,0 +1,4 @@
+Manifest-Version: 1.0
+Main-Class: jline.io.DockerClient
+Class-Path: commons-lang3-3.9.jar
+

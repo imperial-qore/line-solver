@@ -1,0 +1,150 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nfrom scipy import optimize\nimport numpy as np",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:24:18.174188Z",
+          "start_time": "2025-07-27T17:24:17.079792Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:05.122506Z",
+          "iopub.execute_input": "2026-01-03T15:31:05.122814Z",
+          "shell.execute_reply": "2026-01-03T15:31:05.902048Z",
+          "iopub.status.idle": "2026-01-03T15:31:05.902589Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('LoadBalCQN')\n# Block 1: nodes\ndelay = Delay(model, 'Think')\nqueue1 = Queue(model, 'Queue1', SchedStrategy.PS)\nqueue2 = Queue(model, 'Queue2', SchedStrategy.PS)\n# Block 2: classes\ncclass = ClosedClass(model, 'Job1', 16, delay)\ndelay.set_service(cclass, Exp(1))\nqueue1.set_service(cclass, Exp(0.75))\nqueue2.set_service(cclass, Exp(0.50))\nP = model.init_routing_matrix()\nP.set(cclass, cclass, queue1, delay, 1.0)\nP.set(cclass, cclass, queue2, delay, 1.0)\nmodel.link(P)\n\ndef objFun(p):\n    P.set(cclass, cclass, delay, queue1, p)\n    P.set(cclass, cclass, delay, queue2, 1.0 - p)\n    model.relink(P)\n    # Block 4: solution\n    R = MVA(model, method='exact', verbose=False).avg_sys_resp_t()    \n    return R[0]",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:24:18.243846Z",
+          "start_time": "2025-07-27T17:24:18.226182Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:05.904211Z",
+          "iopub.execute_input": "2026-01-03T15:31:05.904445Z",
+          "shell.execute_reply": "2026-01-03T15:31:05.907663Z",
+          "iopub.status.idle": "2026-01-03T15:31:05.908171Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "p_opt = optimize.fminbound(objFun, 0, 1)\nprint(p_opt)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:24:18.371769Z",
+          "start_time": "2025-07-27T17:24:18.274329Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:05.909328Z",
+          "iopub.execute_input": "2026-01-03T15:31:05.909456Z",
+          "shell.execute_reply": "2026-01-03T15:31:05.942868Z",
+          "iopub.status.idle": "2026-01-03T15:31:05.943268Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "0.9999965039913429\n",
+            "numerical_values": [
+              0.9999965039913429
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "import matplotlib.pyplot as plt\ny = []\nx = np.arange(0.01,1,0.01)\ny = np.array([objFun(xi) for xi in x])\nplt.plot(x, y)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:24:18.742324Z",
+          "start_time": "2025-07-27T17:24:18.382314Z"
+        },
+        "collapsed": false,
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:05.944241Z",
+          "iopub.execute_input": "2026-01-03T15:31:05.944362Z",
+          "shell.execute_reply": "2026-01-03T15:31:06.500600Z",
+          "iopub.status.idle": "2026-01-03T15:31:06.501321Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "execute_result",
+          "execution_count": 4,
+          "metadata": {},
+          "content": {
+            "text/plain": "[<matplotlib.lines.Line2D at 0x737790df8f50>]",
+            "numerical_values": [
+              2.0,
+              0.0,
+              737790.0,
+              8.0,
+              50.0
+            ]
+          }
+        },
+        {
+          "output_type": "display_data",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "text/plain": "<Figure size 640x480 with 1 Axes>",
+            "numerical_values": [
+              640.0,
+              480.0,
+              1.0
+            ],
+            "image/png": "<image_data_length:19864>"
+          }
+        }
+      ],
+      "execution_count": 4
+    }
+  },
+  "numerical_summary": {
+    "cell_2": [
+      0.9999965039913429,
+      0.0,
+      1.0
+    ],
+    "cell_3": [
+      2.0,
+      0.0,
+      737790.0,
+      8.0,
+      50.0,
+      640.0,
+      480.0,
+      1.0,
+      0.01,
+      1.0,
+      0.01
+    ]
+  },
+  "metadata": {
+    "notebook_path": "tut08_opt_load_balancing.ipynb",
+    "source_dir": "examples/gettingstarted",
+    "total_cells": 4,
+    "code_cells": 4,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

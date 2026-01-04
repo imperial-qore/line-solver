@@ -1,0 +1,305 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\n\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:07:16.535657Z",
+          "start_time": "2025-07-30T22:07:15.549473Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:17.733229Z",
+          "iopub.execute_input": "2026-01-03T15:31:17.733368Z",
+          "shell.execute_reply": "2026-01-03T15:31:18.332722Z",
+          "iopub.status.idle": "2026-01-03T15:31:18.333282Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('model')\nn = 5  # number of items\nm = 2  # cache capacity\n\ndelay = Delay(model, 'Delay')\ncacheNode = Cache(model, 'Cache', n, m, ReplacementStrategy.FIFO)\njobClass = ClosedClass(model, 'JobClass', 1, delay, 0)\nhitClass = ClosedClass(model, 'HitClass', 0, delay, 0)\nmissClass = ClosedClass(model, 'MissClass', 0, delay, 0)\n\ndelay.set_service(jobClass, Exp(1))\n\n# Uniform item references - create Matrix from numpy array\nprob_array = np.ones(n) / n\npAccess = DiscreteSampler([1/n] * n)\ncacheNode.set_read(jobClass, pAccess)\n\ncacheNode.set_hit_class(jobClass, hitClass)\ncacheNode.set_miss_class(jobClass, missClass)\nP = model.init_routing_matrix()\nP.set(jobClass, jobClass, delay, cacheNode, 1.0)\nP.set(hitClass, jobClass, cacheNode, delay, 1.0)\nP.set(missClass, jobClass, cacheNode, delay, 1.0)\n\nmodel.link(P)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:07:16.688568Z",
+          "start_time": "2025-07-30T22:07:16.592394Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:18.334502Z",
+          "iopub.execute_input": "2026-01-03T15:31:18.334732Z",
+          "shell.execute_reply": "2026-01-03T15:31:18.338495Z",
+          "iopub.status.idle": "2026-01-03T15:31:18.339123Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "solver = np.empty(3, dtype=object)\nAvgTable = np.empty(3, dtype=object)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:07:16.698381Z",
+          "start_time": "2025-07-30T22:07:16.696782Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:18.342355Z",
+          "iopub.execute_input": "2026-01-03T15:31:18.342567Z",
+          "shell.execute_reply": "2026-01-03T15:31:18.345116Z",
+          "iopub.status.idle": "2026-01-03T15:31:18.345709Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "solver[0] = CTMC(model, keep=False, seed=1)\nAvgTable[0] = solver[0].avg_node_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:07:16.893679Z",
+          "start_time": "2025-07-30T22:07:16.750084Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:18.347290Z",
+          "iopub.execute_input": "2026-01-03T15:31:18.347501Z",
+          "shell.execute_reply": "2026-01-03T15:31:18.356226Z",
+          "iopub.status.idle": "2026-01-03T15:31:18.356793Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Station JobClass  QLen  Util  RespT  ResidT  ArvR  Tput\n  Delay JobClass   1.0   1.0    1.0     1.0   1.0   1.0\n",
+            "numerical_values": [
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 4
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "model.reset()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:07:16.906852Z",
+          "start_time": "2025-07-30T22:07:16.905150Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:18.358473Z",
+          "iopub.execute_input": "2026-01-03T15:31:18.358670Z",
+          "shell.execute_reply": "2026-01-03T15:31:18.360309Z",
+          "iopub.status.idle": "2026-01-03T15:31:18.360851Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "solver[1] = SSA(model, samples=10000, verbose=True, method='serial', seed=1)\nAvgTable[1] = solver[1].avg_node_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:07:17.742637Z",
+          "start_time": "2025-07-30T22:07:16.960715Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:18.362193Z",
+          "iopub.execute_input": "2026-01-03T15:31:18.362407Z",
+          "shell.execute_reply": "2026-01-03T15:31:18.368424Z",
+          "iopub.status.idle": "2026-01-03T15:31:18.369006Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "SSA: No enabled transitions at sample 1\nStation JobClass  QLen  Util  RespT  ResidT   ArvR   Tput\n  Delay JobClass   1.0   1.0 0.5396  0.5396 1.8532 1.8532\n",
+            "numerical_values": [
+              1.0,
+              1.0,
+              1.0,
+              0.5396,
+              0.5396,
+              1.8532,
+              1.8532
+            ]
+          }
+        }
+      ],
+      "execution_count": 6
+    },
+    "cell_6": {
+      "cell_type": "code",
+      "source": "solver[2] = MVA(model, seed=1)\nAvgTable[2] = solver[2].avg_node_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:07:17.802620Z",
+          "start_time": "2025-07-30T22:07:17.753802Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:18.370210Z",
+          "iopub.execute_input": "2026-01-03T15:31:18.370396Z",
+          "iopub.status.idle": "2026-01-03T15:31:18.379298Z",
+          "shell.execute_reply": "2026-01-03T15:31:18.378770Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Station JobClass  QLen  Util  RespT  ResidT  ArvR  Tput\n  Delay JobClass   1.0   1.0    1.0     1.0   1.0   1.0\n",
+            "numerical_values": [
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stderr",
+            "text": "/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api/solvers/mva/amvald.py:271: RuntimeWarning: divide by zero encountered in divide\n  deltaclass = (Nchain - 1) / Nchain\n/home/gcasale/Dropbox/code/line-dev.git/python/line_solver/api/solvers/mva/amvald.py:119: RuntimeWarning: divide by zero encountered in divide\n  deltaclass = (Nchain_in - 1) / Nchain_in\n",
+            "numerical_values": [
+              271.0,
+              1.0,
+              119.0,
+              1.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 7
+    },
+    "cell_7": {
+      "cell_type": "code",
+      "source": "# MVA\nmodel.reset()\nsolver = np.append(solver, MVA(model, seed=1))\nprint('\\nSOLVER: MVA')\nAvgTable3 = solver[2].avg_node_table()",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-30T22:07:17.825289Z",
+          "start_time": "2025-07-30T22:07:17.818745Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-03T15:31:18.380494Z",
+          "iopub.execute_input": "2026-01-03T15:31:18.380622Z",
+          "shell.execute_reply": "2026-01-03T15:31:18.385538Z",
+          "iopub.status.idle": "2026-01-03T15:31:18.386043Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "\nSOLVER: MVA\nStation JobClass  QLen  Util  RespT  ResidT  ArvR  Tput\n  Delay JobClass   1.0   1.0    1.0     1.0   1.0   1.0\n",
+            "numerical_values": [
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 8
+    }
+  },
+  "numerical_summary": {
+    "cell_2": [
+      3.0,
+      3.0
+    ],
+    "cell_3": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    "cell_5": [
+      1.0,
+      1.0,
+      1.0,
+      0.5396,
+      0.5396,
+      1.8532,
+      1.8532,
+      1.0,
+      10000.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "cell_6": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      271.0,
+      1.0,
+      119.0,
+      1.0,
+      2.0,
+      1.0,
+      2.0,
+      2.0
+    ],
+    "cell_7": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      3.0,
+      2.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "cacheModel/cache_replc_fifo.ipynb",
+    "source_dir": "examples/basic",
+    "total_cells": 8,
+    "code_cells": 8,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

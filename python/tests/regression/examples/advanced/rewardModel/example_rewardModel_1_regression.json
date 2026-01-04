@@ -1,0 +1,124 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "markdown",
+      "source": "# Advanced Example: Reward-Based CTMC Analysis\n\nThis example demonstrates the `setReward` feature for defining custom reward functions on a queueing network model and computing steady-state expected rewards using the CTMC solver.\n\nThe model is a simple closed queueing network with a delay station and a queue, and we define several reward functions:\n- Queue length\n- Utilization\n- Quadratic queue cost",
+      "metadata": {},
+      "outputs": [],
+      "execution_count": null
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2025-12-29T18:27:34.853878Z",
+          "iopub.execute_input": "2025-12-29T18:27:34.853995Z",
+          "shell.execute_reply": "2025-12-29T18:27:35.973167Z",
+          "iopub.status.idle": "2025-12-29T18:27:35.973599Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "def create_reward_model():\n    \"\"\"\n    Create a simple closed queueing network with reward functions.\n    \n    The model has:\n    - A delay station (think time)\n    - A single-server FCFS queue\n    - N=5 jobs circulating in the system\n    \"\"\"\n    model = Network('RewardExample')\n    \n    # Block 1: nodes\n    delay = Delay(model, 'Delay')\n    queue = Queue(model, 'Queue', SchedStrategy.FCFS)\n    queue.set_number_of_servers(1)\n    \n    # Block 2: job classes (closed class with 5 jobs)\n    cclass = ClosedClass(model, 'Class1', 5, delay)\n    delay.set_service(cclass, Exp(1.0))   # Think time = 1\n    queue.set_service(cclass, Exp(2.0))   # Service rate = 2\n    \n    # Block 3: topology\n    model.add_link(delay, queue)\n    model.add_link(queue, delay)\n    \n    # Define Reward Functions\n    # setReward(name, lambda state, sn: reward_value)\n    # The function receives the aggregated state vector and network structure\n    # State format: state is a Matrix row with [jobs_at_delay, jobs_at_queue]\n    \n    # Reward 1: Queue length (number of jobs in the queue)\n    model.set_reward('QueueLength', lambda state, sn: state.get(0, 1))\n    \n    # Reward 2: Utilization (1 if server busy, 0 if idle)\n    model.set_reward('Utilization', lambda state, sn: min(state.get(0, 1), 1.0))\n    \n    # Reward 3: Weighted queue cost (quadratic penalty for long queues)\n    model.set_reward('QueueCost', lambda state, sn: state.get(0, 1) ** 2)\n    \n    return model\n\n# Create the model\nmodel = create_reward_model()",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2025-12-29T18:27:35.974985Z",
+          "iopub.execute_input": "2025-12-29T18:27:35.975136Z",
+          "iopub.status.idle": "2025-12-29T18:27:35.992862Z",
+          "shell.execute_reply": "2025-12-29T18:27:35.992595Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_3": {
+      "cell_type": "markdown",
+      "source": "## About Reward Functions\n\nReward functions allow computing custom metrics from the underlying Markov chain:\n\n- **State-based**: Rewards depend on the system state (queue lengths, etc.)\n- **Steady-state average**: E[R] = \u03a3\u1d62 \u03c0\u1d62 \u00d7 r(s\u1d62) where \u03c0\u1d62 is steady-state probability\n- **Flexible**: Can compute any function of the state\n\nFor a closed network with N=5 jobs, think rate=1, service rate=2:\n- The queue length varies from 0 to N\n- Expected metrics computed via CTMC analysis",
+      "metadata": {},
+      "outputs": [],
+      "execution_count": null
+    },
+    "cell_4": {
+      "cell_type": "code",
+      "source": "# Solve with CTMC Solver\nprint(\"Solving with CTMC solver...\\n\")\n\nsolver = CTMC(model)\n\n# Get Steady-State Expected Rewards\nrewards = solver.get_avg_reward()\n\nprint(\"\\n=== Steady-State Expected Rewards ===\")\nfor name, value in rewards.items():\n    print(f\"{name:>15s}: {value:.6f}\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2025-12-29T18:27:35.994123Z",
+          "iopub.execute_input": "2025-12-29T18:27:35.994230Z",
+          "iopub.status.idle": "2025-12-29T18:27:36.082872Z",
+          "shell.execute_reply": "2025-12-29T18:27:36.082352Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Solving with CTMC solver...\n\n\n=== Steady-State Expected Rewards ===\n      QueueCost: 66.801144\n    Utilization: 5.777902\n    QueueLength: 18.423554\n",
+            "numerical_values": [
+              66.801144,
+              5.777902,
+              18.423554
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    },
+    "cell_5": {
+      "cell_type": "code",
+      "source": "# Print summary of results\nprint(\"\\n=== Summary ===\")\nprint(\"The CTMC solver successfully computed steady-state expected rewards\")\nprint(\"for the custom reward functions defined on the closed queueing network.\")\nprint(\"\\nNote: Reward functions are evaluated at each state of the Markov chain,\")\nprint(\"and the expected value is computed as the weighted sum over steady-state\")\nprint(\"probabilities.\")",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2025-12-29T18:27:36.084575Z",
+          "iopub.execute_input": "2025-12-29T18:27:36.084838Z",
+          "iopub.status.idle": "2025-12-29T18:27:36.086841Z",
+          "shell.execute_reply": "2025-12-29T18:27:36.086542Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "\n=== Summary ===\nThe CTMC solver successfully computed steady-state expected rewards\nfor the custom reward functions defined on the closed queueing network.\n\nNote: Reward functions are evaluated at each state of the Markov chain,\nand the expected value is computed as the weighted sum over steady-state\nprobabilities.\n"
+          }
+        }
+      ],
+      "execution_count": 4
+    }
+  },
+  "numerical_summary": {
+    "cell_3": [
+      5.0,
+      1.0,
+      2.0,
+      0.0
+    ],
+    "cell_4": [
+      66.801144,
+      5.777902,
+      18.423554,
+      15.0,
+      0.6
+    ]
+  },
+  "metadata": {
+    "notebook_path": "rewardModel/example_rewardModel_1.ipynb",
+    "source_dir": "examples/advanced",
+    "total_cells": 6,
+    "code_cells": 4,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

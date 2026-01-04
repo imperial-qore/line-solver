@@ -1,0 +1,6 @@
+1. This is an implementation of MAMSolver's ETAQA algorithm in Matlab. 
+   To use the code here, one has to have the G, R matrix. The G, R matrix can be computed by the Matlab code in Prof. Benny Van Houdt's webpage: http://www.win.ua.ac.be/~vanhoudt/ 
+
+2. Since the Matlab code on Prof. Benny's Van Houdt's webpage only computes the G, R matrix for discrete time Markov Chain, we have attached the code that can compute G, R matrix for both continuous time Markov Chain and discrete time Markov Chain based on the Benny's code. They are respectively "MG1_G_ETAQA.m" and "GIM1_R_ETAQA.m" and "QBD_G_ETAQA.m". To see the usage, please type: "help function_name" in Matlab console, for example, type "help MG1_G_ETAQA" for immediate usage information on the function "MG1_G_ETAQA"
+
+3. Please send us email to MAMSolver@cs.wm.edu if you have some other problems or requests. The website www.cs.wm.edu/~MAMSolver is being renovated now and a new version of MAMSolver website will be online soon. Please check out some time later.

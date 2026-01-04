@@ -1,0 +1,164 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nimport numpy as np\nGlobalConstants.set_verbose(VerboseLevel.SILENT)",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:45.383865Z",
+          "iopub.execute_input": "2026-01-01T10:31:45.383959Z",
+          "iopub.status.idle": "2026-01-01T10:31:45.851887Z",
+          "shell.execute_reply": "2026-01-01T10:31:45.851573Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = LayeredNetwork('cacheInLayeredNetwork')\n\n# Client\nP1 = Processor(model, 'P1', 1, SchedStrategy.PS)\nT1 = Task(model, 'T1', 1, SchedStrategy.REF).on(P1)\nE1 = Entry(model, 'E1').on(T1)\n\n# Cache task\ntotalitems = 4\ncachecapacity = 2\n# Create uniform access probabilities using Python list\naccess_probs = [1.0 / totalitems] * totalitems\npAccess = DiscreteSampler(access_probs)\nPC = Processor(model, 'PC', 1, SchedStrategy.PS)\nC2 = CacheTask(model, 'C2', totalitems, cachecapacity, ReplacementStrategy.RR, 1).on(PC)\nI2 = ItemEntry(model, 'I2', totalitems, pAccess).on(C2)\n\n# Definition of activities\nA1 = Activity(model, 'A1', Immediate()).on(T1).bound_to(E1).synch_call(I2, 1)\nAC2 = Activity(model, 'AC2', Immediate()).on(C2).bound_to(I2)\nAC2h = Activity(model, 'AC2h', Exp(1.0)).on(C2).replies_to(I2)  # Cache hit\nAC2m = Activity(model, 'AC2m', Exp(0.5)).on(C2).replies_to(I2)  # Cache miss\n\n# Add cache access precedence\nC2.add_precedence(ActivityPrecedence.cache_access(AC2, [AC2h, AC2m]))",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:45.852932Z",
+          "iopub.execute_input": "2026-01-01T10:31:45.853129Z",
+          "shell.execute_reply": "2026-01-01T10:31:45.858045Z",
+          "iopub.status.idle": "2026-01-01T10:31:45.858294Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "execute_result",
+          "execution_count": 2,
+          "metadata": {},
+          "content": {
+            "text/plain": "<line_solver.layered.CacheTaskNative at 0x7d0ef4bd2120>",
+            "numerical_values": [
+              0.0,
+              7.0,
+              0.0,
+              4.0,
+              2120.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "lnoptions = LN.default_options()\n# lnoptions.iter_max = 1  # Note: iter_max option may not be available\nlnoptions.verbose = True\noptions = MVA.default_options()\noptions.verbose = False\n\nsolver = LN(model, lambda model: MVA(model, options), lnoptions)\nAvgTable = solver.avg_table()",
+      "metadata": {
+        "execution": {
+          "iopub.status.busy": "2026-01-01T10:31:45.859024Z",
+          "iopub.execute_input": "2026-01-01T10:31:45.859144Z",
+          "iopub.status.idle": "2026-01-01T10:31:45.904533Z",
+          "shell.execute_reply": "2026-01-01T10:31:45.904267Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "Node  NodeType       QLen       Util      RespT     ResidT         ArvR         Tput\n  P1 Processor 3.6630e-07 3.6630e-07 1.0000e-06 1.0000e-06       0.3663       0.3663\n  PC Processor 1.0000e+00 1.0000e+00 1.0000e-06 1.0000e-06 1000000.0000 1000000.0000\n  C2      Task 5.2356e-01 5.2356e-01 3.0000e+00 3.0000e+00       0.1745       0.1745\n  E1     Entry 3.6630e-07 3.6630e-07 1.0000e-06 1.0000e-06       0.3663       0.3663\n  I2     Entry 1.0000e+00 1.0000e+00 1.0000e-06 1.0000e-06 1000000.0000 1000000.0000\n",
+            "numerical_values": [
+              1.0,
+              3.663e-07,
+              3.663e-07,
+              1e-06,
+              1e-06,
+              0.3663,
+              0.3663,
+              1.0,
+              1.0,
+              1e-06,
+              1e-06,
+              1000000.0,
+              1000000.0,
+              2.0,
+              0.52356,
+              0.52356,
+              3.0,
+              3.0,
+              0.1745,
+              0.1745,
+              1.0,
+              3.663e-07,
+              3.663e-07,
+              1e-06,
+              1e-06,
+              0.3663,
+              0.3663,
+              2.0,
+              1.0,
+              1.0,
+              1e-06,
+              1e-06,
+              1000000.0,
+              1000000.0
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      0.0,
+      7.0,
+      0.0,
+      4.0,
+      2120.0
+    ],
+    "cell_2": [
+      1.0,
+      3.663e-07,
+      3.663e-07,
+      1e-06,
+      1e-06,
+      0.3663,
+      0.3663,
+      1.0,
+      1.0,
+      1e-06,
+      1e-06,
+      1000000.0,
+      1000000.0,
+      2.0,
+      0.52356,
+      0.52356,
+      3.0,
+      3.0,
+      0.1745,
+      0.1745,
+      1.0,
+      3.663e-07,
+      3.663e-07,
+      1e-06,
+      1e-06,
+      0.3663,
+      0.3663,
+      2.0,
+      1.0,
+      1.0,
+      1e-06,
+      1e-06,
+      1000000.0,
+      1000000.0,
+      1.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "layeredCQ/lcq_singlehost.ipynb",
+    "source_dir": "examples/advanced",
+    "total_cells": 3,
+    "code_cells": 3,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}

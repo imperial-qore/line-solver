@@ -1,0 +1,266 @@
+{
+  "cell_content": {
+    "cell_0": {
+      "cell_type": "code",
+      "source": "from line_solver import *\nGlobalConstants.set_verbose(VerboseLevel.STD)",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:23:30.835642Z",
+          "start_time": "2025-07-27T17:23:29.896781Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:07:06.179096Z",
+          "iopub.execute_input": "2026-01-02T14:07:06.179211Z",
+          "iopub.status.idle": "2026-01-02T14:07:07.067050Z",
+          "shell.execute_reply": "2026-01-02T14:07:07.066774Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 1
+    },
+    "cell_1": {
+      "cell_type": "code",
+      "source": "model = Network('RRLB')\nsource = Source(model, 'Source')\nlb = Router(model, 'LB')\nqueue1 = Queue(model, 'Queue1', SchedStrategy.PS)\nqueue2 = Queue(model, 'Queue2', SchedStrategy.PS)\nsink = Sink(model, 'Sink')\noclass = OpenClass(model, 'Class1')\nsource.set_arrival(oclass, Exp(1))\nqueue1.set_service(oclass, Exp(2))\nqueue2.set_service(oclass, Exp(2))",
+      "metadata": {
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:23:30.901408Z",
+          "start_time": "2025-07-27T17:23:30.885319Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:07:07.068219Z",
+          "iopub.execute_input": "2026-01-02T14:07:07.068351Z",
+          "iopub.status.idle": "2026-01-02T14:07:07.082076Z",
+          "shell.execute_reply": "2026-01-02T14:07:07.081730Z"
+        }
+      },
+      "outputs": [],
+      "execution_count": 2
+    },
+    "cell_2": {
+      "cell_type": "code",
+      "source": "model.add_link(source, lb)\nmodel.add_link(lb, queue1)\nmodel.add_link(lb, queue2)\nmodel.add_link(queue1, sink)\nmodel.add_link(queue2, sink)\nlb.set_routing(oclass, RoutingStrategy.RAND)\njmtAvgTable = JMT(model, seed=23000).avg_table()",
+      "metadata": {
+        "collapsed": false,
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:23:31.884254Z",
+          "start_time": "2025-07-27T17:23:30.935051Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:07:07.083236Z",
+          "iopub.execute_input": "2026-01-02T14:07:07.083362Z",
+          "shell.execute_reply": "2026-01-02T14:07:07.766884Z",
+          "iopub.status.idle": "2026-01-02T14:07:07.767246Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "JMT Model: /tmp/workspace/jsim/8352812624534493557/jmodel.jsim\n",
+            "numerical_values": [
+              8.352812624534493e+18
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0  Source   Class1  0.0000  0.0000  0.0000  0.0000  0.0000  1.0135\n1  Queue1   Class1  0.3161  0.2468  0.6541  0.6541  0.5014  0.5010\n2  Queue2   Class1  0.3340  0.2508  0.6841  0.3420  0.5045  0.5041\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0135,
+              1.0,
+              1.0,
+              1.0,
+              0.3161,
+              0.2468,
+              0.6541,
+              0.6541,
+              0.5014,
+              0.501,
+              2.0,
+              2.0,
+              1.0,
+              0.334,
+              0.2508,
+              0.6841,
+              0.342,
+              0.5045,
+              0.5041
+            ]
+          }
+        }
+      ],
+      "execution_count": 3
+    },
+    "cell_3": {
+      "cell_type": "code",
+      "source": "model.reset()\nlb.set_routing(oclass, RoutingStrategy.RROBIN)\njmtAvgTableRR = JMT(model, seed=23000).avg_table()",
+      "metadata": {
+        "collapsed": false,
+        "ExecuteTime": {
+          "end_time": "2025-07-27T17:23:32.716305Z",
+          "start_time": "2025-07-27T17:23:31.920755Z"
+        },
+        "execution": {
+          "iopub.status.busy": "2026-01-02T14:07:07.768189Z",
+          "iopub.execute_input": "2026-01-02T14:07:07.768329Z",
+          "shell.execute_reply": "2026-01-02T14:07:08.346579Z",
+          "iopub.status.idle": "2026-01-02T14:07:08.346863Z"
+        }
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "JMT Model: /tmp/workspace/jsim/6948520371763375936/jmodel.jsim\n",
+            "numerical_values": [
+              6.948520371763376e+18
+            ]
+          }
+        },
+        {
+          "output_type": "stream",
+          "execution_count": null,
+          "metadata": {},
+          "content": {
+            "stream_name": "stdout",
+            "text": "  Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0  Source   Class1  0.0000  0.0000  0.0000  0.0000  0.0000  1.0089\n1  Queue1   Class1  0.3043  0.2612  0.5848  0.5848  0.5029  0.5053\n2  Queue2   Class1  0.2928  0.2440  0.5729  0.2865  0.5050  0.5053\n",
+            "numerical_values": [
+              0.0,
+              1.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0089,
+              1.0,
+              1.0,
+              1.0,
+              0.3043,
+              0.2612,
+              0.5848,
+              0.5848,
+              0.5029,
+              0.5053,
+              2.0,
+              2.0,
+              1.0,
+              0.2928,
+              0.244,
+              0.5729,
+              0.2865,
+              0.505,
+              0.5053
+            ]
+          }
+        }
+      ],
+      "execution_count": 4
+    }
+  },
+  "numerical_summary": {
+    "cell_1": [
+      1.0,
+      1.0,
+      2.0,
+      2.0,
+      1.0,
+      1.0,
+      1.0,
+      2.0,
+      2.0,
+      2.0
+    ],
+    "cell_2": [
+      8.352812624534493e+18,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0135,
+      1.0,
+      1.0,
+      1.0,
+      0.3161,
+      0.2468,
+      0.6541,
+      0.6541,
+      0.5014,
+      0.501,
+      2.0,
+      2.0,
+      1.0,
+      0.334,
+      0.2508,
+      0.6841,
+      0.342,
+      0.5045,
+      0.5041,
+      1.0,
+      2.0,
+      1.0,
+      2.0,
+      23000.0
+    ],
+    "cell_3": [
+      6.948520371763376e+18,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0089,
+      1.0,
+      1.0,
+      1.0,
+      0.3043,
+      0.2612,
+      0.5848,
+      0.5848,
+      0.5029,
+      0.5053,
+      2.0,
+      2.0,
+      1.0,
+      0.2928,
+      0.244,
+      0.5729,
+      0.2865,
+      0.505,
+      0.5053,
+      23000.0
+    ]
+  },
+  "metadata": {
+    "notebook_path": "tut04_lb_routing.ipynb",
+    "source_dir": "examples/gettingstarted",
+    "total_cells": 4,
+    "code_cells": 4,
+    "generation_info": {
+      "script_version": "2.0",
+      "extraction_method": "comprehensive"
+    }
+  }
+}
