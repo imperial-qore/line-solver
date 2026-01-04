@@ -19,6 +19,7 @@ import io
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -125,7 +126,7 @@ SOLVERS: Dict[str, Dict[str, Any]] = {
     "nc": {
         "name": "Normalizing Constant",
         "description": "Exact analysis using normalizing constant computation",
-        "formats": ["jsim", "jsimg", "jsimw", "lqnx", "xml"],
+        "formats": ["jsim", "jsimg", "jsimw"],
     },
     "qns": {
         "name": "QNS",
@@ -1314,28 +1315,25 @@ def cmd_solve(args: argparse.Namespace) -> int:
 
 def _check_external_tool(name: str) -> bool:
     """Check if an external tool is available in PATH."""
-    try:
-        result = subprocess.run(
-            [name, "--version"] if name != "lqns" else [name, "-V"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-    except Exception:
-        return False
+    return shutil.which(name) is not None
 
 
 def _check_jmt_available(config: Config) -> bool:
     """Check if JMT.jar is available."""
-    # Check common JMT locations
-    jmt_paths = [
+    # Check common JMT locations (same order as JarRunner.solve)
+    jmt_paths = []
+
+    # First check in the same directory as jline.jar (common/)
+    if config.jar_path:
+        jmt_paths.append(config.jar_path.parent / "JMT.jar")
+
+    # Then check other standard locations
+    jmt_paths.extend([
         Path.home() / ".jmt" / "JMT.jar",
         Path("/usr/share/jmt/JMT.jar"),
         Path("/opt/jmt/JMT.jar"),
-    ]
+    ])
+
     env_jmt = os.environ.get("JMT_PATH")
     if env_jmt:
         jmt_paths.insert(0, Path(env_jmt))
@@ -1344,6 +1342,18 @@ def _check_jmt_available(config: Config) -> bool:
         if path.exists():
             return True
     return False
+
+
+def _check_lqns_available(config: Config) -> bool:
+    """Check if LQNS is available."""
+    # First check in the same directory as jline.jar (common/)
+    if config.jar_path:
+        lqns_path = config.jar_path.parent / "lqns"
+        if lqns_path.exists():
+            return True
+
+    # Then check if lqns is in PATH
+    return _check_external_tool("lqns")
 
 
 def cmd_info(args: argparse.Namespace) -> int:
@@ -1385,7 +1395,7 @@ def cmd_info(args: argparse.Namespace) -> int:
     print("\nExternal Tools:")
     print("-" * 40)
     jmt_available = _check_jmt_available(config)
-    lqns_available = _check_external_tool("lqns")
+    lqns_available = _check_lqns_available(config)
     qnsolver_available = _check_external_tool("qnsolver")
 
     print(f"JMT:             {'Available' if jmt_available else 'Not found'}")
