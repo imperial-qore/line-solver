@@ -9,10 +9,10 @@ LINE is an open-source queueing network solver for performance and reliability a
 
 | Version | Requirements | Maturity | Documentation |
 |---------|--------------|----------|---------------|
-| [MATLAB](matlab/) | MATLAB | Stable | [Manual](https://sourceforge.net/p/line-solver/code/ci/master/tree/doc/LINE-matlab.pdf?format=raw) |
-| [Java/Kotlin](jar/) | Java SE 8+ | Stable | [Manual](https://sourceforge.net/p/line-solver/code/ci/master/tree/doc/LINE-java.pdf?format=raw) |
-| [Python Wrapper](python-wrapper/) | Python 3.10+, Java SE 8+ | Beta | [Manual](https://sourceforge.net/p/line-solver/code/ci/master/tree/doc/LINE-python.pdf?format=raw) |
-| [Python Native](python/) | Python 3.10+ | Alpha | [Manual](https://sourceforge.net/p/line-solver/code/ci/master/tree/doc/LINE-python.pdf?format=raw) |
+| [MATLAB](matlab/) | MATLAB | Stable | [Manual](https://line-solver.sourceforge.net/index.html#papers) |
+| [Java/Kotlin](jar/) | Java SE 8+ | Stable | [Manual](https://line-solver.sourceforge.net/index.html#papers) |
+| [Python Wrapper](python-wrapper/) | Python 3.10+, Java SE 8+ | Beta | [Manual](https://line-solver.sourceforge.net/index.html#papers) |
+| [Python Native](python/) | Python 3.10+ | Alpha | [Manual](https://line-solver.sourceforge.net/index.html#papers) |
 
 The Python Wrapper interfaces with the Java/Kotlin JAR via JPype, allowing Python users to leverage the faster, more mature JAR-based solvers while using familiar Python syntax. The JAR implementation offers better performance than the native Python version for large-scale models. 
 
