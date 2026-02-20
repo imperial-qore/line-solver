@@ -14,7 +14,7 @@ The package offers solution algorithms for queueing systems (e.g., M/M/1, M/M/k,
 | [MATLAB](matlab/) | matlab/                      | MATLAB                   | Stable       | [PDF](https://line-solver.sourceforge.net/doc/LINE-matlab.pdf) | [Doxygen](https://line-solver.sourceforge.net/doxygen/index.html) |
 | [Java/Kotlin](jar/) | jar/                         | Java SE 8+               | Beta       | [PDF](https://line-solver.sourceforge.net/doc/LINE-java.pdf) | [Javadoc](https://line-solver.sourceforge.net/javadoc/index.html) |
 | [Python Wrapper](python-wrapper/) | python-wrapper/                      | Python 3.11+, Java SE 8+ | Beta         | [PDF](https://line-solver.sourceforge.net/doc/LINE-python.pdf) | [Sphinx](https://line-solver.sourceforge.net/sphinx/index.html) |
-| [Python Native](python/) | python/ | Python 3.11+             | Alpha                    | [PDF](https://line-solver.sourceforge.net/doc/LINE-python.pdf) | [Sphinx](https://line-solver.sourceforge.net/sphinx/index.html) |
+| [Python Native](python/) | python/ | Python 3.11+             | Beta                    | [PDF](https://line-solver.sourceforge.net/doc/LINE-python.pdf) | [Sphinx](https://line-solver.sourceforge.net/sphinx/index.html) |
 
 The Python Wrapper interfaces with the Java/Kotlin JAR via JPype, allowing Python users to leverage the faster, more mature, JAR-based solvers while using familiar Python syntax. The JAR implementation offers better performance than the native Python version for large-scale and layered models.
 
