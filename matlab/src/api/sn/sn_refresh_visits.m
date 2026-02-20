@@ -88,9 +88,12 @@ for c=1:nchains
     % Normalize routing matrix for Fork-containing models
     % Fork nodes have row sums > 1 (sending to all branches with prob 1 each)
     % which causes dtmc_solve_reducible to fail. Normalize to make stochastic.
+    % Record original row sums to correct visit ratios after DTMC solve.
+    row_sums = ones(size(Pchain,1), 1);
     if any(sn.nodetype == NodeType.Fork)
         for row = 1:size(Pchain,1)
             rs = sum(Pchain(row,:));
+            row_sums(row) = rs;
             if rs > GlobalConstants.FineTol
                 Pchain(row,:) = Pchain(row,:) / rs;
             end
@@ -109,6 +112,44 @@ for c=1:nchains
         %disabled because a self-looping customer is an absorbing chain
         %line_error(mfilename,'One chain has an absorbing state.');
     end
+
+    % Apply Fork fanout correction: multiply fork-scope station visits by fanout
+    % This corrects for the normalization of rows with sum > 1 (caused by Fork
+    % routing being collapsed into the stateful routing matrix).
+    % Block propagation through Join nodes to prevent the correction from
+    % leaking back through cycles (which would cancel out during normalization).
+    if any(sn.nodetype == NodeType.Fork)
+        n = size(Pchain, 1);
+        nIC = length(inchain{c});
+        % Build adjacency but block outgoing edges from Join nodes
+        adj = Pchain > GlobalConstants.FineTol;
+        for isf = 1:M
+            nd = sn.statefulToNode(isf);
+            if sn.nodetype(nd) == NodeType.Join
+                for k = 1:nIC
+                    adj((isf-1)*nIC + k, :) = false;
+                end
+            end
+        end
+        % Compute transitive closure with join-blocked adjacency
+        reachable = adj;
+        for iter = 1:ceil(log2(n))
+            reachable = reachable | (reachable * reachable > 0);
+        end
+
+        % For each fork row, multiply only fork-scope reachable states by fanout
+        for row = 1:n
+            fanout = row_sums(row);
+            if fanout > 1 + GlobalConstants.FineTol
+                for col = 1:n
+                    if reachable(row, col)
+                        alpha(col) = alpha(col) * fanout;
+                    end
+                end
+            end
+        end
+    end
+
     visits{c} = zeros(M,K);
     for ist=1:M
         for k=1:length(inchain{c})
@@ -155,9 +196,12 @@ for c=1:nchains
     nodes_visited = sum(nodes_Pchain,2) > 0;
 
     % Normalize routing matrix for Fork-containing models
+    % Record original row sums to correct visit ratios after DTMC solve.
+    nodes_row_sums = ones(size(nodes_Pchain,1), 1);
     if any(sn.nodetype == NodeType.Fork)
         for row = 1:size(nodes_Pchain,1)
             rs = sum(nodes_Pchain(row,:));
+            nodes_row_sums(row) = rs;
             if rs > GlobalConstants.FineTol
                 nodes_Pchain(row,:) = nodes_Pchain(row,:) / rs;
             end
@@ -172,7 +216,41 @@ for c=1:nchains
         [nodes_alpha_visited, ~, ~, ~, ~] = dtmc_solve_reducible(nodes_Pchain_visited, [], struct('tol', GlobalConstants.FineTol));
     end
     nodes_alpha = zeros(1,I*K); nodes_alpha(nodes_visited) = nodes_alpha_visited;
-    
+
+    % Apply Fork fanout correction for node visits
+    % Block propagation through Join nodes to prevent the correction from
+    % leaking back through cycles.
+    if any(sn.nodetype == NodeType.Fork)
+        n_nodes = size(nodes_Pchain, 1);
+        nIC = length(inchain{c});
+        % Build adjacency but block outgoing edges from Join nodes
+        nodes_adj = nodes_Pchain > GlobalConstants.FineTol;
+        for nd = 1:I
+            if sn.nodetype(nd) == NodeType.Join
+                for k = 1:nIC
+                    nodes_adj((nd-1)*nIC + k, :) = false;
+                end
+            end
+        end
+        % Compute transitive closure with join-blocked adjacency
+        nodes_reachable = nodes_adj;
+        for iter = 1:ceil(log2(n_nodes))
+            nodes_reachable = nodes_reachable | (nodes_reachable * nodes_reachable > 0);
+        end
+
+        % For each fork row, multiply only fork-scope reachable states by fanout
+        for row = 1:n_nodes
+            fanout = nodes_row_sums(row);
+            if fanout > 1 + GlobalConstants.FineTol
+                for col = 1:n_nodes
+                    if nodes_reachable(row, col)
+                        nodes_alpha(col) = nodes_alpha(col) * fanout;
+                    end
+                end
+            end
+        end
+    end
+
     nodevisits{c} = zeros(I,K);
     for ind=1:I
         for k=1:length(inchain{c})

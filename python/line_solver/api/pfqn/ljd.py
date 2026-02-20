@@ -195,7 +195,9 @@ def infradius_h(x: np.ndarray, L: np.ndarray, N: np.ndarray,
 
         # Evaluate h function
         z = np.sum(L * np.tile(np.exp(2 * np.pi * 1j * (t - tb)), (M, 1)), axis=1)
-        gld_result = pfqn_gld(z, Nt, alpha)
+        # Reshape z to column vector (M x 1) to match MATLAB convention
+        # (M stations, 1 class) - np.atleast_2d would make it (1, M) which is wrong
+        gld_result = pfqn_gld(z.reshape(-1, 1), Nt, alpha)
         # Extract scalar G value from PfqnNcResult
         gld_value = gld_result.G if hasattr(gld_result, 'G') else gld_result
 
@@ -208,30 +210,54 @@ def infradius_h(x: np.ndarray, L: np.ndarray, N: np.ndarray,
 
 
 def infradius_hnorm(x: np.ndarray, L: np.ndarray, N: np.ndarray,
-                    alpha: np.ndarray, logNormConstScale: float) -> np.ndarray:
+                    alpha: np.ndarray) -> np.ndarray:
     """
-    Normalized helper function for infinite radius computation.
+    Helper function for infinite radius computation with normal CDF (probit) transformation.
 
-    Like infradius_h but with normalization for numerical stability.
+    Uses normcdf/normpdf transformation instead of logistic (used in infradius_h).
 
     Args:
-        x: Logistic transformation parameters
+        x: Normal CDF transformation parameters
         L: Service demand matrix (M x R)
         N: Population vector (R,)
         alpha: Load-dependent rate matrix
-        logNormConstScale: Logarithm of normalizing scale factor
 
     Returns:
-        Normalized evaluated function value
+        Evaluated function value for integration
 
     References:
         Original MATLAB: matlab/src/api/pfqn/infradius_hnorm.m
     """
-    y = infradius_h(x, L, N, alpha)
+    from scipy.stats import norm
+    from .ncld import pfqn_gld
 
-    # Normalize
-    if logNormConstScale != 0:
-        y = y / np.exp(logNormConstScale)
+    L = np.atleast_2d(np.asarray(L, dtype=float))
+    N = np.asarray(N, dtype=float).flatten()
+    x = np.atleast_2d(np.asarray(x, dtype=float))
+
+    M = L.shape[0]
+    Nt = int(np.sum(N))
+    beta = N / Nt if Nt > 0 else np.zeros_like(N)
+
+    y = np.zeros(x.shape[0])
+
+    for i in range(x.shape[0]):
+        xi = x[i, :]
+
+        # Probit (normal CDF) transformation
+        t = norm.cdf(xi)
+        tb = np.sum(beta * t)
+
+        # Evaluate h function
+        z = np.sum(L * np.tile(np.exp(2 * np.pi * 1j * (t - tb)), (M, 1)), axis=1)
+        # Reshape z to column vector (M x 1) to match MATLAB convention
+        gld_result = pfqn_gld(z.reshape(-1, 1), Nt, alpha)
+        gld_value = gld_result.G if hasattr(gld_result, 'G') else gld_result
+
+        # Jacobian of normal CDF transformation
+        jacobian = np.prod(norm.pdf(xi))
+
+        y[i] = np.real(gld_value * jacobian)
 
     return y
 

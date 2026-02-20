@@ -90,15 +90,15 @@ public class RandomEnvExamplesTest {
         // Check if results are computed
         assertNotNull(avgTable);
         
-        // Expected values updated to match actual implementation
+        // Expected values updated after ENV solver fixes (probOrig conditional, ODEMaxStep=0.25, QEntry normalization)
+        // New values are closer to MATLAB ground truth: QLen=[0.559, 0.441]
         // Order: Queue1(Class1), Queue2(Class1)
-        // Previous MAPE: 0.4130%, Max APE: 0.8712%
-        double[] expectedQLen = {0.5553050657085871, 0.44469493429141305};
-        double[] expectedUtil = {0.5553050657085871, 0.44469493429141305};
-        double[] expectedRespT = {0.8061536352735976, 0.6448739537999434};
-        double[] expectedResidT = {0.0, 0.0};          // ResidT not provided in allExamplesBaseline.txt
-        double[] expectedArvR = {0.0, 0.0};            // ArvR not provided in allExamplesBaseline.txt
-        double[] expectedTput = {0.688832799867142, 0.6895842694080476};
+        double[] expectedQLen = {0.5569970698530251, 0.44300293014697495};
+        double[] expectedUtil = {0.5569970698530251, 0.44300293014697495};
+        double[] expectedRespT = {0.8108196883676689, 0.6489639902619199};
+        double[] expectedResidT = {0.0, 0.0};
+        double[] expectedArvR = {0.0, 0.0};
+        double[] expectedTput = {0.6869555313516917, 0.6826309884592832};
         
         // Verify table size
         assertEquals(2, avgTable.getQLen().size(), 
@@ -289,16 +289,15 @@ public class RandomEnvExamplesTest {
         // Check if results are computed
         assertNotNull(avgTable);
         
-        // Expected values updated to match actual implementation
+        // Expected values updated after ENV solver fixes (probOrig conditional, ODEMaxStep=0.25, QEntry normalization)
+        // New values are closer to MATLAB ground truth: QLen=[0.445, 29.555]
         // Order: Queue1(Class1), Queue2(Class1)
-        // Note: The model has 3 stations but only 2 appear in the output
-        // Previous MAPE: 0.1516%, Max APE: 0.6008%
-        double[] expectedQLen = {0.4473157988387284, 29.552684201161274};
-        double[] expectedUtil = {0.44731579883872846, 1.0};
-        double[] expectedRespT = {0.45644985533424426, 29.552684201161274};
-        double[] expectedResidT = {0.0, 0.0};          // ResidT not provided in allExamplesBaseline.txt
-        double[] expectedArvR = {0.0, 0.0};            // ArvR not provided in allExamplesBaseline.txt
-        double[] expectedTput = {0.9799889157839096, 1.0};
+        double[] expectedQLen = {0.4449058417680881, 29.555094158231913};
+        double[] expectedUtil = {0.4449058417680881, 1.0000000096616304};
+        double[] expectedRespT = {0.4572591104329129, 29.55509387268152};
+        double[] expectedResidT = {0.0, 0.0};
+        double[] expectedArvR = {0.0, 0.0};
+        double[] expectedTput = {0.9729840950503331, 1.0000000096616304};
         
         // Verify table size
         assertEquals(2, avgTable.getQLen().size(), 

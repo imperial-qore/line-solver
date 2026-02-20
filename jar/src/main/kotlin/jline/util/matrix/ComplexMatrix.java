@@ -10,8 +10,11 @@ import static jline.GlobalConstants.NegInf;
 
 import org.apache.commons.math3.complex.Complex;
 import org.apache.commons.math3.complex.ComplexField;
+import org.apache.commons.math3.linear.ArrayFieldVector;
+import org.apache.commons.math3.linear.FieldDecompositionSolver;
 import org.apache.commons.math3.linear.FieldLUDecomposition;
 import org.apache.commons.math3.linear.FieldMatrix;
+import org.apache.commons.math3.linear.FieldVector;
 import org.apache.commons.math3.linear.MatrixUtils;
 import org.ejml.data.DMatrixSparseCSC;
 import org.ejml.sparse.csc.CommonOps_DSCC;
@@ -296,5 +299,223 @@ public class ComplexMatrix {
         this.im.zero();
     }
 
+    /**
+     * Creates a complex identity matrix of the specified size.
+     *
+     * @param n the size of the identity matrix
+     * @return an n x n complex identity matrix
+     */
+    public static ComplexMatrix eye(int n) {
+        return new ComplexMatrix(Matrix.eye(n), new Matrix(n, n));
+    }
+
+    /**
+     * Creates a complex zero matrix of the specified dimensions.
+     *
+     * @param rows the number of rows
+     * @param cols the number of columns
+     * @return a rows x cols complex zero matrix
+     */
+    public static ComplexMatrix zeros(int rows, int cols) {
+        return new ComplexMatrix(new Matrix(rows, cols), new Matrix(rows, cols));
+    }
+
+    /**
+     * Multiplies this complex matrix by another complex matrix.
+     * (A+iB)(C+iD) = (AC-BD) + i(AD+BC)
+     *
+     * @param other the matrix to multiply by
+     * @return the product of the two complex matrices
+     */
+    public ComplexMatrix mult(ComplexMatrix other) {
+        Matrix ac = this.real.mult(other.real);
+        Matrix bd = this.im.mult(other.im);
+        Matrix ad = this.real.mult(other.im);
+        Matrix bc = this.im.mult(other.real);
+        return new ComplexMatrix(ac.add(-1.0, bd), ad.add(1.0, bc));
+    }
+
+    /**
+     * Adds another complex matrix to this one, returning a new matrix.
+     *
+     * @param other the matrix to add
+     * @return a new ComplexMatrix that is the sum of this and other
+     */
+    public ComplexMatrix add(ComplexMatrix other) {
+        return new ComplexMatrix(this.real.add(1.0, other.real), this.im.add(1.0, other.im));
+    }
+
+    /**
+     * Subtracts another complex matrix from this one, returning a new matrix.
+     *
+     * @param other the matrix to subtract
+     * @return a new ComplexMatrix that is this minus other
+     */
+    public ComplexMatrix sub(ComplexMatrix other) {
+        return new ComplexMatrix(this.real.add(-1.0, other.real), this.im.add(-1.0, other.im));
+    }
+
+    /**
+     * Returns the transpose of this complex matrix.
+     *
+     * @return the transpose
+     */
+    public ComplexMatrix transpose() {
+        return new ComplexMatrix(this.real.transpose(), this.im.transpose());
+    }
+
+    /**
+     * Returns the conjugate transpose (Hermitian transpose) of this complex matrix.
+     * For (A+iB), the conjugate transpose is (A^T - iB^T).
+     *
+     * @return the conjugate transpose
+     */
+    public ComplexMatrix conjugateTranspose() {
+        Matrix negIm = this.im.scale(-1.0);
+        return new ComplexMatrix(this.real.transpose(), negIm.transpose());
+    }
+
+    /**
+     * Scales this complex matrix by a complex scalar, returning a new matrix.
+     * (a+ib)(C+iD) = (aC-bD) + i(aD+bC)
+     *
+     * @param z the complex scalar
+     * @return a new ComplexMatrix scaled by z
+     */
+    public ComplexMatrix scaleComplex(Complex z) {
+        double a = z.getReal();
+        double b = z.getImaginary();
+        Matrix newReal = this.real.scale(a).add(-1.0, this.im.scale(b));
+        Matrix newIm = this.real.scale(b).add(1.0, this.im.scale(a));
+        return new ComplexMatrix(newReal, newIm);
+    }
+
+    /**
+     * Solves the complex linear system A*x = b. For square systems, uses LU decomposition.
+     * For overdetermined systems (more rows than columns), uses the real-embedding approach
+     * with SVD-based pseudo-inverse, which correctly handles rank-deficient systems.
+     *
+     * <p>The complex system (A_r + i*A_i)(x_r + i*x_i) = (b_r + i*b_i) is converted to
+     * the equivalent real system:
+     * <pre>
+     *   [A_r, -A_i] [x_r]   [b_r]
+     *   [A_i,  A_r] [x_i] = [b_i]
+     * </pre>
+     * This 2m x 2n real system is solved via the real Matrix.leftMatrixDivide (SVD-based).</p>
+     *
+     * @param b the right-hand side complex column vector or matrix
+     * @return the solution vector x
+     */
+    public ComplexMatrix leftMatrixDivide(ComplexMatrix b) {
+        int m = this.getNumRows();
+        int n = this.getNumCols();
+        int nrhs = b.getNumCols();
+
+        if (m == n) {
+            // Square system: use LU decomposition directly
+            return solveLU(this, b);
+        }
+
+        // Convert to real-embedded system
+        // [A_r, -A_i; A_i, A_r] * [x_r; x_i] = [b_r; b_i]
+        Matrix Ar = this.real;
+        Matrix Ai = this.im;
+
+        // Build 2m x 2n real matrix
+        Matrix realSys = new Matrix(2 * m, 2 * n);
+        for (int i = 0; i < m; i++) {
+            for (int j = 0; j < n; j++) {
+                double rval = Ar.get(i, j);
+                double ival = Ai.get(i, j);
+                if (rval != 0.0) {
+                    realSys.set(i, j, rval);
+                    realSys.set(m + i, n + j, rval);
+                }
+                if (ival != 0.0) {
+                    realSys.set(i, n + j, -ival);
+                    realSys.set(m + i, j, ival);
+                }
+            }
+        }
+
+        ComplexMatrix result = new ComplexMatrix(n, nrhs);
+        for (int col = 0; col < nrhs; col++) {
+            // Build 2m x 1 real RHS
+            Matrix realRHS = new Matrix(2 * m, 1);
+            for (int i = 0; i < m; i++) {
+                Complex bval = b.get(i, col);
+                if (bval.getReal() != 0.0) realRHS.set(i, 0, bval.getReal());
+                if (bval.getImaginary() != 0.0) realRHS.set(m + i, 0, bval.getImaginary());
+            }
+
+            // Solve using real SVD-based least squares
+            Matrix realSol = realSys.leftMatrixDivide(realRHS);
+
+            // Extract complex solution
+            for (int j = 0; j < n; j++) {
+                double xr = realSol.get(j, 0);
+                double xi = realSol.get(n + j, 0);
+                if (xr != 0.0 || xi != 0.0) {
+                    result.set(j, col, new Complex(xr, xi));
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Solves a square complex linear system A*x = b using LU decomposition
+     * via Apache Commons Math3 FieldMatrix.
+     *
+     * @param A the coefficient matrix (must be square)
+     * @param b the right-hand side (column vector or matrix)
+     * @return the solution x
+     */
+    private static ComplexMatrix solveLU(ComplexMatrix A, ComplexMatrix b) {
+        int n = A.getNumRows();
+        int nrhs = b.getNumCols();
+
+        // Convert to Apache Commons Math3 FieldMatrix
+        FieldMatrix<Complex> fieldA = MatrixUtils.createFieldMatrix(ComplexField.getInstance(), n, n);
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                fieldA.setEntry(i, j, A.get(i, j));
+            }
+        }
+
+        FieldLUDecomposition<Complex> lu = new FieldLUDecomposition<Complex>(fieldA);
+        FieldDecompositionSolver<Complex> solver = lu.getSolver();
+
+        ComplexMatrix result = new ComplexMatrix(nrhs > 0 ? n : 0, nrhs);
+        for (int col = 0; col < nrhs; col++) {
+            Complex[] bCol = new Complex[n];
+            for (int i = 0; i < n; i++) {
+                bCol[i] = b.get(i, col);
+            }
+            FieldVector<Complex> bVec = new ArrayFieldVector<Complex>(ComplexField.getInstance(), bCol);
+            FieldVector<Complex> xVec = solver.solve(bVec);
+            for (int i = 0; i < n; i++) {
+                result.set(i, col, xVec.getEntry(i));
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Converts this ComplexMatrix to an Apache Commons Math3 FieldMatrix.
+     *
+     * @return the equivalent FieldMatrix
+     */
+    public FieldMatrix<Complex> toFieldMatrix() {
+        int m = getNumRows();
+        int n = getNumCols();
+        FieldMatrix<Complex> fm = MatrixUtils.createFieldMatrix(ComplexField.getInstance(), m, n);
+        for (int i = 0; i < m; i++) {
+            for (int j = 0; j < n; j++) {
+                fm.setEntry(i, j, get(i, j));
+            }
+        }
+        return fm;
+    }
 
 }

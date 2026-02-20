@@ -1,12 +1,16 @@
 package jline.examples.advanced;
+import jline.GlobalConstants;
 
+import jline.VerboseLevel;
 import jline.examples.java.advanced.LayeredCQModel;
 import jline.lang.Network;
 import jline.lang.constant.SolverType;
 import jline.lang.layered.LayeredNetwork;
+import jline.solvers.ln.LNOptions;
 import jline.solvers.ln.SolverLN;
 import jline.solvers.AvgTable;
 import jline.solvers.LayeredNetworkAvgTable;
+import jline.solvers.SolverOptions;
 import jline.util.Maths;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;
@@ -27,6 +31,7 @@ public class LayeredCQExamplesTest {
     public static void setUp() {
         // Ensure MATLAB-compatible random number generation
         Maths.setRandomNumbersMatlab(true);
+        GlobalConstants.setVerbose(VerboseLevel.SILENT);
     }
 
 
@@ -35,8 +40,12 @@ public class LayeredCQExamplesTest {
         // Create the model
         LayeredNetwork model = LayeredCQModel.lcq_singlehost();
 
-        // Create and run the solver
-        SolverLN solver = new SolverLN(model, SolverType.MVA);
+        // Create and run the solver with silent verbose
+        LNOptions lnOptions = new LNOptions();
+        lnOptions.verbose = VerboseLevel.SILENT;
+        SolverOptions solverOptions = new SolverOptions();
+        solverOptions.verbose = VerboseLevel.SILENT;
+        SolverLN solver = new SolverLN(model, SolverType.MVA, lnOptions, solverOptions);
         AvgTable avgTable = solver.getAvgTable();
 
         // Check if results are computed
@@ -68,8 +77,12 @@ public class LayeredCQExamplesTest {
         // Create the model
         LayeredNetwork model = LayeredCQModel.lcq_threehosts();
 
-        // Create and run the solver
-        SolverLN solver = new SolverLN(model, SolverType.MVA);
+        // Create and run the solver with silent verbose
+        LNOptions lnOptions = new LNOptions();
+        lnOptions.verbose = VerboseLevel.SILENT;
+        SolverOptions solverOptions = new SolverOptions();
+        solverOptions.verbose = VerboseLevel.SILENT;
+        SolverLN solver = new SolverLN(model, SolverType.MVA, lnOptions, solverOptions);
         AvgTable avgTable = solver.getAvgTable();
 
         // Check if results are computed

@@ -80,17 +80,28 @@ def qbd_cr(A0: np.ndarray, A1: np.ndarray, A2: np.ndarray,
             A1 = A1 / lamb + np.eye(m)
             A2 = A2 / lamb
     else:
-        lamb = np.max(-A1_diag)
-        A0 = A0 / lamb
-        A1 = A1 / lamb + np.eye(m)
-        A2 = A2 / lamb
+        if np.min(A1_diag) < 0:
+            continues = True
+            lamb = np.max(-A1_diag)
+            A0 = A0 / lamb
+            A1 = A1 / lamb + np.eye(m)
+            A2 = A2 / lamb
 
-    # Initial G using extended generator method
+    # Check whether G is known explicitly
     result = qbd_eg(A0, A1, A2, verbose)
     G = result.get('G')
 
-    if G is None or G.size == 0:
-        return result
+    if G is not None:
+        # Explicit solution found - compute R, U if not already done and return
+        R = result.get('R')
+        U_eg = result.get('U')
+        if R is None:
+            R = A2 @ la.inv(np.eye(m) - (A1 + A2 @ G))
+        if U_eg is None:
+            U_eg = A1 + R @ A0
+        if continues:
+            U_eg = lamb * (U_eg - np.eye(m))
+        return {'G': G, 'R': R, 'U': U_eg}
 
     # Compute drift
     theta = stat(A0 + A1 + A2)
@@ -98,12 +109,12 @@ def qbd_cr(A0: np.ndarray, A1: np.ndarray, A2: np.ndarray,
 
     A2_old = A2.copy()
     A0_old = A0.copy()
-    uT = np.ones((1, m)) * m
+    uT = np.ones((1, m)) / m
 
     if mode == "Shift":
         if drift < 0:
-            A2 = A2 - np.ones((m, 1)) @ (theta @ A2)
-            A1 = A1 + np.ones((m, 1)) @ (theta @ A0)
+            A2 = A2 - np.ones((m, 1)) @ (theta @ A2).reshape(1, -1)
+            A1 = A1 + np.ones((m, 1)) @ (theta @ A0).reshape(1, -1)
         else:
             A0 = A0 - np.sum(A0, axis=1, keepdims=True) @ uT
             A1 = A1 + np.sum(A2, axis=1, keepdims=True) @ uT
@@ -121,8 +132,8 @@ def qbd_cr(A0: np.ndarray, A1: np.ndarray, A2: np.ndarray,
         BAtemp = B @ Atemp
         CAtemp = C @ Atemp
 
-        Ahat = A + BAtemp @ C
-        A = A + BAtemp @ A + CAtemp @ B
+        Ahat = Ahat + BAtemp @ C
+        A = A + BAtemp @ C + CAtemp @ B
         B = BAtemp @ B
         C = CAtemp @ C
 
@@ -139,7 +150,7 @@ def qbd_cr(A0: np.ndarray, A1: np.ndarray, A2: np.ndarray,
 
     if mode == "Shift":
         if drift < 0:
-            A1 = A1 - np.ones((m, 1)) @ theta @ A0
+            A1 = A1 - np.ones((m, 1)) @ (theta @ A0).reshape(1, -1)
             A2 = A2_old.copy()
         else:
             G = G + np.ones((m, 1)) @ uT
@@ -168,39 +179,125 @@ def qbd_cr(A0: np.ndarray, A1: np.ndarray, A2: np.ndarray,
     return {'G': G, 'R': R, 'U': U}
 
 
-def qbd_eg(A0: np.ndarray, A1: np.ndarray, A2: np.ndarray,
-           verbose: bool = False) -> Dict[str, np.ndarray]:
+def qbd_caudal(A0: np.ndarray, A1: np.ndarray, A2: np.ndarray,
+               dual: bool = False) -> float:
     """
-    QBD_EG: Extended Generator method for initial G computation.
+    QBD_CAUDAL: Compute the spectral radius of R (caudal characteristic).
+
+    Computes the dominant eigenvalue of R, the smallest nonnegative solution
+    to R = A2 + R*A1 + R^2*A0, when the QBD is recurrent.
 
     Args:
         A0: Downward transition matrix
         A1: Level transition matrix
         A2: Upward transition matrix
-        verbose: Print progress if True
+        dual: If True, return the dominant eigenvalue of the Ramaswami dual
 
     Returns:
-        Dictionary with 'G' matrix
+        eta: The caudal characteristic (spectral radius of R)
+    """
+    A0 = np.asarray(A0, dtype=float)
+    A1 = np.asarray(A1, dtype=float)
+    A2 = np.asarray(A2, dtype=float)
+
+    if dual:
+        A0, A2 = A2.copy(), A0.copy()
+
+    eta_min = 0.0
+    eta_max = 1.0
+    eta = 0.5
+    while eta_max - eta_min > 1e-15:
+        new_eta = np.max(np.real(la.eigvals(A2 + A1 * eta + A0 * eta**2)))
+        if new_eta > eta:
+            eta_min = eta
+        else:
+            eta_max = eta
+        eta = (eta_min + eta_max) / 2.0
+    return eta
+
+
+def qbd_eg(A0: np.ndarray, A1: np.ndarray, A2: np.ndarray,
+           verbose: bool = False) -> Dict[str, np.ndarray]:
+    """
+    QBD_EG: Determines G directly if rank(A0)=1 or rank(A2)=1.
+
+    For special cases where the downward or upward transition matrix has rank 1,
+    the G and R matrices can be computed in closed form without iteration.
+
+    Args:
+        A0: Downward transition matrix
+        A1: Level transition matrix
+        A2: Upward transition matrix
+        verbose: Print residual errors if True
+
+    Returns:
+        Dictionary with 'G', 'R', 'U' matrices (empty dict values are None
+        if no explicit solution exists)
     """
     A0 = np.asarray(A0, dtype=float)
     A1 = np.asarray(A1, dtype=float)
     A2 = np.asarray(A2, dtype=float)
 
     m = A0.shape[0]
+    G = None
+    R = None
+    U = None
 
-    # Initial approximation using simple iteration
-    G = np.zeros((m, m))
-    for _ in range(100):
-        G_new = la.inv(np.eye(m) - A1 - A2 @ G) @ A0
-        if la.norm(G_new - G, np.inf) < 1e-14:
-            break
-        G = G_new
+    theta = stat(A0 + A1 + A2)
+    drift = theta @ np.sum(A0, axis=1) - theta @ np.sum(A2, axis=1)
 
-    return {'G': G}
+    if drift > 0:  # positive recurrent case
+        if np.linalg.matrix_rank(A0) == 1:
+            # A0 = alpha * beta
+            row_sums = np.sum(A0, axis=1)
+            temp = -1
+            for i in range(m):
+                if row_sums[i] > 0:
+                    temp = i
+                    break
+            if temp >= 0:
+                beta = A0[temp, :] / np.sum(A0[temp, :])
+                G = np.ones((m, 1)) @ beta.reshape(1, -1)
+                R = A2 @ la.inv(np.eye(m) - (A1 + A2 @ G))
+        elif np.linalg.matrix_rank(A2) == 1:
+            eta = qbd_caudal(A0, A1, A2)
+            R = A2 @ la.inv(np.eye(m) - A1 - eta * A0)
+            G = la.inv(np.eye(m) - (A1 + R @ A0)) @ A0
+    elif drift < 0:  # transient case
+        if np.linalg.matrix_rank(A2) == 1:
+            alpha = A2 @ np.ones((m, 1))
+            R = (alpha @ theta.reshape(1, -1)) / (theta @ alpha)
+            G = la.inv(np.eye(m) - (A1 + R @ A0)) @ A0
+        elif np.linalg.matrix_rank(A0) == 1:
+            # Use the dual (time-reversed) chain
+            theta_inv = 1.0 / theta
+            A0hat = np.diag(theta_inv) @ A2.T @ np.diag(theta)
+            A1hat = np.diag(theta_inv) @ A1.T @ np.diag(theta)
+            A2hat = np.diag(theta_inv) @ A0.T @ np.diag(theta)
+            etahat = qbd_caudal(A0hat, A1hat, A2hat)
+            Rhat = A2hat @ la.inv(np.eye(m) - A1hat - etahat * A0hat)
+            G = np.diag(theta_inv) @ Rhat.T @ np.diag(theta)
+            R = A2 @ la.inv(np.eye(m) - (A1 + A2 @ G))
+
+    if R is not None:
+        U = A1 + R @ A0
+
+    if verbose:
+        if G is not None:
+            res_norm = la.norm(G - A0 - (A1 + A2 @ G) @ G, np.inf)
+            print(f"Final Residual Error for G: {res_norm}")
+        if R is not None:
+            res_norm = la.norm(R - A2 - R @ (A1 + R @ A0), np.inf)
+            print(f"Final Residual Error for R: {res_norm}")
+        if U is not None:
+            res_norm = la.norm(U - A1 - A2 @ la.inv(np.eye(m) - U) @ A0, np.inf)
+            print(f"Final Residual Error for U: {res_norm}")
+
+    return {'G': G, 'R': R, 'U': U}
 
 
 def qbd_pi(B0: np.ndarray, B1: np.ndarray, R: np.ndarray,
-           max_num_comp: int = 500, verbose: int = 0,
+           max_num_comp: int = 10000, verbose: int = 0,
            boundary: Optional[np.ndarray] = None,
            rap_comp: bool = False) -> np.ndarray:
     """
@@ -219,7 +316,7 @@ def qbd_pi(B0: np.ndarray, B1: np.ndarray, R: np.ndarray,
         B0: Boundary transition matrix (level 1 -> 0)
         B1: Boundary transition matrix (level 0)
         R: Rate matrix (minimal nonnegative solution to R = A2 + R*A1 + R^2*A0)
-        max_num_comp: Maximum number of components (default: 500)
+        max_num_comp: Maximum number of components (default: 10000)
         verbose: Print progress every verbose steps (0 = no output)
         boundary: More general boundary structure (optional)
         rap_comp: Set to True for RAP components
@@ -275,23 +372,116 @@ def qbd_lr(A0: np.ndarray, A1: np.ndarray, A2: np.ndarray,
            max_num_it: int = 50, verbose: bool = False,
            mode: str = "Shift") -> Dict[str, np.ndarray]:
     """
-    QBD_LR: Logarithmic Reduction algorithm for QBD Markov chains.
+    QBD_LR: Logarithmic Reduction algorithm for QBD Markov chains
+    [Latouche, Ramaswami].
 
-    Similar to QBD_CR but uses different iteration scheme.
+    Computes the G, R, and U matrices for a QBD Markov chain using the
+    Logarithmic Reduction method.
 
     Args:
         A0: Downward transition matrix
         A1: Level transition matrix
         A2: Upward transition matrix
-        max_num_it: Maximum number of iterations
+        max_num_it: Maximum number of iterations (default: 50)
         verbose: Print progress if True
         mode: "Shift" or "Basic"
 
     Returns:
         Dictionary with 'G', 'R', 'U' matrices
     """
-    # For simplicity, delegate to CR algorithm
-    return qbd_cr(A0, A1, A2, max_num_it, verbose, mode)
+    A0 = np.asarray(A0, dtype=float).copy()
+    A1 = np.asarray(A1, dtype=float).copy()
+    A2 = np.asarray(A2, dtype=float).copy()
+
+    m = A1.shape[0]
+
+    # Convert to discrete time problem, if needed
+    A1_diag = np.diag(A1)
+    continues = False
+    if np.min(A1_diag) < 0:
+        continues = True
+        lamb = np.max(-A1_diag)
+        A0 = A0 / lamb
+        A1 = A1 / lamb + np.eye(m)
+        A2 = A2 / lamb
+
+    # Check whether G is known explicitly
+    result = qbd_eg(A0, A1, A2, verbose)
+    G_eg = result.get('G')
+    if G_eg is None or G_eg.size == 0:
+        return result
+
+    # Shift technique
+    drift = 0.0
+    if mode == "Shift":
+        theta = stat(A0 + A1 + A2)
+        drift = theta @ np.sum(A0, axis=1) - theta @ np.sum(A2, axis=1)
+        if drift < 0:
+            A2_old = A2.copy()
+            A2 = A2 - np.ones((m, 1)) @ (theta @ A2).reshape(1, -1)
+            A1 = A1 + np.ones((m, 1)) @ (theta @ A0).reshape(1, -1)
+        else:
+            uT = np.ones((1, m)) / m
+            A0_old = A0.copy()
+            A0 = A0 - np.sum(A0, axis=1, keepdims=True) @ uT
+            A1 = A1 + np.sum(A2, axis=1, keepdims=True) @ uT
+
+    # Start of Logarithmic Reduction (Basic)
+    B2 = la.inv(np.eye(m) - A1)
+    B0 = B2 @ A2
+    B2 = B2 @ A0
+    G = B2.copy()
+    PI = B0.copy()
+
+    check = 1.0
+    numit = 0
+    while check > 1e-14 and numit < max_num_it:
+        A1star = B2 @ B0 + B0 @ B2
+        A0star = B0 @ B0
+        A2star = B2 @ B2
+        B0 = la.inv(np.eye(m) - A1star)
+        B2 = B0 @ A2star
+        B0 = B0 @ A0star
+        G = G + PI @ B2
+        PI = PI @ B0
+        check = min(la.norm(B0, np.inf), la.norm(B2, np.inf))
+        numit += 1
+        if verbose:
+            print(f"Check after {numit} iterations: {check}")
+
+    if numit == max_num_it and check > 1e-14:
+        print("Maximum Number of Iterations reached")
+
+    # Shift Technique restoration
+    if mode == "Shift":
+        if drift < 0:
+            A1 = A1 - np.ones((m, 1)) @ (theta @ A0).reshape(1, -1)
+            A2 = A2_old.copy()
+        else:
+            G = G + np.ones((m, 1)) @ uT
+            A1 = A1 - np.sum(A2, axis=1, keepdims=True) @ uT
+            A0 = A0_old.copy()
+
+    if verbose:
+        res_norm = la.norm(G - A0 - (A1 + A2 @ G) @ G, np.inf)
+        print(f"Final Residual Error for G: {res_norm}")
+
+    # Compute R
+    R = A2 @ la.inv(np.eye(m) - (A1 + A2 @ G))
+    if verbose:
+        res_norm = la.norm(R - A2 - R @ (A1 + R @ A0), np.inf)
+        print(f"Final Residual Error for R: {res_norm}")
+
+    # Compute U
+    U = A1 + R @ A0
+    if verbose:
+        res_norm = la.norm(U - A1 - A2 @ la.inv(np.eye(m) - U) @ A0, np.inf)
+        print(f"Final Residual Error for U: {res_norm}")
+
+    if continues:
+        U = lamb * (U - np.eye(m))
+
+    return {'G': G, 'R': R, 'U': U}
 
 
 def mg1_g(A: np.ndarray, max_num_it: int = 100, verbose: bool = False
@@ -773,6 +963,7 @@ def mg1_qlen_etaqa(B: Optional[np.ndarray], A: np.ndarray,
 __all__ = [
     'stat',
     'qbd_cr',
+    'qbd_caudal',
     'qbd_eg',
     'qbd_pi',
     'qbd_lr',

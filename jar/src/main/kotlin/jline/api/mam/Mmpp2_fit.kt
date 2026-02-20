@@ -1931,7 +1931,7 @@ fun mmpp2_fit_q10(E1: Double, E2: Double, E3: Double, G2: Double): Double {
  */
 
 fun mmpp2_fit(E1: Double, E2: Double, E3: Double, G2: Double): MatrixCell {
-    val SCV = (E2 - E1 * E2) / E1 / E1
+    val SCV = (E2 - E1 * E1) / E1 / E1
     val mu00: Double
     val mu11: Double
     val q01: Double

@@ -318,6 +318,7 @@ class Solver_ctmc_analyzer(private val solverCTMC: SolverCTMC?) {
             UN.setNaNToZero()
             XN.setNaNToZero()
             TN.setNaNToZero()
+
             val Tstop = System.nanoTime()
             val runtime = (Tstop - Tstart).toDouble() / 1000000000.0
 
@@ -340,21 +341,37 @@ class Solver_ctmc_analyzer(private val solverCTMC: SolverCTMC?) {
                 for (isf in 0..<sncopy.nstateful) {
                     val ind = sncopy.statefulToNode.get(isf).toInt()
                     if (sncopy.nodetype.get(ind) == NodeType.Cache) {
-                        if ((sncopy.nodeparam.get(sn.nodes.get(ind)) as CacheNodeParam).hitclass.length() >= k) {
-                            val h = (sncopy.nodeparam.get(sn.nodes.get(ind)) as CacheNodeParam).hitclass.get(k).toInt()
-                            val m = (sncopy.nodeparam.get(sn.nodes.get(ind)) as CacheNodeParam).missclass.get(k).toInt()
-                            if (h > 0 && m > 0) {
+                        val cacheParam = sncopy.nodeparam.get(sn.nodes.get(ind)) as CacheNodeParam
+                        if (cacheParam.hitclass.length() > k) {
+                            val h = cacheParam.hitclass.get(k).toInt()
+                            val m = cacheParam.missclass.get(k).toInt()
+                            if (h == -1 || m == -1) {
+                                // Hit or miss class not defined for this class - set NaN
+                                if (cacheParam.actualhitprob == null) {
+                                    cacheParam.actualhitprob = Matrix(1, K)
+                                    cacheParam.actualhitprob.fill(Double.NaN)
+                                }
+                                cacheParam.actualhitprob.set(k, Double.NaN)
+                                if (cacheParam.actualmissprob == null) {
+                                    cacheParam.actualmissprob = Matrix(1, K)
+                                    cacheParam.actualmissprob.fill(Double.NaN)
+                                }
+                                cacheParam.actualmissprob.set(k, Double.NaN)
+                            } else {
                                 val actualhitprobValue =
                                     TNcache.get(isf, h) / (TNcache.get(isf, h) + TNcache.get(isf, m))
                                 val actualmissprobValue =
                                     TNcache.get(isf, m) / (TNcache.get(isf, h) + TNcache.get(isf, m))
-                                (sncopy.nodeparam.get(sn.nodes.get(ind)) as CacheNodeParam).actualhitprob = Matrix(1, 1)
-                                (sncopy.nodeparam.get(sn.nodes.get(ind)) as CacheNodeParam).actualhitprob.set(k,
-                                    actualhitprobValue)
-                                (sncopy.nodeparam.get(sn.nodes.get(ind)) as CacheNodeParam).actualmissprob =
-                                    Matrix(1, 1)
-                                (sncopy.nodeparam.get(sn.nodes.get(ind)) as CacheNodeParam).actualmissprob.set(k,
-                                    actualmissprobValue)
+                                if (cacheParam.actualhitprob == null) {
+                                    cacheParam.actualhitprob = Matrix(1, K)
+                                    cacheParam.actualhitprob.fill(Double.NaN)
+                                }
+                                cacheParam.actualhitprob.set(k, actualhitprobValue)
+                                if (cacheParam.actualmissprob == null) {
+                                    cacheParam.actualmissprob = Matrix(1, K)
+                                    cacheParam.actualmissprob.fill(Double.NaN)
+                                }
+                                cacheParam.actualmissprob.set(k, actualmissprobValue)
                             }
                         }
                     }

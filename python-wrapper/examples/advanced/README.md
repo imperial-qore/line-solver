@@ -4,13 +4,17 @@ This directory contains Jupyter notebook examples demonstrating various features
 
 ## Directory Structure
 
+- **agentModels/** - Agent-based modeling examples
 - **cdfRespT/** - Cumulative distribution function of response times
 - **cyclicPolling/** - Cyclic polling system examples
+- **fcRegion/** - Feasible capacity region analysis
 - **initState/** - Initial state configuration examples
-- **layeredCacheQueueing/** - Layered networks with caching
+- **layeredCQ/** - Layered networks with caching
 - **loadDependent/** - Load-dependent service examples
-- **randomEnvironment/** - Random environment models
-- **stateDependentRouting/** - State-dependent routing
+- **randomEnv/** - Random environment models
+- **rewardModel/** - Reward models and reinforcement learning routing examples
+- **stateDepRouting/** - State-dependent routing
+- **stateProbabilities/** - State probability analysis examples
 - **switchoverTimes/** - Switchover time modeling
 
 ## Running Examples

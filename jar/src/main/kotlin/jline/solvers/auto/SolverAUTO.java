@@ -774,19 +774,28 @@ public class SolverAUTO extends NetworkSolver {
 
     public NetworkAvgChainTable getAvgChainTable() {
         Object[] results = delegate("getAvgChainTable", 1);
-        // Convert matrix to appropriate format - simplified implementation
+        if (results.length > 0 && results[0] instanceof NetworkAvgChainTable) {
+            return (NetworkAvgChainTable) results[0];
+        }
+        // Fallback to empty table if delegation fails
         return new NetworkAvgChainTable(new ArrayList<Double>(), new ArrayList<Double>(), new ArrayList<Double>(), new ArrayList<Double>(), new ArrayList<Double>(), new ArrayList<Double>());
     }
 
     public NetworkAvgSysTable getAvgSysTable() {
         Object[] results = delegate("getAvgSysTable", 1);
-        // Convert matrix to appropriate format - simplified implementation
+        if (results.length > 0 && results[0] instanceof NetworkAvgSysTable) {
+            return (NetworkAvgSysTable) results[0];
+        }
+        // Fallback to empty table if delegation fails
         return new NetworkAvgSysTable(new ArrayList<Double>(), new ArrayList<Double>(), this.options);
     }
 
     public NetworkAvgNodeTable getAvgNodeTable() {
         Object[] results = delegate("getAvgNodeTable", 1);
-        // Convert matrix to appropriate format - simplified implementation
+        if (results.length > 0 && results[0] instanceof NetworkAvgNodeTable) {
+            return (NetworkAvgNodeTable) results[0];
+        }
+        // Fallback to empty table if delegation fails
         return new NetworkAvgNodeTable(new ArrayList<Double>(), new ArrayList<Double>(), new ArrayList<Double>(), new ArrayList<Double>(), new ArrayList<Double>(), new ArrayList<Double>());
     }
 

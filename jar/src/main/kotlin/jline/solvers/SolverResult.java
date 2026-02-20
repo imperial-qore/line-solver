@@ -181,12 +181,12 @@ public class SolverResult {
 
         clone.method = this.method;
 
-        clone.QN = this.QN.copy();
-        clone.UN = this.UN.copy();
-        clone.RN = this.RN.copy();
-        clone.WN = this.WN.copy();
-        clone.TN = this.TN.copy();
-        clone.AN = this.AN.copy();
+        clone.QN = this.QN == null ? null : this.QN.copy();
+        clone.UN = this.UN == null ? null : this.UN.copy();
+        clone.RN = this.RN == null ? null : this.RN.copy();
+        clone.WN = this.WN == null ? null : this.WN.copy();
+        clone.TN = this.TN == null ? null : this.TN.copy();
+        clone.AN = this.AN == null ? null : this.AN.copy();
         clone.TardN = this.TardN == null ? null : this.TardN.copy();
         clone.SysTardN = this.SysTardN == null ? null : this.SysTardN.copy();
         clone.CN = this.CN == null ? null : this.CN.copy();

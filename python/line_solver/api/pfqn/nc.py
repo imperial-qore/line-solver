@@ -15,6 +15,19 @@ from math import log, exp, factorial, lgamma
 from typing import Tuple, Dict, Any
 from functools import lru_cache
 
+# Try to import JIT-compiled kernels
+try:
+    from .nc_jit import (
+        HAS_NUMBA as NC_HAS_NUMBA,
+        convolution_recursion_jit,
+    )
+except ImportError:
+    NC_HAS_NUMBA = False
+    convolution_recursion_jit = None
+
+# Threshold for using JIT (number of population states)
+NC_JIT_THRESHOLD = 100
+
 
 def _factln(n: float) -> float:
     """Compute log(n!) using log-gamma function."""
@@ -159,6 +172,11 @@ def pfqn_ca(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None
     # Compute total number of population vectors
     product_N_plus_one = int(np.prod(N + 1))
 
+    # Use JIT kernel for large state spaces
+    if NC_HAS_NUMBA and product_N_plus_one > NC_JIT_THRESHOLD:
+        N_int = N.astype(np.int64)
+        return convolution_recursion_jit(L, N_int, Z, M, R)
+
     # G[m, idx] = G_m(n) where idx = hashpop(n, N)
     G = np.ones((M + 1, product_N_plus_one))
 
@@ -227,96 +245,196 @@ def pfqn_nc(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     """
     method = method.lower() if method else 'ca'
 
-    if method in ['ca', 'exact']:
-        return pfqn_ca(L, N, Z)
-    elif method == 'panacea':
-        return pfqn_panacea(L, N, Z)
-    elif method == 'propfair':
-        G, lG, _ = pfqn_propfair(L, N, Z)
-        return G, lG
-    elif method == 'le':
-        from .asymptotic import pfqn_le
-        result = pfqn_le(L, N, Z)
-        # pfqn_le returns (lG, XN) - extract lG
-        lG = result[0] if isinstance(result, tuple) else result
-        G = exp(lG) if np.isfinite(lG) else 0.0
-        return G, lG
-    elif method == 'cub':
-        from .asymptotic import pfqn_cub
-        result = pfqn_cub(L, N, Z)
-        lG = result[0] if isinstance(result, tuple) else result
-        G = exp(lG) if np.isfinite(lG) else 0.0
-        return G, lG
-    elif method == 'imci':
-        from .asymptotic import pfqn_mci
-        result = pfqn_mci(L, N, Z)
-        lG = result[0] if isinstance(result, tuple) else result
-        G = exp(lG) if np.isfinite(lG) else 0.0
-        return G, lG
-    elif method in ['mmint2', 'gleint']:
-        from .quadrature import pfqn_mmint2, pfqn_mmint2_gausslegendre
-        if method == 'gleint':
-            lG, _ = pfqn_mmint2_gausslegendre(L, N, Z)
+    # Preprocessing matching MATLAB pfqn_nc:
+    # 1. Convert inputs
+    L = np.atleast_2d(np.asarray(L, dtype=float))
+    N = np.asarray(N, dtype=float).ravel()
+
+    # Early returns
+    if np.any(N < 0) or len(N) == 0:
+        return 0.0, float('-inf')
+    if np.sum(N) == 0:
+        return 1.0, 0.0
+
+    if Z is None:
+        Z = np.zeros(len(N))
+    else:
+        Z = np.asarray(Z, dtype=float).ravel()
+
+    # 2. Erase open classes (inf population -> 0)
+    N = np.where(np.isinf(N), 0.0, N)
+
+    # 3. Remove zero-population classes
+    nnz_classes = np.where(N > 0)[0]
+    if len(nnz_classes) == 0:
+        # All classes have zero population
+        Z_sum = np.sum(Z)
+        if Z_sum == 0:
+            return 1.0, 0.0
         else:
-            lG, _ = pfqn_mmint2(L, N, Z)
-        G = exp(lG) if np.isfinite(lG) else 0.0
-        return G, lG
-    elif method == 'sampling':
-        from .quadrature import pfqn_mmsample2
-        lG, _ = pfqn_mmsample2(L, N, Z)
-        G = exp(lG) if np.isfinite(lG) else 0.0
-        return G, lG
-    elif method == 'kt':
-        from .kt import pfqn_kt
-        lG, _ = pfqn_kt(L, N, Z)
-        G = exp(lG) if np.isfinite(lG) else 0.0
-        return G, lG
-    elif method == 'comom':
-        from .comom import pfqn_comom
-        result = pfqn_comom(L, N, Z)
-        lG = result.lG if hasattr(result, 'lG') else np.nan
-        G = exp(lG) if np.isfinite(lG) else 0.0
-        return G, lG
-    elif method == 'rd':
-        from .rd import pfqn_rd
-        result = pfqn_rd(L, N, Z)
-        lG = result.lG if hasattr(result, 'lG') else np.nan
-        G = exp(lG) if np.isfinite(lG) else 0.0
-        return G, lG
-    elif method == 'ls':
-        from .ls import pfqn_ls
-        # Logistic sampling approximation
-        return pfqn_ls(L, N, Z)
-    elif method == 'nrl':
-        from .laplace import pfqn_nrl
-        lG = pfqn_nrl(L, N, Z)
-        G = exp(lG) if np.isfinite(lG) else 0.0
-        return G, lG
-    elif method == 'nrp':
-        from .laplace import pfqn_nrp
-        lG = pfqn_nrp(L, N, Z)
-        G = exp(lG) if np.isfinite(lG) else 0.0
-        return G, lG
-    elif method == 'default':
-        # Auto-select based on problem size
-        L = np.atleast_2d(np.asarray(L, dtype=float))
-        N = np.asarray(N, dtype=float).ravel()
+            lG = float(-np.sum([_factln(int(N[r])) for r in range(len(N))]) +
+                        np.sum([N[r] * log(max(Z[r], 1e-300)) for r in range(len(N)) if N[r] > 0]))
+            return exp(lG) if np.isfinite(lG) else 0.0, lG
+
+    L = L[:, nnz_classes]
+    N = N[nnz_classes]
+    Z = Z[nnz_classes]
+
+    # 4. Scale demands to improve numerical stability
+    M, R = L.shape
+    scalevec = np.ones(R)
+    for r in range(R):
+        scalevec[r] = max(np.max(L[:, r]), Z[r]) if (np.max(L[:, r]) > 0 or Z[r] > 0) else 1.0
+    L = L / scalevec
+    Z = Z / scalevec
+
+    # 5. Remove zero-demand stations
+    Lsum = np.sum(L, axis=1)
+    dem_stations = np.where(Lsum > 1e-12)[0]
+    L = L[dem_stations, :]
+
+    # Check degenerate: no demand at any station
+    if L.size == 0 or np.sum(L) < 1e-12:
+        Z_sum = np.sum(Z)
+        if Z_sum < 1e-12:
+            lG = 0.0
+        else:
+            lG = float(-np.sum([_factln(int(N[r])) for r in range(R)]) +
+                        np.sum([N[r] * log(max(Z[r], 1e-300)) for r in range(R) if N[r] > 0]) +
+                        np.dot(N, np.log(scalevec)))
+        return exp(lG) if np.isfinite(lG) else 0.0, lG
+
+    M, R = L.shape
+    Ntot = int(np.sum(N))
+
+    # Dispatch to method
+    def _compute_nc(L, N, Z, method):
         M, R = L.shape
         Ntot = int(np.sum(N))
+        Z_row = Z  # Z is already 1D
 
-        # Use CA for small problems, asymptotic for large
-        if Ntot * R <= 500:
-            return pfqn_ca(L, N, Z)
-        else:
-            # Use LE for large problems
+        if method in ['ca', 'exact']:
+            return pfqn_ca(L, N, Z_row)
+        elif method == 'panacea':
+            return pfqn_panacea(L, N, Z_row)
+        elif method == 'propfair':
+            G, lG, _ = pfqn_propfair(L, N, Z_row)
+            return G, lG
+        elif method == 'le':
             from .asymptotic import pfqn_le
-            result = pfqn_le(L, N, Z)
+            result = pfqn_le(L, N, Z_row)
             lG = result[0] if isinstance(result, tuple) else result
             G = exp(lG) if np.isfinite(lG) else 0.0
             return G, lG
-    else:
-        # Default to convolution algorithm
-        return pfqn_ca(L, N, Z)
+        elif method == 'cub':
+            from .asymptotic import pfqn_cub
+            order = int(np.ceil((Ntot - 1) / 2))
+            result = pfqn_cub(L, N, Z_row, order=order, atol=1e-8)
+            lG = result[1] if isinstance(result, tuple) else result
+            G = exp(lG) if np.isfinite(lG) else 0.0
+            return G, lG
+        elif method == 'imci':
+            from .asymptotic import pfqn_mci
+            result = pfqn_mci(L, N, Z_row)
+            lG = result[0] if isinstance(result, tuple) else result
+            G = exp(lG) if np.isfinite(lG) else 0.0
+            return G, lG
+        elif method in ['mmint2', 'gleint']:
+            from .quadrature import pfqn_mmint2, pfqn_mmint2_gausslegendre
+            if method == 'gleint':
+                lG, _ = pfqn_mmint2_gausslegendre(L, N, Z_row)
+            else:
+                lG, _ = pfqn_mmint2(L, N, Z_row)
+            G = exp(lG) if np.isfinite(lG) else 0.0
+            return G, lG
+        elif method == 'sampling':
+            from .quadrature import pfqn_mmsample2
+            lG, _ = pfqn_mmsample2(L, N, Z_row)
+            G = exp(lG) if np.isfinite(lG) else 0.0
+            return G, lG
+        elif method == 'kt':
+            from .kt import pfqn_kt
+            lG, _ = pfqn_kt(L, N, Z_row)
+            G = exp(lG) if np.isfinite(lG) else 0.0
+            return G, lG
+        elif method == 'comom':
+            from .comom import pfqn_comom
+            result = pfqn_comom(L, N, Z_row)
+            lG = result.lG if hasattr(result, 'lG') else np.nan
+            G = exp(lG) if np.isfinite(lG) else 0.0
+            return G, lG
+        elif method == 'rd':
+            from .rd import pfqn_rd
+            result = pfqn_rd(L, N, Z_row)
+            # pfqn_rd returns a tuple (lGN, Cgamma)
+            lG = result[0] if isinstance(result, tuple) else result.lGN
+            G = exp(lG) if np.isfinite(lG) else 0.0
+            return G, lG
+        elif method == 'ls':
+            from .ls import pfqn_ls
+            return pfqn_ls(L, N, Z_row)
+        elif method == 'nrl':
+            from .laplace import pfqn_nrl
+            lG = pfqn_nrl(L, N, Z_row)
+            G = exp(lG) if np.isfinite(lG) else 0.0
+            return G, lG
+        elif method == 'nrp':
+            from .laplace import pfqn_nrp
+            lG = pfqn_nrp(L, N, Z_row)
+            G = exp(lG) if np.isfinite(lG) else 0.0
+            return G, lG
+        elif method == 'default':
+            from math import comb
+            from .asymptotic import pfqn_cub, pfqn_le
+            if M > 1:
+                if Ntot < 1000:
+                    # CUB with order selection matching MATLAB cost budget
+                    Cmax = M * R * (50 ** 3)
+                    maxorder = min(int(np.ceil((Ntot - 1) / 2)), 16)
+                    order = 0
+                    totCost = 0
+                    while order < maxorder:
+                        nextCost = R * comb(M + 2 * (order + 1), M - 1)
+                        if totCost + nextCost <= Cmax:
+                            order += 1
+                            totCost += nextCost
+                        else:
+                            break
+                    result = pfqn_cub(L, N, Z_row, order=order, atol=1e-8)
+                    lG = result[1] if isinstance(result, tuple) else result
+                    G = exp(lG) if np.isfinite(lG) else 0.0
+                    return G, lG
+                else:
+                    result = pfqn_le(L, N, Z_row)
+                    lG = result[0] if isinstance(result, tuple) else result
+                    G = exp(lG) if np.isfinite(lG) else 0.0
+                    return G, lG
+            elif M == 1:
+                Z_sum = np.sum(Z_row)
+                if Z_sum < 1e-12:
+                    # Single queue, no delay: exact formula
+                    lG = float(-np.dot(N, np.log(L[0, :])))
+                    G = exp(lG) if np.isfinite(lG) else 0.0
+                    return G, lG
+                else:
+                    if Ntot < 10000:
+                        return pfqn_ca(L, N, Z_row)
+                    else:
+                        result = pfqn_le(L, N, Z_row)
+                        lG = result[0] if isinstance(result, tuple) else result
+                        G = exp(lG) if np.isfinite(lG) else 0.0
+                        return G, lG
+            else:
+                return pfqn_ca(L, N, Z_row)
+        else:
+            return pfqn_ca(L, N, Z_row)
+
+    G, lG = _compute_nc(L, N, Z, method)
+
+    # Scale back: lG += N * log(scalevec)
+    lG = lG + float(np.dot(N, np.log(scalevec)))
+    G = exp(lG) if np.isfinite(lG) else 0.0
+    return G, lG
 
 
 def pfqn_panacea(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None

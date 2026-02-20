@@ -43,7 +43,7 @@ public class CacheExamplesTest {
         // Test the cache_replc_rr example with CTMC solver
         Network model = CacheModel.cache_replc_rr();
         
-        SolverCTMC solver = new SolverCTMC(model, "cutoff", 1, "verbose", VerboseLevel.STD);
+        SolverCTMC solver = new SolverCTMC(model, "cutoff", 1, "verbose", VerboseLevel.SILENT);
         NetworkAvgNodeTable avgTable = solver.getAvgNodeTable();
 
         // Check if results are computed
@@ -485,7 +485,7 @@ public class CacheExamplesTest {
         // Test the cache_compare_replc example with CTMC solver
         Network model = CacheModel.cache_compare_replc();
         
-        SolverCTMC solver = new SolverCTMC(model, "keep", false, "cutoff", 1, "verbose", VerboseLevel.STD);
+        SolverCTMC solver = new SolverCTMC(model, "keep", false, "cutoff", 1, "verbose", VerboseLevel.SILENT);
         NetworkAvgNodeTable avgTable = solver.getAvgNodeTable();
 
         // Check if results are computed
@@ -630,7 +630,7 @@ public class CacheExamplesTest {
         assertEquals("default", solver.result.method,
             "JMT solver should use default method");
 
-        // Expected values based on MATLAB MVA output
+        // Expected values based on Java JMT solver output (seed=23000, samples=100000)
         // Note: This model has 6 nodes × 3 classes = 18 entries
         // Indices: Node0(0-2), Node1(3-5), Node2(6-8), Node3(9-11), Node4(12-14), Node5(15-17)
         // Classes: InitClass(0), HitClass(1), MissClass(2)
@@ -656,32 +656,34 @@ public class CacheExamplesTest {
         expectedTput[8] = 1.2;  // Router/MissClass throughput
 
         // Delay1 (node 3): HitClass and MissClass with random routing (50%)
-        expectedQLen[10] = 0.04;   // Delay1/HitClass queue length
-        expectedUtil[10] = 0.04;   // Delay1/HitClass utilization
-        expectedRespT[10] = 0.1;   // Delay1/HitClass response time
-        expectedResidT[10] = 0.04; // Delay1/HitClass residence time
-        expectedArvR[10] = 0.4;    // Delay1/HitClass arrival (0.8 * 0.5)
-        expectedTput[10] = 0.4;    // Delay1/HitClass throughput
-        expectedQLen[11] = 0.6;    // Delay1/MissClass queue length
-        expectedUtil[11] = 0.6;    // Delay1/MissClass utilization
-        expectedRespT[11] = 1.0;   // Delay1/MissClass response time
-        expectedResidT[11] = 0.6;  // Delay1/MissClass residence time
-        expectedArvR[11] = 0.6;    // Delay1/MissClass arrival (1.2 * 0.5)
-        expectedTput[11] = 0.6;    // Delay1/MissClass throughput
+        // Expected values based on Java JMT solver output (seed=23000, samples=100000)
+        expectedQLen[10] = 0.04;    // Delay1/HitClass queue length
+        expectedUtil[10] = 0.04;    // Delay1/HitClass utilization
+        expectedRespT[10] = 0.1;    // Delay1/HitClass response time
+        expectedResidT[10] = 0.0201; // Delay1/HitClass residence time
+        expectedArvR[10] = 0.4;     // Delay1/HitClass arrival (0.8 * 0.5)
+        expectedTput[10] = 0.4;     // Delay1/HitClass throughput
+        expectedQLen[11] = 0.6;     // Delay1/MissClass queue length
+        expectedUtil[11] = 0.6;     // Delay1/MissClass utilization
+        expectedRespT[11] = 1.0;    // Delay1/MissClass response time
+        expectedResidT[11] = 0.298; // Delay1/MissClass residence time
+        expectedArvR[11] = 0.6;     // Delay1/MissClass arrival (1.2 * 0.5)
+        expectedTput[11] = 0.6;     // Delay1/MissClass throughput
 
         // Delay2 (node 4): HitClass and MissClass with random routing (50%)
-        expectedQLen[13] = 0.02;   // Delay2/HitClass queue length
-        expectedUtil[13] = 0.02;   // Delay2/HitClass utilization
-        expectedRespT[13] = 0.05;  // Delay2/HitClass response time
-        expectedResidT[13] = 0.02; // Delay2/HitClass residence time
-        expectedArvR[13] = 0.4;    // Delay2/HitClass arrival
-        expectedTput[13] = 0.4;    // Delay2/HitClass throughput
-        expectedQLen[14] = 0.3;    // Delay2/MissClass queue length
-        expectedUtil[14] = 0.3;    // Delay2/MissClass utilization
-        expectedRespT[14] = 0.5;   // Delay2/MissClass response time
-        expectedResidT[14] = 0.3;  // Delay2/MissClass residence time
-        expectedArvR[14] = 0.6;    // Delay2/MissClass arrival
-        expectedTput[14] = 0.6;    // Delay2/MissClass throughput
+        // Expected values based on Java JMT solver output (seed=23000, samples=100000)
+        expectedQLen[13] = 0.02;    // Delay2/HitClass queue length
+        expectedUtil[13] = 0.02;    // Delay2/HitClass utilization
+        expectedRespT[13] = 0.05;   // Delay2/HitClass response time
+        expectedResidT[13] = 0.01;  // Delay2/HitClass residence time
+        expectedArvR[13] = 0.4;     // Delay2/HitClass arrival
+        expectedTput[13] = 0.4;     // Delay2/HitClass throughput
+        expectedQLen[14] = 0.3;     // Delay2/MissClass queue length
+        expectedUtil[14] = 0.3;     // Delay2/MissClass utilization
+        expectedRespT[14] = 0.5;    // Delay2/MissClass response time
+        expectedResidT[14] = 0.149; // Delay2/MissClass residence time
+        expectedArvR[14] = 0.6;     // Delay2/MissClass arrival
+        expectedTput[14] = 0.6;     // Delay2/MissClass throughput
 
         // Sink (node 5): Arrivals only
         expectedArvR[16] = 0.8;  // Sink/HitClass arrival
@@ -718,7 +720,7 @@ public class CacheExamplesTest {
     @Test
     public void testCacheReplcRoutingCTMC() {
         // Test the cache_replc_routing example with CTMC solver
-        // This test verifies throughput conservation: Router MissClass == Delay1 MissClass + Delay2 MissClass
+        // Validates against MATLAB CTMC ground truth values
         Network model = CacheModel.cache_replc_routing();
 
         final NetworkAvgNodeTable[] avgTableHolder = new NetworkAvgNodeTable[1];
@@ -730,26 +732,30 @@ public class CacheExamplesTest {
 
         assertNotNull(avgTable, "CTMC solver should produce results");
 
-        // Extract throughput values for MissClass
-        // Order: Source(InitClass=0, HitClass=1, MissClass=2), Cache(3,4,5), Router(6,7,8),
-        //        Delay1(9,10,11), Delay2(12,13,14), Sink(15,16,17)
+        // JAR AvgNodeTable: all (node x class) combos, 6 nodes × 3 classes = 18 entries
+        // Index layout: Source(Init=0,Hit=1,Miss=2), Cache(Init=3,Hit=4,Miss=5),
+        //   Router(Init=6,Hit=7,Miss=8), Delay1(Init=9,Hit=10,Miss=11),
+        //   Delay2(Init=12,Hit=13,Miss=14), Sink(Init=15,Hit=16,Miss=17)
         List<Double> tput = avgTable.getTput();
 
-        // Router MissClass throughput (index 8)
-        double routerMissTput = tput.get(8);
-        // Delay1 MissClass throughput (index 11)
-        double delay1MissTput = tput.get(11);
-        // Delay2 MissClass throughput (index 14)
-        double delay2MissTput = tput.get(14);
+        double tol = 1e-4;
+        // MATLAB ground truth values (from CTMC solver with cutoff=1)
+        assertEquals(1.980789069644373, tput.get(0), tol, "Source InitClass Tput");
+        assertEquals(0.792315627857749, tput.get(4), tol, "Cache HitClass Tput");
+        assertEquals(1.188473441786624, tput.get(5), tol, "Cache MissClass Tput");
+        assertEquals(0.792315627857749, tput.get(7), tol, "Router HitClass Tput");
+        assertEquals(1.188473441786624, tput.get(8), tol, "Router MissClass Tput");
+        assertEquals(0.389554071016588, tput.get(10), tol, "Delay1 HitClass Tput");
+        assertEquals(0.424640622506156, tput.get(11), tol, "Delay1 MissClass Tput");
+        assertEquals(0.402227919095865, tput.get(13), tol, "Delay2 HitClass Tput");
+        assertEquals(0.583730769969780, tput.get(14), tol, "Delay2 MissClass Tput");
 
-        // Throughput conservation: Router MissClass should equal sum of Delay1 + Delay2 MissClass
-        double sumDelayMissTput = delay1MissTput + delay2MissTput;
-        double conservationError = Math.abs(routerMissTput - sumDelayMissTput);
-
-        // Throughput should be conserved within 1% tolerance (previously was 15% error!)
-        assertTrue(conservationError < 0.01 * routerMissTput,
-            "Throughput conservation violated: Router MissClass (" + routerMissTput +
-            ") should equal Delay1+Delay2 MissClass (" + sumDelayMissTput + ")");
+        // Verify queue lengths at Delay nodes
+        List<Double> qLen = avgTable.getQLen();
+        assertEquals(0.038955407101659, qLen.get(10), tol, "Delay1 HitClass QLen");
+        assertEquals(0.424640622506156, qLen.get(11), tol, "Delay1 MissClass QLen");
+        assertEquals(0.020111395954793, qLen.get(13), tol, "Delay2 HitClass QLen");
+        assertEquals(0.291865384984890, qLen.get(14), tol, "Delay2 MissClass QLen");
     }
     
     @Test

@@ -674,8 +674,14 @@ class LayeredTest {
             SolverLN solverMVA = new SolverLN(model, (m) -> new SolverMVA(m, createBaseSolverOptions()), createLNOptions());
             LayeredNetworkAvgTable mvaResults = (LayeredNetworkAvgTable) solverMVA.getAvgTable();
 
-            // Solve with LINE Fluid
-            SolverLN solverFluid = new SolverLN(model, (m) -> new SolverFluid(m, createBaseSolverOptions()), createLNOptions());
+            // Solve with LINE Fluid - use SolverFluid.defaultOptions() to get FLUID-specific
+            // settings (hide_immediate, stiff solver, etc.) needed for LN sub-models
+            SolverOptions fluidOptions = SolverFluid.defaultOptions();
+            fluidOptions.iter_max = 150;
+            fluidOptions.iter_tol = 1e-8;
+            fluidOptions.verbose = VerboseLevel.SILENT;
+            fluidOptions.method = "closing";
+            SolverLN solverFluid = new SolverLN(model, (m) -> new SolverFluid(m, fluidOptions), createLNOptions());
             LayeredNetworkAvgTable fluidResults = (LayeredNetworkAvgTable) solverFluid.getAvgTable();
 
             // Compare MVA vs Fluid
@@ -819,6 +825,8 @@ class LayeredTest {
     void activityBoundTo() {
         LayeredNetwork lqn = new LayeredNetwork("LQN");
         Activity activity = new Activity(lqn, "A1", new Exp(1.0));
+        Task task = new Task(lqn, "T1", 1, SchedStrategy.PS);
+        activity.on(task);
         Entry entry = new Entry(lqn, "E1");
         activity.boundTo(entry);
         assertEquals(activity.boundToEntry, "E1");
@@ -1060,7 +1068,7 @@ class LayeredTest {
      *
      * Compares LQNS and SolverLN results for parity.
      */
-    @Disabled("Complex activity graph - LQNS has AND-fork/join limitation, SolverLN has large errors")
+    @Disabled("Requires LQNS >= 5.32 (v6.2.28 has a bug with OR-fork/join followed by AND-fork/join)")
     @Test
     void woodsideTutorialActivityGraph() {
         LayeredNetwork model = new LayeredNetwork("WoodsideTutorial");
@@ -1104,7 +1112,7 @@ class LayeredTest {
         Activity a11 = new Activity(model, "a11", Exp.fitMean(0.1)).on(taskT);
         Activity a12 = new Activity(model, "a12", Exp.fitMean(0.1)).on(taskT);
         Activity a13 = new Activity(model, "a13", Exp.fitMean(0.1)).on(taskT);
-        Activity a14 = new Activity(model, "a14", Exp.fitMean(0.1)).on(taskT).synchCall(entryELOOP, 1.7);
+        Activity a14 = new Activity(model, "a14", Exp.fitMean(0.1)).on(taskT).synchCall(entryELOOP, 2);
 
         // Activities for Loop pseudo-task (defines the loop behavior)
         Activity loopStart = new Activity(model, "loopStart", Exp.fitMean(0.1)).on(loopTask).boundTo(entryELOOP);
@@ -1199,7 +1207,7 @@ class LayeredTest {
         try {
             LQNSOptions lqsimOptions = new LQNSOptions();
             lqsimOptions.method = "lqsim";
-            lqsimOptions.samples = 10000;  // Simulation run time
+            lqsimOptions.samples = 100000;  // Simulation run time (high for stable reference)
             lqsimOptions.verbose = VerboseLevel.SILENT;
             SolverLQNS solverLQSIM = new SolverLQNS(model, lqsimOptions);
             lqsimResults = (LayeredNetworkAvgTable) solverLQSIM.getAvgTable();
@@ -1281,6 +1289,11 @@ class LayeredTest {
                     }
                 }
                 System.out.printf("  Max LQNS error: %.2f%% (%s)%n", maxLqnsError, maxLqnsErrorName);
+
+                // Assert error bounds against LQSIM reference
+                assertTrue(maxLqnsError < 20.0,
+                        String.format("LQNS max error %.2f%% at %s exceeds 20%% threshold vs LQSIM",
+                                maxLqnsError, maxLqnsErrorName));
             } else if (!lqnsUnsupported) {
                 System.out.println("\n===== LQNS vs LQSIM Errors =====");
                 System.out.println("  LQNS: Not available or failed");
@@ -1311,9 +1324,10 @@ class LayeredTest {
                 }
                 System.out.printf("  Max SolverLN error: %.2f%% (%s)%n", maxLnError, maxLnErrorName);
 
-                // Note: Large errors are expected for complex models with mixed OR/AND precedence
-                // SolverLN uses approximations that may not be accurate for such patterns
-                // This comparison is informational - see LQSIM results for ground truth
+                // Assert error bounds against LQSIM reference
+                assertTrue(maxLnError < 25.0,
+                        String.format("SolverLN max error %.2f%% at %s exceeds 25%% threshold vs LQSIM",
+                                maxLnError, maxLnErrorName));
             } else {
                 System.out.println("\n===== SolverLN vs LQSIM Errors =====");
                 System.out.println("  SolverLN: Failed to produce results");

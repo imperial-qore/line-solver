@@ -27,9 +27,7 @@ fun solver_mam_analyzer(snInput: NetworkStruct, options: SolverOptions): MAMResu
     val isClosed = snIsClosedModel(sn)
     val isMixed = isOpen && isClosed
     
-    if (isMixed) {
-        throw RuntimeException("SolverMAM does not support mixed models with both open and closed classes.")
-    }
+    // Mixed models are supported by the dec.source method
     
     options.config.merge = "super"
     options.config.compress = "mixture.order1"

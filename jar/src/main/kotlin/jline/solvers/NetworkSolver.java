@@ -8,6 +8,7 @@ package jline.solvers;
 import static jline.GlobalConstants.Inf;
 
 import jline.GlobalConstants;
+import jline.VerboseLevel;
 import jline.io.Ret.DistributionResult;
 import jline.io.Ret.ProbabilityResult;
 import jline.io.Ret.SampleResult;
@@ -605,11 +606,20 @@ public abstract class NetworkSolver extends Solver {
         }
 
         // set to zero metrics for classes that are unreachable
-        for (int k = 0; k < K; k++) {
-            int c = (int) sn.chains.getColumn(k).find().value();
-            for (int i = 0; i < M; i++) {
-                if (sn.visits.get(c).get(i, k) == 0) {
-                    outData.set(i, k, 0);
+        // skip when no chains are defined (routing not specified)
+        // skip for SPN models where Places don't have traditional visits
+        boolean hasSPN = sn.nodetype.contains(NodeType.Place) || sn.nodetype.contains(NodeType.Transition);
+
+        if (sn.nchains > 0 && !hasSPN) {
+            for (int k = 0; k < K; k++) {
+                Matrix chainCol = sn.chains.getColumn(k);
+                if (chainCol.elementMax() > 0) { // Only check if class k belongs to a chain
+                    int c = (int) chainCol.find().value();
+                    for (int i = 0; i < M; i++) {
+                        if (sn.visits.get(c).get(i, k) == 0) {
+                            outData.set(i, k, 0);
+                        }
+                    }
                 }
             }
         }
@@ -628,7 +638,6 @@ public abstract class NetworkSolver extends Solver {
 
         if (this.avgHandles == null || this.avgHandles.Q == null || this.avgHandles.U == null || this.avgHandles.R == null ||
                 this.avgHandles.T == null || this.avgHandles.A == null) {
-            System.err.println("DEBUG getAvg: calling reset()");
             reset();
         }
         this.avgHandles = model.getAvgHandles();
@@ -895,7 +904,9 @@ public abstract class NetworkSolver extends Solver {
             res.runtime = this.result.runtime;
             res.iter = this.result.iter;
         }
-        this.result = res;
+        // Note: Do NOT overwrite this.result here as it would replace class-level
+        // results (M x K) with chain-level results (M x C), breaking subsequent
+        // calls to getAvgSys() which expect class-level dimensions.
         return res;
     }
 
@@ -914,27 +925,29 @@ public abstract class NetworkSolver extends Solver {
         int M = sn.nstations;
         int C = sn.nchains;
 
+        SolverResult chainResult = null;
         try {
             if (!isInf(options.timespan[1]) && !Double.isNaN(options.timespan[1])) {
                 this.tranHandles = model.getTranHandles();
                 //getTranAvg();
             } else {
-                getAvgChain();
+                chainResult = getAvgChain();
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
 
-        Matrix QN = this.result.QN;
-        Matrix UN = this.result.UN;
-        Matrix RN = this.result.RN;
-        Matrix TN = this.result.TN;
-        Matrix AN = this.result.AN;
-        Matrix WN = this.result.WN;
+        // Use the chain-aggregated results, not this.result which has class-level dimensions
+        Matrix QN = chainResult != null ? chainResult.QN : null;
+        Matrix UN = chainResult != null ? chainResult.UN : null;
+        Matrix RN = chainResult != null ? chainResult.RN : null;
+        Matrix TN = chainResult != null ? chainResult.TN : null;
+        Matrix AN = chainResult != null ? chainResult.AN : null;
+        Matrix WN = chainResult != null ? chainResult.WN : null;
 
         if (QN == null || QN.isEmpty()) {
             throw new RuntimeException(
-                    "Unable to compute results and therefore unable to print AvgTable.");
+                    "Unable to compute results and therefore unable to print AvgChainTable.");
         }
 
         if (!keepDisabled) {
@@ -1088,27 +1101,29 @@ public abstract class NetworkSolver extends Solver {
         int M = sn.nstations;
         int C = sn.nchains;
 
+        SolverResult chainResult = null;
         try {
             if (!isInf(options.timespan[1]) && !Double.isNaN(options.timespan[1])) {
                 this.tranHandles = model.getTranHandles();
                 //getTranAvg();
             } else {
-                getAvgChain();
+                chainResult = getAvgChain();
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
 
-        Matrix QN = this.result.QN;
-        Matrix UN = this.result.UN;
-        Matrix RN = this.result.RN;
-        Matrix TN = this.result.TN;
-        Matrix AN = this.result.AN;
-        Matrix WN = this.result.WN;
+        // Use the chain-aggregated results, not this.result which has class-level dimensions
+        Matrix QN = chainResult != null ? chainResult.QN : null;
+        Matrix UN = chainResult != null ? chainResult.UN : null;
+        Matrix RN = chainResult != null ? chainResult.RN : null;
+        Matrix TN = chainResult != null ? chainResult.TN : null;
+        Matrix AN = chainResult != null ? chainResult.AN : null;
+        Matrix WN = chainResult != null ? chainResult.WN : null;
 
         if (QN == null || QN.isEmpty()) {
             throw new RuntimeException(
-                    "Unable to compute results and therefore unable to print AvgTable.");
+                    "Unable to compute results and therefore unable to print AvgChainTable.");
         }
 
         List<Double> Qval = new ArrayList<>();
@@ -3307,7 +3322,7 @@ public abstract class NetworkSolver extends Solver {
         } catch (Exception e) {
             e.printStackTrace();
             throw new RuntimeException(
-                    "Unable to compute results and therefore unable to print AvgTable.");
+                    "Unable to compute results and therefore unable to print AvgTable.", e);
         }
 
         // Check if result is null or incomplete before accessing fields
@@ -3353,7 +3368,7 @@ public abstract class NetworkSolver extends Solver {
             List<String> stationName = new ArrayList<>();
             for (int i = 0; i < M; i++) {
                 for (int k = 0; k < K; k++) {
-                    if (QN.get(i, k) + UN.get(i, k) + TN.get(i, k) > 0) {
+                    if (QN.get(i, k) + UN.get(i, k) + RN.get(i, k) + TN.get(i, k) + AN.get(i, k) + WN.get(i, k) > 0) {
                         int c = -1;
                         for (int row = 0; row < sn.chains.getNumRows(); row++) {
                             if (sn.chains.get(row, k) > 0) {
@@ -4411,29 +4426,29 @@ public abstract class NetworkSolver extends Solver {
         this.result.runtime = runtime;
         this.result.method = method;
 
-        // Commented out to suppress print statements
-        // if (this.options.verbose != VerboseLevel.SILENT) {
-        //     if (iter <= 1) {
-        //         System.out.printf(
-        //                 "%s analysis [method: %s, lang: %s, env: %s] completed in %fs.\n",
-        //                 this.name.replaceFirst("^Solver", ""),   // solver name with prefix stripped
-        //                 this.result.method,                      // algorithm/method
-        //                 "java",                                  // language label
-        //                 System.getProperty("java.version"),      // actual JVM version in use
-        //                 this.result.runtime                      // elapsed time in seconds
-        //         );
-        //     } else {
-        //         System.out.printf(
-        //                 "%s analysis [method: %s, lang: %s, env: %s] completed in %fs. Iterations: %d.\n",
-        //                 this.name.replaceFirst("^Solver", ""),   // solver name with prefix stripped
-        //                 this.result.method,                      // algorithm/method
-        //                 "java",                                  // language label
-        //                 System.getProperty("java.version"),      // actual JVM version in use
-        //                 this.result.runtime,                     // elapsed time in seconds
-        //                 iter                                     // iteration count
-        //         );
-        //     }
-        // }
+        if (this.options.verbose != VerboseLevel.SILENT) {
+            if (iter <= 1) {
+                System.out.printf(
+                        "%s analysis [method: %s, lang: %s, env: %s] completed in %fs.\n",
+                        this.name.replaceFirst("^Solver", ""),   // solver name with prefix stripped
+                        this.result.method,                      // algorithm/method
+                        "java",                                  // language label
+                        System.getProperty("java.version"),      // actual JVM version in use
+                        this.result.runtime                      // elapsed time in seconds
+                );
+            } else {
+                System.out.printf(
+                        "%s analysis [method: %s, lang: %s, env: %s] completed in %fs. Iterations: %d.\n",
+                        this.name.replaceFirst("^Solver", ""),   // solver name with prefix stripped
+                        this.result.method,                      // algorithm/method
+                        "java",                                  // language label
+                        System.getProperty("java.version"),      // actual JVM version in use
+                        this.result.runtime,                     // elapsed time in seconds
+                        iter                                     // iteration count
+                );
+            }
+            System.out.flush();
+        }
     }
 
     /**
@@ -4472,13 +4487,14 @@ public abstract class NetworkSolver extends Solver {
             Ct, Matrix[][] Xt, double runtimet) {
         this.result.solver = getName();
         this.result.method = getOptions().method;
-        // Check for NaN values and set to empty matrices if found
-        this.result.QNt = hasNaNValues(Qt) ? new Matrix[0][0] : Qt.clone();
-        this.result.UNt = hasNaNValues(Ut) ? new Matrix[0][0] : Ut.clone();
-        this.result.RNt = hasNaNValues(Rt) ? new Matrix[0][0] : Rt.clone();
-        this.result.TNt = hasNaNValues(Tt) ? new Matrix[0][0] : Tt.clone();
-        this.result.CNt = hasNaNValues(Ct) ? new Matrix[0][0] : Ct.clone();
-        this.result.XNt = hasNaNValues(Xt) ? new Matrix[0][0] : Xt.clone();
+        // NaN values in transient metrics are normal (e.g., throughput at time 0
+        // when no jobs exist at a station), so store the arrays as-is
+        this.result.QNt = Qt != null ? Qt.clone() : new Matrix[0][0];
+        this.result.UNt = Ut != null ? Ut.clone() : new Matrix[0][0];
+        this.result.RNt = Rt != null ? Rt.clone() : new Matrix[0][0];
+        this.result.TNt = Tt != null ? Tt.clone() : new Matrix[0][0];
+        this.result.CNt = Ct != null ? Ct.clone() : new Matrix[0][0];
+        this.result.XNt = Xt != null ? Xt.clone() : new Matrix[0][0];
         this.result.runtime = runtimet;
     }
 

@@ -595,7 +595,6 @@ public class MapqnAPITest {
      */
     @Test
     @Timeout(value = 2, unit = TimeUnit.MINUTES)
-    @Disabled("Known limitation: Apache Commons Math SimplexSolver cannot converge for M>2 networks due to simplex cycling. Use MATLAB's linprog with interior-point algorithm or LR bounds instead.")
     public void testRSRD_asymmetric_3queue_M3_N3() {
         // MATLAB reference values
         final double MATLAB_LB = 0.8565395986;
@@ -719,5 +718,100 @@ public class MapqnAPITest {
 
         // With N=3 jobs, utilization should be positive
         assertTrue(LB > 0, "With 3 jobs, utilization lower bound should be positive");
+    }
+
+    /**
+     * Test BAS with actual blocking configurations (MR=2).
+     * 2-queue tandem with blocking, validates MM indexing fix (1-based to 0-based).
+     *
+     * Configuration: M=2, N=3, f=1, F=[2,3], K=[2,2], MR=2
+     * MATLAB reference (qrf_bas.m):
+     *   Lower bound: 0.718653
+     *   Upper bound: 0.823197
+     */
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.MINUTES)
+    public void testBAS_blocking_M2_MR2() {
+        final double MATLAB_LB = 0.718653;
+        final double MATLAB_UB = 0.823197;
+
+        int M = 2;
+        int N = 3;
+        int f = 1;  // Finite capacity queue (1-based)
+        int[] K = {2, 2};
+        int[] F = {2, 3};
+
+        // Service rates mu{i}(k,h)
+        Matrix[] mu = new Matrix[M];
+        mu[0] = new Matrix(new double[][]{
+            {1.0, 0.1},
+            {0.1, 0.5}
+        });
+        mu[1] = new Matrix(new double[][]{
+            {0.8, 0.2},
+            {0.2, 0.6}
+        });
+
+        // Background transition rates (zeros)
+        Matrix[] v = new Matrix[M];
+        for (int i = 0; i < M; i++) {
+            v[i] = new Matrix(new double[][]{{0.0, 0.0}, {0.0, 0.0}});
+        }
+
+        // Routing probabilities (tandem)
+        Matrix r = new Matrix(new double[][]{
+            {0.0, 1.0},
+            {1.0, 0.0}
+        });
+
+        // Blocking configurations (MR=2)
+        int MR = 2;
+
+        // BB(m, i) = 1 if queue i is blocked in configuration m
+        Matrix BB = new Matrix(new double[][]{
+            {0, 0},   // m=0: no blocking
+            {0, 1}    // m=1: queue 2 blocked
+        });
+
+        // MM(m, order) = queue index (1-based) at position 'order' in blocking list
+        Matrix MM = new Matrix(new double[][]{
+            {0, 0},   // m=0: no blocking
+            {2, 0}    // m=1: queue 2 first (1-based)
+        });
+
+        // ZZ(m) = number of blocked queues in configuration m
+        int[] ZZ = {0, 1};
+
+        // MM1(m, j) = extended blocking order info
+        Matrix MM1 = new Matrix(new double[][]{
+            {0, 0},
+            {0, 0}
+        });
+
+        Mapqn_qr_bounds_bas_parameters params = new Mapqn_qr_bounds_bas_parameters(
+            M, N, MR, f, K, F, MM, MM1, ZZ, BB, mu, v, r);
+
+        Mapqn_solution solMin = Mapqn_qr_bounds_bas.INSTANCE.solve(params, 1, "min");
+        Mapqn_solution solMax = Mapqn_qr_bounds_bas.INSTANCE.solve(params, 1, "max");
+
+        assertNotNull(solMin, "Min solution should not be null");
+        assertNotNull(solMax, "Max solution should not be null");
+
+        double lineLB = solMin.getObjectiveValue();
+        double lineUB = solMax.getObjectiveValue();
+
+        assertFalse(Double.isNaN(lineLB), "Lower bound should not be NaN");
+        assertFalse(Double.isNaN(lineUB), "Upper bound should not be NaN");
+
+        // Basic consistency
+        assertTrue(lineLB >= 0, "Lower bound should be non-negative");
+        assertTrue(lineUB <= 1, "Upper bound should not exceed 1");
+        assertTrue(lineLB <= lineUB + 1e-6, "Lower bound should not exceed upper bound");
+
+        // Validate against MATLAB reference
+        assertEquals(MATLAB_LB, lineLB, MATLAB_TOLERANCE,
+            String.format("BAS LB (%.6f) should match MATLAB reference (%.6f)", lineLB, MATLAB_LB));
+        assertEquals(MATLAB_UB, lineUB, MATLAB_TOLERANCE,
+            String.format("BAS UB (%.6f) should match MATLAB reference (%.6f)", lineUB, MATLAB_UB));
     }
 }

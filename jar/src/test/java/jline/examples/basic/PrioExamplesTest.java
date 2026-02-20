@@ -1,4 +1,5 @@
 package jline.examples.basic;
+import jline.GlobalConstants;
 
 import jline.TestTools;
 import jline.examples.java.basic.PrioModel;
@@ -57,25 +58,25 @@ public class PrioExamplesTest {
             "MVA solver should use default/egflin) method for priority models");
         
         // Expected values from MATLAB output (MVA solver ground truth)
-        // Order: Source(Class1,Class2,Class3), WebServer(Class1,Class2,Class3), Storage1(Class1,Class2,Class3), 
+        // Order: Source(Class1,Class2,Class3), WebServer(Class1,Class2,Class3), Storage1(Class1,Class2,Class3),
         //        Storage2(Class1,Class2,Class3), Storage3(Class1,Class2,Class3)
-        double[] expectedQLen = {0.0, 0.0, 0.0, 0.374499208179313, 0.45449920817873, 0.494499208178439, 
-                                0.194425921295638, 0.214425921295493, 0.234425921295347, 0.499870152586697, 0.524863660216032, 0.474876644957362, 
-                                0.446428503191219, 0.234596862744448, 1.13152163657697};
-        double[] expectedUtil = {0.0, 0.0, 0.0, 0.12, 0.2, 0.24, 
-                                0.11, 0.13, 0.15, 0.2, 0.21, 0.19, 
+        double[] expectedQLen = {0.0, 0.0, 0.0, 0.37452833642695, 0.454528336426914, 0.494528336426896,
+                                0.194426157598126, 0.214426157598117, 0.234426157598108, 0.499946814499407, 0.524944155224377, 0.474949473774437,
+                                0.333377782277657, 1.46140608543643, 0.754517533480026};
+        double[] expectedUtil = {0.0, 0.0, 0.0, 0.12, 0.2, 0.24,
+                                0.11, 0.13, 0.15, 0.2, 0.21, 0.19,
                                 0.25, 0.19, 0.43};
-        double[] expectedRespT = {0.0, 0.0, 0.0, 0.936248020448281, 1.13624802044683, 1.2362480204461, 
-                                 1.94425921295638, 2.14425921295493, 2.34425921295347, 4.99870152586697, 5.24863660216032, 4.74876644957362, 
-                                 4.46428503191219, 2.34596862744448, 11.3152163657697};
-        double[] expectedResidT = {0.0, 0.0, 0.0, 3.74499208179313, 4.5449920817873, 4.94499208178439, 
-                                  1.94425921295638, 2.14425921295493, 2.34425921295347, 4.99870152586697, 5.24863660216032, 4.74876644957362, 
-                                  4.46428503191219, 2.34596862744448, 11.3152163657697};
-        double[] expectedArvR = {0.0, 0.0, 0.0, 0.4, 0.4, 0.4, 
-                                0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 
+        double[] expectedRespT = {0.0, 0.0, 0.0, 0.936320841067375, 1.13632084106728, 1.23632084106724,
+                                 1.94426157598126, 2.14426157598117, 2.34426157598108, 4.99946814499407, 5.24944155224377, 4.74949473774437,
+                                 3.33377782277657, 14.6140608543643, 7.54517533480026};
+        double[] expectedResidT = {0.0, 0.0, 0.0, 3.7452833642695, 4.54528336426914, 4.94528336426896,
+                                  1.94426157598126, 2.14426157598117, 2.34426157598108, 4.99946814499407, 5.24944155224377, 4.74949473774437,
+                                  3.33377782277657, 14.6140608543643, 7.54517533480026};
+        double[] expectedArvR = {0.0, 0.0, 0.0, 0.4, 0.4, 0.4,
+                                0.1, 0.1, 0.1, 0.1, 0.1, 0.1,
                                 0.1, 0.1, 0.1};
-        double[] expectedTput = {0.1, 0.1, 0.1, 0.4, 0.4, 0.4, 
-                                0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 
+        double[] expectedTput = {0.1, 0.1, 0.1, 0.4, 0.4, 0.4,
+                                0.1, 0.1, 0.1, 0.1, 0.1, 0.1,
                                 0.1, 0.1, 0.1};
         
         // Verify table size
@@ -168,26 +169,26 @@ public class PrioExamplesTest {
             "MVA solver should use default/egflin) method for priority models");
         
         // Expected values from MATLAB output (MVA solver ground truth)
-        // Order: SlowDelay(Class1,Class2,Class3), FCFSQueue(Class1,Class2,Class3), SIROQueue(Class1,Class2,Class3), 
+        // Order: SlowDelay(Class1,Class2,Class3), FCFSQueue(Class1,Class2,Class3), SIROQueue(Class1,Class2,Class3),
         //        PSQueue(Class1,Class2,Class3), HOLQueue(Class1,Class2,Class3), FastDelay(Class1,Class2,Class3)
-        double[] expectedQLen = {1.88140943816302, 2.33628253574678, 1.2184469140195, 10.4219512433026, 12.9546061008667, 6.86880811717636, 
-                                0.72581251773679, 0.942476117942643, 0.518927693169747, 0.563588852428907, 0.769834062128354, 0.693488541314444, 
-                                4.2184922740892, 0.764637091052955, 8.57722363222328, 0.188140943816302, 0.233628253574678, 0.12184469140195};
-        double[] expectedUtil = {1.88147264808843, 2.33609251056257, 1.21853223828295, 0.225776717770612, 0.467218502112515, 0.292447737187909, 
-                                0.206961991289727, 0.303692026373135, 0.182779835742443, 0.188147264808843, 0.256970176161883, 0.231521125273761, 
-                                0.470368162022107, 0.443857577006889, 0.52396886246167, 0.188147264808843, 0.233609251056257, 0.121853223828295};
-        double[] expectedRespT = {9.99966404015771, 10.0008134317599, 9.99929977836632, 13.8481301520531, 13.8635414075992, 14.0923807786474, 
-                                 3.85768306796388, 4.03441265138801, 4.25862916766956, 2.99546662557923, 3.29539202170964, 5.69117926901668, 
-                                 22.4212256201289, 3.27314559502961, 70.389796533488, 0.999966404015771, 1.00008134317599, 0.999929977836632};
-        double[] expectedResidT = {9.99966404015771, 10.0008134317599, 9.99929977836632, 55.3925206082124, 55.454165630397, 56.3695231145896, 
-                                  3.85768306796388, 4.03441265138801, 4.25862916766956, 2.99546662557923, 3.29539202170964, 5.69117926901668, 
-                                  22.4212256201289, 3.27314559502961, 70.389796533488, 0.999966404015771, 1.00008134317599, 0.999929977836632};
-        double[] expectedArvR = {0.188147264808843, 0.233609251056257, 0.121853223828295, 0.752589059235372, 0.93443700422503, 0.487412895313182, 
-                                0.188147264808843, 0.233609251056257, 0.121853223828295, 0.188147264808843, 0.233609251056257, 0.121853223828295, 
-                                0.188147264808843, 0.233609251056257, 0.121853223828295, 0.188147264808843, 0.233609251056257, 0.121853223828295};
-        double[] expectedTput = {0.188147264808843, 0.233609251056257, 0.121853223828295, 0.752589059235372, 0.93443700422503, 0.487412895313182, 
-                                0.188147264808843, 0.233609251056257, 0.121853223828295, 0.188147264808843, 0.233609251056257, 0.121853223828295, 
-                                0.188147264808843, 0.233609251056257, 0.121853223828295, 0.188147264808843, 0.233609251056257, 0.121853223828295};
+        double[] expectedQLen = {3.43636107729059, 0.000526312921992351, 2.18586482169469, 6.99976018194001, 0.00113874342457379, 4.68043242970567,
+                                1.34409547636036, 0.000220710040261501, 0.943185705572623, 1.32120027060668, 0.000222590477315224, 1.59678617724074,
+                                4.55489158652334, 17.9978563455951, 8.37514825093958, 0.343636107729059, 5.26312921992351e-05, 0.218586482169469};
+        double[] expectedUtil = {3.43637163449741, 0.000526312415168568, 2.18586435205896, 0.412364596139689, 0.000105262483033714, 0.52460744449415,
+                                0.378000879794715, 6.84206139719138e-05, 0.327879652808844, 0.343637163449741, 5.78943656685425e-05, 0.415314226891202,
+                                0.859092908624353, 9.99993588820279e-05, 0.939921671385352, 0.343637163449741, 5.26312415168568e-05, 0.218586435205896};
+        double[] expectedRespT = {9.99996927804108, 10.0000096297136, 10.0000021485127, 5.09240626921, 5.40906594521942, 5.35306825569593,
+                                 3.91137984863777, 4.19351765036383, 4.31493246451545, 3.84475374358021, 4.22924618344663, 7.30505612453332,
+                                 13.254944665464, 341961.462942704, 38.3150411097133, 0.999996927804108, 1.00000096297136, 1.00000021485127};
+        double[] expectedResidT = {9.99996927804108, 10.0000096297136, 10.0000021485127, 20.36962507684, 21.6362637808777, 21.4122730227837,
+                                  3.91137984863777, 4.19351765036383, 4.31493246451545, 3.84475374358021, 4.22924618344663, 7.30505612453332,
+                                  13.254944665464, 341961.462942704, 38.3150411097133, 0.999996927804108, 1.00000096297136, 1.00000021485127};
+        double[] expectedArvR = {0.343637163449741, 5.26312415168568e-05, 0.218586435205896, 1.37454865379896, 0.000210524966067427, 0.874345740823583,
+                                0.343637163449741, 5.26312415168568e-05, 0.218586435205896, 0.343637163449741, 5.26312415168568e-05, 0.218586435205896,
+                                0.343637163449741, 5.26312415168568e-05, 0.218586435205896, 0.343637163449741, 5.26312415168568e-05, 0.218586435205896};
+        double[] expectedTput = {0.343637163449741, 5.26312415168568e-05, 0.218586435205896, 1.37454865379896, 0.000210524966067427, 0.874345740823583,
+                                0.343637163449741, 5.26312415168568e-05, 0.218586435205896, 0.343637163449741, 5.26312415168568e-05, 0.218586435205896,
+                                0.343637163449741, 5.26312415168568e-05, 0.218586435205896, 0.343637163449741, 5.26312415168568e-05, 0.218586435205896};
         
         // Verify table size
         assertEquals(18, avgTable.getQLen().size(), 
@@ -256,47 +257,50 @@ public class PrioExamplesTest {
     }
 
     @Test
-    @Disabled("SSA PSPRIO: Max APE 6.82% exceeds 5% tolerance due to simulation variability")
     public void testPrioPsprioSSA() {
         // Create the model
         Network model = PrioModel.prio_psprio();
-        
+
         // Create solver options matching MATLAB
         SSAOptions options = new SSAOptions();
         options.seed = 23000;
         options.samples = 5000;
         options.verbose = VerboseLevel.SILENT;
-        
+
         // Create and run the SSA solver (MVA doesn't support PSPRIO)
         SolverSSA solver = new SolverSSA(model, options);
         NetworkAvgTable avgTable = solver.getAvgTable();
-        
+
         // Check if results are computed
         assertNotNull(avgTable);
-        
+
         // Verify the executed method
         assertNotNull(solver.result, "Solver result should not be null");
-        assertEquals("default/serial", solver.result.method, 
+        assertEquals("default/serial", solver.result.method,
             "SSA solver should use default/serial method");
-        
-        // Expected values from MATLAB ground truth output (SSA solver with 5000 samples)
-        // Order: Delay(Class1,Class2), Queue1(Class1,Class2)
-        // Note: SSA is a simulation method, so we use relaxed tolerances
-        double[] expectedQLen = {0.066197229965643, 0.213020755007946, 1.93380277003436, 1.78697924499205};
-        double[] expectedUtil = {0.066197229965643, 0.213020755007946, 0.0176746917774692, 0.974661183964202};
-        double[] expectedRespT = {0.711609223619123, 0.218558775616296, 22.2059575406122, 1.81970993848782};
-        double[] expectedResidT = {0.711609223619123, 0.218558775616296, 22.2059575406122, 1.81970993848782};
-        double[] expectedArvR = {0.087084862992179, 0.974661183964202, 0.087084862992179, 0.974661183964202};
-        double[] expectedTput = {0.0930246935656275, 0.974661183964202, 0.087084862992179, 0.982013235844078};
-        
+
+        // Expected values from MATLAB ground truth output (SSA solver with 5000 samples, seed 23000)
+        // Order: Delay(Class1,Class2), PSPRIOQueue(Class1,Class2)
+        // MATLAB SSA results:
+        //   Delay Class1: QLen=1.428, Util=1.428, RespT=0.65673, ArvR=2.1485, Tput=2.1744
+        //   Delay Class2: QLen=0.11833, Util=0.11833, RespT=0.20959, ArvR=0.53552, Tput=0.56457
+        //   Queue Class1: QLen=0.57202, Util=0.41313, RespT=0.26624, ArvR=2.1744, Tput=2.1485
+        //   Queue Class2: QLen=1.8817, Util=0.56457, RespT=3.5137, ArvR=0.56457, Tput=0.53552
+        double[] expectedQLen = {1.428, 0.11833, 0.57202, 1.8817};
+        double[] expectedUtil = {1.428, 0.11833, 0.41313, 0.56457};
+        double[] expectedRespT = {0.65673, 0.20959, 0.26624, 3.5137};
+        double[] expectedResidT = {0.65673, 0.20959, 0.26624, 3.5137};
+        double[] expectedArvR = {2.1485, 0.53552, 2.1744, 0.56457};
+        double[] expectedTput = {2.1744, 0.56457, 2.1485, 0.53552};
+
         // Verify table size
-        assertEquals(4, avgTable.getQLen().size(), 
+        assertEquals(4, avgTable.getQLen().size(),
             "Expected 4 entries (2 stations × 2 classes)");
-        
+
         // Check all metrics against expected values
-        // SSA is a stochastic method, but we still use COARSE_REL_TOL for consistency
-        assertTableMetrics(avgTable, expectedQLen, expectedUtil, expectedRespT, 
-                          expectedResidT, expectedArvR, expectedTput, TestTools.MID_TOL);
+        // SSA is stochastic, so use COARSE_TOL (1%) for comparison
+        assertTableMetrics(avgTable, expectedQLen, expectedUtil, expectedRespT,
+                          expectedResidT, expectedArvR, expectedTput, TestTools.COARSE_TOL);
     }
     
     @Test

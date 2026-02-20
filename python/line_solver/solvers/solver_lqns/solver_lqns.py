@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Tuple
 import pandas as pd
 
+from ..base import Solver
+
 
 @dataclass
 class LQNSOptions:
@@ -49,7 +51,7 @@ class LQNSResult:
     iterations: int = 0
 
 
-class SolverLQNS:
+class SolverLQNS(Solver):
     """
     Native Python LQNS solver using external lqns/lqsim tools.
 
@@ -95,7 +97,6 @@ class SolverLQNS:
         self.model = model
         self.options = options or LQNSOptions()
         self._result: Optional[LQNSResult] = None
-        self._table_silent = False
         self._lqn = None  # Will be set during analysis
         self._keep = kwargs.get('keep', True)  # For compatibility
 
@@ -386,8 +387,9 @@ class SolverLQNS:
 
         # Get structure info
         try:
-            num_nodes = int(self._lqn.obj.getNidx())
-            num_calls = int(self._lqn.obj.getNcalls())
+            # Native Python struct has nidx and ncalls as attributes
+            num_nodes = int(self._lqn.nidx)
+            num_calls = int(self._lqn.ncalls) if hasattr(self._lqn, 'ncalls') else 0
         except:
             # Use the number of names we found
             num_nodes = max(names.keys()) if names else 100
@@ -541,10 +543,16 @@ class SolverLQNS:
         """Get mapping of node index to node name."""
         names = {}
         try:
-            names_dict = self._lqn.obj.getNames()
-            # Convert Map to Python dict
-            for key in java_names.keySet():
-                names[int(key)] = str(java_names.get(key))
+            lqn = self._lqn
+            if lqn is None:
+                return names
+            # Native Python struct has names as numpy array
+            if hasattr(lqn, 'names') and lqn.names is not None:
+                # lqn.names is a numpy array with 1-based indexing (index 0 is empty)
+                for idx in range(1, len(lqn.names)):
+                    name = lqn.names[idx]
+                    if name is not None and name != '':
+                        names[idx] = str(name)
         except Exception:
             pass
         return names
@@ -592,23 +600,23 @@ class SolverLQNS:
         else:
             names = self._get_node_names()
 
-        # Build rows only for nodes that have data (non-NaN values)
+        # Build rows for all nodes (preserves NaN for values not computed)
         rows = []
         for idx, name in names.items():
             i = idx - 1  # Convert to 0-based index
             if i < len(result.QN):
-                # Only include nodes with at least some non-zero data
-                qlen = result.QN[i] if not np.isnan(result.QN[i]) else 0
-                util = result.UN[i] if not np.isnan(result.UN[i]) else 0
-                respt = result.RN[i] if not np.isnan(result.RN[i]) else 0
-                tput = result.TN[i] if not np.isnan(result.TN[i]) else 0
+                # Determine node type from the model structure
+                node_type = self._get_node_type(idx)
 
                 rows.append({
                     'Node': name,
-                    'QLen': qlen,
-                    'Util': util,
-                    'RespT': respt,
-                    'Tput': tput,
+                    'NodeType': node_type,
+                    'QLen': result.QN[i],
+                    'Util': result.UN[i],
+                    'RespT': result.RN[i],
+                    'ResidT': np.nan,  # LQNS doesn't compute ResidT
+                    'ArvR': np.nan,    # LQNS doesn't compute ArvR
+                    'Tput': result.TN[i],
                 })
 
         df = pd.DataFrame(rows)
@@ -617,6 +625,42 @@ class SolverLQNS:
             print(df.to_string(index=False))
 
         return df
+
+    def avg_table(self) -> pd.DataFrame:
+        """Alias for getAvgTable() for API consistency."""
+        return self.getAvgTable()
+
+    # Alias for snake_case naming convention
+    get_avg_table = avg_table
+
+    def _get_node_type(self, idx: int) -> str:
+        """Get node type name for a given index."""
+        try:
+            lqn = self.getStruct()
+            if lqn is None:
+                return 'Unknown'
+
+            # Check if model has type information
+            # Note: lqn.type uses 1-based indexing (matching lqn.names)
+            if hasattr(lqn, 'type') and idx < len(lqn.type):
+                elem_type = int(lqn.type[idx])  # 1-based indexing
+                # Native Python uses integer values:
+                # 0=PROCESSOR, 1=TASK, 2=ENTRY, 3=ACTIVITY
+                if elem_type == 0:
+                    return 'Processor'
+                elif elem_type == 1:
+                    if hasattr(lqn, 'isref') and lqn.isref[idx, 0]:
+                        return 'RefTask'
+                    return 'Task'
+                elif elem_type == 2:
+                    return 'Entry'
+                elif elem_type == 3:
+                    return 'Activity'
+                elif elem_type == 4:
+                    return 'Call'
+        except Exception:
+            pass
+        return 'Unknown'
 
     def getRawAvgTables(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
@@ -633,17 +677,21 @@ class SolverLQNS:
         else:
             names = self._get_node_names()
 
-        # Build average table rows
+        # Build average table rows (preserves NaN for values not computed)
         rows = []
         for idx, name in names.items():
             i = idx - 1
             if i < len(result.QN):
+                node_type = self._get_node_type(idx)
                 rows.append({
                     'Node': name,
-                    'QLen': result.QN[i] if not np.isnan(result.QN[i]) else 0,
-                    'Util': result.UN[i] if not np.isnan(result.UN[i]) else 0,
-                    'RespT': result.RN[i] if not np.isnan(result.RN[i]) else 0,
-                    'Tput': result.TN[i] if not np.isnan(result.TN[i]) else 0,
+                    'NodeType': node_type,
+                    'QLen': result.QN[i],
+                    'Util': result.UN[i],
+                    'RespT': result.RN[i],
+                    'ResidT': np.nan,  # LQNS doesn't compute ResidT
+                    'ArvR': np.nan,    # LQNS doesn't compute ArvR
+                    'Tput': result.TN[i],
                 })
 
         avg_table = pd.DataFrame(rows)
@@ -672,8 +720,6 @@ class SolverLQNS:
     # Aliases
     run_analyzer = runAnalyzer
     get_avg = getAvg
-    get_avg_table = getAvgTable
-    avg_table = getAvgTable
     is_available = isAvailable
     list_valid_methods = listValidMethods
     default_options = defaultOptions

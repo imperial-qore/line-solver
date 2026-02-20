@@ -44,8 +44,10 @@ T{3}.addPrecedence(ActivityPrecedence.OrJoin({C{2}, C{3}, C{4}}, C{5}));
 %%
 solver{1} = LQNS(model);
 AvgTable{1} = solver{1}.getAvgTable();
-%AvgTable{1}
+fprintf(1, '\nLQNS Results:\n');
+disp(AvgTable{1});
 
-solver{2} = LN(model);
+solver{2} = LN(model,'verbose',false);
 AvgTable{2} = solver{2}.getAvgTable();
-%AvgTable{2}
+fprintf(1, '\nLN Results:\n');
+disp(AvgTable{2});

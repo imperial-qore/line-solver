@@ -390,7 +390,7 @@ internal class SSJSimulator(
 
     // Routing strategy tracking
     private lateinit var nodeRoutingStrategies: Array<Array<RoutingStrategy?>>  // [nodeIdx][classIdx]
-    private lateinit var roundRobinCounters: IntArray  // [nodeIdx] - for RROBIN
+    private lateinit var roundRobinCounters: Array<IntArray>  // [nodeIdx][classIdx] - for RROBIN/WRROBIN
     private lateinit var wrrobinWeights: Array<Array<DoubleArray?>>  // [nodeIdx][classIdx] -> weights by destNodeIdx
     private lateinit var rroutlinks: Array<Array<IntArray?>>  // [nodeIdx][classIdx] -> ordered list of dest node indices
     private var kchoicesK: Int = 2  // Default K for power-of-K-choices
@@ -980,8 +980,8 @@ internal class SSJSimulator(
     private lateinit var totalBlockingTime: Array<DoubleArray>       // [svcIdx][classIdx] - cumulative blocking time
     private lateinit var currentBlockedServers: Array<IntArray>      // [svcIdx][classIdx] - servers blocked waiting for SYNCH reply (at source)
 
-    // Blocking policy tracking - blocked jobs count at DESTINATION for queue length calculation
-    private lateinit var basBlockedAtDest: Array<IntArray>           // [destQueueIdx][classIdx] - jobs BAS-blocked waiting to ENTER this destination
+    // Blocking policy tracking - blocked jobs count at DESTINATION for queue length calculation (JMT convention)
+    private lateinit var basBlockedAtDest: Array<IntArray>             // [destQueueIdx][classIdx] - jobs BAS-blocked waiting to ENTER this destination
 
     // DEBUG: BAS event counters
     private var basBlockCount = 0
@@ -2537,8 +2537,8 @@ internal class SSJSimulator(
         //         val stationName = sn.stations[serviceStations[qIdx]].name
         //         for (k in 0 until numClasses) {
         //             val qlen = totalQueueTime[qIdx][k] / simTime
-        //             val basBlocked = basBlockedAtDest[qIdx][k]
-        //             println("  $stationName class $k: qlen=$qlen, basBlockedAtDest=$basBlocked, currentQueueLength=${currentQueueLength[qIdx][k]}")
+        //             val basBlocked = basBlockedAtSource[qIdx][k]
+        //             println("  $stationName class $k: qlen=$qlen, basBlockedAtSource=$basBlocked, currentQueueLength=${currentQueueLength[qIdx][k]}")
         //         }
         //     }
         // }
@@ -4447,15 +4447,14 @@ internal class SSJSimulator(
                                 gen = GammaGen(stream, shape, 1.0/scale) // SSJ GammaGen takes alpha (shape) and lambda (inverse scale)
                             }
                         }
-                        // TODO: Weibull support disabled - parameter mapping needs investigation
-                        // ProcessType.WEIBULL -> {
-                        //     // Weibull: {[shape(r)], [scale(alpha)]}
-                        //     if (proc != null && proc.size() >= 2) {
-                        //         val r = proc.get(0).get(0, 0)      // shape
-                        //         val alpha = proc.get(1).get(0, 0)  // scale
-                        //         gen = WeibullGen(stream, r, 1.0/alpha, 0.0)
-                        //     }
-                        // }
+                        ProcessType.WEIBULL -> {
+                            // Weibull: {[shape(r)], [scale(alpha)]}
+                            if (proc != null && proc.size() >= 2) {
+                                val r = proc.get(0).get(0, 0)      // shape
+                                val alpha = proc.get(1).get(0, 0)  // scale
+                                gen = WeibullGen(stream, r, 1.0/alpha, 0.0)
+                            }
+                        }
                         ProcessType.LOGNORMAL -> {
                             // Lognormal: {[mu], [sigma]}
                             if (proc != null && proc.size() >= 2) {
@@ -4623,15 +4622,14 @@ internal class SSJSimulator(
                                 gen = GammaGen(stream, shape, 1.0/scale) // SSJ GammaGen takes alpha (shape) and lambda (inverse scale)
                             }
                         }
-                        // TODO: Weibull support disabled - parameter mapping needs investigation
-                        // ProcessType.WEIBULL -> {
-                        //     // Weibull: {[shape(r)], [scale(alpha)]}
-                        //     if (proc != null && proc.size() >= 2) {
-                        //         val r = proc.get(0).get(0, 0)      // shape
-                        //         val alpha = proc.get(1).get(0, 0)  // scale
-                        //         gen = WeibullGen(stream, r, 1.0/alpha, 0.0)
-                        //     }
-                        // }
+                        ProcessType.WEIBULL -> {
+                            // Weibull: {[shape(r)], [scale(alpha)]}
+                            if (proc != null && proc.size() >= 2) {
+                                val r = proc.get(0).get(0, 0)      // shape
+                                val alpha = proc.get(1).get(0, 0)  // scale
+                                gen = WeibullGen(stream, r, 1.0/alpha, 0.0)
+                            }
+                        }
                         ProcessType.LOGNORMAL -> {
                             // Lognormal: {[mu], [sigma]}
                             if (proc != null && proc.size() >= 2) {
@@ -5141,7 +5139,7 @@ internal class SSJSimulator(
         totalBlockingTime = Array(numServiceNodes) { DoubleArray(numClasses) { 0.0 } }
         currentBlockedServers = Array(numServiceNodes) { IntArray(numClasses) { 0 } }
 
-        // Initialize blocked-at-destination tracking (blocked jobs count at destination for queue length)
+        // Initialize blocked-at-dest tracking (BAS blocked jobs count at destination, JMT convention)
         basBlockedAtDest = Array(numServiceNodes) { IntArray(numClasses) { 0 } }
         bbsBlockedAtDest = Array(numServiceNodes) { IntArray(numClasses) { 0 } }
         fcrBlockedAtDest = Array(numServiceNodes) { IntArray(numClasses) { 0 } }
@@ -5792,7 +5790,7 @@ internal class SSJSimulator(
         }
 
         // Initialize round-robin counters for each node
-        roundRobinCounters = IntArray(I) { 0 }
+        roundRobinCounters = Array(I) { IntArray(R) { 0 } }
 
         // Initialize WRROBIN weights and RROBIN/WRROBIN outlinks from nodeparam
         wrrobinWeights = Array(I) { Array(R) { null as DoubleArray? } }
@@ -6083,7 +6081,7 @@ internal class SSJSimulator(
         // For JSQ and KCHOICES, we need to compare queue lengths (use node only, ignore class switch for selection)
         return when (routingStrategy) {
             RoutingStrategy.RAND -> selectRandomDestinationWithClass(destinations)
-            RoutingStrategy.RROBIN -> selectRoundRobinDestinationWithClass(fromNode, destinations)
+            RoutingStrategy.RROBIN -> selectRoundRobinDestinationWithClass(fromNode, classId, destinations)
             RoutingStrategy.WRROBIN -> selectWeightedRoundRobinDestinationWithClass(fromNode, classId, destinations)
             RoutingStrategy.JSQ -> selectJSQDestinationWithClass(destinations)
             RoutingStrategy.KCHOICES -> selectKChoicesDestinationWithClass(destinations)
@@ -6133,7 +6131,7 @@ internal class SSJSimulator(
 
         return when (routingStrategy) {
             RoutingStrategy.RAND -> selectRandomDestination(destinations)
-            RoutingStrategy.RROBIN -> selectRoundRobinDestination(fromNode, destinations)
+            RoutingStrategy.RROBIN -> selectRoundRobinDestination(fromNode, classId, destinations)
             RoutingStrategy.WRROBIN -> selectWeightedRoundRobinDestination(fromNode, classId, destinations)
             RoutingStrategy.JSQ -> selectJSQDestination(destinations)
             RoutingStrategy.KCHOICES -> selectKChoicesDestination(destinations)
@@ -6172,14 +6170,15 @@ internal class SSJSimulator(
     /**
      * Select destination with class using round-robin routing.
      */
-    private fun selectRoundRobinDestinationWithClass(fromNode: Int, destinations: List<RoutingResult>): RoutingResult {
-        val idx = roundRobinCounters[fromNode]++ % destinations.size
+    private fun selectRoundRobinDestinationWithClass(fromNode: Int, classId: Int, destinations: List<RoutingResult>): RoutingResult {
+        val idx = roundRobinCounters[fromNode][classId]++ % destinations.size
         return destinations[idx]
     }
 
     /**
      * Select destination with class using weighted round-robin routing.
      * Uses actual weights from nodeparam instead of rtnodes probabilities.
+     * Implements proper interleaved weighted round-robin (not bursts).
      */
     private fun selectWeightedRoundRobinDestinationWithClass(fromNode: Int, classId: Int, destinations: List<RoutingResult>): RoutingResult {
         // Get actual weights from wrrobinWeights
@@ -6187,27 +6186,42 @@ internal class SSJSimulator(
 
         if (weights == null || destinations.size <= 1) {
             // Fallback to simple round-robin if no weights available
-            val idx = roundRobinCounters[fromNode]++ % destinations.size
+            val idx = roundRobinCounters[fromNode][classId]++ % destinations.size
             return destinations[idx]
         }
 
-        // Build integer weights for each destination
-        val scale = 100
-        val intWeights = destinations.map { dest ->
-            val w = weights.getOrNull(dest.destNode) ?: 0.0
-            (w * scale).toInt().coerceAtLeast(if (w > 0) 1 else 0)
+        // Build weights for each destination
+        val rawWeights = destinations.map { dest ->
+            weights.getOrNull(dest.destNode) ?: 0.0
+        }
+
+        // Convert to integer weights while preserving ratios
+        // Check if all weights are effectively integers (e.g., 1.0, 2.0, etc.)
+        val allIntegers = rawWeights.all { w -> w == Math.floor(w) && w >= 0 }
+
+        val intWeights: List<Int>
+        if (allIntegers) {
+            // Use weights directly as integers
+            intWeights = rawWeights.map { w -> w.toInt().coerceAtLeast(if (w > 0) 1 else 0) }
+        } else {
+            // Find scale to convert fractional weights to integers
+            // Multiply by 1000 to handle up to 3 decimal places
+            intWeights = rawWeights.map { w ->
+                (w * 1000).toInt().coerceAtLeast(if (w > 0) 1 else 0)
+            }
         }
 
         val totalWeight = intWeights.sum()
         if (totalWeight <= 0) {
             // No valid weights, use simple round-robin
-            val idx = roundRobinCounters[fromNode]++ % destinations.size
+            val idx = roundRobinCounters[fromNode][classId]++ % destinations.size
             return destinations[idx]
         }
 
         // Use weighted round-robin: cycle through based on weights
-        val counter = roundRobinCounters[fromNode] % totalWeight
-        roundRobinCounters[fromNode]++
+        // For weights [1, 2], totalWeight=3, this produces pattern: dest0, dest1, dest1, dest0, ...
+        val counter = roundRobinCounters[fromNode][classId] % totalWeight
+        roundRobinCounters[fromNode][classId]++
 
         var cumulative = 0
         for (i in destinations.indices) {
@@ -6305,15 +6319,16 @@ internal class SSJSimulator(
      * Select destination using round-robin routing (RROBIN strategy).
      * Cycles through destinations in order.
      */
-    private fun selectRoundRobinDestination(fromNode: Int, destinations: List<Int>): Int {
-        val idx = roundRobinCounters[fromNode] % destinations.size
-        roundRobinCounters[fromNode]++
+    private fun selectRoundRobinDestination(fromNode: Int, classId: Int, destinations: List<Int>): Int {
+        val idx = roundRobinCounters[fromNode][classId] % destinations.size
+        roundRobinCounters[fromNode][classId]++
         return destinations[idx]
     }
 
     /**
      * Select destination using weighted round-robin routing (WRROBIN strategy).
      * Uses actual weights from nodeparam instead of rtnodes probabilities.
+     * Implements proper interleaved weighted round-robin (not bursts).
      */
     private fun selectWeightedRoundRobinDestination(fromNode: Int, classId: Int, destinations: List<Int>): Int {
         // Get actual weights from wrrobinWeights
@@ -6321,29 +6336,44 @@ internal class SSJSimulator(
 
         if (weights == null || destinations.size <= 1) {
             // Fallback to simple round-robin if no weights available
-            val idx = roundRobinCounters[fromNode] % destinations.size
-            roundRobinCounters[fromNode]++
+            val idx = roundRobinCounters[fromNode][classId] % destinations.size
+            roundRobinCounters[fromNode][classId]++
             return destinations[idx]
         }
 
-        // Build integer weights for each destination
-        val scale = 100
-        val intWeights = destinations.map { destNode ->
-            val w = weights.getOrNull(destNode) ?: 0.0
-            (w * scale).toInt().coerceAtLeast(if (w > 0) 1 else 0)
+        // Build weights for each destination
+        val rawWeights = destinations.map { destNode ->
+            weights.getOrNull(destNode) ?: 0.0
+        }
+
+        // Convert to integer weights while preserving ratios
+        // Check if all weights are effectively integers (e.g., 1.0, 2.0, etc.)
+        val allIntegers = rawWeights.all { w -> w == Math.floor(w) && w >= 0 }
+
+        val intWeights: List<Int>
+        if (allIntegers) {
+            // Use weights directly as integers
+            intWeights = rawWeights.map { w -> w.toInt().coerceAtLeast(if (w > 0) 1 else 0) }
+        } else {
+            // Find scale to convert fractional weights to integers
+            // Multiply by 1000 to handle up to 3 decimal places
+            intWeights = rawWeights.map { w ->
+                (w * 1000).toInt().coerceAtLeast(if (w > 0) 1 else 0)
+            }
         }
 
         val totalWeight = intWeights.sum()
         if (totalWeight <= 0) {
             // No valid weights, use simple round-robin
-            val idx = roundRobinCounters[fromNode] % destinations.size
-            roundRobinCounters[fromNode]++
+            val idx = roundRobinCounters[fromNode][classId] % destinations.size
+            roundRobinCounters[fromNode][classId]++
             return destinations[idx]
         }
 
         // Use weighted round-robin: cycle through based on weights
-        val counter = roundRobinCounters[fromNode] % totalWeight
-        roundRobinCounters[fromNode]++
+        // For weights [1, 2], totalWeight=3, this produces pattern: dest0, dest1, dest1, dest0, ...
+        val counter = roundRobinCounters[fromNode][classId] % totalWeight
+        roundRobinCounters[fromNode][classId]++
 
         var cumulative = 0
         for (i in destinations.indices) {
@@ -9271,11 +9301,11 @@ internal class SSJSimulator(
             // if (basUnblockCount <= 3) {
             //     println("BAS_UNBLOCK #$basUnblockCount at T=${Sim.time()}")
             //     println("  Source Q1: currentQueueLength=${currentQueueLength[sourceQueueIdx][sourceClassId]}")
-            //     println("  Dest Q2: currentQueueLength=${currentQueueLength[destQueueIdx][destClassId]}, basBlockedAtDest=${basBlockedAtDest[destQueueIdx][destClassId]}")
+            //     println("  Dest Q2: currentQueueLength=${currentQueueLength[destQueueIdx][destClassId]}, basBlockedAtSource=${basBlockedAtSource[destQueueIdx][destClassId]}")
             // }
 
-            // BAS: waiting job was counted at DESTINATION, so decrement blocked count
-            // Update destination queue stats before decrementing (to properly time-weight)
+            // BAS: waiting job was counted at DESTINATION (JMT convention), so decrement there
+            // Update dest queue stats before decrementing (to properly time-weight)
             updateQueueStats(destQueueIdx, destClassId)
             basBlockedAtDest[destQueueIdx][destClassId]--
 
@@ -9955,10 +9985,10 @@ internal class SSJSimulator(
                             // Mark server as blocked (server stays busy but blocked)
                             serverBlocked[queueIdx][serverId] = true
 
-                            // Job counts towards DESTINATION queue length (even though physically at source)
-                            // Increment blocked count BEFORE updateQueueStats so it's included in time-weighting
-                            basBlockedAtDest[nextQueueIdx][destClassId]++
+                            // Job counts towards DESTINATION queue length (JMT convention)
+                            // Close old time window at destination BEFORE incrementing blocked count
                             updateQueueStats(nextQueueIdx, destClassId)
+                            basBlockedAtDest[nextQueueIdx][destClassId]++
 
                             logEvent("BAS_BLOCK", stationIdx, classId, serverId, nextQueueIdx)
                             basBlockCount++
@@ -9967,7 +9997,7 @@ internal class SSJSimulator(
                             // if (basBlockCount <= 3) {
                             //     println("BAS_BLOCK #$basBlockCount at T=${Sim.time()}")
                             //     println("  Q1 currentQueueLength=${currentQueueLength[queueIdx][classId]}")
-                            //     println("  Q2 currentQueueLength=${currentQueueLength[nextQueueIdx][destClassId]}, basBlockedAtDest=${basBlockedAtDest[nextQueueIdx][destClassId]}")
+                            //     println("  Q2 currentQueueLength=${currentQueueLength[nextQueueIdx][destClassId]}, basBlockedAtSource=${basBlockedAtSource[nextQueueIdx][destClassId]}")
                             //     println("  Q1 totalQueueTime=${totalQueueTime[queueIdx][classId]}")
                             //     println("  Q2 totalQueueTime=${totalQueueTime[nextQueueIdx][destClassId]}")
                             // }
@@ -12011,14 +12041,14 @@ internal class SSJSimulator(
         if (elapsed > 0) {
             // currentQueueLength includes jobs waiting and in service
             // currentBlockedServers includes servers blocked waiting for SYNCH REPLY (at source)
-            // basBlockedAtDest includes jobs BAS-blocked waiting to ENTER this queue
+            // basBlockedAtDest includes jobs BAS-blocked waiting to ENTER this queue (JMT convention)
             // bbsBlockedAtDest includes jobs BBS-blocked waiting to ENTER this queue
             // fcrBlockedAtDest includes jobs FCR-blocked waiting to ENTER this queue
             val effectiveQueueLength = currentQueueLength[queueIdx][classId] +
                                        currentBlockedServers[queueIdx][classId] +  // SYNCH reply blocking (at source)
-                                       basBlockedAtDest[queueIdx][classId] +        // BAS blocking (jobs trying to enter THIS queue)
-                                       bbsBlockedAtDest[queueIdx][classId] +        // BBS blocking (jobs trying to enter THIS queue)
-                                       fcrBlockedAtDest[queueIdx][classId]          // FCR blocking (jobs trying to enter THIS queue)
+                                       basBlockedAtDest[queueIdx][classId] +       // BAS blocking (jobs trying to enter THIS queue)
+                                       bbsBlockedAtDest[queueIdx][classId] +       // BBS blocking (jobs trying to enter THIS queue)
+                                       fcrBlockedAtDest[queueIdx][classId]         // FCR blocking (jobs trying to enter THIS queue)
             totalQueueTime[queueIdx][classId] += effectiveQueueLength * elapsed
             lastQueueUpdateTime[queueIdx][classId] = currentTime
         }

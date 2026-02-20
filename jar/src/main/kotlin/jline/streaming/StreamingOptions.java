@@ -3,8 +3,9 @@ package jline.streaming;
 import java.io.Serializable;
 
 /**
- * Configuration options for SSA streaming to OTLP receiver.
+ * Configuration options for SSA streaming to metrics receiver.
  * Supports two modes: sampled (push every N events) or time-window (push averaged metrics over duration).
+ * Supports two transports: HTTP (recommended, works everywhere) or GRPC (requires compatible JVM).
  */
 public class StreamingOptions implements Serializable {
 
@@ -18,8 +19,21 @@ public class StreamingOptions implements Serializable {
         TIME_WINDOW
     }
 
-    /** OTLP receiver endpoint (default: localhost:4317) */
-    public String endpoint = "localhost:4317";
+    /**
+     * Transport type enumeration.
+     */
+    public enum TransportType {
+        /** HTTP transport using Java's built-in HttpURLConnection (recommended) */
+        HTTP,
+        /** gRPC transport using OTLP protocol (may not work in all JVM environments) */
+        GRPC
+    }
+
+    /** Receiver endpoint (default: localhost:8080/metrics for HTTP, localhost:4317 for GRPC) */
+    public String endpoint = "localhost:8080/metrics";
+
+    /** Transport type: HTTP (recommended) or GRPC */
+    public TransportType transport = TransportType.HTTP;
 
     /** Streaming mode: SAMPLED or TIME_WINDOW */
     public StreamMode mode = StreamMode.SAMPLED;
@@ -164,6 +178,16 @@ public class StreamingOptions implements Serializable {
      */
     public StreamingOptions failOnConnectionError(boolean fail) {
         this.failOnConnectionError = fail;
+        return this;
+    }
+
+    /**
+     * Set the transport type.
+     * @param transport HTTP (recommended) or GRPC
+     * @return this instance for method chaining
+     */
+    public StreamingOptions transport(TransportType transport) {
+        this.transport = transport;
         return this;
     }
 

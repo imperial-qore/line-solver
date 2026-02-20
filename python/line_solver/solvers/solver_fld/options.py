@@ -105,11 +105,13 @@ class SolverFLDOptions:
         Smaller values increase accuracy but runtime.
         Recommended: 0.001-0.01 for diffusion method.
 
-    pstar : float, default=20.0
+    pstar : float or None, default=None
         P-norm smoothing parameter for matrix method.
-        Controls smoothness of capacity constraint: min(1, c/x) ≈ ghat(x, c, p)
+        When None (default), the standard min(1, c/x) constraint is used,
+        matching MATLAB's default behavior. Set to a positive value to enable
+        p-norm smoothing: min(1, c/x) ≈ ghat(x, c, p).
         - p=2: Smooth approximation (fast but less accurate)
-        - p=20: Default, good balance
+        - p=20: Good balance
         - p=100: Very smooth but slower
         Effect: lim_{p→∞} ghat(x, c, p) → min(1, c/x)
 
@@ -176,10 +178,11 @@ class SolverFLDOptions:
     stiff: bool = True
     timespan: Tuple[float, float] = (0.0, float('inf'))
     timestep: Optional[float] = None
-    pstar: float = 20.0
+    pstar: Optional[float] = None
     softmin_alpha: float = 20.0
     hide_immediate: bool = True
     verbose: bool = False
+    init_sol: Optional[np.ndarray] = None  # Initial state for ODE (for transient analysis)
     # Common solver parameters (for compatibility)
     seed: Optional[int] = None  # Random seed (for compatibility)
     keep: bool = False  # Keep intermediate data (for compatibility)
@@ -326,9 +329,12 @@ class FLDResult:
     TN: np.ndarray
     CN: np.ndarray
     XN: np.ndarray
+    AN: Optional[np.ndarray] = None  # Arrival rates (M x K)
+    WN: Optional[np.ndarray] = None  # Residence times (M x K)
     t: Optional[np.ndarray] = None
     QNt: Dict[Tuple[int, int], np.ndarray] = field(default_factory=dict)
     UNt: Dict[Tuple[int, int], np.ndarray] = field(default_factory=dict)
+    TNt: Dict[Tuple[int, int], np.ndarray] = field(default_factory=dict)
     xvec: Optional[np.ndarray] = None
     iterations: int = 0
     runtime: float = 0.0

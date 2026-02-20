@@ -9,43 +9,29 @@ import jline.util.matrix.Matrix
 fun snGetNodeArvRFromTput(sn: NetworkStruct, TN: Matrix, TH: AvgHandle?, AN: Matrix?): Matrix {
     val I = sn.nnodes
     val C = sn.nchains
-    sn.nstations
+    val M = sn.nstations
     val R = sn.nclasses
     val ANn = Matrix(I, R)
 
-    // Debug: Log input parameters
-    val debug = false
-    if (debug) {
-        println("DEBUG snGetNodeArvRFromTput: I=$I, C=$C, R=$R")
-        println("DEBUG TN (station throughputs):")
-        for (i in 0..<TN.numRows) {
-            for (j in 0..<TN.numCols) {
-                print("  TN[$i,$j]=${TN[i,j]}")
-            }
-            println()
-        }
-        if (AN != null && AN.numRows > 0) {
-            println("DEBUG AN (station arrival rates):")
-            for (i in 0..<AN.numRows) {
-                for (j in 0..<AN.numCols) {
-                    print("  AN[$i,$j]=${AN[i,j]}")
+    // First, copy station arrival rates to station nodes (MATLAB lines 48-51)
+    // This preserves the AN values computed in snGetArvRFromTput (including fork scaling)
+    if (AN != null && AN.numRows > 0) {
+        for (ist in 0..<M) {
+            val ind = sn.stationToNode[ist].toInt()
+            if (ind >= 0 && ind < I) {
+                for (r in 0..<R) {
+                    ANn[ind, r] = AN[ist, r]
                 }
-                println()
-            }
-        }
-        println("DEBUG nodevisits[0] (chain 0):")
-        if (sn.nodevisits.containsKey(0)) {
-            val nv = sn.nodevisits[0]!!
-            for (i in 0..<nv.numRows) {
-                for (j in 0..<nv.numCols) {
-                    print("  nv[$i,$j]=${nv[i,j]}")
-                }
-                println()
             }
         }
     }
 
+    // Process non-station nodes using nodevisits formula (MATLAB lines 52-81)
     for (ind in 0..<I) {
+        // Skip if this is a station node - keep the AN values copied above
+        val nodeToStation = sn.nodeToStation[ind].toInt()
+        if (nodeToStation >= 0) continue
+
         for (c in 0..<C) {
             val inchain = sn.inchain[c]
             val refstat = sn.refstat[c].toInt()
@@ -76,6 +62,7 @@ fun snGetNodeArvRFromTput(sn: NetworkStruct, TN: Matrix, TH: AvgHandle?, AN: Mat
                             }
                         }
                     } else {
+                        // Non-station, non-Cache nodes (e.g., Sink, ClassSwitch)
                         // ANn(ind, r) =  (sn.nodevisits{c}(ind,r) / sum(sn.visits{c}(sn.stationToStateful(refstat),inchain))) * sum(TN(refstat,inchain));
                         val num = sn.nodevisits[c]!![ind, rIdx]
                         var den = 0.0
@@ -93,21 +80,9 @@ fun snGetNodeArvRFromTput(sn: NetworkStruct, TN: Matrix, TH: AvgHandle?, AN: Mat
                         } else {
                             ANn[ind, rIdx] = 0
                         }
-                        if (debug && ind == 0 && rIdx == 0) {
-                            println("DEBUG node[$ind] class[$rIdx]: num=$num, den=$den, coeff=$coeff, ANn=${ANn[ind, rIdx]}")
-                        }
                     }
                 }
             }
-        }
-    }
-    if (debug) {
-        println("DEBUG ANn (result):")
-        for (i in 0..<ANn.numRows) {
-            for (j in 0..<ANn.numCols) {
-                print("  ANn[$i,$j]=${ANn[i,j]}")
-            }
-            println()
         }
     }
     return ANn

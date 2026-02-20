@@ -85,9 +85,10 @@ classdef Source < Station
             if isempty(self.obj)
                 % Check if arrival was already configured
                 if length(self.input.sourceClasses) >= class.index && ~isempty(self.input.sourceClasses{1, class.index})
-                    % Invalidate struct so procid gets recomputed
+                    % Note: We no longer invalidate hasStruct here as it causes severe performance
+                    % issues in iterative solvers like LN. The refreshRates/refreshProcesses methods
+                    % called during solver post-iteration phase handle updating procid appropriately.
                     self.model.setInitialized(false);
-                    self.model.hasStruct = false;
                 end
                 self.input.sourceClasses{1, class.index}{2} = ServiceStrategy.LI;
                 self.input.sourceClasses{1, class.index}{3} = distribution;
@@ -96,6 +97,14 @@ classdef Source < Station
                     self.classCap(class.index) = 0;
                 else
                     self.classCap(class.index) = Inf;
+                end
+                % Update cached procid if struct exists to avoid stale values
+                % This is needed because we don't invalidate hasStruct for performance
+                if self.model.hasStruct && ~isempty(self.model.sn)
+                    ist = self.model.getStationIndex(self);
+                    c = class.index;
+                    procTypeId = ProcessType.toId(ProcessType.fromText(builtin('class', distribution)));
+                    self.model.sn.procid(ist, c) = procTypeId;
                 end
             else
                 self.obj.setArrival(class.obj, distribution.obj);
@@ -103,9 +112,10 @@ classdef Source < Station
                 % This ensures getArrivalProcess returns the correct distribution
                 % Check if arrival was already configured
                 if length(self.input.sourceClasses) >= class.index && ~isempty(self.input.sourceClasses{1, class.index})
-                    % Invalidate struct so procid gets recomputed
+                    % Note: We no longer invalidate hasStruct here as it causes severe performance
+                    % issues in iterative solvers like LN. The refreshRates/refreshProcesses methods
+                    % called during solver post-iteration phase handle updating procid appropriately.
                     self.model.setInitialized(false);
-                    self.model.hasStruct = false;
                 end
                 self.input.sourceClasses{1, class.index}{2} = ServiceStrategy.LI;
                 self.input.sourceClasses{1, class.index}{3} = distribution;
@@ -114,6 +124,13 @@ classdef Source < Station
                     self.classCap(class.index) = 0;
                 else
                     self.classCap(class.index) = Inf;
+                end
+                % Update cached procid if struct exists to avoid stale values
+                if self.model.hasStruct && ~isempty(self.model.sn)
+                    ist = self.model.getStationIndex(self);
+                    c = class.index;
+                    procTypeId = ProcessType.toId(ProcessType.fromText(builtin('class', distribution)));
+                    self.model.sn.procid(ist, c) = procTypeId;
                 end
             end
         end

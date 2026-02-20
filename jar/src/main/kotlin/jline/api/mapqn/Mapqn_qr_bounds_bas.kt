@@ -13,6 +13,7 @@ import org.apache.commons.math3.optim.linear.LinearConstraint
 import org.apache.commons.math3.optim.linear.LinearConstraintSet
 import org.apache.commons.math3.optim.linear.LinearObjectiveFunction
 import org.apache.commons.math3.optim.linear.Relationship
+import org.apache.commons.math3.optim.linear.NonNegativeConstraint
 import org.apache.commons.math3.optim.linear.SimplexSolver
 import org.apache.commons.math3.optim.nonlinear.scalar.GoalType
 import org.apache.commons.math3.optim.MaxIter
@@ -355,12 +356,12 @@ object Mapqn_qr_bounds_bas {
                         }
                     }
                 }
-                // LHS: arrivals from j==f with MM(m,0)<>i
+                // LHS: arrivals from j==f with MM(m,0)<>i (MM values are 1-based, convert to 0-based)
                 for (nj in 1..F[f]) {
                     for (kj in 0 until K[f]) {
                         for (hj in 0 until K[f]) {
                             for (m in 0 until MR) {
-                                if (MM.get(m, 0).toInt() != i) {
+                                if (MM.get(m, 0).toInt() - 1 != i) {
                                     val idx = p2Idx(f, nj, kj, i, 0, ui, m)
                                     if (idx >= 0) coeffs[idx] += q[f][i].get(kj, hj)
                                 }
@@ -398,9 +399,9 @@ object Mapqn_qr_bounds_bas {
                         }
                     }
                 }
-                // RHS: unblocking when BB(m,i)==1 and MM(m,0)==i
+                // RHS: unblocking when BB(m,i)==1 and MM(m,0)==i (MM values are 1-based, convert to 0-based)
                 for (m in 0 until MR) {
-                    if (BB.get(m, i).toInt() == 1 && MM.get(m, 0).toInt() == i) {
+                    if (BB.get(m, i).toInt() == 1 && MM.get(m, 0).toInt() - 1 == i) {
                         for (kf in 0 until K[f]) {
                             for (pf in 0 until K[f]) {
                                 for (w in 0 until M) {
@@ -440,13 +441,13 @@ object Mapqn_qr_bounds_bas {
                         }
                     }
                 }
-                // LHS: arrivals from j==f with MM(m,0)<>i
+                // LHS: arrivals from j==f with MM(m,0)<>i (MM values are 1-based, convert to 0-based)
                 for (nj in 1..F[f]) {
                     for (kj in 0 until K[f]) {
                         for (hj in 0 until K[f]) {
                             for (ui in 0 until K[i]) {
                                 for (m in 0 until MR) {
-                                    if (MM.get(m, 0).toInt() != i) {
+                                    if (MM.get(m, 0).toInt() - 1 != i) {
                                         val idx = p2Idx(f, nj, kj, i, ni, ui, m)
                                         if (idx >= 0) coeffs[idx] += q[f][i].get(kj, hj)
                                     }
@@ -489,9 +490,9 @@ object Mapqn_qr_bounds_bas {
                         }
                     }
                 }
-                // RHS: unblocking when BB(m,i)==1 and MM(m,0)==i
+                // RHS: unblocking when BB(m,i)==1 and MM(m,0)==i (MM values are 1-based, convert to 0-based)
                 for (m in 0 until MR) {
-                    if (BB.get(m, i).toInt() == 1 && MM.get(m, 0).toInt() == i) {
+                    if (BB.get(m, i).toInt() == 1 && MM.get(m, 0).toInt() - 1 == i) {
                         for (ki in 0 until K[i]) {
                             for (kf in 0 until K[f]) {
                                 for (pf in 0 until K[f]) {
@@ -686,7 +687,8 @@ object Mapqn_qr_bounds_bas {
                 objectiveFunction,
                 constraintSet,
                 goalType,
-                MaxIter(100000)
+                MaxIter(100000),
+                NonNegativeConstraint(true)
             )
 
             val variables = mutableMapOf<String, Double>()

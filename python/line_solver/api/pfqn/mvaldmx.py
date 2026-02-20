@@ -412,14 +412,47 @@ def pfqn_mvaldms(lam: np.ndarray, D: np.ndarray, N: np.ndarray,
     # Compute closed population
     Nct = int(np.sum(N[np.isfinite(N)]))
 
+    if len(Z) == 0 or Z is None:
+        Z = np.zeros(R)
+
+    # Handle pure open networks (Nct=0) using M/M/k formulas directly
+    # pfqn_mvaldmx cannot handle empty mu matrix
+    if Nct == 0:
+        # All classes are open - use M/M/k formulas
+        openClasses = np.where(np.isinf(N))[0]
+        XN = np.zeros(R)
+        QN = np.zeros((M, R))
+        UN = np.zeros((M, R))
+        CN = np.zeros((M, R))
+        lGN = np.nan  # Normalizing constant not defined for open networks
+
+        for r in openClasses:
+            XN[r] = lam[r]
+            for ist in range(M):
+                if D[ist, r] > 0 and S[ist] > 0:
+                    # M/M/k: rho = lambda * D / S
+                    rho = lam[r] * D[ist, r] / S[ist]
+                    UN[ist, r] = rho
+                    if rho < 1:
+                        k = int(S[ist])
+                        if k == 1:
+                            # M/M/1: Q = rho/(1-rho)
+                            QN[ist, r] = rho / (1 - rho)
+                        else:
+                            # M/M/k approximation using Erlang-C
+                            from ..qsys import qsys_mmk
+                            mu_rate = 1.0 / D[ist, r] if D[ist, r] > 0 else float('inf')
+                            result = qsys_mmk(lam[r], mu_rate, k)
+                            QN[ist, r] = result.get('L', rho / (1 - rho))
+                        CN[ist, r] = QN[ist, r] / lam[r] if lam[r] > 0 else 0
+
+        return XN, QN, UN, CN, lGN
+
     # Build load-dependent rate matrix
     mu = np.ones((M, Nct))
     for ist in range(M):
         for n in range(Nct):
             mu[ist, n] = min(n + 1, S[ist])
-
-    if len(Z) == 0 or Z is None:
-        Z = np.zeros(R)
 
     # Call mvaldmx
     XN, QN, _, CN, lGN, _ = pfqn_mvaldmx(lam, D, N, Z, mu, S)

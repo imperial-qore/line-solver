@@ -7,8 +7,14 @@ Created on Thu Mar 21 18:29:52 2013
 import numpy as np
 import numpy.matlib as ml
 import numpy.linalg as la
-import butools
-from butools.mc import CheckGenerator, CheckProbMatrix
+# Use local butools settings instead of external package
+from .. import checkPrecision, checkInput
+from .check import CheckGenerator, CheckProbMatrix
+# Create a butools-like namespace for backward compatibility
+class _butools_settings:
+    checkPrecision = checkPrecision
+    checkInput = checkInput
+butools = _butools_settings()
 
 
 def CRPSolve (Q):

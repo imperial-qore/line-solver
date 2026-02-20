@@ -6,13 +6,14 @@ This directory contains Jupyter notebook examples demonstrating various features
 
 - **cacheModel/** - Cache modeling examples with hit/miss behavior
 - **classSwitching/** - Class switching scenarios
-- **closedModel/** - Closed queueing network models
+- **closedQN/** - Closed queueing network models
 - **forkJoin/** - Fork-join queueing models
 - **layeredModel/** - Layered queueing network (LQN) examples
-- **mixedModel/** - Mixed open/closed queueing models
-- **openModel/** - Open queueing network models
+- **mixedQN/** - Mixed open/closed queueing models
+- **openQN/** - Open queueing network models
 - **prioModel/** - Priority queueing examples
 - **stochPetriNet/** - Stochastic Petri net examples
+- **workflowModels/** - Workflow modeling examples
 
 ## Running Examples
 

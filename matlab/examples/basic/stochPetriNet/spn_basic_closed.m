@@ -47,7 +47,7 @@ state = model.getState;
 options = Solver.defaultOptions;
 options.keep=2;
 options.verbose=1;
-options.cutoff = 10;
+%options.cutoff = 10;
 options.seed = 23000;
 %options.samples = 100;
 

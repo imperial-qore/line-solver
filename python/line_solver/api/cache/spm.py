@@ -74,15 +74,18 @@ def cache_xi_iter(gamma: np.ndarray, m: np.ndarray,
             else:
                 zi_min = 1.0
                 zi_max = 2.0
-                # Expand search range
-                while True:
+                # Expand search range with safety limit to prevent infinite loop
+                expand_iter = 0
+                max_expand = 100  # Prevent infinite loop if condition never met
+                while expand_iter < max_expand:
                     denom_test = n * zi_max * pp[i + 1, :] + a
                     denom_test = np.where(np.abs(denom_test) < 1e-14, 1e-14, denom_test)
                     Fi_test = np.sum(zi_max * pp[i + 1, :] / denom_test)
-                    if Fi_test >= f[i]:
+                    if Fi_test >= f[i] or not np.isfinite(Fi_test) or not np.isfinite(f[i]):
                         break
                     zi_min = zi_max
                     zi_max *= 2
+                    expand_iter += 1
 
             # Bisection search
             for _ in range(50):
@@ -158,10 +161,8 @@ def cache_spm(gamma: np.ndarray, m: np.ndarray
 
             C[j, l] = delta[j, l] * C1 - xi[j] * C2
 
-    # Compute Z using the formula
+    # Compute Z using the formula (matching MATLAB: lZ=real(lZ) to handle roundoff)
     det_C = np.linalg.det(C)
-    if det_C <= 0:
-        det_C = 1e-100  # Avoid log of non-positive
 
     # m! (factorial of each element)
     m_fact = special.factorial(m)
@@ -171,11 +172,11 @@ def cache_spm(gamma: np.ndarray, m: np.ndarray
     lZ = (-h * np.log(np.sqrt(2 * np.pi)) + phi +
           np.sum(special.gammaln(m + 1)) -  # log of m!
           np.sum(0.5 * np.log(xi)) -
-          0.5 * np.log(det_C))
+          0.5 * np.log(det_C + 0j))  # +0j to handle negative det via complex log
+    lZ = np.real(lZ)  # Remove small imaginary parts from roundoff (MATLAB: lZ=real(lZ))
 
     # Z
-    Z = (np.exp(phi) * (2 * np.pi)**(-h/2) * m_fact_prod /
-         np.prod(np.sqrt(xi)) / np.sqrt(det_C))
+    Z = np.exp(lZ)
 
     return Z, lZ, xi
 
@@ -215,46 +216,47 @@ def cache_prob_spm(gamma: np.ndarray, m: np.ndarray) -> np.ndarray:
 def cache_prob_fpi(gamma: np.ndarray, m: np.ndarray,
                    tol: float = 1e-8, max_iter: int = 1000) -> np.ndarray:
     """
-    Compute cache miss probabilities using fixed point iteration.
+    Compute cache hit probabilities using fixed point iteration (FPI method).
 
-    Uses fixed point iteration to compute steady-state miss probabilities
-    for hierarchical cache systems with LRU replacement policies.
+    Matches MATLAB cache_prob_fpi: Uses fixed point iteration to compute
+    cache hit probability distribution.
 
     Args:
         gamma: Cache access factors matrix (n x h).
         m: Cache capacity vector (h,).
-        tol: Convergence tolerance.
-        max_iter: Maximum iterations.
+        tol: Convergence tolerance (unused, kept for API compatibility).
+        max_iter: Maximum iterations (unused, kept for API compatibility).
 
     Returns:
-        Vector of miss probabilities.
+        Matrix (n x h+1) where:
+            - Column 0: miss probabilities
+            - Columns 1:h: hit probabilities at each level
     """
+    from .miss import cache_xi_fp
+
     gamma = np.asarray(gamma, dtype=np.float64)
     m = np.asarray(m, dtype=np.float64).ravel()
 
     n = gamma.shape[0]
     h = gamma.shape[1]
 
-    # Initialize with SPM solution as starting point
-    prob = cache_prob_spm(gamma, m)
+    # Get xi using fixed point method (matches MATLAB cache_xi_fp)
+    xi, _, _, _ = cache_xi_fp(gamma, m)
 
-    # Fixed point iteration
-    for _ in range(max_iter):
-        prob_old = prob.copy()
+    # Build probability matrix (n x h+1)
+    # Column 0: miss probability, columns 1:h: hit at each level
+    prob = np.zeros((n, h + 1))
 
-        # Update based on cache occupancy
+    for i in range(n):
+        # S_i = gamma(i,:) * xi
+        S_i = np.dot(gamma[i, :], xi)
+
+        # Miss probability: 1 / (1 + S_i)
+        prob[i, 0] = 1.0 / (1.0 + S_i)
+
+        # Hit probabilities at each level: gamma(i,j)*xi(j) / (1 + S_i)
         for j in range(h):
-            total_rate = np.sum(gamma[:, j])
-            if total_rate > 0:
-                # Expected number in cache at level j
-                expected_in_cache = np.sum(gamma[:, j] * (1 - prob))
-                # If more items than capacity, increase miss probability
-                if expected_in_cache > m[j]:
-                    excess_ratio = expected_in_cache / m[j]
-                    prob = 1 - (1 - prob) / excess_ratio
-
-        if np.max(np.abs(prob - prob_old)) < tol:
-            break
+            prob[i, j + 1] = gamma[i, j] * xi[j] / (1.0 + S_i)
 
     return prob
 

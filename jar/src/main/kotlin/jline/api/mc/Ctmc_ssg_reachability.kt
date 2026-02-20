@@ -29,6 +29,7 @@ fun ctmc_ssg_reachability(sn: NetworkStruct, options: SolverOptions): CtmcSsgRea
     val stateSpaceHashed = spaceResult.SSh
     val nodeStateSpace = spaceResult.sn.space
     sn.space = nodeStateSpace
+    sn.spaceHash = spaceResult.ST.spaceHash
 
     // Ensure hide_immediate is enabled for reachability analysis
     options.config.hide_immediate = true

@@ -106,11 +106,23 @@ class Solver_qns(private val sn: NetworkStruct, private val options: SolverOptio
             val Xchain = Matrix.zeros(1, sn.nchains)
 
             // Calculate system throughput for each chain
-            // MATLAB: ref= zeros(sn.nchains,1); (line 132, not used)
-            // MATLAB: Xchain(c)=Tchain(sn.refstat(c),c); (line 135)
             for (c in 0 until sn.nchains) {
-                val refstat = sn.refstat.get(c).toInt() // sn.refstat is 0-based index
-                Xchain.set(0, c, Tchain.get(refstat, c))
+                val refstat = sn.refstat.get(c).toInt()
+                val tChainRefstat = Tchain.get(refstat, c)
+                if (tChainRefstat > 0) {
+                    // Reference station has throughput data (closed chains or non-Source ref)
+                    Xchain.set(0, c, tChainRefstat)
+                } else {
+                    // For open chains where refstat is Source (not in qnsolver output),
+                    // recover Xchain from any station with valid throughput:
+                    // Xchain(c) = Tchain(i,c) / Vchain(i,c)
+                    for (i in 0 until sn.nstations) {
+                        if (Vchain.get(i, c) > 0 && Tchain.get(i, c) > 0) {
+                            Xchain.set(0, c, Tchain.get(i, c) / Vchain.get(i, c))
+                            break
+                        }
+                    }
+                }
             }
 
             // Response times per chain (Rchain = Wchain for dollar output)
@@ -128,6 +140,7 @@ class Solver_qns(private val sn: NetworkStruct, private val options: SolverOptio
             }
 
             // Deaggregate chain results to station-class results
+            // Pass Uchain so utilization is taken directly from qnsolver output
             val results = snDeaggregateChainResults(sn, Lchain, null, STchain, Vchain, alpha,
                 Qchain, Uchain, Rchain, Tchain, null, Xchain)
 

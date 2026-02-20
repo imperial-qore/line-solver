@@ -99,7 +99,8 @@ fun weaklyconncomp(G: Matrix): ConnectedComponents {
         for (j in 0 until n) {
             val gij = G.get(i, j)
             val gji = G.get(j, i)
-            if (!gij.isNaN() && gij != 0.0 || !gji.isNaN() && gji != 0.0) {
+            // Match MATLAB: G(isnan(G)) = 1; NaN is treated as connected
+            if (gij.isNaN() || gij != 0.0 || gji.isNaN() || gji != 0.0) {
                 adj.set(i, j, 1.0)
                 adj.set(j, i, 1.0)
             }
@@ -248,42 +249,110 @@ fun ctmc_solveFull(Q: Matrix): CTMCSolveResult {
         return CTMCSolveResult(p, normalizedQ, 1, IntArray(n) { 1 })
     }
 
+    // Iterative stripping of states with zero rows AND columns (matching MATLAB lines 91-118)
+    var nnzel = (0 until n).toList().toIntArray()
+    var Qnnz = normalizedQ
+    var bnnz = DoubleArray(n)
+    var Qnnz_prev = Qnnz
+    var bnnz_prev = bnnz.copyOf()
+
+    var goon = true
+    while (goon) {
+        val m = Qnnz.numRows
+        // Find indices where both column sum and row sum of abs values are nonzero
+        val keep = mutableListOf<Int>()
+        for (idx in 0 until m) {
+            var colSum = 0.0
+            var rowSum = 0.0
+            for (k in 0 until m) {
+                colSum += FastMath.abs(Qnnz.get(k, idx))
+                rowSum += FastMath.abs(Qnnz.get(idx, k))
+            }
+            if (colSum != 0.0 && rowSum != 0.0) {
+                keep.add(idx)
+            }
+        }
+
+        // Extract sub-matrix for kept indices
+        val mKeep = keep.size
+        val QnnzNew = Matrix(mKeep, mKeep)
+        val bnnzNew = DoubleArray(mKeep)
+        for ((ii, i) in keep.withIndex()) {
+            bnnzNew[ii] = bnnz[i]
+            for ((jj, j) in keep.withIndex()) {
+                QnnzNew.set(ii, jj, Qnnz.get(i, j))
+            }
+        }
+
+        val QnnzNorm = ctmc_makeinfgen(QnnzNew)
+
+        // Map kept local indices back to original indices
+        val newNnzel = IntArray(mKeep) { nnzel[keep[it]] }
+
+        // Check convergence: sizes must match
+        if (Qnnz_prev.numRows == QnnzNorm.numRows && bnnz_prev.size == bnnzNew.size) {
+            goon = false
+        } else {
+            Qnnz_prev = QnnzNorm
+            bnnz_prev = bnnzNew
+            nnzel = newNnzel
+        }
+
+        Qnnz = QnnzNorm
+        bnnz = bnnzNew
+        nnzel = newNnzel
+    }
+
+    // If all states were stripped, return uniform
+    if (Qnnz.numRows == 0) {
+        val p = DoubleArray(n) { 1.0 / n }
+        return CTMCSolveResult(p, normalizedQ, 1, IntArray(n) { 1 })
+    }
+
+    val mSolve = Qnnz.numRows
+
     // Solve the system: p * Q = 0, sum(p) = 1
     // Modified to: Q' * p' = b where b = [0,0,...,1] and last column of Q' is replaced with ones
 
-    val Qmod = Matrix(n, n)
-    for (i in 0 until n) {
-        for (j in 0 until n) {
-            Qmod.set(j, i, normalizedQ.get(i, j)) // Transpose
+    val Qmod = Matrix(mSolve, mSolve)
+    for (i in 0 until mSolve) {
+        for (j in 0 until mSolve) {
+            Qmod.set(j, i, Qnnz.get(i, j)) // Transpose
         }
     }
 
     // Replace last column with ones for normalization constraint
-    for (i in 0 until n) {
-        Qmod.set(i, n - 1, 1.0)
+    for (i in 0 until mSolve) {
+        Qmod.set(i, mSolve - 1, 1.0)
     }
 
     // Build RHS vector
-    val b = DoubleArray(n)
-    b[n - 1] = 1.0
+    val b = DoubleArray(mSolve)
+    b[mSolve - 1] = 1.0
 
     // Solve using LU decomposition
-    val realMatrix = MatrixUtils.createRealMatrix(n, n)
-    for (i in 0 until n) {
-        for (j in 0 until n) {
+    val realMatrix = MatrixUtils.createRealMatrix(mSolve, mSolve)
+    for (i in 0 until mSolve) {
+        for (j in 0 until mSolve) {
             realMatrix.setEntry(i, j, Qmod.get(i, j))
         }
     }
 
-    val p = try {
+    val pSolve = try {
         val solver = LUDecomposition(realMatrix).solver
         solver.solve(MatrixUtils.createRealVector(b)).toArray()
     } catch (e: Exception) {
-        // If singular, return uniform
-        DoubleArray(n) { 1.0 / n }
+        // If singular, return NaN so callers can detect and fall back to dtmc_solve_reducible
+        DoubleArray(mSolve) { Double.NaN }
     }
 
-    return CTMCSolveResult(p, normalizedQ, 1, IntArray(n) { 1 })
+    // Map solution back to full state vector (zeros for stripped states)
+    val p = DoubleArray(n)
+    for ((ii, origIdx) in nnzel.withIndex()) {
+        p[origIdx] = pSolve[ii]
+    }
+
+    return CTMCSolveResult(p, normalizedQ, cc.numComponents, cc.componentAssignment)
 }
 
 /**
@@ -305,7 +374,8 @@ fun ctmc_timereverse(Q: Matrix): Matrix {
         }
     }
 
-    return Qrev
+    // Ensure valid generator with zero row sums (safety for numerical noise)
+    return ctmc_makeinfgen(Qrev)
 }
 
 /**
@@ -439,7 +509,7 @@ fun ctmc_relsolve(Q: Matrix, refstate: Int = 0): DoubleArray {
 
     val normalizedQ = ctmc_makeinfgen(Q)
 
-    // Modify system: set column refstate to have 1 at refstate, 0 elsewhere
+    // Build Q^T (transpose of normalized generator)
     val Qmod = Matrix(n, n)
     for (i in 0 until n) {
         for (j in 0 until n) {
@@ -447,15 +517,17 @@ fun ctmc_relsolve(Q: Matrix, refstate: Int = 0): DoubleArray {
         }
     }
 
-    // Replace reference column
-    for (i in 0 until n) {
-        Qmod.set(i, refstate, 0.0)
+    // Replace last row of Q^T (= last column of Q) with normalization constraint
+    // MATLAB: Qnnz(:,end) = 0; Qnnz(refstate,end) = 1; bnnz(end) = 1; then solves Qnnz' \ bnnz
+    val lastRow = n - 1
+    for (j in 0 until n) {
+        Qmod.set(lastRow, j, 0.0)
     }
-    Qmod.set(refstate, refstate, 1.0)
+    Qmod.set(lastRow, refstate, 1.0)
 
     // Build RHS vector
     val b = DoubleArray(n)
-    b[refstate] = 1.0
+    b[lastRow] = 1.0
 
     // Solve using LU decomposition
     val realMatrix = MatrixUtils.createRealMatrix(n, n)

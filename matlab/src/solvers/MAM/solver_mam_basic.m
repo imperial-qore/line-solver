@@ -77,10 +77,6 @@ if any(isfinite(sn.njobs))
     isClosed = true;
 end
 isMixed = isOpen & isClosed;
-if isMixed
-    line_error(mfilename,'SolverMAM does not support mixed models with both open and closed classes.');
-    return;
-end
 
 lambdas_inchain = cell(1,C);
 for c=1:C

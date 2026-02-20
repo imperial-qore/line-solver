@@ -489,13 +489,13 @@ def pfqn_mci(
     # Compute throughput estimate using balanced system
     if variant.lower() == 'imci':
         # Improved MCI
-        XN, _, _, _, _, _, _ = pfqn_bs(D, N, Z)
+        XN, _, _, _, _ = pfqn_bs(D, N, Z)
         tput = XN.ravel()
         util = D @ tput
         gamma = np.maximum(0.01, 1 - util)
     elif variant.lower() == 'mci':
         # Original MCI
-        XN, _, _, _, _, _, _ = pfqn_bs(D, N, Z)
+        XN, _, _, _, _ = pfqn_bs(D, N, Z)
         tput = XN.ravel()
         util = D @ tput
         gamma = np.zeros(M)

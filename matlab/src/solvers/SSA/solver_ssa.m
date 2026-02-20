@@ -401,10 +401,10 @@ end
 function print_progress(options,samples_collected)
 if options.verbose
     if samples_collected == 1e2
-        line_printf(sprintf('\nSSA samples: %6d',samples_collected));
+        line_printf(sprintf('\bSSA samples: %6d',samples_collected));
     elseif options.verbose == 2
         if samples_collected == 0
-            line_printf(sprintf('\nSSA samples: %6d',samples_collected));
+            line_printf(sprintf('\bSSA samples: %6d',samples_collected));
         else
             line_printf(sprintf('\b\b\b\b\b\b%6d',samples_collected));
         end

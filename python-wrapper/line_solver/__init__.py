@@ -46,7 +46,7 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(1, dir_path)
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
-pd.set_option('display.precision', 4)
+pd.set_option('display.precision', 5)
 
 
 class GlobalImport:
@@ -108,10 +108,26 @@ def jlineStart():
                         jar_file_path)
             print("done.")
 
+        # Look for JMT.jar (contains dependencies like EJML)
+        jmt_jar_path = None
+        jmt_locations = [
+            os.path.join(package_dir, "JMT.jar"),  # Inside package (pip install)
+            os.path.join(os.path.dirname(os.path.dirname(package_dir)), 'common', "JMT.jar"),  # Dev: ../../common/
+        ]
+        for loc in jmt_locations:
+            if os.path.isfile(loc):
+                jmt_jar_path = loc
+                break
+
+        # Build classpath with both JARs if JMT.jar exists
+        classpath = [jar_file_path]
+        if jmt_jar_path:
+            classpath.append(jmt_jar_path)
+
         # Only start JVM if not already running
         if not jpype.isJVMStarted():
             # Pass classpath as argument to startJVM for reliable loading
-            jpype.startJVM(classpath=[jar_file_path])
+            jpype.startJVM(classpath=classpath)
             #jpype.startJVM(jpype.getDefaultJVMPath(), classpath=[jar_file_path],
             #               "-agentlib:jdwp=transport=dt_socket,server=n,suspend=y,address=5005")
         else:
@@ -280,7 +296,10 @@ def jlineMatrixFromArray(array):
     Returns:
         Java Matrix object compatible with LINE solver.
     """
-    if isinstance(array, list):
+    # Handle scalar inputs (int, float, numpy scalar) by wrapping as 1x1 2D array
+    if np.isscalar(array):
+        array = np.array([[array]], dtype=float)
+    elif isinstance(array, list):
         array = np.array(array)
 
     # Use Matrix(int, int) constructor and set values individually
@@ -356,16 +375,20 @@ def _add_activity_precedence_snake_case(java_class):
 
         @staticmethod
         def serial(acts):
-            """Python snake_case alias for Serial(). Takes a list of activities."""
+            """Python snake_case alias for Serial(). Takes a list of activities.
+
+            Returns an array of ActivityPrecedence objects representing the serial chain.
+            For N activities, returns N-1 precedence relationships.
+            """
             if not acts:
                 raise ValueError("serial() requires at least one activity")
             if len(acts) == 1:
                 return java_class.Serial(acts[0], acts[0])
-            # For multiple activities, chain them together serially
-            result = java_class.Serial(acts[0], acts[1])
-            for i in range(2, len(acts)):
-                result = java_class.Serial(acts[i-1], acts[i])
-            return result
+            # Build a Java list and call Serial(List) which returns ActivityPrecedence[]
+            java_list = jpype.java.util.ArrayList()
+            for act in acts:
+                java_list.add(act)
+            return java_class.Serial(java_list)
 
         @staticmethod
         def AndFork(preAct, postActs):

@@ -34,8 +34,10 @@ queue2.setService(job_class2, Exp(3))
 K = model.getNumberOfClasses()
 P = [[None, None], [None, None]]
 
-P[0] = [[0, 1, 0], [0, 0, 1], [1, 0, 0]]
-P[1] = [[0, 1, 0], [0, 0, 1], [1, 0, 0]]
+# P[r][s] is routing matrix for class r to class s transitions
+# Same-class routing (no class switching)
+P[0][0] = [[0, 1, 0], [0, 0, 1], [1, 0, 0]]  # Class 1 -> Class 1
+P[1][1] = [[0, 1, 0], [0, 0, 1], [1, 0, 0]]  # Class 2 -> Class 2
 
 model.link(P)
 
@@ -56,8 +58,6 @@ for i in range(M):
     if n[i][0] != -1 or n[i][1] != -1:
         stations[i].setState(n[i])
 
-state = model.getState()
-
 # Solver options
 options = {
     'verbose': 1,
@@ -66,20 +66,22 @@ options = {
 
 # Query probability of state at station M (queue2)
 i = M - 1  # Python 0-indexing
+target_station = stations[i]
+target_state = n[i]
 
-print(f'Querying probability for station {i+1} (Queue2) in state {state[i]}\n')
+print(f'Querying probability for station {i+1} ({target_station.getName()}) in state {target_state}\n')
 
 # Solve with CTMC
 solver_ctmc = CTMC(model, options)
-pr_ctmc = solver_ctmc.get_prob_aggr(stations[i])
-print(f'CTMC: Station {i+1} is in state {state[i]} with probability {pr_ctmc}')
+pr_ctmc = solver_ctmc.getProbAggr(target_station)
+print(f'CTMC: Station {i+1} is in state {target_state} with probability {pr_ctmc}')
 
 # Solve with NC
 solver_nc = NC(model, options)
-pr_nc = solver_nc.get_prob_aggr(stations[i])
-print(f'NC:   Station {i+1} is in state {state[i]} with probability {pr_nc}')
+pr_nc = solver_nc.getProbAggr(target_station)
+print(f'NC:   Station {i+1} is in state {target_state} with probability {pr_nc}')
 
-print('\nNote: get_prob_aggr() computes marginal probabilities for the aggregated')
+print('\nNote: getProbAggr() computes marginal probabilities for the aggregated')
 print('      state space, where each station is specified by a tuple (n_i1, ..., n_iR),')
 print('      with n_ir being the number of class r jobs at station i.')
 print('      Rows set to [-1, -1] are ignored in the calculation.')

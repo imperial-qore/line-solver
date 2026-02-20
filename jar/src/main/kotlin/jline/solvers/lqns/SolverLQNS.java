@@ -521,7 +521,9 @@ public class SolverLQNS extends Solver {
         this.result.QN = new Matrix(AvgNodesProcWaiting);
         this.result.QN.fill(Double.NaN);
         this.result.AN = new Matrix(lqn.nidx, 1);
+        this.result.AN.fill(Double.NaN);
         this.result.WN = new Matrix(lqn.nidx, 1);
+        this.result.WN.fill(Double.NaN);
 
         // Store raw metrics for getRawAvgTables (aligned with MATLAB RawAvg structure)
         LayeredSolverResult layeredResult = (LayeredSolverResult) this.result;
@@ -568,7 +570,7 @@ public class SolverLQNS extends Solver {
         String praqmaFlag = "";
         if (!"lqsim".equalsIgnoreCase(options.method)) {
             String pol = options.config.multiserver;          // default 'rolia'
-            if (pol == null || pol.isEmpty()) pol = "rolia";
+            if (pol == null || pol.isEmpty() || "default".equals(pol)) pol = "rolia";
             praqmaFlag = "-Pmultiserver=" + pol;
         }
 

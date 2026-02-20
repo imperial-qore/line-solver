@@ -21,7 +21,7 @@ if __name__ == "__main__":
     node = np.empty(2, dtype=object)
     node[0] = Delay(ps_model, 'Delay')
     node[1] = Queue(ps_model, 'Queue1', SchedStrategy.PS)
-    node[1].set_num_servers(c)
+    node[1].set_number_of_servers(c)
 
     jobclass = np.empty(2, dtype=object)
     jobclass[0] = ClosedClass(ps_model, 'Class1', 2, node[0], 0)
@@ -34,11 +34,8 @@ if __name__ == "__main__":
     node[1].set_service(jobclass[1], Exp(1))
 
     P = ps_model.init_routing_matrix()
-    routing = Network.serial_routing(node)
-    P.set(jobclass[0], jobclass[0], node[0], node[1], routing[0][1])
-    P.set(jobclass[0], jobclass[0], node[1], node[0], routing[1][0])
-    P.set(jobclass[1], jobclass[1], node[0], node[1], routing[0][1])
-    P.set(jobclass[1], jobclass[1], node[1], node[0], routing[1][0])
+    P[jobclass[0], jobclass[0]] = Network.serial_routing(node)
+    P[jobclass[1], jobclass[1]] = Network.serial_routing(node)
     ps_model.link(P)
 
     # FCFS scheduling model
@@ -47,7 +44,7 @@ if __name__ == "__main__":
     node = np.empty(2, dtype=object)
     node[0] = Delay(fcfs_model, 'Delay')
     node[1] = Queue(fcfs_model, 'Queue1', SchedStrategy.FCFS)
-    node[1].set_num_servers(c)
+    node[1].set_number_of_servers(c)
 
     jobclass = np.empty(2, dtype=object)
     jobclass[0] = ClosedClass(fcfs_model, 'Class1', 2, node[0], 0)
@@ -60,11 +57,8 @@ if __name__ == "__main__":
     node[1].set_service(jobclass[1], Exp(1))
 
     P = fcfs_model.init_routing_matrix()
-    routing = Network.serial_routing(node)
-    P.set(jobclass[0], jobclass[0], node[0], node[1], routing[0][1])
-    P.set(jobclass[0], jobclass[0], node[1], node[0], routing[1][0])
-    P.set(jobclass[1], jobclass[1], node[0], node[1], routing[0][1])
-    P.set(jobclass[1], jobclass[1], node[1], node[0], routing[1][0])
+    P[jobclass[0], jobclass[0]] = Network.serial_routing(node)
+    P[jobclass[1], jobclass[1]] = Network.serial_routing(node)
     fcfs_model.link(P)
 
     # LCFS-PR scheduling model
@@ -73,7 +67,7 @@ if __name__ == "__main__":
     node = np.empty(2, dtype=object)
     node[0] = Delay(lcfspr_model, 'Delay')
     node[1] = Queue(lcfspr_model, 'Queue1', SchedStrategy.LCFSPR)
-    node[1].set_num_servers(c)
+    node[1].set_number_of_servers(c)
 
     jobclass = np.empty(2, dtype=object)
     jobclass[0] = ClosedClass(lcfspr_model, 'Class1', 2, node[0], 0)
@@ -86,11 +80,8 @@ if __name__ == "__main__":
     node[1].set_service(jobclass[1], Exp(1))
 
     P = lcfspr_model.init_routing_matrix()
-    routing = Network.serial_routing(node)
-    P.set(jobclass[0], jobclass[0], node[0], node[1], routing[0][1])
-    P.set(jobclass[0], jobclass[0], node[1], node[0], routing[1][0])
-    P.set(jobclass[1], jobclass[1], node[0], node[1], routing[0][1])
-    P.set(jobclass[1], jobclass[1], node[1], node[0], routing[1][0])
+    P[jobclass[0], jobclass[0]] = Network.serial_routing(node)
+    P[jobclass[1], jobclass[1]] = Network.serial_routing(node)
     lcfspr_model.link(P)
 
     # Solve all three models
@@ -102,3 +93,4 @@ if __name__ == "__main__":
     for s in range(len(solver)):
         print(f'\nMODEL: {solver[s].model.get_name()}')
         avg_table = solver[s].avg_table()
+        print(avg_table)

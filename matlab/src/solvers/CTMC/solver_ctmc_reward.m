@@ -33,7 +33,7 @@ end
 
 if isinf(options.cutoff)
     options.cutoff = 100;
-    line_printf(mfilename,'Cutoff option missing, setting cutoff=100');
+    line_printf('[%s] Cutoff option missing, setting cutoff=100\n', mfilename);
 end
 
 % Get default iterations for transient analysis

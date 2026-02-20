@@ -2860,7 +2860,8 @@ classdef JLINE
             % @brief Creates StreamingOptions for streaming simulation metrics
             %
             % @param varargin Name-value pairs for options:
-            %   'endpoint' - OTLP receiver endpoint (default: '127.0.0.1:4317')
+            %   'transport' - 'http' (recommended) or 'grpc' (default: 'http')
+            %   'endpoint' - Receiver endpoint (default: 'localhost:8080/metrics' for HTTP)
             %   'mode' - 'sampled' or 'time_window' (default: 'sampled')
             %   'sampleFrequency' - Push every N events in sampled mode (default: 100)
             %   'timeWindowSeconds' - Window duration in time_window mode (default: 1.0)
@@ -2875,14 +2876,15 @@ classdef JLINE
             %
             % Example:
             % @code
-            % streamOpts = JLINE.StreamingOptions('mode', 'sampled', 'sampleFrequency', 50);
+            % streamOpts = JLINE.StreamingOptions('transport', 'http', 'sampleFrequency', 50);
             % @endcode
 
             streamOpts = jline.streaming.StreamingOptions();
 
             % Parse optional arguments
             p = inputParser;
-            addParameter(p, 'endpoint', '127.0.0.1:4317', @ischar);
+            addParameter(p, 'transport', 'http', @ischar);
+            addParameter(p, 'endpoint', '', @ischar);  % Empty means use default for transport
             addParameter(p, 'mode', 'sampled', @ischar);
             addParameter(p, 'sampleFrequency', 100, @isnumeric);
             addParameter(p, 'timeWindowSeconds', 1.0, @isnumeric);
@@ -2894,8 +2896,22 @@ classdef JLINE
             addParameter(p, 'includeArrivalRate', true, @islogical);
             parse(p, varargin{:});
 
-            % Set endpoint
-            streamOpts.endpoint = p.Results.endpoint;
+            % Set transport type
+            transportTypes = javaMethod('values', 'jline.streaming.StreamingOptions$TransportType');
+            switch lower(p.Results.transport)
+                case 'http'
+                    streamOpts.transport = transportTypes(1);  % HTTP
+                case 'grpc'
+                    streamOpts.transport = transportTypes(2);  % GRPC
+                otherwise
+                    streamOpts.transport = transportTypes(1);  % Default to HTTP
+            end
+
+            % Set endpoint (use provided or default based on transport)
+            if ~isempty(p.Results.endpoint)
+                streamOpts.endpoint = p.Results.endpoint;
+            end
+            % If empty, StreamingOptions uses its default for the transport type
 
             % Set mode
             streamModes = javaMethod('values', 'jline.streaming.StreamingOptions$StreamMode');

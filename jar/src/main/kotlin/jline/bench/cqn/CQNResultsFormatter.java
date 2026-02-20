@@ -81,7 +81,7 @@ public class CQNResultsFormatter {
         }
 
         private void printHeader() {
-            System.out.println("Starting LINE version 3.0.2: StdOut=console, VerboseLevel=STD, DoChecks=true, " +
+            System.out.println("Starting LINE version 3.0.3: StdOut=console, VerboseLevel=STD, DoChecks=true, " +
                              "CoarseTol=1.0e-03, FineTol=1.0e-08, Zero=1.0e-14, MaxInt=2147483647\n");
         }
 

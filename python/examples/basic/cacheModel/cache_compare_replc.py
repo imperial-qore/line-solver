@@ -7,13 +7,22 @@ This example demonstrates:
 - Hit ratio comparison across different strategies
 """
 
+# Ensure native line_solver is used (not python-wrapper)
+import sys
+import os
+_native_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+if _native_path not in sys.path:
+    sys.path.insert(0, _native_path)
+
 from line_solver import *
+import numpy as np
 
 if __name__ == "__main__":
+    # Use STD verbosity to show warnings (like MATLAB behavior)
     GlobalConstants.set_verbose(VerboseLevel.STD)
 
     n = 5
-    m = 2
+    m = [2, 1]  # Two-level cache matching MATLAB
     alpha = 1.0
 
     repl_strat = [ReplacementStrategy.RR, ReplacementStrategy.FIFO, ReplacementStrategy.LRU]
@@ -51,25 +60,68 @@ if __name__ == "__main__":
         solver_ctmc = CTMC(model, keep=False, cutoff=1, verbose=False)
         solver_ctmc.avg_node_table()
         hr = cache_node.get_hit_ratio()
-        ctmc_hit_ratio.append(hr if hr is not None else float('nan'))
+        # Extract scalar from array (first requesting class)
+        if isinstance(hr, (float, np.floating, np.integer)):
+            hr_val = float(hr)
+        elif isinstance(hr, np.ndarray):
+            if hr.ndim == 0:
+                hr_val = float(hr)
+            elif hr.ndim == 2 and hr.shape[0] > 0 and hr.shape[1] > 0:
+                hr_val = float(hr[0][0])
+            elif hr.ndim == 1 and len(hr) > 0:
+                hr_val = float(hr[0])
+            else:
+                hr_val = float('nan')
+        else:
+            hr_val = float('nan')
+        ctmc_hit_ratio.append(hr_val)
 
         # MVA solver
-        if MVA.supports(model):
+        try:
             model.reset()
             solver_mva = MVA(model, verbose=False)
             solver_mva.avg_node_table()
             hr = cache_node.get_hit_ratio()
-            mva_hit_ratio.append(hr if hr is not None else float('nan'))
-        else:
+            if isinstance(hr, (float, np.floating, np.integer)):
+                hr_val = float(hr)
+            elif isinstance(hr, np.ndarray):
+                if hr.ndim == 0:
+                    hr_val = float(hr)
+                elif hr.ndim == 2 and hr.shape[0] > 0 and hr.shape[1] > 0:
+                    hr_val = float(hr[0][0])
+                elif hr.ndim == 1 and len(hr) > 0:
+                    hr_val = float(hr[0])
+                else:
+                    hr_val = float('nan')
+            else:
+                hr_val = float('nan')
+            mva_hit_ratio.append(hr_val)
+        except:
             mva_hit_ratio.append(float('nan'))
 
-        # NC solver
+        # NC solver - check if model is supported first (prints warnings for unsupported features)
         if NC.supports(model):
-            model.reset()
-            solver_nc = NC(model, verbose=False)
-            solver_nc.avg_node_table()
-            hr = cache_node.get_hit_ratio()
-            nc_hit_ratio.append(hr if hr is not None else float('nan'))
+            try:
+                model.reset()
+                solver_nc = NC(model, verbose=False)
+                solver_nc.avg_node_table()
+                hr = cache_node.get_hit_ratio()
+                if isinstance(hr, (float, np.floating, np.integer)):
+                    hr_val = float(hr)
+                elif isinstance(hr, np.ndarray):
+                    if hr.ndim == 0:
+                        hr_val = float(hr)
+                    elif hr.ndim == 2 and hr.shape[0] > 0 and hr.shape[1] > 0:
+                        hr_val = float(hr[0][0])
+                    elif hr.ndim == 1 and len(hr) > 0:
+                        hr_val = float(hr[0])
+                    else:
+                        hr_val = float('nan')
+                else:
+                    hr_val = float('nan')
+                nc_hit_ratio.append(hr_val)
+            except:
+                nc_hit_ratio.append(float('nan'))
         else:
             nc_hit_ratio.append(float('nan'))
 

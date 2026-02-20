@@ -46,12 +46,12 @@ if __name__ == "__main__":
     print('\nLQNS Results:')
     print(avg_table)
 
-    # Get raw average tables
-    avg_table_raw, call_avg_table = solver.get_raw_avg_tables()
-    print('\nRaw Average Table:')
-    print(avg_table_raw)
-    print('\nCall Average Table:')
-    print(call_avg_table)
+    # Note: get_raw_avg_tables() not yet implemented in Python
+    # avg_table_raw, call_avg_table = solver.get_raw_avg_tables()
+    # print('\nRaw Average Table:')
+    # print(avg_table_raw)
+    # print('\nCall Average Table:')
+    # print(call_avg_table)
 
     # Solve using LN
     avg_table_ln = SolverLN(model).get_avg_table()

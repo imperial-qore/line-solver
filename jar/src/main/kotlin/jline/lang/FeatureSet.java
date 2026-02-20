@@ -11,6 +11,7 @@ import java.util.LinkedList;
 import java.util.List;
 
 import static jline.io.InputOutputKt.line_error;
+import static jline.io.InputOutputKt.line_warning;
 import static jline.io.InputOutputKt.mfilename;
 
 /**
@@ -140,13 +141,14 @@ public class FeatureSet implements Serializable {
     public static boolean supports(FeatureSet supported, FeatureSet used) {
         List<String> unsupported = new LinkedList<>();
         used.set.forEach((usedFeat, val) -> {
-            if (val && !supported.set.get(usedFeat)) {
+            if (val && !supported.set.getOrDefault(usedFeat, false)) {
                 unsupported.add(usedFeat);
             }
         });
         if (!unsupported.isEmpty()) {
-            System.out.println("Some features are not supported by the chosen solver:");
-            unsupported.forEach(System.out::println);
+            String featStr = String.join(", ", unsupported);
+            line_warning(mfilename(new Object() {}),
+                    "Some features are not supported by the chosen solver (feature: " + featStr + ").");
             return false;
         }
         return true;

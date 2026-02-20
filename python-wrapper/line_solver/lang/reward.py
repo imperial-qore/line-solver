@@ -20,6 +20,23 @@ class Reward:
     """Factory class for common reward function templates."""
 
     @staticmethod
+    def _get_node_index(node):
+        """Get node index (1-based), handling both wrapper and native implementations."""
+        # Native Python nodes
+        if hasattr(node, 'get_index'):
+            return node.get_index()  # Already 1-based
+        if hasattr(node, 'index'):
+            idx = node.index
+            return idx() if callable(idx) else idx
+        # Wrapper nodes (Java backend): getNodeIndex() returns 0-based, convert to 1-based
+        if hasattr(node, 'obj'):
+            try:
+                return int(node.obj.getNodeIndex()) + 1
+            except Exception:
+                pass
+        raise ValueError(f"Node {node} has no index attribute")
+
+    @staticmethod
     def queue_length(node, jobclass=None):
         """Queue length reward template.
 
@@ -64,14 +81,16 @@ class Reward:
             >>> model.set_reward('Util', Reward.utilization(queue1))
             >>> model.set_reward('Util_C1', Reward.utilization(queue1, class1))
         """
+        node_idx = Reward._get_node_index(node)
+
         if jobclass is None:
             # Total utilization at node (all classes)
             def util_fn(state, sn=None):
                 jobs = state.at(node).total()
                 if sn is None:
                     sn = state.sn
-                station_idx = sn.nodeToStation[node.index - 1]
-                nservers = sn.nservers[station_idx - 1]
+                station_idx = sn.nodeToStation[node_idx - 1]
+                nservers = sn.nservers[station_idx]
                 return min(jobs, nservers)
             return util_fn
         else:
@@ -80,8 +99,8 @@ class Reward:
                 jobs = state.at(node, jobclass)
                 if sn is None:
                     sn = state.sn
-                station_idx = sn.nodeToStation[node.index - 1]
-                nservers = sn.nservers[station_idx - 1]
+                station_idx = sn.nodeToStation[node_idx - 1]
+                nservers = sn.nservers[station_idx]
                 return min(jobs, nservers)
             return util_class_fn
 
@@ -101,12 +120,14 @@ class Reward:
         Example:
             >>> model.set_reward('Block', Reward.blocking(queue1))
         """
+        node_idx = Reward._get_node_index(node)
+
         def blocking_fn(state, sn=None):
             jobs = state.at(node).total()
             if sn is None:
                 sn = state.sn
-            station_idx = sn.nodeToStation[node.index - 1]
-            capacity = sn.cap[station_idx - 1]
+            station_idx = sn.nodeToStation[node_idx - 1]
+            capacity = sn.cap[station_idx]
             return 1.0 if jobs >= capacity else 0.0
         return blocking_fn
 

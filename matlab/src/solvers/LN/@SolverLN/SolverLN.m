@@ -247,6 +247,7 @@ classdef SolverLN < EnsembleSolver
             self.residt_prev = NaN(self.lqn.nidx, 1);
             self.tput_prev = NaN(self.lqn.nidx, 1);
             self.thinkt_prev = NaN(self.lqn.nidx, 1);
+            self.thinkt = zeros(self.lqn.nidx, 1); % Initialize to zeros (Python parity)
             self.callservt_prev = NaN(self.lqn.ncalls, 1);
 
             % Initialize MOL-specific state
@@ -467,6 +468,21 @@ classdef SolverLN < EnsembleSolver
             ArvR = AN;
             AT = Table(Node,ArvR);
             AvgTable = Table(Node, NodeType, QLen, Util, RespT, ResidT, ArvR, Tput);%, ProcUtil, SvcT);
+        end
+
+        function [AvgTable,QT,UT,RT,WT,AT,TT] = avgTable(self)
+            % AVGTABLE Alias for getAvgTable
+            [AvgTable,QT,UT,RT,WT,AT,TT] = self.getAvgTable();
+        end
+
+        function [AvgTable,QT,UT,RT,WT,AT,TT] = avgT(self)
+            % AVGT Short alias for getAvgTable
+            [AvgTable,QT,UT,RT,WT,AT,TT] = self.getAvgTable();
+        end
+
+        function [AvgTable,QT,UT,RT,WT,AT,TT] = aT(self)
+            % AT Short alias for getAvgTable (MATLAB-compatible)
+            [AvgTable,QT,UT,RT,WT,AT,TT] = self.getAvgTable();
         end
     end
 
@@ -840,5 +856,7 @@ function solver = adaptiveSolverFactory(model, parentOptions)
         verbose = parentOptions.verbose;
     end
 
+    % Create MVA solver with reduced iter_max for sublayer stability (Python parity)
     solver = SolverMVA(model, 'verbose', verbose);
+    solver.options.iter_max = 1000; % Cap sublayer MVA iterations
 end

@@ -46,13 +46,13 @@ disp('This example shows the execution of the solver on a 2-class mixed model wi
 solver={};
 %solver{end+1} = CTMC(model,options); % CTMC is infinite on this model
 solver{end+1} = JMT(model,options);
-solver{end+1} = FLD(model,options);
+%solver{end+1} = FLD(model,options); % FLD is very slow with APH arrivals in mixed networks
 solver{end+1} = MVA(model,'lin');
 solver{end+1} = NC(model,options);
 solver{end+1} = DES(model,options);
 %solver{end+1} = MAM(model,options);
 for s=1:length(solver)
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());
+    fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgTable();
     AvgTable{s}    
 end

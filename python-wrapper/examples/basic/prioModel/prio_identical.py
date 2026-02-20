@@ -42,10 +42,8 @@ if __name__ == "__main__":
 
     # Serial routing for all classes
     P = model.init_routing_matrix()
-    routing = Network.serial_routing(node)
     for r in range(4):
-        P.set(jobclass[r], jobclass[r], node[0], node[1], routing[0][1])
-        P.set(jobclass[r], jobclass[r], node[1], node[0], routing[1][0])
+        P[jobclass[r], jobclass[r]] = Network.serial_routing(node)
     model.link(P)
 
     # Run solvers
@@ -55,5 +53,6 @@ if __name__ == "__main__":
 
     avg_table = np.empty(len(solver), dtype=object)
     for s in range(len(solver)):
-        print(f'\nSOLVER: {solver[s].get_name()}')
+        print(f'\nSOLVER: {solver[s].get_name().replace("Solver", "")}')
         avg_table[s] = solver[s].avg_table()
+        print(avg_table[s])

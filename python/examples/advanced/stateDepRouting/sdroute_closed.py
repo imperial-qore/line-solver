@@ -40,19 +40,19 @@ print('=== State-Dependent Routing - Closed Network ===\n')
 # Solve with CTMC
 print('CTMC (exact):')
 solver_ctmc = CTMC(model, keep=True)
-avg_table_ctmc = solver_ctmc.get_avg_table()
+avg_table_ctmc = solver_ctmc.getAvgTable()
 print(avg_table_ctmc)
 
 # Solve with JMT
 print('\nJMT Simulation:')
 solver_jmt = JMT(model, samples=int(1e5), seed=23000)
-avg_table_jmt = solver_jmt.get_avg_table()
+avg_table_jmt = solver_jmt.getAvgTable()
 print(avg_table_jmt)
 
 # Solve with SSA
 print('\nSSA (Stochastic State-space Analysis):')
 solver_ssa = SSA(model, verbose=True, samples=int(1e4), seed=23000)
-avg_table_ssa = solver_ssa.get_avg_table()
+avg_table_ssa = solver_ssa.getAvgTable()
 print(avg_table_ssa)
 
 print('\nNote: The delay node uses round-robin routing to alternate between Queue1 and Queue2.')

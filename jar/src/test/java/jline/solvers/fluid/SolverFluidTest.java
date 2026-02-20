@@ -86,13 +86,13 @@ public class SolverFluidTest {
         SolverResult result = solver.result;
 
         // method
-        assertEquals("default/closing", result.method);
+        assertEquals("default/matrix", result.method);
 
         // QN
         assertEquals(5, result.QN.getNumRows());
         assertEquals(1, result.QN.getNumCols());
         assertEquals(5, result.QN.getNumElements());
-        assertEquals(0.44166666667061105, result.QN.value(), relativeTolerance(0.44166666667061105, TestTools.MID_TOL));
+        assertEquals(0.0, result.QN.value(), MID_TOL);
         assertEquals(0.15, result.QN.get(1, 0), relativeTolerance(0.15, TestTools.MID_TOL));
         assertEquals(0.2, result.QN.get(2, 0), relativeTolerance(0.2, TestTools.MID_TOL));
         assertEquals(0.075, result.QN.get(3, 0), relativeTolerance(0.075, TestTools.MID_TOL));
@@ -102,7 +102,7 @@ public class SolverFluidTest {
         assertEquals(5, result.RN.getNumRows());
         assertEquals(1, result.RN.getNumCols());
         assertEquals(5, result.RN.getNumElements());
-        assertEquals(0.22083333333530553, result.RN.get(0, 0), relativeTolerance(0.22083333333530553, TestTools.MID_TOL));
+        assertEquals(0.0, result.RN.get(0, 0), MID_TOL);
         assertEquals(0.25, result.RN.get(1, 0), relativeTolerance(0.25, TestTools.MID_TOL));
         assertEquals(0.5, result.RN.get(2, 0), relativeTolerance(0.5, TestTools.MID_TOL));
         assertEquals(0.125, result.RN.get(3, 0), relativeTolerance(0.125, TestTools.MID_TOL));
@@ -118,7 +118,7 @@ public class SolverFluidTest {
         assertEquals(5, result.UN.getNumRows());
         assertEquals(1, result.UN.getNumCols());
         assertEquals(5, result.UN.getNumElements());
-        assertEquals(0.44166666667061105, result.UN.get(0, 0), relativeTolerance(0.44166666667061105, TestTools.MID_TOL));
+        assertEquals(0.0, result.UN.get(0, 0), MID_TOL);
         assertEquals(0.15, result.UN.get(1, 0), relativeTolerance(0.15, TestTools.MID_TOL));
         assertEquals(0.2, result.UN.get(2, 0), relativeTolerance(0.2, TestTools.MID_TOL));
         assertEquals(0.075, result.UN.get(3, 0), relativeTolerance(0.075, TestTools.MID_TOL));
@@ -144,13 +144,13 @@ public class SolverFluidTest {
         assertEquals(5, result.QNt.length);
         assertEquals(1, result.QNt[0].length);
         assertEquals(1, result.QNt[0][0].getNumCols());
-        assertEquals(1, result.QNt[0][0].get(0, 0), relativeTolerance(1, TestTools.MID_TOL));
+        assertEquals(0, result.QNt[0][0].get(0, 0), MID_TOL);
         assertEquals(0, result.QNt[1][0].get(0, 0), MID_TOL);
         assertEquals(0, result.QNt[2][0].get(0, 0), MID_TOL);
         assertEquals(0, result.QNt[3][0].get(0, 0), MID_TOL);
         assertEquals(0, result.QNt[4][0].get(0, 0), MID_TOL);
         int Tmax = result.QNt[0][0].getNumRows();
-        assertEquals(0.44166666667061105, result.QNt[0][0].get(Tmax - 1, 0), relativeTolerance(0.44166666667061105, TestTools.MID_TOL));
+        assertEquals(0, result.QNt[0][0].get(Tmax - 1, 0), MID_TOL);
         assertEquals(0.15, result.QNt[1][0].get(Tmax - 1, 0), relativeTolerance(0.15, TestTools.MID_TOL));
         assertEquals(0.2, result.QNt[2][0].get(Tmax - 1, 0), relativeTolerance(0.2, TestTools.MID_TOL));
         assertEquals(0.075, result.QNt[3][0].get(Tmax - 1, 0), relativeTolerance(0.075, TestTools.MID_TOL));
@@ -160,12 +160,12 @@ public class SolverFluidTest {
         assertEquals(5, result.UNt.length);
         assertEquals(1, result.UNt[0].length);
         assertEquals(1, result.UNt[0][0].getNumCols());
-        assertEquals(1, result.UNt[0][0].get(0, 0), relativeTolerance(1, TestTools.MID_TOL));
+        assertEquals(0, result.UNt[0][0].get(0, 0), MID_TOL);
         assertEquals(0, result.UNt[1][0].get(0, 0), MID_TOL);
         assertEquals(0, result.UNt[2][0].get(0, 0), MID_TOL);
         assertEquals(0, result.UNt[3][0].get(0, 0), MID_TOL);
         assertEquals(0, result.UNt[4][0].get(0, 0), MID_TOL);
-        assertEquals(0.44166666667061105, result.UNt[0][0].get(Tmax - 1, 0), relativeTolerance(0.44166666667061105, TestTools.MID_TOL));
+        assertEquals(0, result.UNt[0][0].get(Tmax - 1, 0), MID_TOL);
         assertEquals(0.15, result.UNt[1][0].get(Tmax - 1, 0), relativeTolerance(0.15, TestTools.MID_TOL));
         assertEquals(0.2, result.UNt[2][0].get(Tmax - 1, 0), relativeTolerance(0.2, TestTools.MID_TOL));
         assertEquals(0.075, result.UNt[3][0].get(Tmax - 1, 0), relativeTolerance(0.075, TestTools.MID_TOL));
@@ -175,12 +175,12 @@ public class SolverFluidTest {
         assertEquals(5, result.TNt.length);
         assertEquals(1, result.TNt[0].length);
         assertEquals(1, result.TNt[0][0].getNumCols());
-        assertEquals(2, result.TNt[0][0].get(0, 0), relativeTolerance(2, TestTools.MID_TOL));
+        assertEquals(0, result.TNt[0][0].get(0, 0), MID_TOL);
         assertEquals(0, result.TNt[1][0].get(0, 0), MID_TOL);
         assertEquals(0, result.TNt[2][0].get(0, 0), MID_TOL);
         assertEquals(0, result.TNt[3][0].get(0, 0), MID_TOL);
         assertEquals(0, result.TNt[4][0].get(0, 0), MID_TOL);
-        assertEquals(0.8834, result.TNt[0][0].get(Tmax - 1, 0), relativeTolerance(0.8834, TestTools.MID_TOL));
+        assertEquals(0, result.TNt[0][0].get(Tmax - 1, 0), MID_TOL);
         assertEquals(0.6, result.TNt[1][0].get(Tmax - 1, 0), relativeTolerance(0.6, TestTools.MID_TOL));
         assertEquals(0.4, result.TNt[2][0].get(Tmax - 1, 0), relativeTolerance(0.4, TestTools.MID_TOL));
         assertEquals(0.6, result.TNt[3][0].get(Tmax - 1, 0), relativeTolerance(0.6, TestTools.MID_TOL));
@@ -196,10 +196,10 @@ public class SolverFluidTest {
         assertEquals(1, result.t.getNumCols());
         assertEquals(Tmax, numElements);
         assertEquals(0.00000001, result.t.get(0, 0), relativeTolerance(0.00000001, TestTools.MID_TOL));
-        assertEquals(1000, result.t.get(result.t.getNumRows() - 1, 0));
+        assertEquals(5000, result.t.get(result.t.getNumRows() - 1, 0));
 
         // odeStateVec
-        assertEquals(0.44166666667061105, fluidResult.odeStateVec.get(0, 0), relativeTolerance(0.44166666667061105, TestTools.MID_TOL));
+        assertEquals(0.0, fluidResult.odeStateVec.get(0, 0), MID_TOL);
         assertEquals(0.15, fluidResult.odeStateVec.get(0, 1), relativeTolerance(0.15, TestTools.MID_TOL));
         assertEquals(0.1, fluidResult.odeStateVec.get(0, 2), relativeTolerance(0.1, TestTools.MID_TOL));
         assertEquals(0.1, fluidResult.odeStateVec.get(0, 3), relativeTolerance(0.1, TestTools.MID_TOL));
@@ -226,15 +226,15 @@ public class SolverFluidTest {
         SolverResult result = solver.result;
 
         // method
-        assertEquals("default/closing", result.method);
+        assertEquals("default/matrix", result.method);
 
         // QN
         assertEquals(4, result.QN.getNumRows());
         assertEquals(3, result.QN.getNumCols());
         assertEquals(12, result.QN.getNumElements());
-        assertEquals(0.6456250000002015, result.QN.get(0, 0), relativeTolerance(0.6456250000002015, TestTools.MID_TOL));
-        assertEquals(0.6456250000002015, result.QN.get(0, 1), relativeTolerance(0.6456250000002015, TestTools.MID_TOL));
-        assertEquals(0.8228125000001006, result.QN.get(0, 2), relativeTolerance(0.8228125000001006, TestTools.MID_TOL));
+        assertEquals(0.0, result.QN.get(0, 0), MID_TOL);
+        assertEquals(0.0, result.QN.get(0, 1), MID_TOL);
+        assertEquals(0.0, result.QN.get(0, 2), MID_TOL);
         assertEquals(0.0625, result.QN.get(1, 0), relativeTolerance(0.0625, TestTools.MID_TOL));
         assertEquals(0.0625, result.QN.get(1, 1), relativeTolerance(0.0625, TestTools.MID_TOL));
         assertEquals(0.0703125, result.QN.get(1, 2), relativeTolerance(0.0703125, TestTools.MID_TOL));
@@ -249,9 +249,9 @@ public class SolverFluidTest {
         assertEquals(4, result.RN.getNumRows());
         assertEquals(3, result.RN.getNumCols());
         assertEquals(12, result.RN.getNumElements());
-        assertEquals(0.3228, result.RN.get(0, 0), relativeTolerance(0.3228, TestTools.MID_TOL));
-        assertEquals(0.3228, result.RN.get(0, 1), relativeTolerance(0.3228, TestTools.MID_TOL));
-        assertEquals(0.8228, result.RN.get(0, 2), relativeTolerance(0.8228, TestTools.MID_TOL));
+        assertEquals(0.0, result.RN.get(0, 0), MID_TOL);
+        assertEquals(0.0, result.RN.get(0, 1), MID_TOL);
+        assertEquals(0.0, result.RN.get(0, 2), MID_TOL);
         assertEquals(0.03125, result.RN.get(1, 0), relativeTolerance(0.03125, TestTools.MID_TOL));
         assertEquals(0.03125, result.RN.get(1, 1), relativeTolerance(0.03125, TestTools.MID_TOL));
         assertEquals(0.03125, result.RN.get(1, 2), relativeTolerance(0.03125, TestTools.MID_TOL));
@@ -274,9 +274,9 @@ public class SolverFluidTest {
         assertEquals(4, result.UN.getNumRows());
         assertEquals(3, result.UN.getNumCols());
         assertEquals(12, result.UN.getNumElements());
-        assertEquals(0.6456, result.UN.get(0, 0), relativeTolerance(0.6456, TestTools.MID_TOL));
-        assertEquals(0.6456, result.UN.get(0, 1), relativeTolerance(0.6456, TestTools.MID_TOL));
-        assertEquals(0.8228, result.UN.get(0, 2), relativeTolerance(0.8228, TestTools.MID_TOL));
+        assertEquals(0.0, result.UN.get(0, 0), MID_TOL);
+        assertEquals(0.0, result.UN.get(0, 1), MID_TOL);
+        assertEquals(0.0, result.UN.get(0, 2), MID_TOL);
         assertEquals(0.0625, result.UN.get(1, 0), relativeTolerance(0.0625, TestTools.MID_TOL));
         assertEquals(0.0625, result.UN.get(1, 1), relativeTolerance(0.0625, TestTools.MID_TOL));
         assertEquals(0.0703125, result.UN.get(1, 2), relativeTolerance(0.0703125, TestTools.MID_TOL));
@@ -316,9 +316,9 @@ public class SolverFluidTest {
         assertEquals(4, result.QNt.length);
         assertEquals(3, result.QNt[0].length);
         assertEquals(1, result.QNt[0][0].getNumCols());
-        assertEquals(1, result.QNt[0][0].get(0, 0), relativeTolerance(1, TestTools.MID_TOL));
-        assertEquals(1, result.QNt[0][1].get(0, 0), relativeTolerance(1, TestTools.MID_TOL));
-        assertEquals(1, result.QNt[0][2].get(0, 0), relativeTolerance(1, TestTools.MID_TOL));
+        assertEquals(0, result.QNt[0][0].get(0, 0), MID_TOL);
+        assertEquals(0, result.QNt[0][1].get(0, 0), MID_TOL);
+        assertEquals(0, result.QNt[0][2].get(0, 0), MID_TOL);
         assertEquals(0, result.QNt[1][0].get(0, 0), MID_TOL);
         assertEquals(0, result.QNt[1][1].get(0, 0), MID_TOL);
         assertEquals(0, result.QNt[1][2].get(0, 0), MID_TOL);
@@ -329,9 +329,9 @@ public class SolverFluidTest {
         assertEquals(0, result.QNt[3][1].get(0, 0), MID_TOL);
         assertEquals(0, result.QNt[3][2].get(0, 0), MID_TOL);
         int Tmax = result.QNt[0][0].getNumRows();
-        assertEquals(0.6456, result.QNt[0][0].get(Tmax - 1, 0), relativeTolerance(0.6456, TestTools.MID_TOL));
-        assertEquals(0.6456, result.QNt[0][1].get(Tmax - 1, 0), relativeTolerance(0.6456, TestTools.MID_TOL));
-        assertEquals(0.8228, result.QNt[0][2].get(Tmax - 1, 0), relativeTolerance(0.8228, TestTools.MID_TOL));
+        assertEquals(0, result.QNt[0][0].get(Tmax - 1, 0), MID_TOL);
+        assertEquals(0, result.QNt[0][1].get(Tmax - 1, 0), MID_TOL);
+        assertEquals(0, result.QNt[0][2].get(Tmax - 1, 0), MID_TOL);
         assertEquals(0.0625, result.QNt[1][0].get(Tmax - 1, 0), relativeTolerance(0.0625, TestTools.MID_TOL));
         assertEquals(0.0625, result.QNt[1][1].get(Tmax - 1, 0), relativeTolerance(0.0625, TestTools.MID_TOL));
         assertEquals(0.0703125, result.QNt[1][2].get(Tmax - 1, 0), relativeTolerance(0.0703125, TestTools.MID_TOL));
@@ -346,9 +346,9 @@ public class SolverFluidTest {
         assertEquals(4, result.UNt.length);
         assertEquals(3, result.UNt[0].length);
         assertEquals(1, result.UNt[0][0].getNumCols());
-        assertEquals(0.3333333333333333, result.UNt[0][0].get(0, 0), relativeTolerance(0.3333333333333333, TestTools.MID_TOL));
-        assertEquals(0.3333333333333333, result.UNt[0][1].get(0, 0), relativeTolerance(0.3333333333333333, TestTools.MID_TOL));
-        assertEquals(0.3333333333333333, result.UNt[0][2].get(0, 0), relativeTolerance(0.3333333333333333, TestTools.MID_TOL));
+        assertEquals(0, result.UNt[0][0].get(0, 0), MID_TOL);
+        assertEquals(0, result.UNt[0][1].get(0, 0), MID_TOL);
+        assertEquals(0, result.UNt[0][2].get(0, 0), MID_TOL);
         assertEquals(0, result.UNt[1][0].get(0, 0), MID_TOL);
         assertEquals(0, result.UNt[1][1].get(0, 0), MID_TOL);
         assertEquals(0, result.UNt[1][2].get(0, 0), MID_TOL);
@@ -358,9 +358,9 @@ public class SolverFluidTest {
         assertEquals(0, result.UNt[3][0].get(0, 0), MID_TOL);
         assertEquals(0, result.UNt[3][1].get(0, 0), MID_TOL);
         assertEquals(0, result.UNt[3][2].get(0, 0), MID_TOL);
-        assertEquals(0.3054, result.UNt[0][0].get(Tmax - 1, 0), relativeTolerance(0.3054, TestTools.MID_TOL));
-        assertEquals(0.3054, result.UNt[0][1].get(Tmax - 1, 0), relativeTolerance(0.3054, TestTools.MID_TOL));
-        assertEquals(0.3892, result.UNt[0][2].get(Tmax - 1, 0), relativeTolerance(0.3892, TestTools.MID_TOL));
+        assertEquals(0, result.UNt[0][0].get(Tmax - 1, 0), MID_TOL);
+        assertEquals(0, result.UNt[0][1].get(Tmax - 1, 0), MID_TOL);
+        assertEquals(0, result.UNt[0][2].get(Tmax - 1, 0), MID_TOL);
         assertEquals(0.0625, result.UNt[1][0].get(Tmax - 1, 0), relativeTolerance(0.0625, TestTools.MID_TOL));
         assertEquals(0.0625, result.UNt[1][1].get(Tmax - 1, 0), relativeTolerance(0.0625, TestTools.MID_TOL));
         assertEquals(0.0703125, result.UNt[1][2].get(Tmax - 1, 0), relativeTolerance(0.0703125, TestTools.MID_TOL));
@@ -375,9 +375,9 @@ public class SolverFluidTest {
         assertEquals(4, result.TNt.length);
         assertEquals(3, result.TNt[0].length);
         assertEquals(1, result.TNt[0][0].getNumCols());
-        assertEquals(0.6667, result.TNt[0][0].get(0, 0), relativeTolerance(0.6667, TestTools.MID_TOL));
-        assertEquals(0.6667, result.TNt[0][1].get(0, 0), relativeTolerance(0.6667, TestTools.MID_TOL));
-        assertEquals(0.3333333333333333, result.TNt[0][2].get(0, 0), relativeTolerance(0.3333333333333333, TestTools.MID_TOL));
+        assertEquals(0, result.TNt[0][0].get(0, 0), MID_TOL);
+        assertEquals(0, result.TNt[0][1].get(0, 0), MID_TOL);
+        assertEquals(0, result.TNt[0][2].get(0, 0), MID_TOL);
         assertEquals(0, result.TNt[1][0].get(0, 0), MID_TOL);
         assertEquals(0, result.TNt[1][1].get(0, 0), MID_TOL);
         assertEquals(0, result.TNt[1][2].get(0, 0), MID_TOL);
@@ -387,9 +387,9 @@ public class SolverFluidTest {
         assertEquals(0, result.TNt[3][0].get(0, 0), MID_TOL);
         assertEquals(0, result.TNt[3][1].get(0, 0), MID_TOL);
         assertEquals(0, result.TNt[3][2].get(0, 0), MID_TOL);
-        assertEquals(0.6108, result.TNt[0][0].get(Tmax - 1, 0), relativeTolerance(0.6108, TestTools.MID_TOL));
-        assertEquals(0.6108, result.TNt[0][1].get(Tmax - 1, 0), relativeTolerance(0.6108, TestTools.MID_TOL));
-        assertEquals(0.3892, result.TNt[0][2].get(Tmax - 1, 0), relativeTolerance(0.3892, TestTools.MID_TOL));
+        assertEquals(0, result.TNt[0][0].get(Tmax - 1, 0), MID_TOL);
+        assertEquals(0, result.TNt[0][1].get(Tmax - 1, 0), MID_TOL);
+        assertEquals(0, result.TNt[0][2].get(Tmax - 1, 0), MID_TOL);
         assertEquals(2, result.TNt[1][0].get(Tmax - 1, 0), relativeTolerance(2, TestTools.MID_TOL));
         assertEquals(2, result.TNt[1][1].get(Tmax - 1, 0), relativeTolerance(2, TestTools.MID_TOL));
         assertEquals(2.25, result.TNt[1][2].get(Tmax - 1, 0), relativeTolerance(2.25, TestTools.MID_TOL));
@@ -413,9 +413,9 @@ public class SolverFluidTest {
         assertEquals(2000, result.t.get(result.t.getNumRows() - 1, 0));
 
         // odeStateVec
-        assertEquals(0.6456, fluidResult.odeStateVec.get(0, 0), relativeTolerance(0.6456, TestTools.MID_TOL));
-        assertEquals(0.6456, fluidResult.odeStateVec.get(0, 1), relativeTolerance(0.6456, TestTools.MID_TOL));
-        assertEquals(0.8228, fluidResult.odeStateVec.get(0, 2), relativeTolerance(0.8228, TestTools.MID_TOL));
+        assertEquals(0.0, fluidResult.odeStateVec.get(0, 0), MID_TOL);
+        assertEquals(0.0, fluidResult.odeStateVec.get(0, 1), MID_TOL);
+        assertEquals(0.0, fluidResult.odeStateVec.get(0, 2), MID_TOL);
         assertEquals(0.0625, fluidResult.odeStateVec.get(0, 3), relativeTolerance(0.0625, TestTools.MID_TOL));
         assertEquals(0.0625, fluidResult.odeStateVec.get(0, 4), relativeTolerance(0.0625, TestTools.MID_TOL));
         assertEquals(0.0703125, fluidResult.odeStateVec.get(0, 5), relativeTolerance(0.0703125, TestTools.MID_TOL));

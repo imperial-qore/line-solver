@@ -13,10 +13,15 @@ import jline.lang.processes.Exp;
 import jline.solvers.NetworkAvgTable;
 import jline.solvers.SolverOptions;
 import jline.util.matrix.Matrix;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
+
+import jline.GlobalConstants;
+import jline.VerboseLevel;
+import jline.util.Maths;
 
 import static jline.TestTools.*;
 import static jline.solvers.nc.handlers.Solver_nc_jointKt.solver_nc_joint;
@@ -35,6 +40,13 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class SolverNCTest {
 
+    @BeforeAll
+    public static void setUp() {
+        // Ensure MATLAB-compatible random number generation
+        Maths.setRandomNumbersMatlab(true);
+        // Set verbose level to SILENT to suppress warnings during tests
+        GlobalConstants.setVerbose(VerboseLevel.SILENT);
+    }
 
     @Test
     public void test_marg_joint() {

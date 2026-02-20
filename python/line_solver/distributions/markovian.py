@@ -262,19 +262,43 @@ class APH(PH):
 
     def _erlang_adjust(self, mean: float, scv: float, k: int) -> Tuple[np.ndarray, np.ndarray]:
         """Adjust Erlang to match mean and SCV < 1."""
-        # Use mixture of Erlang-k and Erlang-(k-1)
-        # This gives SCV in range [1/k, 1/(k-1)]
+        # Use mixture of Erlang-k and Erlang-(k-1) via starting phase selection
+        # Starting in phase 0 gives Erlang-k, starting in phase 1 gives Erlang-(k-1)
+        # SCV of Erlang-k is 1/k, SCV of Erlang-(k-1) is 1/(k-1)
         if k <= 1:
             rate = 1.0 / mean
             return np.array([1.0]), np.array([[-rate]])
 
-        # Probability of using k phases
-        k_float = float(k)
-        p = k_float * (scv * k_float - 1) / (k_float - 1) if k > 1 else 1.0
+        # Check if we can use pure Erlang-k (when scv = 1/k)
+        scv_k = 1.0 / k
+        if abs(scv - scv_k) < 1e-10:
+            # Pure Erlang-k
+            rate = k / mean
+            alpha = np.zeros(k)
+            alpha[0] = 1.0
+            T = np.diag([-rate] * k) + np.diag([rate] * (k - 1), 1)
+            return alpha, T
+
+        # For SCV between 1/k and 1/(k-1), use mixture
+        # p = probability of starting in phase 0 (Erlang-k)
+        # 1-p = probability of starting in phase 1 (Erlang-(k-1))
+        #
+        # Using moment matching:
+        # Mean = (p*k + (1-p)*(k-1)) / r = mean  =>  r = (k - 1 + p) / mean
+        # For the mixture SCV, solving gives:
+        # p = (k - 1) * (1 - scv*(k-1)) / (scv*(k-1) - 1 + 1/k * (k - scv*(k-1)*(k-1)))
+        # Simplified: p such that target SCV is achieved
+
+        # Simpler approach: linear interpolation based on SCV
+        # SCV = 1/k when p=1, SCV = 1/(k-1) when p=0
+        # p = (1/(k-1) - scv) / (1/(k-1) - 1/k) = (1/(k-1) - scv) * k * (k-1) / 1
+        scv_k_minus_1 = 1.0 / (k - 1) if k > 1 else 1.0
+        p = (scv_k_minus_1 - scv) / (scv_k_minus_1 - scv_k)
         p = max(0, min(1, p))
 
-        # Rate to match mean
-        rate = (p * k + (1 - p) * (k - 1)) / mean
+        # Rate to match mean: mean = (p*k + (1-p)*(k-1)) / rate
+        effective_phases = p * k + (1 - p) * (k - 1)
+        rate = effective_phases / mean
 
         # Construct mixed Erlang representation
         alpha = np.zeros(k)
@@ -288,20 +312,38 @@ class APH(PH):
         return alpha, T
 
     def _hyperexp_match(self, mean: float, scv: float) -> Tuple[np.ndarray, np.ndarray]:
-        """Match moments using 2-phase hyperexponential."""
-        # Balanced means hyperexponential
-        cv = np.sqrt(scv)
-        # Two phases with rates mu1, mu2 and probabilities p, 1-p
-        # Use balanced means approach
-        p = 0.5 * (1 + np.sqrt((scv - 1) / (scv + 1)))
-        p = max(0.01, min(0.99, p))
+        """Match moments using BUTools APHFrom2Moments algorithm.
 
-        mu1 = 2 * p / mean
-        mu2 = 2 * (1 - p) / mean
+        This produces a 2-phase APH with the same structure as MATLAB's
+        BUTools APHFrom2Moments, ensuring identical simulation results
+        when using the same seed in JMT.
 
-        alpha = np.array([p, 1 - p])
-        T = np.diag([-mu1, -mu2])
-        return alpha, T
+        The structure is:
+        - Phase 1 transitions to phase 2 with rate lambda*p*N
+        - Phase 2 absorbs with rate lambda*N
+        - Initial probability: alpha = [p, 1-p]
+        """
+        # BUTools APHFrom2Moments algorithm
+        # cv2 = moms(2)/moms(1)^2 - 1.0 = scv
+        cv2 = scv
+        lam = 1.0 / mean  # base rate (lambda)
+        N = max(int(np.ceil(1.0 / cv2)), 2)  # number of phases, at least 2
+
+        # Probability of starting in phase 1
+        p = 1.0 / (cv2 + 1.0 + (cv2 - 1.0) / (N - 1))
+
+        # Build the generator matrix A
+        A = -lam * p * N * np.eye(N)
+        for i in range(N - 1):
+            A[i, i + 1] = -A[i, i]  # transition from phase i to i+1
+        A[N - 1, N - 1] = -lam * N  # last phase rate
+
+        # Initial probability vector
+        alpha = np.zeros(N)
+        alpha[0] = p
+        alpha[N - 1] = 1.0 - p
+
+        return alpha, A
 
     @classmethod
     def fit_mean_and_scv(cls, mean: float, scv: float) -> 'APH':
@@ -324,6 +366,26 @@ class APH(PH):
     # CamelCase alias
     fitMeanAndScv = fit_mean_and_scv
 
+    @classmethod
+    def fit_central(cls, mean: float, scv: float, skew: float = None) -> 'APH':
+        """
+        Create an APH distribution from central moments.
+
+        Uses moment matching to construct an acyclic phase-type
+        distribution with the specified mean, SCV, and optionally skewness.
+
+        Args:
+            mean: Target mean.
+            scv: Target squared coefficient of variation.
+            skew: Target skewness (optional).
+
+        Returns:
+            APH distribution with given moments.
+        """
+        return cls(mean, scv, skew)
+
+    # CamelCase alias
+    fitCentral = fit_central
 
 
 class Coxian(PH):
@@ -391,11 +453,13 @@ class Coxian(PH):
         alpha[0] = 1.0
 
         # Sub-generator matrix
+        # phi[i] is the COMPLETION probability (absorbing from phase i)
+        # so (1 - phi[i]) is the probability of continuing to phase i+1
         T = np.zeros((n, n))
         for i in range(n):
             T[i, i] = -rates[i]
             if i < n - 1:
-                T[i, i + 1] = rates[i] * self._probs[i]
+                T[i, i + 1] = rates[i] * (1 - self._probs[i])
 
         return alpha, T
 
@@ -409,6 +473,64 @@ class Coxian(PH):
         """Get the continuation probabilities."""
         return self._probs.copy()
 
+    @classmethod
+    def fit_mean_and_scv(cls, mean: float, scv: float) -> 'Coxian':
+        """
+        Create a Coxian distribution from mean and SCV.
+
+        Uses a 2-phase Coxian (Cox2) representation for moment matching.
+
+        Args:
+            mean: Target mean.
+            scv: Target squared coefficient of variation.
+
+        Returns:
+            Coxian distribution with given mean and SCV.
+        """
+        # Use Cox2 algorithm for 2-moment matching
+        if scv < 0.5:
+            # For very low SCV, use Erlang-like approximation
+            k = max(2, int(np.ceil(1.0 / scv)))
+            rate = k / mean
+            rates = [rate] * k
+            probs = [0.0] * (k - 1)  # All continuation, no early absorption
+            return cls(rates, probs)
+
+        # Standard Cox2 matching for SCV >= 0.5
+        # Mean = mu1^-1 + p1 * mu2^-1
+        # SCV = (2/mu1^2 + 2*p1/mu2^2 + 2*p1/(mu1*mu2)) / mean^2 - 1
+        if scv >= 1.0:
+            # High variability: use HyperExp-like structure
+            p = 1.0 / (1.0 + scv)
+            mu1 = 2.0 * p / mean
+            mu2 = 2.0 * (1.0 - p) / mean
+            return cls([mu1, mu2], [1.0 - p])
+        else:
+            # SCV in [0.5, 1): use 2-phase Coxian
+            # Simplified matching
+            mu = 2.0 / mean
+            p = 2.0 * (1.0 - scv)
+            return cls([mu, mu], [1.0 - p])
+
+    @classmethod
+    def fit_central(cls, mean: float, scv: float, skew: float = None) -> 'Coxian':
+        """
+        Create a Coxian distribution from central moments.
+
+        Args:
+            mean: Target mean.
+            scv: Target squared coefficient of variation.
+            skew: Target skewness (ignored, uses 2-moment matching).
+
+        Returns:
+            Coxian distribution with given moments.
+        """
+        return cls.fit_mean_and_scv(mean, scv)
+
+    # CamelCase aliases
+    fitMeanAndSCV = fit_mean_and_scv
+    fitMeanAndScv = fit_mean_and_scv
+    fitCentral = fit_central
 
 
 class MAP(ContinuousDistribution, Markovian):
@@ -530,6 +652,32 @@ class MAP(ContinuousDistribution, Markovian):
             return float('inf')
         return 1.0 / mean
 
+    def set_mean(self, target_mean: float) -> 'MAP':
+        """
+        Create a new MAP with the specified mean by scaling rates.
+
+        The structure of the MAP is preserved, only the rates are scaled
+        to achieve the target mean.
+
+        Args:
+            target_mean: Target mean inter-arrival/service time.
+
+        Returns:
+            New MAP with the specified mean.
+        """
+        current_mean = self.getMean()
+        if current_mean <= 0 or np.isnan(current_mean):
+            raise ValueError("Cannot scale MAP with invalid mean")
+
+        scale = current_mean / target_mean
+        new_D0 = self._D0 * scale
+        new_D1 = self._D1 * scale
+
+        return MAP(new_D0, new_D1)
+
+    # CamelCase alias
+    setMean = set_mean
+
     def sample(self, n: int = 1, rng: Optional[np.random.Generator] = None) -> np.ndarray:
         """Generate random inter-arrival times."""
         if rng is None:
@@ -574,6 +722,37 @@ class MAP(ContinuousDistribution, Markovian):
 
         return samples
 
+    @classmethod
+    def rand(cls, n: int = 2, seed: int = None) -> 'MAP':
+        """
+        Create a random MAP with n phases.
+
+        Generates a random MAP with the specified number of phases.
+        The D0 and D1 matrices are randomly generated to form a valid MAP.
+
+        Args:
+            n: Number of phases (default: 2).
+            seed: Random seed for reproducibility (optional).
+
+        Returns:
+            MAP distribution with random parameters.
+        """
+        if seed is not None:
+            np.random.seed(seed)
+
+        # Generate random D0 (sub-generator with negative diagonal)
+        D0 = np.random.rand(n, n) * 0.5
+        np.fill_diagonal(D0, 0)
+
+        # Generate random D1 (arrival transitions)
+        D1 = np.random.rand(n, n) * 0.5
+
+        # Ensure row sums are zero (D0 + D1 is a generator)
+        for i in range(n):
+            row_sum = D0[i, :].sum() + D1[i, :].sum()
+            D0[i, i] = -row_sum
+
+        return cls(D0, D1)
 
 
 class MMPP(MAP):

@@ -35,7 +35,18 @@ function WN=sn_get_residt_from_respt(sn, RN, WH)
 M = sn.nstations;
 K = sn.nclasses;
 WN = zeros(M, K);
-V = cellsum(sn.visits);
+
+% sn.visits is cell array of stateful-indexed matrices (nstateful x nclasses)
+% We need to convert to station-indexed matrix (M x K) using statefulToStation
+Vstateful = cellsum(sn.visits);
+V = zeros(M, K);
+for sf = 1:sn.nstateful
+    stationIdx = sn.statefulToStation(sf);
+    if ~isnan(stationIdx) && stationIdx >= 1 && stationIdx <= M
+        V(stationIdx, :) = V(stationIdx, :) + Vstateful(sf, :);
+    end
+end
+
 for ist = 1:M
     for k = 1:K
         if isempty(WH) || WH{ist,k}.disabled

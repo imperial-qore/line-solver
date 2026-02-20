@@ -119,19 +119,15 @@ def pfqn_rd(
     for ist in range(M):
         gamma[ist, :] = mu_work[ist, :] / mu_work[ist, s[ist] - 1]
 
-    # Compute beta
+    # Compute beta - match MATLAB's computation exactly
+    # MATLAB computes beta directly without special-casing gamma=1
     beta = np.ones((M, total_pop))
     for ist in range(M):
-        if gamma[ist, 0] != 1:
+        with np.errstate(divide='ignore', invalid='ignore'):
             beta[ist, 0] = gamma[ist, 0] / (1 - gamma[ist, 0])
-        else:
-            beta[ist, 0] = np.inf
 
-        for j in range(1, total_pop):
-            if gamma[ist, j] != 1:
+            for j in range(1, total_pop):
                 beta[ist, j] = (1 - gamma[ist, j - 1]) * (gamma[ist, j] / (1 - gamma[ist, j]))
-            else:
-                beta[ist, j] = np.inf
 
     beta[np.isnan(beta)] = np.inf
 
@@ -145,21 +141,28 @@ def pfqn_rd(
     sld = s[s > 1]
     vmax = min(int(np.sum(sld - 1)), total_pop)
 
+    # Debug: compare with MATLAB/Kotlin
+    import os
+    _debug = os.environ.get('DEBUG_RD')
+
     # Compute MVA for y values
     mva_result = pfqn_mva(y, N, np.zeros_like(N))
     if hasattr(mva_result, 'X'):
         Y = mva_result.X
     else:
-        Y = mva_result[4] if isinstance(mva_result, tuple) else np.zeros(R)
+        Y = mva_result[0] if isinstance(mva_result, tuple) else np.zeros(R)
 
-    rhoN = np.dot(y, Y) if np.ndim(Y) == 1 else np.sum(y * Y)
+    # rhoN = y * Y' in MATLAB: per-station utilization vector (M x 1)
+    Y_flat = Y.flatten()
+    rhoN = y @ Y_flat  # (M, R) @ (R,) = (M,)
 
     # Compute lEN values
     lEN = np.zeros(vmax + 2)
     lEN[0] = 0  # ln(1) = 0
 
     for vtot in range(1, vmax + 1):
-        lEN[vtot] = np.real(pfqn_gldsingle(rhoN, vtot, beta))
+        # Reshape rhoN to column (M, 1) so pfqn_gldsingle sees M stations, 1 class
+        lEN[vtot] = np.real(pfqn_gldsingle(rhoN.reshape(-1, 1), vtot, beta).lG)
 
     # Compute Cgamma
     for vtot in range(vmax + 1):
@@ -168,6 +171,23 @@ def pfqn_rd(
 
     # Compute final normalizing constant
     _, lGN = pfqn_nc(y, N, Z, method='default')
+
+    if _debug:
+        print(f'DEBUG RD: M={M}, R={R}, total_pop={total_pop}')
+        print(f'DEBUG RD: L=\n{L}')
+        print(f'DEBUG RD: Z={Z}')
+        print(f'DEBUG RD: mu=\n{mu}')
+        print(f'DEBUG RD: s={s}')
+        print(f'DEBUG RD: y=\n{y}')
+        print(f'DEBUG RD: gamma=\n{gamma}')
+        print(f'DEBUG RD: beta=\n{beta}')
+        print(f'DEBUG RD: vmax={vmax}')
+        print(f'DEBUG RD: Y (throughputs)={Y_flat}')
+        print(f'DEBUG RD: rhoN={rhoN}')
+        print(f'DEBUG RD: lEN={lEN[:vmax+1]}')
+        print(f'DEBUG RD: lGN_nc={lGN}')
+        print(f'DEBUG RD: Cgamma={Cgamma}')
+
     lGN = lGN + np.log(Cgamma) if Cgamma > 0 else lGN
 
     return lGN, Cgamma

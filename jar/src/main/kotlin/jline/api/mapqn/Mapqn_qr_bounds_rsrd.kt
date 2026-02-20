@@ -9,13 +9,10 @@
  */
 package jline.api.mapqn
 
-import org.apache.commons.math3.optim.linear.LinearConstraint
-import org.apache.commons.math3.optim.linear.LinearConstraintSet
-import org.apache.commons.math3.optim.linear.LinearObjectiveFunction
-import org.apache.commons.math3.optim.linear.Relationship
-import org.apache.commons.math3.optim.linear.SimplexSolver
-import org.apache.commons.math3.optim.nonlinear.scalar.GoalType
-import org.apache.commons.math3.optim.MaxIter
+import org.ojalgo.optimisation.Expression
+import org.ojalgo.optimisation.ExpressionsBasedModel
+import org.ojalgo.optimisation.Optimisation
+import org.ojalgo.optimisation.Variable
 import kotlin.math.min
 
 /**
@@ -156,30 +153,29 @@ object Mapqn_qr_bounds_rsrd {
             }
         }
 
-        val constraints = mutableListOf<LinearConstraint>()
+        // Create ojAlgo optimization model
+        val model = ExpressionsBasedModel()
 
-        // ZERO constraints as explicit equalities
-        for (idx in 0 until nVars) {
-            if (ub[idx] == 0.0) {
-                val coeffs = DoubleArray(nVars)
-                coeffs[idx] = 1.0
-                constraints.add(LinearConstraint(coeffs, Relationship.EQ, 0.0))
-            }
+        // Create variables with bounds [0, 1] (or 0 for ZERO variables)
+        val vars = Array(nVars) { idx ->
+            val upperBound = if (ub[idx] == 0.0) 0.0 else 1.0
+            model.addVariable("x$idx").lower(0.0).upper(upperBound)
         }
+
 
         // ONE: Normalization - sum of diagonal p2 = 1 for each queue
         for (j in 0 until M) {
-            val coeffs = DoubleArray(nVars)
+            val expr = model.addExpression("norm_$j").level(1.0)
             for (nj in 0..F[j]) {
                 for (kj in 0 until K[j]) {
                     val idx = p2Idx(j, nj, kj, j, nj, kj)
-                    if (idx >= 0) coeffs[idx] = 1.0
+                    if (idx >= 0) expr.set(vars[idx], 1.0)
                 }
             }
-            constraints.add(LinearConstraint(coeffs, Relationship.EQ, 1.0))
         }
 
         // SYMMETRY: p2[j,nj,k,i,ni,h] = p2[i,ni,h,j,nj,k]
+        var symCount = 0
         for (j in 0 until M) {
             for (nj in 0..F[j]) {
                 for (kj in 0 until K[j]) {
@@ -190,10 +186,9 @@ object Mapqn_qr_bounds_rsrd {
                                 val idx2 = p2Idx(i, ni, hi, j, nj, kj)
                                 if (idx1 >= 0 && idx2 >= 0 && idx1 != idx2 &&
                                     !(ub[idx1] == 0.0 && ub[idx2] == 0.0)) {
-                                    val coeffs = DoubleArray(nVars)
-                                    coeffs[idx1] = 1.0
-                                    coeffs[idx2] = -1.0
-                                    constraints.add(LinearConstraint(coeffs, Relationship.EQ, 0.0))
+                                    val expr = model.addExpression("sym_${symCount++}").level(0.0)
+                                    expr.set(vars[idx1], 1.0)
+                                    expr.set(vars[idx2], -1.0)
                                 }
                             }
                         }
@@ -203,59 +198,59 @@ object Mapqn_qr_bounds_rsrd {
         }
 
         // MARGINALS: p2[j,nj,k,j,nj,k] = sum{ni,h} p2[j,nj,k,i,ni,h] for each i != j
+        var margCount = 0
         for (j in 0 until M) {
             for (kj in 0 until K[j]) {
                 for (nj in 0..F[j]) {
                     for (i in 0 until M) {
                         if (i == j) continue
-                        val coeffs = DoubleArray(nVars)
+                        val expr = model.addExpression("marg_${margCount++}").level(0.0)
                         val idxDiag = p2Idx(j, nj, kj, j, nj, kj)
-                        if (idxDiag >= 0) coeffs[idxDiag] = 1.0
+                        if (idxDiag >= 0) expr.set(vars[idxDiag], 1.0)
                         // Match MATLAB: iterate full range, ZERO constraints handle invalid states
                         for (ni in 0..F[i]) {
                             for (hi in 0 until K[i]) {
                                 val idx = p2Idx(j, nj, kj, i, ni, hi)
-                                if (idx >= 0) coeffs[idx] -= 1.0
+                                if (idx >= 0) expr.set(vars[idx], -1.0)
                             }
                         }
-                        constraints.add(LinearConstraint(coeffs, Relationship.EQ, 0.0))
                     }
                 }
             }
         }
 
         // UCLASSIC: U[i,k,ni] = p2[i,ni,k,i,ni,k]
+        var uclCount = 0
         for (i in 0 until M) {
             for (ki in 0 until K[i]) {
                 for (ni in 1..F[i]) {
-                    val coeffs = DoubleArray(nVars)
+                    val expr = model.addExpression("ucl_${uclCount++}").level(0.0)
                     val idxU = uIdx(i, ki, ni)
                     val idxP2 = p2Idx(i, ni, ki, i, ni, ki)
-                    if (idxU >= 0) coeffs[idxU] = 1.0
-                    if (idxP2 >= 0) coeffs[idxP2] = -1.0
-                    constraints.add(LinearConstraint(coeffs, Relationship.EQ, 0.0))
+                    if (idxU >= 0) expr.set(vars[idxU], 1.0)
+                    if (idxP2 >= 0) expr.set(vars[idxP2], -1.0)
                 }
             }
         }
 
         // UEFFS: Ueff[i,k,ni] = p2[i,ni,k,i,ni,k] - sum{j: r[i,j]>0} r[i,j]*p2[i,ni,k,j,F[j],h]
+        var ueffCount = 0
         for (i in 0 until M) {
             for (ki in 0 until K[i]) {
                 for (ni in 1..F[i]) {
-                    val coeffs = DoubleArray(nVars)
+                    val expr = model.addExpression("ueff_${ueffCount++}").level(0.0)
                     val idxUeff = ueffIdx(i, ki, ni)
                     val idxP2Diag = p2Idx(i, ni, ki, i, ni, ki)
-                    if (idxUeff >= 0) coeffs[idxUeff] = 1.0
-                    if (idxP2Diag >= 0) coeffs[idxP2Diag] = -1.0
+                    if (idxUeff >= 0) expr.set(vars[idxUeff], 1.0)
+                    if (idxP2Diag >= 0) expr.set(vars[idxP2Diag], -1.0)
                     for (j in 0 until M) {
                         if (j != i && r.get(i, j) > 0) {
                             for (hj in 0 until K[j]) {
                                 val idxBlock = p2Idx(i, ni, ki, j, F[j], hj)
-                                if (idxBlock >= 0) coeffs[idxBlock] = r.get(i, j)
+                                if (idxBlock >= 0) expr.set(vars[idxBlock], r.get(i, j))
                             }
                         }
                     }
-                    constraints.add(LinearConstraint(coeffs, Relationship.EQ, 0.0))
                 }
             }
         }
@@ -263,6 +258,7 @@ object Mapqn_qr_bounds_rsrd {
         // THM2: Phase balance (Theorem 1 - THM:sdeffective)
         // sum{ni} (sum{j<>i, h<>k} q[i,j,k,h,ni]*Ueff[i,k,ni] + sum{h<>k} q[i,i,k,h,ni]*U[i,k,ni])
         // = sum{ni} (sum{j<>i, h<>k} q[i,j,h,k,ni]*Ueff[i,h,ni] + sum{h<>k} q[i,i,h,k,ni]*U[i,h,ni])
+        var thm2Count = 0
         for (i in 0 until M) {
             for (ki in 0 until K[i]) {
                 val coeffs = DoubleArray(nVars)
@@ -306,12 +302,16 @@ object Mapqn_qr_bounds_rsrd {
                         if (idxP2 >= 0) coeffs[idxP2] -= coef
                     }
                 }
-                constraints.add(LinearConstraint(coeffs, Relationship.EQ, 0.0))
+                val expr = model.addExpression("thm2_${thm2Count++}").level(0.0)
+                for (idx in 0 until nVars) {
+                    if (coeffs[idx] != 0.0) expr.set(vars[idx], coeffs[idx])
+                }
             }
         }
 
         // THM1: Population constraint per (j,nj,k)
         // sum{i,ni,h} ni*p2[j,nj,k,i,ni,h] = N * p2[j,nj,k,j,nj,k]
+        var thm1Count = 0
         for (j in 0 until M) {
             for (kj in 0 until K[j]) {
                 for (nj in 0..F[j]) {
@@ -328,12 +328,16 @@ object Mapqn_qr_bounds_rsrd {
                             }
                         }
                     }
-                    constraints.add(LinearConstraint(coeffs, Relationship.EQ, 0.0))
+                    val expr = model.addExpression("thm1_${thm1Count++}").level(0.0)
+                    for (idx in 0 until nVars) {
+                        if (coeffs[idx] != 0.0) expr.set(vars[idx], coeffs[idx])
+                    }
                 }
             }
         }
 
         // THM3a: Marginal balance for ni in 1:F[i]-1
+        var thm3aCount = 0
         for (i in 0 until M) {
             for (ni in 1 until F[i]) {
                 val coeffs = DoubleArray(nVars)
@@ -367,11 +371,15 @@ object Mapqn_qr_bounds_rsrd {
                         }
                     }
                 }
-                constraints.add(LinearConstraint(coeffs, Relationship.EQ, 0.0))
+                val expr = model.addExpression("thm3a_${thm3aCount++}").level(0.0)
+                for (idx in 0 until nVars) {
+                    if (coeffs[idx] != 0.0) expr.set(vars[idx], coeffs[idx])
+                }
             }
         }
 
         // THM3b: Marginal balance for ni=0, per phase
+        var thm3bCount = 0
         for (i in 0 until M) {
             for (ui in 0 until K[i]) {
                 val coeffs = DoubleArray(nVars)
@@ -399,7 +407,10 @@ object Mapqn_qr_bounds_rsrd {
                         }
                     }
                 }
-                constraints.add(LinearConstraint(coeffs, Relationship.EQ, 0.0))
+                val expr = model.addExpression("thm3b_${thm3bCount++}").level(0.0)
+                for (idx in 0 until nVars) {
+                    if (coeffs[idx] != 0.0) expr.set(vars[idx], coeffs[idx])
+                }
             }
         }
 
@@ -495,12 +506,16 @@ object Mapqn_qr_bounds_rsrd {
                     }
                 }
 
-                constraints.add(LinearConstraint(coeffs, Relationship.EQ, 0.0))
+                val expr = model.addExpression("qbal_${i}_${ki}").level(0.0)
+                for (idx in 0 until nVars) {
+                    if (coeffs[idx] != 0.0) expr.set(vars[idx], coeffs[idx])
+                }
             }
         }
 
         // THM4: Bound constraint
         // sum{t,h,nj,nt} nt*p2[j,nj,k,t,nt,h] >= N*sum{h,nj,ni} p2[j,nj,k,i,ni,h]
+        var thm4Count = 0
         for (j in 0 until M) {
             for (kj in 0 until K[j]) {
                 for (i in 0 until M) {
@@ -525,58 +540,61 @@ object Mapqn_qr_bounds_rsrd {
                             }
                         }
                     }
-                    constraints.add(LinearConstraint(coeffs, Relationship.GEQ, 0.0))
+                    val expr = model.addExpression("thm4_${thm4Count++}").lower(0.0)
+                    for (idx in 0 until nVars) {
+                        if (coeffs[idx] != 0.0) expr.set(vars[idx], coeffs[idx])
+                    }
                 }
             }
         }
 
         // Build objective function
-        val objectiveCoeffs = DoubleArray(nVars)
         val targetQueue = objectiveQueue - 1
         for (ki in 0 until K[targetQueue]) {
             for (ni in 1..F[targetQueue]) {
                 val idx = p2Idx(targetQueue, ni, ki, targetQueue, ni, ki)
-                if (idx >= 0) objectiveCoeffs[idx] = 1.0
+                if (idx >= 0) vars[idx].weight(1.0)
             }
         }
 
-        val goalType = if (sense == "max") GoalType.MAXIMIZE else GoalType.MINIMIZE
-        val objectiveFunction = LinearObjectiveFunction(objectiveCoeffs, 0.0)
-
-        val solver = SimplexSolver()
-        val constraintSet = LinearConstraintSet(constraints)
-
+        // Solve LP with ojAlgo
         try {
-            val solution = solver.optimize(
-                objectiveFunction,
-                constraintSet,
-                goalType,
-                MaxIter(100000)
-            )
+            val result = if (sense == "max") model.maximise() else model.minimise()
 
-            val variables = mutableMapOf<String, Double>()
+            if (result.state == Optimisation.State.OPTIMAL ||
+                result.state == Optimisation.State.FEASIBLE) {
 
-            for (i in 0 until M) {
-                var totalU = 0.0
-                var totalUeff = 0.0
-                for (ki in 0 until K[i]) {
-                    for (ni in 1..F[i]) {
-                        val idxU = uIdx(i, ki, ni)
-                        val idxUeff = ueffIdx(i, ki, ni)
-                        if (idxU >= 0) totalU += solution.point[idxU]
-                        if (idxUeff >= 0) totalUeff += solution.point[idxUeff]
+                val variables = mutableMapOf<String, Double>()
+
+                for (i in 0 until M) {
+                    var totalU = 0.0
+                    var totalUeff = 0.0
+                    for (ki in 0 until K[i]) {
+                        for (ni in 1..F[i]) {
+                            val idxU = uIdx(i, ki, ni)
+                            val idxUeff = ueffIdx(i, ki, ni)
+                            if (idxU >= 0) totalU += result.get(idxU.toLong()).toDouble()
+                            if (idxUeff >= 0) totalUeff += result.get(idxUeff.toLong()).toDouble()
+                        }
                     }
+                    variables["U_${i + 1}"] = totalU
+                    variables["Ueff_${i + 1}"] = totalUeff
+                    variables["pb_${i + 1}"] = totalU - totalUeff
                 }
-                variables["U_${i + 1}"] = totalU
-                variables["Ueff_${i + 1}"] = totalUeff
-                variables["pb_${i + 1}"] = totalU - totalUeff
-            }
 
-            return Mapqn_solution(
-                objectiveValue = solution.value,
-                variables = variables
-            )
+                return Mapqn_solution(
+                    objectiveValue = result.value.toDouble(),
+                    variables = variables
+                )
+            } else {
+                // LP solver failed to find optimal solution
+                return Mapqn_solution(
+                    objectiveValue = Double.NaN,
+                    variables = emptyMap()
+                )
+            }
         } catch (e: Exception) {
+            // LP solver failed
             return Mapqn_solution(
                 objectiveValue = Double.NaN,
                 variables = emptyMap()

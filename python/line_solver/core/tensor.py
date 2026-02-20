@@ -302,7 +302,10 @@ class LineTensor:
         if dim is None:
             result._data = self._data.squeeze()
         else:
-            result._data = self._data.squeeze(dim if self._backend == Backend.PYTORCH else axis=dim)
+            if self._backend == Backend.PYTORCH:
+                result._data = self._data.squeeze(dim)
+            else:
+                result._data = self._data.squeeze(axis=dim)
         return result
 
     def unsqueeze(self, dim: int) -> 'LineTensor':

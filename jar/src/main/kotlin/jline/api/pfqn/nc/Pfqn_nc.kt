@@ -442,7 +442,7 @@ fun compute_norm_const(L: Matrix, N: Matrix, Z: Matrix, options: SolverOptions):
                 lG = ret.lG
                 method = "imci"
             } else {
-                val ret = pfqn_ls(L, N, Z.sumCols(), options.samples.toLong())
+                val ret = pfqn_ls(L, N, Z.sumCols(), options.samples.toLong(), options.seed.toLong())
                 lG = ret.lG
                 method = "ls"
             }
@@ -475,7 +475,7 @@ fun compute_norm_const(L: Matrix, N: Matrix, Z: Matrix, options: SolverOptions):
         }
 
         "ls" -> {
-            val ret = pfqn_ls(L, N, Z.sumCols(), options.samples.toLong())
+            val ret = pfqn_ls(L, N, Z.sumCols(), options.samples.toLong(), options.seed.toLong())
             lG = ret.lG
         }
 

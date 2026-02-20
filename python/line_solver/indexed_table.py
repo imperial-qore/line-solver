@@ -39,6 +39,42 @@ import pandas as pd
 import numpy as np
 
 
+def _matlab_format_float(x, precision=5):
+    """
+    Format a float in MATLAB style - uses fixed-point for moderate values,
+    scientific notation for very small/large values.
+
+    MATLAB uses 'g' style formatting that:
+    - Uses fixed-point for values that can be represented compactly
+    - Uses scientific notation for very small (<1e-4) or very large (>=1e5) values
+    - Removes trailing zeros
+    """
+    if pd.isna(x):
+        return 'NaN'
+    if not isinstance(x, (int, float, np.integer, np.floating)):
+        return str(x)
+
+    # Handle special cases
+    if x == 0:
+        return '0'
+    if np.isinf(x):
+        return 'Inf' if x > 0 else '-Inf'
+
+    abs_x = abs(x)
+
+    # MATLAB uses scientific notation for very small or very large values
+    # Use fixed-point if 1e-4 <= |x| < 1e5, otherwise scientific
+    if abs_x >= 1e-4 and abs_x < 1e5:
+        # Use fixed-point, try to show up to 'precision' significant figures
+        # Format with enough decimal places, then strip trailing zeros
+        formatted = f'{x:.{precision}g}'
+    else:
+        # Use scientific notation
+        formatted = f'{x:.{precision-1}e}'
+
+    return formatted
+
+
 class IndexedTable:
     """
     Enhanced pandas DataFrame wrapper with object-based filtering.
@@ -64,6 +100,18 @@ class IndexedTable:
         if not isinstance(dataframe, pd.DataFrame):
             raise TypeError('IndexedTable requires a pandas DataFrame as input')
         self.data = dataframe.copy()
+
+    def __getattr__(self, name):
+        """
+        Delegate attribute access to the underlying DataFrame columns.
+
+        Allows accessing columns as attributes: table.QLen, table.Util, etc.
+        """
+        if name == 'data':
+            raise AttributeError(name)
+        if name in self.data.columns:
+            return self.data[name]
+        raise AttributeError(f"'IndexedTable' object has no attribute '{name}'")
 
     def __getitem__(self, key):
         """
@@ -266,12 +314,28 @@ class IndexedTable:
         return len(self.data)
 
     def __repr__(self):
-        """Return string representation."""
-        return repr(self.data)
+        """Return string representation with MATLAB-style number formatting."""
+        return self._format_table()
 
     def __str__(self):
-        """Return string representation."""
-        return str(self.data)
+        """Return string representation with MATLAB-style number formatting."""
+        return self._format_table()
+
+    def _format_table(self):
+        """Format the table with MATLAB-style number formatting, fitting rows on single lines."""
+        # Create a copy and format numeric columns
+        formatted_df = self.data.copy()
+
+        # Get list of numeric columns
+        numeric_cols = formatted_df.select_dtypes(include=[np.number]).columns.tolist()
+
+        # Apply MATLAB-style formatting to numeric columns
+        for col in numeric_cols:
+            formatted_df[col] = formatted_df[col].apply(_matlab_format_float)
+
+        # Use to_string with explicit parameters to prevent line wrapping
+        # line_width=None means unlimited width (no wrapping)
+        return formatted_df.to_string(line_width=None)
 
     @property
     def shape(self):

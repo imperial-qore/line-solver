@@ -85,15 +85,18 @@ def to_marginal_aggr(
 
     # Get state for this station
     if state_i is None:
-        # Try to get state from sn.state dict
-        if sn.state and ist < len(sn.state):
-            # Get state via stationToStateful mapping if available
-            if sn.stationToStateful is not None and len(sn.stationToStateful) > ist:
-                isf = int(sn.stationToStateful[ist])
-                # Find stateful node index
-                if sn.statefulToNode is not None and len(sn.statefulToNode) > isf:
-                    stateful_node = int(sn.statefulToNode[isf])
-                    state_i = sn.state.get(stateful_node, None)
+        # Try to get state from sn.state (can be list or dict)
+        if sn.state is not None:
+            if isinstance(sn.state, dict):
+                # Dict keyed by node index
+                if sn.stationToStateful is not None and len(sn.stationToStateful) > ist:
+                    isf = int(sn.stationToStateful[ist])
+                    if sn.statefulToNode is not None and len(sn.statefulToNode) > isf:
+                        stateful_node = int(sn.statefulToNode[isf])
+                        state_i = sn.state.get(stateful_node, None)
+            elif isinstance(sn.state, (list, np.ndarray)) and ist < len(sn.state):
+                # List indexed by station
+                state_i = sn.state[ist]
 
         if state_i is None:
             # Default: empty state (all zeros)

@@ -207,31 +207,43 @@ def ctmc_uniformization(Q, lambda_rate=None):
     }
 
 
-def ctmc_stochcomp(Q, keep_states, eliminate_states):
+def ctmc_stochcomp(Q, keep_states, eliminate_states=None):
     """
     Compute stochastic complement of CTMC.
 
+    Matches MATLAB: [S,Q11,Q12,Q21,Q22,T] = ctmc_stochcomp(Q, I)
+    where I is the set of states to keep.
+
     Args:
         Q: Infinitesimal generator matrix.
-        keep_states: States to retain in reduced model.
-        eliminate_states: States to eliminate from model.
+        keep_states: States to retain in reduced model (indices).
+        eliminate_states: States to eliminate (optional, inferred if None).
 
     Returns:
-        numpy.ndarray: Reduced generator matrix.
+        dict: Decomposed matrices (S, Q11, Q12, Q21, Q22, T).
     """
     Q = np.array(Q)
     keep_states = np.array(keep_states, dtype=int)
-    eliminate_states = np.array(eliminate_states, dtype=int)
 
     java_Q = jlineMatrixFromArray(Q)
-    java_keep = jpype.JArray(jpype.JInt)(keep_states)
-    java_eliminate = jpype.JArray(jpype.JInt)(eliminate_states)
 
-    java_result = jpype.JPackage('jline').api.mc.Ctmc_stochcompKt.ctmc_stochcomp(
-        java_Q, java_keep, java_eliminate
+    # JAR ctmc_stochcomp takes (Q, I_list) where I_list = keep_states
+    java_list = jpype.java.util.ArrayList()
+    for idx in keep_states:
+        java_list.add(jpype.JDouble(float(idx)))
+
+    result = jpype.JPackage('jline').api.mc.Ctmc_stochcompKt.ctmc_stochcomp(
+        java_Q, java_list
     )
 
-    return jlineMatrixToArray(java_result)
+    return {
+        'S': jlineMatrixToArray(result.S),
+        'Q11': jlineMatrixToArray(result.Q11),
+        'Q12': jlineMatrixToArray(result.Q12),
+        'Q21': jlineMatrixToArray(result.Q21),
+        'Q22': jlineMatrixToArray(result.Q22),
+        'T': jlineMatrixToArray(result.T),
+    }
 
 
 def ctmc_timereverse(Q, pi=None):

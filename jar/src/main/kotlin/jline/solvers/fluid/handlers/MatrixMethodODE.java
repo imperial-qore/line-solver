@@ -27,16 +27,19 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
     private final Matrix Qa;
     private final Matrix ALambda;
     private final int numDimensions;
+    private final boolean[] isSourceState;
     private Matrix pQa;
 
     public MatrixMethodODE(
-            Matrix W, Matrix SQ, Matrix S, Matrix Qa, Matrix ALambda, int numDimensions) {
+            Matrix W, Matrix SQ, Matrix S, Matrix Qa, Matrix ALambda, int numDimensions,
+            boolean[] isSourceState) {
         this.W = W.copy();
         this.SQ = SQ.copy();
         this.S = S.copy();
         this.Qa = Qa.copy();
         this.ALambda = ALambda.copy();
         this.numDimensions = numDimensions;
+        this.isSourceState = isSourceState;
         this.pQa = new Matrix(0, 0);
     }
 
@@ -47,10 +50,11 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
             Matrix Qa,
             Matrix ALambda,
             int numDimensions,
+            boolean[] isSourceState,
             NetworkStruct sn,
             List<Double> pStarValues) {
 
-        this(W, SQ, S, Qa, ALambda, numDimensions);
+        this(W, SQ, S, Qa, ALambda, numDimensions, isSourceState);
 
         this.pQa = new Matrix(SQ.getNumRows(), 1);
         int row = 0;
@@ -58,8 +62,11 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
             double pStarValue = pStarValues.get(i);
             for (int j = 0; j < sn.nclasses; j++) {
                 int nPhases = (int) sn.phases.get(i, j);
+                if (nPhases == 0) nPhases = 1;
                 for (int k = 0; k < nPhases; k++) {
-                    pQa.set(row, 0, pStarValue);
+                    if (row < pQa.getNumRows()) {
+                        pQa.set(row, 0, pStarValue);
+                    }
                     row++;
                 }
             }
@@ -87,7 +94,7 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
         }
 
         Matrix dxdtTmp;
-        if (this.pQa.getNumRows() == 0) { // If no pStar values have been specified
+        if (this.pQa.getNumRows() == 0) {
             dxdtTmp = computeDerivativesWithoutSmoothing(xDMS, sumXQa, SQa);
         } else {
             dxdtTmp = computeDerivativesUsingPNormSmoothing(xDMS, sumXQa, SQa);
@@ -101,10 +108,8 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
     private Matrix computeDerivativesUsingPNormSmoothing(
             Matrix x, Matrix sumXQa, Matrix SQa) {
 
-        // ghat = smoothed processor-share constraint approximation, per Ruuskanen et. al
         Matrix ghat = Matrix.createLike(new Matrix(x));
         for (int i = 0; i < x.getNumRows(); i++) {
-            // x, c and p as per Ruuskanen's Julia implementation
             double xVal = sumXQa.get(i, 0);
             double cVal = SQa.get(i, 0);
             double pVal = pQa.get(i, 0);
@@ -116,28 +121,40 @@ public class MatrixMethodODE implements FirstOrderDifferentialEquations {
             }
         }
 
+        Matrix thetaEff = new Matrix(x.getNumRows(), 1);
+        for (int i = 0; i < x.getNumRows(); i++) {
+            if (isSourceState != null && i < isSourceState.length && isSourceState[i]) {
+                thetaEff.set(i, 0, 0.0);
+            } else {
+                thetaEff.set(i, 0, x.get(i, 0) * ghat.get(i, 0));
+            }
+        }
+
         MatrixEquation computeDerivatives = new MatrixEquation();
-        computeDerivatives.alias(W, "W", x, "x", ghat, "ghat", ALambda, "ALambda");
-        computeDerivatives.process("dxdt = W' * (x .* ghat) + ALambda");
+        computeDerivatives.alias(W, "W", thetaEff, "theta", ALambda, "ALambda");
+        computeDerivatives.process("dxdt = W' * theta + ALambda");
         return computeDerivatives.lookupSimple("dxdt");
     }
 
     private Matrix computeDerivativesWithoutSmoothing(
             Matrix x, Matrix sumXQa, Matrix SQa) {
 
-        int sumXQaRows = sumXQa.getNumRows();
-        int sumXQaCols = sumXQa.getNumCols();
-        Matrix minOfSumXQaAndSQa = new Matrix(sumXQaRows, sumXQaCols);
-        for (int i = 0; i < sumXQaRows; i++) {
-            for (int j = 0; j < sumXQaCols; j++) {
-                minOfSumXQaAndSQa.set(i, j, min(sumXQa.get(i, j), SQa.get(i, j)));
+        int nStates = x.getNumRows();
+        Matrix theta = new Matrix(nStates, 1);
+        for (int i = 0; i < nStates; i++) {
+            if (isSourceState != null && i < isSourceState.length && isSourceState[i]) {
+                theta.set(i, 0, 0.0);
+            } else {
+                double xVal = x.get(i, 0);
+                double sumVal = sumXQa.get(i, 0);
+                double sVal = SQa.get(i, 0);
+                theta.set(i, 0, xVal / sumVal * min(sumVal, sVal));
             }
         }
 
         MatrixEquation computeDerivatives = new MatrixEquation();
-        computeDerivatives.alias(
-                W, "W", x, "x", sumXQa, "sumXQa", minOfSumXQaAndSQa, "minOfSumXQaAndSQa", ALambda, "ALambda");
-        computeDerivatives.process("dxdt = W' * (x ./ sumXQa .* minOfSumXQaAndSQa) + ALambda");
+        computeDerivatives.alias(W, "W", theta, "theta", ALambda, "ALambda");
+        computeDerivatives.process("dxdt = W' * theta + ALambda");
         return computeDerivatives.lookupSimple("dxdt");
     }
 

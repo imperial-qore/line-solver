@@ -71,4 +71,12 @@ model.link(myP);
 %
 spaceRunning = State.fromMarginalAndRunning(model,node{2},[2,1,1,1],[2,1,0,0])
 spaceStarted = State.fromMarginalAndStarted(model,node{2},[2,1,1,1],[2,1,0,0])
-space = State.fromMarginal(model,node{2},[2,1,1,1],[2,1,0,0])
+space = State.fromMarginal(model,node{2},[2,1,1,1])
+
+% Run solver
+tic
+solver = SolverMVA(model);
+avgTable = solver.getAvgTable();
+fprintf('SOLVER: MVA\n');
+disp(avgTable);
+toc

@@ -2,7 +2,10 @@
 """Gallery Example: M/M/1-Tandem Queue"""
 
 from line_solver import *
-from .gallery_mm1_linear import gallery_mm1_linear
+try:
+    from .gallery_mm1_linear import gallery_mm1_linear
+except ImportError:
+    from gallery_mm1_linear import gallery_mm1_linear
 
 def gallery_mm1_tandem():
     return gallery_mm1_linear(2)

@@ -42,7 +42,8 @@ public class Immediate extends Distribution implements Serializable {
     }
 
     public double getMean() {
-        return 1.0 / GlobalConstants.Immediate;
+        // Return 0 to match MATLAB behavior (Immediate.getMean returns 0)
+        return 0;
     }
 
     public double getMu() {
@@ -70,7 +71,9 @@ public class Immediate extends Distribution implements Serializable {
     }
 
     public double getSCV() {
-        return 0;
+        // Return 1 to match native Python behavior which converts Immediate to
+        // Distribution(mean=0, scv=1.0) - this produces correct LQNS results
+        return 1;
     }
 
     public double getSkewness() {

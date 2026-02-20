@@ -69,8 +69,22 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
                 Dfilt.set(a, Matrix(size, size))
             }
             val local = sn.nnodes + 1
+            // DEBUG: print sn.space for each stateful node
+            val debugSolverCtmc = false
+            if (debugSolverCtmc) {
+                System.err.println("DEBUG: sn.space contents:")
+                for (isf in 0..<sn.nstateful) {
+                    val node = sn.stateful.get(isf)
+                    val space = sn.space.get(node)
+                    System.err.printf("  isf=%d, node=%s, space=%dx%d: %s%n",
+                        isf, node?.getName(), space?.getNumRows() ?: 0, space?.getNumCols() ?: 0,
+                        space?.toString()?.take(100))
+                }
+            }
+
             for (a in 0..<A) {
                 val stateCell = MatrixCell()
+
                 for (s in 0..<stateSpaceHashed.getNumRows()) {
                     val state = stateSpaceHashed.getRow(s)
 
@@ -81,6 +95,11 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
 
                             val spaceMatrix: Matrix = sn.space.get(sn.stateful.get(isf))!!
                             val stateRow = spaceMatrix.getRow(stateIndex)
+                            if (debugSolverCtmc && s == 0 && a == 0) {
+                                System.err.printf("DEBUG: ind=%d, isf=%d, stateIndex=%d, spaceMatrix=%dx%d, stateRow=%s%n",
+                                    ind, isf, stateIndex, spaceMatrix.getNumRows(), spaceMatrix.getNumCols(),
+                                    stateRow.toString())
+                            }
                             stateCell.set(isf, stateRow)
                         }
                     }
@@ -91,10 +110,19 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
                     val event_a = sync.get(a)!!.active.get(0)!!.getEvent()
 
                     val eventResult = State.afterEventHashed(sn, node_a, state_a, event_a, class_a)
+
                     val new_state_a = eventResult.outspace
                     val rate_a = eventResult.outrate
 
-                    if (new_state_a.get(0) == -1.0) {
+                    // Check if ALL output states are invalid (-1), not just the first one
+                    var allInvalid = true
+                    for (checkIdx in 0..<new_state_a.length()) {
+                        if (new_state_a.get(checkIdx) != -1.0) {
+                            allInvalid = false
+                            break
+                        }
+                    }
+                    if (allInvalid) {
                         continue
                     }
 
@@ -154,9 +182,10 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
                                                 val stateCell_node: MutableMap<Node?, Matrix?> =
                                                     HashMap<Node?, Matrix?>()
                                                 for (entry in stateCell.toMap().entries) {
-                                                    val node_index = entry.key
+                                                    val isf_index = entry.key
                                                     val matrix = entry.value
-                                                    val node = sn.nodes.get(node_index)
+                                                    // Use stateful list, not nodes list - entry key is stateful index (isf)
+                                                    val node = sn.stateful.get(isf_index)
                                                     if (node != null) {
                                                         stateCell_node.putIfAbsent(node, matrix)
                                                     }
@@ -165,9 +194,10 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
                                                 val newStateCell_node: MutableMap<Node?, Matrix?> =
                                                     HashMap<Node?, Matrix?>()
                                                 for (entry in newStateCell.toMap().entries) {
-                                                    val node_index = entry.key
+                                                    val isf_index = entry.key
                                                     val matrix = entry.value
-                                                    val node = sn.nodes.get(node_index)
+                                                    // Use stateful list, not nodes list - entry key is stateful index (isf)
+                                                    val node = sn.stateful.get(isf_index)
                                                     if (node != null) {
                                                         newStateCell_node.putIfAbsent(node, matrix)
                                                     }
@@ -204,7 +234,6 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
                                         //                  MATLAB line 192
                                         checkNotNull(new_state)
                                         val ns = Matrix.matchrow(stateSpaceHashed, new_state)
-
 
                                         if (ns >= 0) {
                                             if (!rate_a.isEmpty()) {
@@ -297,11 +326,11 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
                     val node_a_sf = sn.nodeToStateful.get(node_a).toInt()
                     val node_p_sf = sn.nodeToStateful.get(node_p).toInt()
                     for (s in 0..<stateSpaceHashed.getNumRows()) {
-                        val value = depRates!![s]!![node_a_sf]!![class_a] + Dfilt.get(a).sumRows(s)
-                        depRates[s]!![node_a_sf]!![class_a] =
-                            depRates[s]!![node_a_sf]!![class_a] + Dfilt.get(a).sumRows(s)
+                        val rate = Dfilt.get(a).sumRows(s)
+                        depRates!![s]!![node_a_sf]!![class_a] =
+                            depRates[s]!![node_a_sf]!![class_a] + rate
                         arvRates!![s]!![node_p_sf]!![class_p] =
-                            arvRates[s]!![node_p_sf]!![class_p] + Dfilt.get(a).sumRows(s)
+                            arvRates[s]!![node_p_sf]!![class_p] + rate
                     }
                 }
             }
@@ -340,15 +369,39 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
 
             Q = ctmc_makeinfgen(Q)
 
+            // DEBUG: print state space structure
+            val debugStateSpace = false
+            if (debugStateSpace) {
+                println("DEBUG: Q diagonal (first 30 states):")
+                for (s in 0..<minOf(30, Q.getNumRows())) {
+                    println("  state $s: diag=${Q.get(s, s)}")
+                }
+                println("DEBUG: stateSpaceHashed (first 30 rows):")
+                for (s in 0..<minOf(30, stateSpaceHashed.getNumRows())) {
+                    val row = (0..<stateSpaceHashed.getNumCols()).map { stateSpaceHashed.get(s, it) }
+                    println("  row $s: $row")
+                }
+                println("DEBUG: stateSpaceHashed (rows 40-60):")
+                for (s in 40..<minOf(60, stateSpaceHashed.getNumRows())) {
+                    val row = (0..<stateSpaceHashed.getNumCols()).map { stateSpaceHashed.get(s, it) }
+                    println("  row $s: $row")
+                }
+                println("DEBUG: Q diagonal (rows 40-60):")
+                for (s in 40..<minOf(60, Q.getNumRows())) {
+                    println("  state $s: diag=${Q.get(s, s)}")
+                }
+            }
+
             if (options.config.hide_immediate) {
-                // Find non-station stateful nodes, excluding Cache and Router nodes
+                // Find non-station stateful nodes, excluding Cache nodes
                 // Cache nodes need their immediate transitions to compute hit/miss rates
-                // Router nodes must preserve immediate transitions for correct throughput computation
+                // Router nodes ARE included (like MATLAB) - stochastic complementation uses
+                // robust solving that handles near-singular matrices
                 val imm_list: MutableList<kotlin.Double?> = ArrayList<kotlin.Double?>()
 
                 for (ind in 0..<sn.nnodes) {
-                    // Only consider non-station stateful nodes that are not Caches or Routers
-                    if (sn.isstateful.get(ind) != 0.0 && sn.isstation.get(ind) == 0.0 && sn.nodetype.get(ind) != NodeType.Cache && sn.nodetype.get(ind) != NodeType.Router) {
+                    // Only consider non-station stateful nodes that are not Caches
+                    if (sn.isstateful.get(ind) != 0.0 && sn.isstation.get(ind) == 0.0 && sn.nodetype.get(ind) != NodeType.Cache) {
                         val isf = sn.nodeToStateful.get(ind).toInt()
 
                         val space_slice = Matrix.extract(
@@ -358,10 +411,12 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
                             0,
                             nclasses
                         )
-                        val colSum = space_slice.sumCols()
+                        // Sum along each row (like MATLAB sum(..., 2))
+                        // sumRows() returns a column vector with the sum of each row
+                        val rowSum = space_slice.sumRows()
                         val imm_st: MutableList<Int?> = ArrayList<Int?>()
-                        for (row in 0..<colSum.getNumRows()) {
-                            if (colSum.get(row, 0) > 0) {
+                        for (row in 0..<rowSum.getNumRows()) {
+                            if (rowSum.get(row, 0) > 0) {
                                 imm_st.add(row)
                             }
                         }
@@ -369,8 +424,9 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
                         for (s in 0..<stateSpaceHashed.getNumRows()) {
                             val finalIsf = isf
                             val finalS = s
+                            val hashValue = stateSpaceHashed.get(finalS, finalIsf)
                             val anyMatch = imm_st.stream().anyMatch { immStIndex: Int? ->
-                                stateSpaceHashed.get(finalS, finalIsf) == immStIndex!!.toDouble()
+                                hashValue == immStIndex!!.toDouble()
                             }
                             if (anyMatch) {
                                 imm_list.add(s.toDouble())
@@ -428,37 +484,103 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
                     val stochcompResult = ctmc_stochcomp(Q, nonimm)
                     Q = stochcompResult.S
                     val Q12 = stochcompResult.Q12
-                    val Q22 = stochcompResult.Q22
+
+                    // Build index maps for efficient submatrix extraction
+                    val immSet = HashMap<Int, Int>(imm_unique.size * 2)
+                    for (i in imm_unique.indices) immSet[imm_unique[i].toInt()] = i
+                    val nonimmSet = HashMap<Int, Int>(nonimm.size * 2)
+                    for (i in nonimm.indices) nonimmSet[nonimm[i]!!.toInt()] = i
 
                     // Apply stochastic complement to event filters
+                    // Reuse dense LU factorization from ctmc_stochcomp for efficient per-event solve
+                    @Suppress("UNCHECKED_CAST")
+                    val denseLU = stochcompResult.denseLUSolver as? org.ejml.interfaces.linsol.LinearSolverDense<org.ejml.data.DMatrixRMaj>
+                    val nImm = imm_unique.size
+                    val nNonimm = nonimm.size
+
                     for (a in 0..<A) {
-                        val Q21a = Matrix(imm_unique.size, nonimm.size)
-                        for (row in imm_unique.indices) {
-                            val rowIndex = imm_unique[row].toInt()
-                            for (col in nonimm.indices) {
-                                val colIndex = nonimm[col]!!.toInt()
-                                Q21a.set(row, col, Dfilt.get(a).get(rowIndex, colIndex))
+                        // Extract Q21a from Dfilt[a] using sparse iteration
+                        val dfiltA = Dfilt.get(a)
+                        val sparseD = dfiltA.getData() as org.ejml.data.DMatrixSparseCSC
+                        val Q21a = Matrix(nImm, nNonimm)
+                        for (c in 0..<sparseD.numCols) {
+                            val newCol = nonimmSet[c] ?: continue
+                            val idx0 = sparseD.col_idx[c]
+                            val idx1 = sparseD.col_idx[c + 1]
+                            for (idx in idx0..<idx1) {
+                                val r = sparseD.nz_rows[idx]
+                                val newRow = immSet[r] ?: continue
+                                Q21a.set(newRow, newCol, sparseD.nz_values[idx])
                             }
                         }
 
-                        Q22.changeSign()
-                        val Q22_inv = Q22.inv()
-                        var Ta = Q22_inv.mult(Q21a)
-                        Ta = Q12.mult(Ta)
-                        val dfilt_value = Matrix(nonimm.size, nonimm.size)
+                        // Solve using pre-factored dense LU for efficiency
+                        var T_intermediate: Matrix
+                        if (denseLU != null) {
+                            // Find non-zero columns of Q21a for selective solve
+                            val sparseQ21a = Q21a.getData() as org.ejml.data.DMatrixSparseCSC
+                            val nzCols = ArrayList<Int>()
+                            for (c in 0..<sparseQ21a.numCols) {
+                                if (sparseQ21a.col_idx[c + 1] > sparseQ21a.col_idx[c]) {
+                                    nzCols.add(c)
+                                }
+                            }
 
-                        for (row in nonimm.indices) {
-                            val rowIndex = nonimm[row]!!.toInt()
-                            for (col in nonimm.indices) {
-                                val colIndex = nonimm[col]!!.toInt()
-                                dfilt_value.set(row, col, Dfilt.get(a).get(rowIndex, colIndex))
+                            if (nzCols.isEmpty()) {
+                                T_intermediate = Matrix(nImm, nNonimm)
+                            } else {
+                                // Extract only non-zero columns, solve, scatter back
+                                val k = nzCols.size
+                                val denseB = org.ejml.data.DMatrixRMaj(nImm, k)
+                                for (ci in 0..<k) {
+                                    val c = nzCols[ci]
+                                    val ci0 = sparseQ21a.col_idx[c]
+                                    val ci1 = sparseQ21a.col_idx[c + 1]
+                                    for (idx in ci0..<ci1) {
+                                        denseB.set(sparseQ21a.nz_rows[idx], ci, sparseQ21a.nz_values[idx])
+                                    }
+                                }
+                                val denseX = org.ejml.data.DMatrixRMaj(nImm, k)
+                                denseLU.solve(denseB, denseX)
+
+                                // Scatter result back to full sparse matrix
+                                T_intermediate = Matrix(nImm, nNonimm)
+                                for (ci in 0..<k) {
+                                    val c = nzCols[ci]
+                                    for (r in 0..<nImm) {
+                                        val v = denseX.get(r, ci)
+                                        if (kotlin.math.abs(v) > 1e-15) {
+                                            T_intermediate.set(r, c, v)
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // Fallback: solve (-Q22) * T = Q21a using Matrix.solve
+                            T_intermediate = Matrix(nImm, nNonimm)
+                            Matrix.solve(stochcompResult.Q22.neg(), Q21a, T_intermediate)
+                        }
+
+                        // Ta = Q12 * T_intermediate
+                        val Ta = Q12.mult(T_intermediate)
+
+                        // Extract Dfilt[a](nonimm, nonimm) using sparse iteration
+                        val dfilt_value = Matrix(nNonimm, nNonimm)
+                        for (c in 0..<sparseD.numCols) {
+                            val newCol = nonimmSet[c] ?: continue
+                            val idx0 = sparseD.col_idx[c]
+                            val idx1 = sparseD.col_idx[c + 1]
+                            for (idx in idx0..<idx1) {
+                                val r = sparseD.nz_rows[idx]
+                                val newRow = nonimmSet[r] ?: continue
+                                dfilt_value.set(newRow, newCol, sparseD.nz_values[idx])
                             }
                         }
-                        
+
                         if (Ta.getNumNonZeros() > 0) {
                             dfilt_value.add(Ta)
                         }
-                        
+
                         Dfilt.set(a, dfilt_value)
                     }
                     

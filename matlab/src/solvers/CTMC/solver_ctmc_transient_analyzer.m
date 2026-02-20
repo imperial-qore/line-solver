@@ -36,12 +36,11 @@ pi0 = zeros(1,length(InfGen));
 
 state0 = matchrow(StateSpace, state);
 if state0 == -1
-    line_error(mfilename,'Initial state not contained in the state space.');
-    %     state0 = matchrow(StateSpace, round(state));
-    %     state = round(state);
-    %     if state0 == -1
-    %         line_error(mfilename,'Cannot recover - CTMC stopping');
-    %     end
+    state0 = matchrow(StateSpace, round(state));
+    state = round(state);
+    if state0 == -1
+        line_error(mfilename,'Initial state not contained in the state space.');
+    end
 end
 pi0(state0) = 1; % find initial state and set it to probability 1
 

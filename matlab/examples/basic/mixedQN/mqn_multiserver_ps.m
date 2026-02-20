@@ -62,7 +62,7 @@ solver{end+1} = DES(model,'samples',1e5, 'seed', 23000);
 %solver{end+1} = NC(model,options);
 %solver{end+1} = MAM(model,mam_options);
 for s=1:length(solver)
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());
+    fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgTable();
     AvgTable{s}    
 end

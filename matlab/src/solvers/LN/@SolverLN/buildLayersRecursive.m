@@ -38,7 +38,7 @@ if iscachelayer
     cacheNode = Cache(model, lqn.hashnames{callers}, lqn.nitems(callers), lqn.itemcap{callers}, lqn.replacestrat(callers));
 end
 
-actsInCaller = lqn.actsof{callers};
+actsInCaller = [lqn.actsof{callers}];
 isPostAndAct = full(lqn.actposttype)==ActivityPrecedenceType.POST_AND;
 isPreAndAct = full(lqn.actpretype)==ActivityPrecedenceType.PRE_AND;
 hasfork = any(intersect(find(isPostAndAct),actsInCaller));
@@ -133,7 +133,7 @@ for tidx_caller = callers
                 if isinf(njobs)
                     % if also the callers of tidx_caller are inf servers, then use
                     % an heuristic
-                    njobs = min(sum(mult(isfinite(mult)) .* lqn.repl(isfinite(mult))),1e6);
+                    njobs = min(sum(mult(isfinite(mult)) .* lqn.repl(isfinite(mult))),1000); % Python parity: cap at 1000
                 end
             end
             self.njobs(tidx_caller,idx) = njobs;
@@ -150,7 +150,6 @@ for tidx_caller = callers
         aidxClass{tidx_caller}.setReferenceClass(true); % renormalize residence times using the visits to the task
         aidxClass{tidx_caller}.attribute = [LayeredNetworkElement.TASK, tidx_caller];
         model.attribute.tasks(end+1,:) = [aidxClass{tidx_caller}.index, tidx_caller];
-        %self.thinkproc
         clientDelay.setService(aidxClass{tidx_caller}, self.thinkproc{tidx_caller});
         if ~lqn.isref(tidx_caller)
             self.thinkt_classes_updmap{idx}(end+1,:) = [idx, tidx_caller, 1, aidxClass{tidx_caller}.index];
@@ -431,10 +430,22 @@ self.ensemble{idx} = model;
         nextaidxs = find(lqn.graph(aidx,:)); % these include the called entries
         if ~isempty(nextaidxs)
             isNextPrecFork(aidx) = any(isPostAndAct(nextaidxs)); % indexed on aidx to avoid losing it during the recursion
+            % Save curClass/jobPos before fork branch loop so each branch
+            % starts with the same pre-fork state (prevents curClass
+            % corruption across parallel branches)
+            if isNextPrecFork(aidx)
+                forkSaveCurClass = curClass;
+                forkSaveJobPos = jobPos;
+            end
         end
 
         for nextaidx = nextaidxs % for all successor activities
             if ~isempty(nextaidx)
+                % Restore pre-fork state for each branch iteration
+                if isNextPrecFork(aidx)
+                    curClass = forkSaveCurClass;
+                    jobPos = forkSaveJobPos;
+                end
                 isLoop = false;
                 % in the activity graph, the following if is entered only
                 % by an edge that is the return from a LOOP activity

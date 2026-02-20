@@ -5,9 +5,14 @@ Created on Sun Aug 24 15:31:04 2014
 @author: gabor
 """
 
-import butools
-from butools.mc import CheckGenerator, CheckProbVector
-from butools.utils import SumMatrixList
+# Use local butools settings instead of external package
+from .. import checkInput, checkPrecision
+class _butools_settings:
+    checkInput = checkInput
+    checkPrecision = checkPrecision
+butools = _butools_settings()
+from ..mc.check import CheckGenerator, CheckProbVector
+from ..utils.misc import SumMatrixList
 import numpy as np
 import scipy.linalg as la
 
@@ -143,11 +148,11 @@ def CheckRAPRepresentation (D0, D1, prec=None):
     reig=np.array(ev)
     for i in range(len(ev)):
         if np.isreal(ev[i]):
-            ceig[i]=-np.Inf
+            ceig[i]=-np.inf
             reig[i]=np.real(ev[i])
         else:
             ceig[i]=np.real(ev[i])
-            reig[i]=-np.Inf;
+            reig[i]=-np.inf;
 
     if np.max(reig) < np.max(ceig):
         if butools.verbose:

@@ -1,8 +1,9 @@
 import numpy as np
 from numpy import linalg as la
 import numpy.matlib as ml
-from butools.moments import ReducedMomsFromMoms
 import math
+# Use local butools implementations instead of external package
+from ..moments.conv import ReducedMomsFromMoms
 
 def MEFromMoments (moms):
     """

@@ -234,7 +234,7 @@ public class SolverMAMTest {
     }
 
     @Test
-    public void testMAMRejectsMixedModel() {
+    public void testMAMAcceptsMixedModel() {
         // Create a mixed model with both open and closed classes
         Network model = new Network("MixedModel");
 
@@ -261,20 +261,11 @@ public class SolverMAMTest {
         P.set(closedClass, closedClass, delay, queue, 1.0);
         P.set(closedClass, closedClass, queue, delay, 1.0);
         model.link(P);
-        
-        // Create solver and try to run it
+
+        // MAM now supports mixed models via the dec.source method
         SolverMAM solver = new SolverMAM(model);
-        
-        // The solver should throw an error for mixed models
-        Exception exception = assertThrows(RuntimeException.class, () -> {
-            solver.runAnalyzer();
-        });
-        
-        // Check the error message
-        String message = exception.getMessage();
-        assertTrue(message.contains("does not support mixed models") || 
-                   message.contains("SolverMAM does not support mixed models"),
-                   "Expected error message about mixed models, got: " + message);
+        NetworkAvgTable avgTable = solver.getAvgTable();
+        assertNotNull(avgTable, "MAM should produce results for mixed models");
     }
     
     @Test

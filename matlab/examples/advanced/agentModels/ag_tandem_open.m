@@ -35,10 +35,6 @@ model.link(Network.serialRouting({source, queue1, queue2, sink}));
 solverINAP = MAM(model, 'method', 'inap');
 avgTableINAP = solverINAP.getAvgTable()
 
-%% Solve with MAM using exact method (AutoCAT)
-solverExact = MAM(model, 'method', 'exact');
-avgTableExact = solverExact.getAvgTable()
-
 %% Compare with MVA
 solverMVA = MVA(model);
 avgTableMVA = solverMVA.getAvgTable()

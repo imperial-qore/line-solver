@@ -19,6 +19,10 @@ import jline.util.Utils
 import jline.util.matrix.Matrix
 import jline.streaming.Collector
 import org.apache.commons.math3.util.FastMath
+import org.ejml.data.DMatrixRMaj
+import org.ejml.data.DMatrixSparseCSC
+import org.ejml.data.DMatrixSparseTriplet
+import org.ejml.ops.DConvertMatrixStruct
 import java.util.stream.Collectors
 
 fun solver_ssa(sn_in: NetworkStruct,
@@ -163,43 +167,48 @@ fun solver_ssa(sn_in: NetworkStruct,
         }
     }
 
-    val tranSync = Matrix(options.samples - 1, 1)
-    tranSync.zero()
+    val nSamples = options.samples - 1
+
+    // Use dense DoubleArray for tranSync (avoids sparse Matrix.set() O(nnz) per call)
+    val tranSyncData = DoubleArray(nSamples)
+
+    // Compute initial tranState dimensions: 1 (time) + state length
     val z = Matrix(1, 1)
     z.zero()
-    var tranState = Matrix.concatColumns(z, state, null).transpose()
+    var tranStateInit = Matrix.concatColumns(z, state, null).transpose()
+    var tranStateRows = tranStateInit.numRows  // state_size + 1
 
-    val tranState_s = Matrix(tranState.numRows, options.samples - 1)
-    for (row in 0..<tranState.numRows) {
-        for (col in 0..<tranState.numCols) {
-            tranState_s.set(row, col, tranState.get(row, col))
-        }
+    // Use dense DMatrixRMaj for tranState: rows = state_size+1, cols = nSamples
+    // This avoids O(nnz) per element with sparse DMatrixSparseCSC
+    var tranStateD = DMatrixRMaj(tranStateRows, nSamples)
+    // Copy initial state to first column
+    for (row in 0..<tranStateRows) {
+        tranStateD.set(row, 0, tranStateInit.get(row, 0))
     }
-    tranState = tranState_s.copy()
 
     samples_collected = 1
 
-    var SSq = Matrix(0, 0)
-    // Iterate by station index to ensure correct ordering
+    // Compute SSq dimensions
+    var SSqRows = 0
     for (ist in 0..<sn.nstations) {
         if (nir.containsKey(ist)) {
-            val col: Matrix = nir.get(ist)!!
-            if (SSq.isEmpty) {
-                SSq = col
-            } else {
-                SSq = Matrix.concatRows(SSq, col, null)
-            }
+            SSqRows += nir.get(ist)!!.numRows
         }
     }
 
-    val SSq_s = Matrix(SSq.numRows, options.samples - 1)
-    // copy all o SSq into SSq_new
-    for (row in 0..<SSq.numRows) {
-        for (col in 0..<SSq.numCols) {
-            SSq_s.set(row, col, SSq.get(row, col))
+    // Use dense DMatrixRMaj for SSq
+    val SSqD = DMatrixRMaj(SSqRows, nSamples)
+    // Copy initial nir to first column
+    var rowOff = 0
+    for (ist in 0..<sn.nstations) {
+        if (nir.containsKey(ist)) {
+            val col = nir.get(ist)!!
+            for (i in 0..<col.numRows) {
+                SSqD.set(rowOff + i, 0, col.get(i))
+            }
+            rowOff += col.numRows
         }
     }
-    SSq = SSq_s.copy()
 
     val local = sn.nnodes
 
@@ -377,24 +386,25 @@ fun solver_ssa(sn_in: NetworkStruct,
 
         // This part is needed to ensure that when the state vector grows the
         // padding of zeros, this is done on the left (e.g., for FCFS buffers)
-        tranState = update_paddings(sn, cur_state, statelen, tranState)
+        tranStateD = update_paddings_dense(sn, cur_state, statelen, tranStateD)
+        tranStateRows = tranStateD.numRows
 
         // Apply the time increment
         val dt = -(FastMath.log(Maths.rand()) / tot_rate)
         cur_time += dt
 
-        // Update sample data
-        save_log(dt,
+        // Update sample data using dense arrays - O(1) per element
+        save_log_dense(dt,
             cur_state,
-            tranState,
+            tranStateD,
             samples_collected,
-            tranSync,
+            tranSyncData,
             enabled_sync,
             firing_ctr,
             sn,
             nir,
             cur_state,
-            SSq,
+            SSqD,
             solverSSA.getStreamingCollector(),
             cur_time)
 
@@ -405,23 +415,64 @@ fun solver_ssa(sn_in: NetworkStruct,
         print_progress(options, samples_collected)
     }
 
-    // Copy final state ONCE after loop - was incorrectly inside loop causing O(n²) overhead
+    // Copy final state ONCE after loop
     cur_state_1 = cur_state.entries.stream().collect(Collectors.toMap({ it.key },
         { it.value!!.copy() }
     ))
 
-    tranState = tranState.transpose()
-    val tranStateTimes = Matrix.extractColumn(tranState, 0, null)
-    val timesCumSum = tranStateTimes.cumsumViaCol()
+    // --- Post-processing using dense DMatrixRMaj for O(1) element access ---
 
-    val uniqueRows = Matrix.uniqueRowIndexesFromColumn(tranState, 1)
-    val ui = uniqueRows.vi
-    val uj = uniqueRows.vj
+    // Cumulative sum of dwell times using DMatrixRMaj
+    val timesCumSumD = DMatrixRMaj(nSamples, 1)
+    var cumSum = 0.0
+    for (i in 0 until nSamples) {
+        cumSum += tranStateD.get(0, i)
+        timesCumSumD.set(i, 0, cumSum)
+    }
+    val timesCumSum = denseToSparseMatrix(timesCumSumD)
 
+    // Find unique state rows (columns of tranStateD, excluding row 0 which is time)
+    val rowKeyMap = HashMap<String, MutableList<Int>>()
+    val uniqueKeysOrdered = ArrayList<String>()
+    val estimatedCapacity = (tranStateRows - 1) * 20
+
+    for (col in 0 until nSamples) {
+        val sb = StringBuilder(estimatedCapacity)
+        for (row in 1 until tranStateRows) {
+            if (row > 1) sb.append(',')
+            sb.append(tranStateD.get(row, col))
+        }
+        val key = sb.toString()
+        val indices = rowKeyMap[key]
+        if (indices == null) {
+            val newList = ArrayList<Int>()
+            newList.add(col)
+            rowKeyMap[key] = newList
+            uniqueKeysOrdered.add(key)
+        } else {
+            indices.add(col)
+        }
+    }
+
+    // Sort unique keys lexicographically
+    uniqueKeysOrdered.sort()
+
+    val numUniqueStates = uniqueKeysOrdered.size
+    val ui = IntArray(numUniqueStates)
+    val uj = Array<List<Int>>(numUniqueStates) { emptyList() }
+
+    for (i in 0 until numUniqueStates) {
+        val key = uniqueKeysOrdered[i]
+        val indices = rowKeyMap[key]!!
+        ui[i] = indices[0]
+        uj[i] = indices
+    }
+
+    // Build tranSysState
     val stateSizeCount = cur_state_1.size
-    val statesz = Matrix(1, stateSizeCount)
+    val statesz = IntArray(stateSizeCount)
     for (i in 0 until stateSizeCount) {
-        statesz.set(i, cur_state_1[i]!!.numElements.toDouble())
+        statesz[i] = cur_state_1[i]!!.numElements
     }
 
     val tranSysState = HashMap<Int, Matrix?>()
@@ -429,110 +480,116 @@ fun solver_ssa(sn_in: NetworkStruct,
 
     var start_index = 1
     for (j in 0 until stateSizeCount) {
-        val size = statesz.get(j).toInt()
+        val size = statesz[j]
         val end_index = start_index + size
-        val tmp = Matrix.extract(tranState, 0, tranState.numRows, start_index, end_index)
-        tranSysState[j + 1] = tmp
+        val tmpD = DMatrixRMaj(nSamples, size)
+        for (samp in 0 until nSamples) {
+            for (k in start_index until end_index) {
+                tmpD.set(samp, k - start_index, tranStateD.get(k, samp))
+            }
+        }
+        tranSysState[j + 1] = denseToSparseMatrix(tmpD)
         start_index = end_index
     }
 
-    val arvRates = HashMap<Int, Matrix?>()
-    val depRates = HashMap<Int, Matrix?>()
-    repeat(R) { i ->
-        val rate = Matrix(ui.numRows, sn.nstateful)
-        arvRates[i] = rate
-        depRates[i] = rate.copy()
-    }
+    // Build arvRates and depRates using DMatrixRMaj, then wrap
+    val arvRatesD = Array(R) { DMatrixRMaj(numUniqueStates, sn.nstateful) }
+    val depRatesD = Array(R) { DMatrixRMaj(numUniqueStates, sn.nstateful) }
 
-    var pi = Matrix(1, ui.numRows)
-    for (s in 0 until ui.numRows) {
-        val stateIndexes = uj[s]!!
-        var sum = 0.0
-        for (i in stateIndexes) {
-            sum += tranState.get(i, 0)
+    // Compute pi using DMatrixRMaj
+    val piD = DMatrixRMaj(1, numUniqueStates)
+    for (s in 0 until numUniqueStates) {
+        val stateIndexes = uj[s]
+        var dwellSum = 0.0
+        for (idx in stateIndexes) {
+            dwellSum += tranStateD.get(0, idx)
         }
-        pi.set(s, sum)
+        piD.set(0, s, dwellSum)
     }
 
-    // Pre-allocate result matrix to avoid O(n²) concatenation overhead
-    val numUniqueStates = ui.numElements
-    val SSq_new = Matrix(SSq.numRows, numUniqueStates)
-    for (col_ind in 0 until numUniqueStates) {
-        val srcCol = ui.get(col_ind).toInt()
-        for (row in 0 until SSq.numRows) {
-            SSq_new.set(row, col_ind, SSq.get(row, srcCol))
+    // Build SSq from unique states using DMatrixRMaj
+    val SSqNewD = DMatrixRMaj(numUniqueStates, SSqRows)
+    for (s in 0 until numUniqueStates) {
+        val srcCol = ui[s]
+        for (row in 0 until SSqRows) {
+            SSqNewD.set(s, row, SSqD.get(row, srcCol))
         }
     }
-    SSq = SSq_new.transpose()
+    var SSq = denseToSparseMatrix(SSqNewD)
 
+    // Fill arvRates/depRates from samples into DMatrixRMaj
     for (ind in 0 until sn.nnodes) {
         if (sn.isstateful.get(ind) == 1.0) {
             val isf = sn.nodeToStateful.get(ind).toInt()
-            for (s in 0 until ui.numRows) {
-                val uis = ui.get(s).toInt()
+            for (s in 0 until numUniqueStates) {
+                val uis = ui[s]
                 for (r in 0 until R) {
-                    val arvRate = arvRates[r]!!
-                    val depRate = depRates[r]!!
-                    arvRate.set(s, isf, arvRatesSamples[uis]!!.get(r, isf))
-                    depRate.set(s, isf, depRatesSamples[uis]!!.get(r, isf))
+                    arvRatesD[r].set(s, isf, arvRatesSamples[uis]!!.get(r, isf))
+                    depRatesD[r].set(s, isf, depRatesSamples[uis]!!.get(r, isf))
                 }
             }
         }
     }
 
-    pi = Matrix.scaleMult(pi, 1.0 / pi.elementSum())
+    // Wrap in Matrix after all data is written
+    val arvRates = HashMap<Int, Matrix?>()
+    val depRates = HashMap<Int, Matrix?>()
+    repeat(R) { i ->
+        arvRates[i] = denseToSparseMatrix(arvRatesD[i])
+        depRates[i] = denseToSparseMatrix(depRatesD[i])
+    }
 
-    //if (options.method.equals("para") || options.method.equals ("parallel")) {
-    //    System.out.printf("SSA samples: %6d\n", samples_collected);
-    //}
+    // Normalize pi
+    val piSum = piD.data.sum()
+    for (i in 0 until numUniqueStates) {
+        piD.set(0, i, piD.get(0, i) / piSum)
+    }
+    var pi = denseToSparseMatrix(piD)
+
+    // Convert tranSync to Matrix using dense path
+    val tranSyncRMaj = DMatrixRMaj(nSamples, 1)
+    for (i in 0 until nSamples) {
+        tranSyncRMaj.set(i, 0, tranSyncData[i])
+    }
+    val tranSync = denseToSparseMatrix(tranSyncRMaj)
+
     return SSAValues(pi, SSq, arvRates, depRates, tranSysState, tranSync, sn)
 }
 
-fun save_log(dt: Double,
-             cur_state: MutableMap<Int?, Matrix>,
-             tranState: Matrix,
-             samples_collected: Int,
-             tranSync: Matrix,
-             enabled_sync: MutableMap<Int?, Int?>,
-             firing_ctr: Int,
-             sn: NetworkStruct,
-             nir: MutableMap<Int?, Matrix>,
-             stateCell: MutableMap<Int?, Matrix>,
-             SSq: Matrix,
-             streamingCollector: Collector? = null,
-             curTime: Double = 0.0) {
-    // Build state vector directly without matrix concatenation
-    // First compute total size
-    var totalSize = 0
-    for (ind in 0..<sn.nnodes) {
-        if (cur_state.containsKey(ind)) {
-            totalSize += cur_state.get(ind)!!.numElements
-        }
-    }
-
-    // Set dt as first element, then copy state data directly to tranState
+/**
+ * Dense version of save_log using DMatrixRMaj for O(1) element access.
+ */
+fun save_log_dense(dt: Double,
+                   cur_state: MutableMap<Int?, Matrix>,
+                   tranStateD: DMatrixRMaj,
+                   samples_collected: Int,
+                   tranSyncData: DoubleArray,
+                   enabled_sync: MutableMap<Int?, Int?>,
+                   firing_ctr: Int,
+                   sn: NetworkStruct,
+                   nir: MutableMap<Int?, Matrix>,
+                   stateCell: MutableMap<Int?, Matrix>,
+                   SSqD: DMatrixRMaj,
+                   streamingCollector: Collector? = null,
+                   curTime: Double = 0.0) {
+    // Set dt as first element, then copy state data directly to tranStateD - O(1) per element
     val colIdx = samples_collected - 1
-    tranState.set(0, colIdx, dt)
+    tranStateD.set(0, colIdx, dt)
     var offset = 1
     for (ind in 0..<sn.nnodes) {
         if (cur_state.containsKey(ind)) {
             val row: Matrix = cur_state.get(ind)!!
             for (i in 0..<row.numElements) {
-                tranState.set(offset + i, colIdx, row.get(i))
+                tranStateD.set(offset + i, colIdx, row.get(i))
             }
             offset += row.numElements
         }
     }
 
-    // add new row to tranSync if needed
-//            if (samples_collected - 1 >= tranSync.getNumRows()) {
-//                Matrix tranSync_new_row = new Matrix(1, tranSync.getNumCols());
-//                tranSync_new_row.zero();
-//                tranSync = Matrix.concatRows(tranSync, tranSync_new_row, null);
-//            }
     // +1 to convert 0-based Java indexing to 1-based indexing for LINE compatibility
-    tranSync.set(samples_collected - 1, 0, enabled_sync.get(firing_ctr)!! + 1)
+    tranSyncData[samples_collected - 1] = (enabled_sync.get(firing_ctr)!! + 1).toDouble()
 
+    // Compute marginals for each station
     for (ind in 0..<sn.nnodes) {
         if (sn.isstation.get(ind) == 1.0) {
             val isf = sn.nodeToStateful.get(ind).toInt()
@@ -541,15 +598,14 @@ fun save_log(dt: Double,
         }
     }
 
-    // Copy nir values directly to SSq column without matrix concatenation
-    // IMPORTANT: iterate by station index to ensure correct ordering in SSq
-    val colIdx2 = samples_collected - 1
+    // Copy nir values directly to SSqD - O(1) per element
+    // IMPORTANT: iterate by station index to ensure correct ordering
     var rowOffset = 0
     for (ist in 0..<sn.nstations) {
         if (nir.containsKey(ist)) {
             val col: Matrix = nir.get(ist)!!
             for (i in 0..<col.numRows) {
-                SSq.set(rowOffset + i, colIdx2, col.get(i))
+                SSqD.set(rowOffset + i, colIdx, col.get(i))
             }
             rowOffset += col.numRows
         }
@@ -591,32 +647,79 @@ fun print_progress(options: SolverOptions, samples_collected: Int) {
     }
 }
 
-fun update_paddings(sn: NetworkStruct,
-                    stateCell: MutableMap<Int?, Matrix>,
-                    statelen: Matrix,
-                    tranState: Matrix): Matrix {
-    var tranState = tranState
+/**
+ * Convert a DMatrixRMaj to a sparse-backed Matrix via triplet format.
+ * Triplet -> CSC conversion is O(nnz) and avoids the O(n^2) pathology
+ * of direct DMatrixRMaj -> DMatrixSparseCSC conversion.
+ */
+private fun denseToSparseMatrix(d: DMatrixRMaj): Matrix {
+    val rows = d.numRows
+    val cols = d.numCols
+    val data = d.data
+
+    // Count non-zeros first for exact triplet allocation
+    var nnz = 0
+    for (i in 0 until data.size) {
+        if (data[i] != 0.0) nnz++
+    }
+
+    val triplet = DMatrixSparseTriplet(rows, cols, nnz)
+    // Add entries in row-major order (data is row-major in DMatrixRMaj)
+    for (i in 0 until rows) {
+        val rowOff = i * cols
+        for (j in 0 until cols) {
+            val v = data[rowOff + j]
+            if (v != 0.0) {
+                triplet.addItem(i, j, v)
+            }
+        }
+    }
+
+    val csc = DConvertMatrixStruct.convert(triplet, null as DMatrixSparseCSC?)
+    return Matrix(csc as org.ejml.data.DMatrix)
+}
+
+/**
+ * Dense version of update_paddings using DMatrixRMaj.
+ * When state vectors grow (e.g., FCFS buffers), pad with zeros by creating a new larger matrix.
+ */
+fun update_paddings_dense(sn: NetworkStruct,
+                          stateCell: MutableMap<Int?, Matrix>,
+                          statelen: Matrix,
+                          tranStateD: DMatrixRMaj): DMatrixRMaj {
+    var result = tranStateD
     for (ind in 0..<sn.nnodes) {
         if (sn.isstation.get(ind) == 1.0) {
             val isf = sn.nodeToStateful.get(ind).toInt()
             val deltalen = (stateCell.get(isf)!!.numElements > statelen.get(isf))
             if (deltalen) {
                 statelen.set(isf, stateCell.get(isf)!!.numElements.toDouble())
-                // padding
+                // padding: insert a row of zeros at position shift+1
                 var shift = 0
                 if (ind > 0) {
                     for (col in 0..<isf) {
                         shift += statelen.get(col).toInt()
                     }
                 }
-                val pad = Matrix(1, tranState.numCols)
-
-                val top = Matrix.extractRows(tranState, 0, shift + 1, null)
-                val bottom = Matrix.extractRows(tranState, shift + 1, tranState.numRows, null)
-                val tmp = Matrix.concatRows(top, pad, null)
-                tranState = Matrix.concatRows(tmp, bottom, null)
+                val oldRows = result.numRows
+                val nCols = result.numCols
+                val newResult = DMatrixRMaj(oldRows + 1, nCols)
+                // Copy rows 0..shift (inclusive)
+                for (r in 0..shift) {
+                    for (c in 0 until nCols) {
+                        newResult.set(r, c, result.get(r, c))
+                    }
+                }
+                // Row shift+1 is zeros (default in DMatrixRMaj)
+                // Copy rows shift+1..oldRows-1 to shift+2..oldRows
+                for (r in shift + 1 until oldRows) {
+                    for (c in 0 until nCols) {
+                        newResult.set(r + 1, c, result.get(r, c))
+                    }
+                }
+                result = newResult
             }
         }
     }
-    return tranState
+    return result
 }

@@ -7,14 +7,20 @@ Created on Tue May  5 11:31:18 2015
 import numpy as np
 import numpy.matlib as ml
 import scipy.linalg as la
-import butools
 import math
-from butools.moments import MomsFromFactorialMoms
-from butools.map import CheckMMAPRepresentation
-from butools.mc import CTMCSolve
-from butools.ph import CheckPHRepresentation
-from butools.mam import FluidFundamentalMatrices, QBDFundamentalMatrices
-from butools.utils import Linsolve
+from ..moments.conv import MomsFromFactorialMoms
+from ..map.check import CheckMMAPRepresentation
+from ..mc.stst import CTMCSolve
+from ..ph.check import CheckPHRepresentation
+from ..mam.fluid import FluidFundamentalMatrices
+from ..mam.qbd import QBDFundamentalMatrices
+from ..utils.misc import Linsolve
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 def MMAPPH1PRPR(D, sigma, S, *argv):
     """

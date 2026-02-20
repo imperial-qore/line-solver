@@ -126,7 +126,7 @@ switch options.lang
                     line_printf('\nJMT command failed with status %d. Output:\n%s\n', status, cmdoutput);
                 end
                 self.getResults;
-                if ~options.keep
+                if ~options.keep && isfolder(getFilePath(self))
                     rmdir(getFilePath(self),'s');
                 end
                 %if options.verbose
@@ -278,7 +278,7 @@ switch options.lang
                     line_printf('\nJMT command failed with status %d. Output:\n%s\n', status, cmdoutput);
                 end
                 self.getResults;
-                if ~options.keep
+                if ~options.keep && isfolder(getFilePath(self))
                     rmdir(getFilePath(self),'s');
                 end
                 %if options.verbose

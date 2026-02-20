@@ -196,7 +196,13 @@ def cache_gamma_lp(lambd: np.ndarray, R: list) -> Tuple[np.ndarray, int, int, in
                     l = Pij[li]
                     y = 0.0
                     for v in range(u):
-                        for t in range(l_1 + 1):  # t from 0 to l_1 (1-indexed: 1 to l_1)
+                        # In Python, levels are 0-indexed: 0=miss, 1..h=cache levels
+                        # MATLAB uses 1-indexed: 1=miss, 2..h+1=cache levels
+                        # For a path segment from l_1 to l:
+                        # - l_1 is the source level (0-indexed in Python)
+                        # - We need to sum over all arrival rates up to and including l_1
+                        # This means range(l_1 + 1) which gives [0, 1, ..., l_1]
+                        for t in range(l_1 + 1):
                             y += lambd[v, i, t] * R[v][i][t, l]
                     gamma[i, j] *= y
 

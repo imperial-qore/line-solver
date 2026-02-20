@@ -5,6 +5,7 @@ import jline.api.qsys.qsys_mapdc
 import jline.api.sn.snGetDemandsChain
 import jline.lang.JobClass
 import jline.lang.NetworkStruct
+import jline.lang.nodes.Queue
 import jline.lang.nodes.Station
 import jline.GlobalConstants
 import jline.lang.constant.NodeType
@@ -115,7 +116,7 @@ fun solver_mam_basic(sn: NetworkStruct, options: SolverOptions): MAMResult {
     val N = sn.njobs.transpose()
     val V = Matrix.cellsum(sn.visits)
     var S = Matrix.ones(sn.rates.numRows, sn.rates.numCols)
-    S = S.elementDivide(sn.rates);
+    S = S.elementDivide(sn.rates)
     val Lchain = snGetDemandsChain(sn).Dchain
 
     val QN = Matrix(M, K, M * K)
@@ -138,6 +139,11 @@ fun solver_mam_basic(sn: NetworkStruct, options: SolverOptions): MAMResult {
             TN_1.set(i, j, Double.Companion.POSITIVE_INFINITY)
         }
     }
+
+    // Track stations using exact MAP/D/c solver (skip post-processing for these)
+    // Note: qbd_setupdelayoff stations should NOT be skipped - they need the second pass normalization
+    // Matches MATLAB mapdcStations pattern in solver_mam_basic.m:33 and :351
+    val mapdcStations = BooleanArray(M) { false }
 
     var it = 0
 
@@ -202,11 +208,8 @@ fun solver_mam_basic(sn: NetworkStruct, options: SolverOptions): MAMResult {
 
     val isMixed = isOpen && isClosed
 
-    if (isMixed) {
-        // treat open as having higher priority than closed
-        // sn.classprio(~isfinite(sn.njobs)) = 1 + max(sn.classprio(isfinite(sn.njobs)));
-        // COMMENTED OUT to match MATLAB behavior - priority adjustment disabled
-    }
+    // Mixed models are handled by treating each chain independently:
+    // open chains use source arrival rates, closed chains iterate lambda via regula falsi
 
     val lambdas_inchain = MatrixCell(C)
     for (c in 0..<C) {
@@ -595,12 +598,43 @@ fun solver_mam_basic(sn: NetworkStruct, options: SolverOptions): MAMResult {
                             for (i in 0..<K) {
                                 sn_rates_ist_k.set(i, sn.rates.get(ist, i) * sn.nservers.get(ist))
                             }
-                            val aggrUtil =
-                                mmap_lambda(aggrArrivalAtNode!!).elementDivide(
-                                    sn_rates_ist_k.elementIncrease(
-                                        GlobalConstants.FineTol
-                                    )
-                                ).elementSum()
+                            // mmap_lambda returns a 1xK_mmap matrix where K_mmap = aggrArrivalAtNode.size() - 2
+                            // When K_mmap != K (e.g., single-chain model with multiple classes),
+                            // we need to handle the dimension mismatch like MATLAB's broadcasting
+                            val lambdaVec = mmap_lambda(aggrArrivalAtNode!!)
+                            val ratesVec = sn_rates_ist_k.elementIncrease(GlobalConstants.FineTol)
+                            // Compute aggrUtil = sum(lambda / rates, 'omitnan') - skip NaN values like MATLAB
+                            var aggrUtil = 0.0
+                            if (lambdaVec.numCols == ratesVec.numCols) {
+                                for (i in 0..<lambdaVec.numCols) {
+                                    val lam = lambdaVec.get(i)
+                                    val rate = ratesVec.get(i)
+                                    if (java.lang.Double.isFinite(lam) && java.lang.Double.isFinite(rate) && rate > 0) {
+                                        aggrUtil += lam / rate
+                                    }
+                                }
+                            } else if (lambdaVec.numCols == 1) {
+                                // Scalar/vector division: broadcast the single lambda value
+                                val totalLambda = lambdaVec.get(0)
+                                if (java.lang.Double.isFinite(totalLambda)) {
+                                    for (i in 0..<K) {
+                                        val rate = ratesVec.get(i)
+                                        if (java.lang.Double.isFinite(rate) && rate > 0) {
+                                            aggrUtil += totalLambda / rate
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Partial match: sum available lambdas divided by corresponding rates
+                                val minCols = min(lambdaVec.numCols, ratesVec.numCols)
+                                for (i in 0..<minCols) {
+                                    val lam = lambdaVec.get(i)
+                                    val rate = ratesVec.get(i)
+                                    if (java.lang.Double.isFinite(lam) && java.lang.Double.isFinite(rate) && rate > 0) {
+                                        aggrUtil += lam / rate
+                                    }
+                                }
+                            }
                             if (aggrUtil < 1 - GlobalConstants.FineTol) {
                                 var closed = true
                                 for (i in 0..<N.length()) {
@@ -680,51 +714,110 @@ fun solver_mam_basic(sn: NetworkStruct, options: SolverOptions): MAMResult {
                                             Qret.put(k, Matrix.singleton(GlobalConstants.FineTol / sn.rates.get(ist)))
                                         }
                                     } else {
-                                        pdistr = MMAPPH1FCFS(
-                                            D,
-                                            pie.get(ist)!!.toMap(),
-                                            D0.get(ist)!!.toMap(),
-                                            null,
-                                            maxLevel.toInt(),
-                                            null,
-                                            null,
-                                            false,
-                                            false,
-                                            null,
-                                            null
-                                        ).get("ncDistr")?.let { distr ->
-                                            distr.mapKeys { it.key as Int? }.mapValues { it.value as Matrix? }
-                                                .toMutableMap()
-                                        } ?: mutableMapOf()
-                                        for (k in 0..<K) {
-                                            pdistr.put(
-                                                k,
-                                                Matrix.extractRows(
-                                                    pdistr.get(k)!!.transpose(),
-                                                    0,
-                                                    N.get(k).toInt() + 1,
-                                                    null
+                                        // Check for FunctionTask (queue with setup/delayoff enabled)
+                                        // Matches MATLAB sn.isfunction(ist) check at solver_mam_basic.m:269
+                                        // NOTE: JAR's qbd_setupdelayoff uses a simplified 2-phase model while MATLAB
+                                        // uses APH-based QBD with variable phases. Results may differ slightly.
+                                        // TODO: Port MATLAB's APH-based qbd_setupdelayoff to JAR for exact parity
+                                        val station = sn.stations.get(ist)
+                                        if (station is Queue && station.isDelayOffEnabled()) {
+                                            // Use qbd_setupdelayoff for FunctionTask layers
+                                            val aggrLambda = mmap_lambda(aggrArrivalAtNode!!)
+                                            val totalLambda = aggrLambda.elementSum()
+
+                                            // Get setup/delayoff parameters from Queue (first class that has them)
+                                            var alpharate = 1.0
+                                            var alphascv = 1.0
+                                            var betarate = 1.0
+                                            var betascv = 1.0
+                                            for (k in 0..<K) {
+                                                val jobClass = sn.jobclasses.get(k)
+                                                val setupDist = station.getSetupTime(jobClass)
+                                                val delayOffDist = station.getDelayOffTime(jobClass)
+                                                if (setupDist != null && delayOffDist != null) {
+                                                    alpharate = 1.0 / setupDist.getMean()
+                                                    alphascv = setupDist.getSCV()
+                                                    betarate = 1.0 / delayOffDist.getMean()
+                                                    betascv = delayOffDist.getSCV()
+                                                    break
+                                                }
+                                            }
+
+                                            // For each class, compute queue length using qbd_setupdelayoff
+                                            for (k in 0..<K) {
+                                                val pieK = pie.get(ist)!!.get(k)
+                                                if (pieK != null && !pieK.hasNaN()) {
+                                                    // Compute mu_k = 1 / (pie_k * inv(-D0{k}) * ones)
+                                                    val D0k = D0.get(ist)!!.get(k)
+                                                    val negD0k = D0k.scale(-1.0)
+                                                    val invNegD0k = negD0k.inv()
+                                                    val ones = Matrix.ones(pieK.length(), 1)
+                                                    val meanServiceTime = pieK.mult(invNegD0k).mult(ones).get(0)
+                                                    val mu_k = 1.0 / meanServiceTime
+
+                                                    val Q_k = qbd_setupdelayoff(totalLambda, mu_k, alpharate, alphascv, betarate, betascv)
+                                                    Qret.put(k, Matrix.singleton(Q_k))
+                                                } else {
+                                                    Qret.put(k, Matrix.singleton(Double.NaN))
+                                                }
+                                            }
+                                            // Note: qbd_setupdelayoff stations should NOT be marked for skipping
+                                            // They need the second pass normalization (unlike MAP/D/c stations)
+                                            // MATLAB does NOT set mapdcStations for qbd_setupdelayoff
+                                        } else {
+                                            pdistr = MMAPPH1FCFS(
+                                                D,
+                                                pie.get(ist)!!.toMap(),
+                                                D0.get(ist)!!.toMap(),
+                                                null,
+                                                maxLevel.toInt(),
+                                                null,
+                                                null,
+                                                false,
+                                                false,
+                                                null,
+                                                null
+                                            ).get("ncDistr")?.let { distr ->
+                                                distr.mapKeys { it.key as Int? }.mapValues { it.value as Matrix? }
+                                                    .toMutableMap()
+                                            } ?: mutableMapOf()
+                                            for (k in 0..<K) {
+                                                val pdistrK = pdistr.get(k)
+                                                if (pdistrK == null) {
+                                                    // MMAPPH1FCFS didn't return distribution for class k
+                                                    // Use default near-zero queue length
+                                                    Qret.put(k, Matrix.singleton(GlobalConstants.FineTol / sn.rates.get(ist)))
+                                                    continue
+                                                }
+                                                pdistr.put(
+                                                    k,
+                                                    Matrix.extractRows(
+                                                        pdistrK.transpose(),
+                                                        0,
+                                                        N.get(k).toInt() + 1,
+                                                        null
+                                                    )
                                                 )
-                                            )
-                                            pdistr.get(k)!!.absEq()
-                                            var sum = 0.0
-                                            for (i in 0..<pdistr.get(k)!!.length() - 1) {
-                                                sum = sum + pdistr.get(k)!!.get(i)
+                                                pdistr.get(k)!!.absEq()
+                                                var sum = 0.0
+                                                for (i in 0..<pdistr.get(k)!!.length() - 1) {
+                                                    sum = sum + pdistr.get(k)!!.get(i)
+                                                }
+                                                pdistr.get(k)!!.set(pdistr.get(k)!!.length() - 1, abs(1 - sum))
+                                                pdistr.get(k)!!.scaleEq(1 / pdistr.get(k)!!.elementSum())
+                                                val a = Matrix(1, N.get(k).toInt() + 1, N.get(k).toInt() + 1)
+                                                for (i in 0..<a.length()) {
+                                                    a.set(i, i.toDouble())
+                                                }
+                                                val b = Matrix(1, N.get(k).toInt() + 1, N.get(k).toInt() + 1)
+                                                for (i in 0..<a.length()) {
+                                                    b.set(i, pdistr.get(k)!!.get(i))
+                                                }
+                                                Qret.put(
+                                                    k,
+                                                    Matrix.singleton(max(0.0, min(N.get(k), a.mult(b.transpose()).get(0))))
+                                                )
                                             }
-                                            pdistr.get(k)!!.set(pdistr.get(k)!!.length() - 1, abs(1 - sum))
-                                            pdistr.get(k)!!.scaleEq(1 / pdistr.get(k)!!.elementSum())
-                                            val a = Matrix(1, N.get(k).toInt() + 1, N.get(k).toInt() + 1)
-                                            for (i in 0..<a.length()) {
-                                                a.set(i, i.toDouble())
-                                            }
-                                            val b = Matrix(1, N.get(k).toInt() + 1, N.get(k).toInt() + 1)
-                                            for (i in 0..<a.length()) {
-                                                b.set(i, pdistr.get(k)!!.get(i))
-                                            }
-                                            Qret.put(
-                                                k,
-                                                Matrix.singleton(max(0.0, min(N.get(k), a.mult(b.transpose()).get(0))))
-                                            )
                                         }
                                     }
                                 }
@@ -786,13 +879,46 @@ fun solver_mam_basic(sn: NetworkStruct, options: SolverOptions): MAMResult {
                 Nc = Nc + sn.njobs.get(inchain.get(j).toInt())
             }
             if (java.lang.Double.isFinite(Nc)) {
+                // Compute QNc = sum of QN columns
+                // IMPORTANT: Match MATLAB's sum() behavior - NaN propagates through the sum
+                // This is critical for the second pass where NaN in one cell causes
+                // the entire scaling to become NaN, which then triggers max(S, NaN) = S
                 var QNc = 0.0
+                var hasNaN = false
                 for (j in 0..<inchain.length()) {
-                    QNc = QNc + QN.sumCols(inchain.get(j).toInt())
+                    val colIdx = inchain.get(j).toInt()
+                    for (rowIdx in 0..<QN.numRows) {
+                        val val_ij = QN.get(rowIdx, colIdx)
+                        if (java.lang.Double.isNaN(val_ij)) {
+                            hasNaN = true
+                        } else if (java.lang.Double.isFinite(val_ij)) {
+                            QNc += val_ij
+                        }
+                    }
                 }
-                for (m in 0..<inchain.length()) {
-                    for (n in 0..<QN.numRows) {
-                        QN.set(n, inchain.get(m).toInt(), QN.get(n, inchain.get(m).toInt()) * (Nc / QNc))
+                // If any NaN was found, set QNc to NaN to match MATLAB behavior
+                if (hasNaN) {
+                    QNc = Double.NaN
+                }
+                // Only scale if QNc > 0 and finite to avoid division by zero
+                if (java.lang.Double.isFinite(QNc) && QNc > GlobalConstants.FineTol) {
+                    for (m in 0..<inchain.length()) {
+                        for (n in 0..<QN.numRows) {
+                            val oldVal = QN.get(n, inchain.get(m).toInt())
+                            if (java.lang.Double.isFinite(oldVal)) {
+                                QN.set(n, inchain.get(m).toInt(), oldVal * (Nc / QNc))
+                            }
+                        }
+                    }
+                } else if (java.lang.Double.isNaN(QNc)) {
+                    // NaN scaling: set all finite QN values to NaN (matches MATLAB behavior)
+                    for (m in 0..<inchain.length()) {
+                        for (n in 0..<QN.numRows) {
+                            val oldVal = QN.get(n, inchain.get(m).toInt())
+                            if (java.lang.Double.isFinite(oldVal)) {
+                                QN.set(n, inchain.get(m).toInt(), Double.NaN)
+                            }
+                        }
                     }
                 }
             }
@@ -801,18 +927,32 @@ fun solver_mam_basic(sn: NetworkStruct, options: SolverOptions): MAMResult {
                 for (k in 0..<inchain.length()) {
                     if (sn.isstation.get(ind) == 1.0) {
                         val ist = sn.nodeToStation.get(ind).toInt()
+                        // Skip stations using exact MAP/D/c solver (already have correct values)
+                        // Matches MATLAB mapdcStations(ist) check at solver_mam_basic.m:351-353
+                        // Note: qbd_setupdelayoff stations should NOT be skipped - they need normalization
+                        if (mapdcStations[ist]) {
+                            continue
+                        }
                         if (V.get(ist, inchain.get(k).toInt()) > GlobalConstants.Zero) {
                             if (Utils.isInf(sn.nservers.get(ist))) {
                                 RN.set(ist, inchain.get(k).toInt(), S.get(ist, inchain.get(k).toInt()))
                             } else {
-                                RN.set(
-                                    ist,
-                                    inchain.get(k).toInt(),
-                                    max(
-                                        S.get(ist, inchain.get(k).toInt()),
-                                        QN.get(ist, inchain.get(k).toInt()) / TN.get(ist, inchain.get(k).toInt())
-                                    )
-                                )
+                                // Use nanMax to match MATLAB behavior: max(a, NaN) = a
+                                // This is critical for the second pass when QN values become NaN
+                                val s_val = S.get(ist, inchain.get(k).toInt())
+                                val tn_val = TN.get(ist, inchain.get(k).toInt())
+                                val qn_tn = if (tn_val > GlobalConstants.Zero) {
+                                    QN.get(ist, inchain.get(k).toInt()) / tn_val
+                                } else {
+                                    Double.NaN
+                                }
+                                // MATLAB's max ignores NaN: max(a, NaN) = a, max(NaN, b) = b
+                                val rn_val = when {
+                                    java.lang.Double.isNaN(qn_tn) -> s_val
+                                    java.lang.Double.isNaN(s_val) -> qn_tn
+                                    else -> max(s_val, qn_tn)
+                                }
+                                RN.set(ist, inchain.get(k).toInt(), rn_val)
                             }
                         } else {
                             RN.set(ist, inchain.get(k).toInt(), 0)

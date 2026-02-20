@@ -402,7 +402,7 @@ fun aph_fit(e1: Double, e2: Double, e3: Double, nmax: Int = 10): Pair<MatrixCell
     val MAP: MatrixCell
 
     if (fitN2 <= n.toDouble() / (n - 1) || fitN3 <= 2 * fitN2 - 1) {
-        // Case 1
+        // Case 1 of 2
         val b = 2 * (4 - n * (3 * fitN2 - 4)) / (fitN2 * (4 + n - n * fitN3) +
                 FastMath.sqrt(n * fitN2) * FastMath.sqrt(12 * fitN2 * fitN2 * (n + 1) +
                         16 * fitN3 * (n + 1) + fitN2 * (n * (fitN3 - 15) * (fitN3 + 1) - 8 * (fitN3 + 3))))
@@ -437,9 +437,103 @@ fun aph_fit(e1: Double, e2: Double, e3: Double, nmax: Int = 10): Pair<MatrixCell
         MAP = MatrixCell(2)
         MAP[0] = D0
         MAP[1] = D1
+    } else if (fitN2 > n.toDouble() / (n - 1) && fitN3 > unPrev) {
+        // Case 2 of 2
+        val K1 = (n - 1).toDouble()
+        val K2 = (n - 2).toDouble()
+        val K3 = 3 * fitN2 - 2 * fitN3
+        val K4 = fitN3 - 3
+        val K5 = n - fitN2
+        val K6 = 1 + fitN2 - fitN3
+        val K7 = n + fitN2 - n * fitN2
+        val K8 = 3 + 3 * fitN2 * fitN2 + fitN3 - 3 * fitN2 * fitN3
+
+        val innerSqrt = -16 * K1 * K1 * FastMath.pow(K7, 6.0) +
+                FastMath.pow(4 * K1 * K5 * K5 * K5 + K1 * K1 * K2 * K4 * K4 * n * fitN2 * fitN2 +
+                        4 * K2 * n * fitN2 * (K4 * n * n - 3 * K6 * fitN2 + K8 * n), 2.0)
+        val K9 = 108 * K1 * K1 * (4 * K2 * K2 * K3 * n * n * fitN2 +
+                K1 * K1 * K2 * K4 * K4 * n * fitN2 * fitN2 +
+                4 * K1 * K5 * (K5 * K5 - 3 * K2 * K6 * n * fitN2) +
+                FastMath.sqrt(innerSqrt))
+
+        val K10 = K4 * K4 / (4 * K3 * K3) - K5 / (K1 * K3 * fitN2)
+        val K9cbrt = if (K9 >= 0) FastMath.pow(K9, 1.0 / 3.0) else -FastMath.pow(-K9, 1.0 / 3.0)
+        val K11 = FastMath.pow(2.0, 1.0 / 3.0) * (3 * K5 * K5 + K2 * (K3 + 2 * K4) * n * fitN2) /
+                (K3 * K9cbrt * fitN2)
+        val K12 = K9cbrt / (3 * FastMath.pow(2.0, 7.0 / 3.0) * K1 * K1 * K3 * fitN2)
+        val K13 = FastMath.sqrt(K10 + K11 + K12)
+        val K14 = (6 * K1 * K3 * K4 * K5 + 4 * K2 * K3 * K3 * n - K1 * K1 * K4 * K4 * K4 * fitN2) /
+                (4 * K1 * K1 * K3 * K3 * K3 * K13 * fitN2)
+        val K15 = -K4 / (2 * K3)
+        val K16 = FastMath.sqrt(2 * K10 - K11 - K12 - K14)
+        val K17 = FastMath.sqrt(2 * K10 - K11 - K12 + K14)
+
+        val innerSqrt18 = 81 * FastMath.pow(4 * K5 * K5 * K5 + 4 * K2 * K4 * K5 * n * fitN2 +
+                K1 * K2 * K4 * K4 * n * fitN2 * fitN2, 2.0) -
+                48 * FastMath.pow(3 * K5 * K5 + 2 * K2 * K4 * n * fitN2, 3.0)
+        val K18 = 36 * K5 * K5 * K5 + 36 * K2 * K4 * K5 * n * fitN2 +
+                9 * K1 * K2 * K4 * K4 * n * fitN2 * fitN2 - FastMath.sqrt(innerSqrt18)
+        val K18cbrt = if (K18 >= 0) FastMath.pow(K18, 1.0 / 3.0) else -FastMath.pow(-K18, 1.0 / 3.0)
+        val K19 = -K5 / (K1 * K4 * fitN2) -
+                FastMath.pow(2.0, 2.0 / 3.0) * (3 * K5 * K5 + 2 * K2 * K4 * n * fitN2) /
+                (FastMath.pow(3.0, 1.0 / 3.0) * K1 * K4 * fitN2 * K18cbrt) -
+                K18cbrt / (FastMath.pow(6.0, 2.0 / 3.0) * K1 * K4 * fitN2)
+        val K20 = 6 * K1 * K3 * K4 * K5 + 4 * K2 * K3 * K3 * n - K1 * K1 * K4 * K4 * K4 * fitN2
+        val K21 = K11 + K12 + K5 / (2 * n * K1 * K3)
+        val K22 = FastMath.sqrt(3 * K4 * K4 / (4 * K3 * K3) - 3 * K5 / (K1 * K3 * fitN2) +
+                FastMath.sqrt(4 * K21 * K21 - n * K2 / (fitN2 * K1 * K1 * K3)))
+
+        val f: Double
+        if (fitN3 > unPrev && fitN3 < 3 * fitN2 / 2) {
+            f = K13 + K15 - K17
+        } else if (fitN3 == 2 * fitN2 / 2) {
+            f = K19
+        } else if (fitN3 > 3 * fitN2 / 2 && K20 > 0) {
+            f = -K13 + K15 + K16
+        } else if (K20 == 0.0) {
+            f = K15 + K22
+        } else {
+            // K20 < 0
+            f = K13 + K15 + K17
+        }
+
+        val a = 2 * (f - 1) * (n - 1) / ((n - 1) * (fitN2 * f * f - 2 * f + 2) - n)
+        val p = (f - 1) * a
+        val lambda = 1.0
+        val mu = lambda * (n - 1) / a
+
+        val alpha = DoubleArray(n)
+        alpha[0] = p
+        alpha[1] = 1 - p
+
+        val T = Matrix(n, n)
+        for (i in 0 until n) {
+            T.set(i, i, -mu)
+            if (i < n - 1) T.set(i, i + 1, mu)
+        }
+        T.set(0, 0, -lambda)
+        T.set(0, 1, lambda)
+
+        // Build D0 = T and D1 = -T*e*alpha
+        val D0 = T.copy()
+        val D1 = Matrix(n, n)
+        for (i in 0 until n) {
+            var exitRate = 0.0
+            for (j in 0 until n) exitRate += T.get(i, j)
+            exitRate = -exitRate
+            for (j in 0 until n) {
+                D1.set(i, j, exitRate * alpha[j])
+            }
+        }
+
+        MAP = MatrixCell(2)
+        MAP[0] = D0
+        MAP[1] = D1
     } else {
-        // Case 2 - more complex fitting
-        // Simplified implementation using approximation
+        // Moment set cannot be matched with an APH distribution
+        System.err.println("Warning: moment set cannot be matched with an APH distribution")
+        isExact = false
+        // Fall back to Erlang approximation
         val lambda = 1.0
         val mu = lambda * n / e1
 
@@ -466,7 +560,6 @@ fun aph_fit(e1: Double, e2: Double, e3: Double, nmax: Int = 10): Pair<MatrixCell
         MAP = MatrixCell(2)
         MAP[0] = D0
         MAP[1] = D1
-        isExact = false
     }
 
     return Pair(map_scale(map_normalize(MAP), e1), isExact)

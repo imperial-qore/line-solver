@@ -291,7 +291,10 @@ public class ModelAdapter {
                     double currentSum = Matrix.ones(nk.getNumRows(), 1).elementDiv(nk).elementSum();
                     d0 += FastMath.pow(-1, pow) * currentSum;
                 }
-                for (int cls : curMerge) {
+                // Match MATLAB: loop over [curMerge, s] to include inner auxiliary class
+                ArrayList<Integer> mergeWithS = new ArrayList<>(curMerge);
+                mergeWithS.add(s);
+                for (int cls : mergeWithS) {
                     ((Delay) nonfjmodel.getNodes().get(joinIdx)).setService(nonfjmodel.getJobClasses().get(cls),
                             Exp.fitMean(d0 - paths.elementSum() / paths.length()));
                 }
@@ -708,6 +711,7 @@ public class ModelAdapter {
             }
         }
         nonfjmodel.setConnectionMatrix(new Matrix(nonfjmodel.getNumberOfNodes(), nonfjmodel.getNumberOfNodes()));
+        ArrayList<Integer> allAuxClassIndices = new ArrayList<>(); // 0-based aux class indices for post-relink routing fix
 
         for (int f : forkIndexes) {
             int joinIdx = -1;
@@ -762,8 +766,11 @@ public class ModelAdapter {
                     }
                     int fanoutValue = (int) (origfanout.get(f, r) * ((Forker) model.getNodes().get(f).getOutput()).tasksPerLink);
                     fanout.put(oclass.get(oclass.size() - 1).getIndex() - 1, fanoutValue);
+                    allAuxClassIndices.add(oclass.get(oclass.size() - 1).getIndex() - 1); // 0-based
                     // Use tolerance for floating point comparison (values < FineTol are effectively zero)
-                    if (Math.abs(sn.nodevisits.get(fc).get(f, r)) < GlobalConstants.FineTol) {
+                    // Also disable classes with zero fanout: they pass through the fork via
+                    // class-switching but aren't actually forked.
+                    if (origfanout.get(f, r) == 0 || Math.abs(sn.nodevisits.get(fc).get(f, r)) < GlobalConstants.FineTol) {
                         source.setArrival(oclass.get(oclass.size() - 1), Disabled.getInstance());
                     } else {
                         source.setArrival(oclass.get(oclass.size() - 1), new Exp(forkLambda.get(r)));
@@ -833,11 +840,105 @@ public class ModelAdapter {
                         }
                         sIdx++;
                     }
-                    P.get(oclass.get(rIdx)).get(oclass.get(rIdx)).set(source.getNodeIndex(), f, 1);
-                    if (joinIdx >= 0) {
-                        P.get(oclass.get(rIdx)).get(oclass.get(rIdx)).set(joinIdx, sink.getNodeIndex(), 1);
+                    if (origfanout.get(f, r) > 0) {
+                        P.get(oclass.get(rIdx)).get(oclass.get(rIdx)).set(source.getNodeIndex(), f, 1);
+                        if (joinIdx >= 0) {
+                            P.get(oclass.get(rIdx)).get(oclass.get(rIdx)).set(joinIdx, sink.getNodeIndex(), 1);
+                        }
                     }
                     rIdx++;
+                }
+
+                // Check if all classes in this chain have non-zero fanout at this fork.
+                // BFS scope clearing only applies when all classes are actually forked;
+                // when some classes pass through the fork via class-switching (origfanout=0),
+                // clearing would disconnect their aux chain and break MVA convergence.
+                ArrayList<Integer> inchain = new ArrayList<>();
+                for (int r = 0; r < sn.chains.getNumCols(); r++) {
+                    if (sn.chains.get(fc, r) != 0) {
+                        inchain.add(r);
+                    }
+                }
+                boolean allForked = true;
+                for (int r : inchain) {
+                    if (origfanout.get(f, r) == 0) {
+                        allForked = false;
+                        break;
+                    }
+                }
+                if (allForked) {
+                    // Determine fork-join scope via class-aware BFS from Fork, stopping
+                    // at Join. Tracks (node, class) pairs so that shared stations (e.g.
+                    // processors serving both fork-branch and return-path classes) are
+                    // correctly handled: only fork-branch class routing is followed.
+                    int pnnodes = P.get(nonfjmodel.getJobClasses().get(inchain.get(0)))
+                            .get(nonfjmodel.getJobClasses().get(inchain.get(0))).getNumRows();
+                    boolean[] fjNodeMask = new boolean[pnnodes];
+                    fjNodeMask[f] = true;
+                    if (joinIdx >= 0) fjNodeMask[joinIdx] = true;
+                    // Source and Sink are mmt infrastructure, always in scope
+                    for (int nd = 0; nd < pnnodes && nd < nonfjmodel.getNodes().size(); nd++) {
+                        if (nonfjmodel.getNodes().get(nd) instanceof jline.lang.nodes.Source
+                                || nonfjmodel.getNodes().get(nd) instanceof jline.lang.nodes.Sink) {
+                            fjNodeMask[nd] = true;
+                        }
+                    }
+                    // Class-aware BFS: find all (node, class) pairs reachable from Fork
+                    int maxclass = 0;
+                    for (int c : inchain) { if (c > maxclass) maxclass = c; }
+                    maxclass++;
+                    boolean[][] visited = new boolean[pnnodes][maxclass];
+                    ArrayList<int[]> bfsQ = new ArrayList<>();
+                    // Seed: classes entering the fork
+                    for (int r : inchain) {
+                        for (int s : inchain) {
+                            JobClass rClass = nonfjmodel.getJobClasses().get(r);
+                            JobClass sClass = nonfjmodel.getJobClasses().get(s);
+                            if (!P.containsKey(rClass) || !P.get(rClass).containsKey(sClass)) continue;
+                            Matrix Prs = P.get(rClass).get(sClass);
+                            boolean hasEntry = false;
+                            for (int j = 0; j < Prs.getNumCols(); j++) {
+                                if (Prs.get(f, j) > 0) { hasEntry = true; break; }
+                            }
+                            if (hasEntry && !visited[f][r]) {
+                                visited[f][r] = true;
+                                bfsQ.add(new int[]{f, r});
+                            }
+                        }
+                    }
+                    while (!bfsQ.isEmpty()) {
+                        int[] pair = bfsQ.remove(0);
+                        int cn = pair[0]; int cc = pair[1];
+                        for (int s : inchain) {
+                            JobClass ccClass = nonfjmodel.getJobClasses().get(cc);
+                            JobClass sClass = nonfjmodel.getJobClasses().get(s);
+                            if (!P.containsKey(ccClass) || !P.get(ccClass).containsKey(sClass)) continue;
+                            Matrix Prs = P.get(ccClass).get(sClass);
+                            for (int nd = 0; nd < pnnodes; nd++) {
+                                if (Prs.get(cn, nd) > 0 && !visited[nd][s]) {
+                                    visited[nd][s] = true;
+                                    fjNodeMask[nd] = true;
+                                    if (joinIdx < 0 || nd != joinIdx) {
+                                        bfsQ.add(new int[]{nd, s});
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Clear outgoing aux routing at nodes outside fork-join scope.
+                    for (int nd = 0; nd < pnnodes; nd++) {
+                        if (fjNodeMask[nd]) continue;
+                        for (int ri = 0; ri < oclass.size(); ri++) {
+                            for (int si = 0; si < oclass.size(); si++) {
+                                if (!P.containsKey(oclass.get(ri))) continue;
+                                if (!P.get(oclass.get(ri)).containsKey(oclass.get(si))) continue;
+                                Matrix Prs = P.get(oclass.get(ri)).get(oclass.get(si));
+                                for (int j = 0; j < Prs.getNumCols(); j++) {
+                                    Prs.set(nd, j, 0.0);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -859,6 +960,22 @@ public class ModelAdapter {
             }
         }
         nonfjmodel.relink(routingMatrix);
+        // Fix spurious routing for aux classes at non-scope nodes and CS nodes.
+        // relink() only calls setProbRouting for non-zero P entries, so nodes
+        // where P was zeroed retain default RAND routing that inherits physical
+        // connections from original classes. CS nodes created by link() for
+        // cross-class routing also get default RAND for aux classes. Override
+        // all non-PROB routing for aux classes to DISABLED.
+        for (int nd = 0; nd < nonfjmodel.getNodes().size(); nd++) {
+            List<OutputStrategy> os = nonfjmodel.getNodes().get(nd).getOutputStrategies();
+            for (int ci : allAuxClassIndices) {
+                if (ci < os.size()) {
+                    if (os.get(ci).getRoutingStrategy() != RoutingStrategy.PROB) {
+                        os.get(ci).setRoutingStrategy(RoutingStrategy.DISABLED);
+                    }
+                }
+            }
+        }
         for (int f : forkIndexes) {
             for (OutputStrategy o : nonfjmodel.getNodeByIndex(f).getOutputStrategies()) {
                 if (o.getRoutingStrategy() == RoutingStrategy.RAND) {

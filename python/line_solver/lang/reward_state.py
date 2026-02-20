@@ -17,6 +17,8 @@ Example:
     >>> total = view.total()  # Sum across stations
 """
 
+__all__ = ['RewardState']
+
 
 class RewardState:
     """Smart state accessor for reward functions.

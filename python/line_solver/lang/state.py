@@ -94,7 +94,7 @@ class State:
         Returns:
             State space matrix where each row is a valid state.
         """
-        from ..api.state.marginal import fromMarginal as _fromMarginal
+        from ..api.state.marginal import fromMarginalAndRunning as _fromMarginalAndRunning
 
         # Get network struct from model
         if hasattr(model, 'get_struct'):
@@ -106,22 +106,7 @@ class State:
         else:
             raise ValueError("Cannot get network struct from model")
 
-        # Get full state space for marginal
-        states = _fromMarginal(sn, node_idx, n)
-
-        if states.size == 0:
-            return states
-
-        # Filter states that match the running constraint
-        # The running jobs are typically encoded in specific columns of the state
-        # This is a simplified implementation - full implementation would need
-        # to understand the state encoding structure
-        s = np.atleast_1d(s)
-        n = np.atleast_1d(n)
-
-        # For now, return states that could match - exact filtering requires
-        # understanding the specific state encoding
-        return states
+        return _fromMarginalAndRunning(sn, node_idx, n, s)
 
     @staticmethod
     def fromMarginalAndStarted(model: 'Network', node_idx: int,
@@ -142,7 +127,7 @@ class State:
         Returns:
             State space matrix where each row is a valid state.
         """
-        from ..api.state.marginal import fromMarginal as _fromMarginal
+        from ..api.state.marginal import fromMarginalAndStarted as _fromMarginalAndStarted
 
         # Get network struct from model
         if hasattr(model, 'get_struct'):
@@ -154,18 +139,7 @@ class State:
         else:
             raise ValueError("Cannot get network struct from model")
 
-        # Get full state space for marginal
-        states = _fromMarginal(sn, node_idx, n)
-
-        if states.size == 0:
-            return states
-
-        # Filter states that match the started constraint
-        # Simplified implementation - exact filtering requires state encoding knowledge
-        s = np.atleast_1d(s)
-        n = np.atleast_1d(n)
-
-        return states
+        return _fromMarginalAndStarted(sn, node_idx, n, s)
 
     # snake_case aliases for consistency
     from_marginal = fromMarginal

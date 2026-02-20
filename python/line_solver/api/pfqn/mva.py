@@ -18,16 +18,23 @@ from math import log, ceil
 
 from .replicas import pfqn_unique, pfqn_expand, pfqn_combine_mi
 
-# Try to import numba for JIT compilation
+# Import JIT-compiled kernels
 try:
-    from numba import njit
-    HAS_NUMBA = True
+    from .mva_jit import (
+        HAS_NUMBA as MVA_HAS_NUMBA,
+        mva_single_class_jit,
+        mva_population_recursion_jit,
+        schweitzer_iteration_jit,
+    )
 except ImportError:
-    HAS_NUMBA = False
-    def njit(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator if args and callable(args[0]) else decorator
+    # Fallback if JIT import fails
+    MVA_HAS_NUMBA = False
+    mva_single_class_jit = None
+    mva_population_recursion_jit = None
+    schweitzer_iteration_jit = None
+
+# Threshold for using JIT (population space size)
+JIT_THRESHOLD = 100
 
 
 def _population_lattice_pprod(n: np.ndarray, N: np.ndarray = None) -> np.ndarray:
@@ -121,7 +128,12 @@ def pfqn_mva_single_class(N: int, L: np.ndarray, Z: float = 0.0,
             'lG': 0.0
         }
 
-    # MVA recursion
+    # Use JIT version for larger populations
+    if MVA_HAS_NUMBA and mva_single_class_jit is not None and N > JIT_THRESHOLD:
+        X, Q, R, U, lG = mva_single_class_jit(N, L, Z, mi)
+        return {'X': X, 'Q': Q, 'R': R, 'U': U, 'lG': lG}
+
+    # Pure Python MVA recursion
     Q = np.zeros(M)
     lG = 0.0
 
@@ -238,7 +250,55 @@ def pfqn_mva(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         return XN, CN, QN, UN, RN, TN, AN
 
     # Multi-class MVA using population recursion
-    # Compute product of (N[i]+1) for indexing
+    # Total population combinations for JIT threshold check
+    totpop = int(np.prod(N + 1))
+
+    # Use JIT version for larger population spaces
+    if MVA_HAS_NUMBA and mva_population_recursion_jit is not None and totpop > JIT_THRESHOLD:
+        N_int = N.astype(np.int64)
+        XN_jit, QN_jit, CN_jit, lGN = mva_population_recursion_jit(
+            L_reduced, N_int, Z, mi
+        )
+        XN = XN_jit.reshape(1, -1)
+        QN = QN_jit
+        CN = CN_jit
+
+        # Compute utilizations
+        UN = np.zeros((M, R))
+        for m in range(M):
+            for r in range(R):
+                UN[m, r] = XN[0, r] * L_reduced[m, r]
+
+        # Compute residence times
+        RN = np.zeros((M, R))
+        for m in range(M):
+            for r in range(R):
+                if XN[0, r] > 0:
+                    RN[m, r] = QN[m, r] / XN[0, r]
+                else:
+                    RN[m, r] = L_reduced[m, r]
+
+        # Expand results back to original dimensions if stations were consolidated
+        if M < M_original:
+            QN, UN, RN = pfqn_expand(QN, UN, RN, mapping)
+            CN, _, _ = pfqn_expand(CN, CN, CN, mapping)
+
+        # Node throughputs and arrival rates
+        TN = np.zeros((M_original, R))
+        AN = np.zeros((M_original, R))
+        for m in range(M_original):
+            for r in range(R):
+                TN[m, r] = XN[0, r]
+                AN[m, r] = XN[0, r]
+
+        # Response time per class
+        CN_total = np.zeros((1, R))
+        for r in range(R):
+            CN_total[0, r] = RN[:, r].sum() + Z[r]
+
+        return XN, CN_total, QN, UN, RN, TN, AN
+
+    # Pure Python: Compute product of (N[i]+1) for indexing
     prods = np.zeros(R - 1)
     for w in range(R - 1):
         prods[w] = np.prod(np.ones(R - w - 1) + N[w + 1:])
@@ -251,9 +311,6 @@ def pfqn_mva(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     if first_non_empty < 0:
         return (np.zeros((1, R)), np.zeros((1, R)), np.zeros((M_original, R)),
                 np.zeros((M_original, R)), np.zeros((M_original, R)), np.zeros((M_original, R)), np.zeros((M_original, R)))
-
-    # Total population combinations
-    totpop = int(np.prod(N + 1))
 
     # Q[pop_idx, station] stores cumulative queue length at population index
     Q = np.zeros((totpop, M))
@@ -361,23 +418,35 @@ def pfqn_mva(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     return XN, CN_total, QN, UN, RN, TN, AN
 
 
-def pfqn_bs(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None
-            ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray,
-                       np.ndarray, np.ndarray, np.ndarray]:
+def pfqn_bs(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
+            tol: float = 1e-6, maxiter: int = 1000,
+            QN0: np.ndarray = None, type_sched: np.ndarray = None
+            ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     """
-    Balanced System (Asymptotic) analysis for product-form networks.
+    Bard-Schweitzer Approximate Mean Value Analysis (MVA).
 
-    Provides asymptotic approximations based on bottleneck analysis.
-    Fast but less accurate than exact MVA for small populations.
+    Iterative approximate MVA algorithm that uses the (N-1)/N correction
+    for the arrival theorem, providing good accuracy for most networks.
 
     Args:
         L: Service demand matrix (M x R)
         N: Population vector
         Z: Think time vector (default 0)
+        tol: Convergence tolerance (default 1e-6)
+        maxiter: Maximum iterations (default 1000)
+        QN0: Initial queue lengths (default: uniform distribution)
+        type_sched: Scheduling strategy per station (default: PS)
 
     Returns:
-        Same format as pfqn_mva
+        Tuple (XN, QN, UN, RN, it) matching MATLAB's pfqn_bs:
+            XN: System throughputs (1 x R)
+            QN: Mean queue lengths (M x R)
+            UN: Utilizations (M x R)
+            RN: Residence times (M x R)
+            it: Number of iterations performed
     """
+    from ...lang.base import SchedStrategy
+
     L = np.asarray(L, dtype=np.float64)
     N = np.asarray(N, dtype=np.float64).flatten()
 
@@ -391,44 +460,85 @@ def pfqn_bs(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None
     else:
         Z = np.asarray(Z, dtype=np.float64).flatten()
 
-    # Compute asymptotic bounds
-    XN = np.zeros((1, R))
-    QN = np.zeros((M, R))
+    # Initialize queue lengths
+    if QN0 is None:
+        QN = np.tile(N, (M, 1)) / M
+    else:
+        QN = np.asarray(QN0, dtype=np.float64).copy()
+
+    # Default scheduling: PS
+    if type_sched is None:
+        type_sched = [SchedStrategy.PS] * M
+
+    CN = np.zeros((M, R))
+    XN = np.zeros(R)
     UN = np.zeros((M, R))
+
+    # Iterative Bard-Schweitzer algorithm
+    for it in range(1, maxiter + 1):
+        QN_old = QN.copy()
+
+        for r in range(R):
+            for ist in range(M):
+                CN[ist, r] = L[ist, r]
+                if L[ist, r] == 0:
+                    continue
+
+                for s in range(R):
+                    if s != r:
+                        # Different class contribution
+                        sched_val = type_sched[ist]
+                        is_fcfs = False
+                        if isinstance(sched_val, int):
+                            is_fcfs = (sched_val == SchedStrategy.FCFS)
+                        elif hasattr(sched_val, 'name'):
+                            is_fcfs = (sched_val.name == 'FCFS')
+                        elif isinstance(sched_val, str):
+                            is_fcfs = (sched_val.upper() == 'FCFS')
+
+                        if is_fcfs:
+                            CN[ist, r] += L[ist, s] * QN[ist, s]
+                        else:
+                            CN[ist, r] += L[ist, r] * QN[ist, s]
+                    else:
+                        # Same class contribution with arrival theorem correction
+                        if N[r] > 0:
+                            CN[ist, r] += L[ist, r] * QN[ist, r] * (N[r] - 1) / N[r]
+
+            # Compute throughput
+            CN_sum = np.sum(CN[:, r])
+            if Z[r] + CN_sum > 0:
+                XN[r] = N[r] / (Z[r] + CN_sum)
+            else:
+                XN[r] = 0
+
+        # Update queue lengths
+        for r in range(R):
+            for ist in range(M):
+                QN[ist, r] = XN[r] * CN[ist, r]
+
+        # Update utilizations
+        for r in range(R):
+            for ist in range(M):
+                UN[ist, r] = XN[r] * L[ist, r]
+
+        # Check convergence
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rel_change = np.abs(1 - QN / QN_old)
+            rel_change = np.nan_to_num(rel_change, nan=0.0, posinf=0.0, neginf=0.0)
+        if np.max(rel_change) < tol:
+            break
+
+    # Compute residence times
     RN = np.zeros((M, R))
-    TN = np.zeros((M, R))
-    AN = np.zeros((M, R))
-
     for r in range(R):
-        if N[r] <= 0:
-            continue
+        if XN[r] > 0:
+            RN[:, r] = QN[:, r] / XN[r]
 
-        # Find bottleneck demand
-        D_max = L[:, r].max()
-        D_total = L[:, r].sum()
+    # Format output to match MATLAB's pfqn_bs: [XN, QN, UN, RN, it]
+    XN_out = XN.reshape(1, -1)
 
-        # Asymptotic throughput
-        if Z[r] > 0 or D_total > 0:
-            X_lower = N[r] / (N[r] * D_max + Z[r])  # Heavy traffic
-            X_upper = N[r] / (D_total + Z[r])  # Light traffic
-            XN[0, r] = min(X_upper, 1.0 / D_max) if D_max > 0 else X_upper
-        else:
-            XN[0, r] = 0.0
-
-        # Utilizations and queue lengths
-        for m in range(M):
-            UN[m, r] = XN[0, r] * L[m, r]
-            RN[m, r] = L[m, r] * (1 + UN[m, r] * N[r] / max(N[r], 1))  # Simple approximation
-            QN[m, r] = XN[0, r] * RN[m, r]
-            TN[m, r] = XN[0, r]
-            AN[m, r] = XN[0, r]
-
-    # Response times
-    CN = np.zeros((1, R))
-    for r in range(R):
-        CN[0, r] = RN[:, r].sum() + Z[r]
-
-    return XN, CN, QN, UN, RN, TN, AN
+    return XN_out, QN, UN, RN, it
 
 
 def pfqn_aql(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
@@ -466,9 +576,33 @@ def pfqn_aql(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         Z = np.asarray(Z, dtype=np.float64).flatten()
 
     # Initialize with balanced system solution
-    XN, CN, QN, UN, RN, TN, AN = pfqn_bs(L, N, Z)
+    # pfqn_bs returns (XN, QN, UN, RN, it)
+    XN, QN, UN, RN, _ = pfqn_bs(L, N, Z)
+    # Compute TN and AN (node throughputs and arrival rates)
+    TN = np.tile(XN, (M, 1)) if XN.ndim == 1 else np.tile(XN, (M, 1))
+    AN = TN.copy()
 
-    # Iterative refinement (Schweitzer approximation)
+    # Use JIT version for iterative refinement
+    if MVA_HAS_NUMBA and schweitzer_iteration_jit is not None and M * R > 10:
+        XN_jit, QN, UN, RN, iterations = schweitzer_iteration_jit(
+            L, N.astype(np.float64), Z, QN, max_iter, tol
+        )
+        XN = XN_jit.reshape(1, -1)
+
+        # Node throughputs and arrival rates
+        for m in range(M):
+            for r in range(R):
+                TN[m, r] = XN[0, r]
+                AN[m, r] = XN[0, r]
+
+        # Response times
+        CN = np.zeros((1, R))
+        for r in range(R):
+            CN[0, r] = RN[:, r].sum() + Z[r]
+
+        return XN, CN, QN, UN, RN, TN, AN
+
+    # Pure Python iterative refinement (Schweitzer approximation)
     for iteration in range(max_iter):
         Q_old = QN.copy()
 

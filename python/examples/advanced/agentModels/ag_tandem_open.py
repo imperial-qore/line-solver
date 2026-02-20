@@ -53,12 +53,8 @@ avg_table_inap = solver_inap.get_avg_table()
 print('MAM (method=inap):')
 print(avg_table_inap)
 
-# Solve with MAM using exact method
-solver_exact = MAM(model, 'exact')
-avg_table_exact = solver_exact.get_avg_table()
-
-print('\nMAM (method=exact):')
-print(avg_table_exact)
+# Note: 'exact' method (AutoCAT) is not yet implemented in native Python
+# It falls back to INAP with a warning in the JAR version
 
 # Solve with MVA for comparison
 solver_mva = MVA(model)

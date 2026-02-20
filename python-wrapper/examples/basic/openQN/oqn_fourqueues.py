@@ -31,30 +31,30 @@ if __name__ == "__main__":
     jobclass[2] = OpenClass(model, 'Class3', 0)
 
     # Arrivals
-    node[0].set_arrival(jobclass[0], Exp.fit_mean(5.0))
-    node[0].set_arrival(jobclass[1], Exp.fit_mean(8.0))
-    node[0].set_arrival(jobclass[2], Exp.fit_mean(7.0))
+    node[0].setArrival(jobclass[0], Exp.fitMean(5.0))
+    node[0].setArrival(jobclass[1], Exp.fitMean(8.0))
+    node[0].setArrival(jobclass[2], Exp.fitMean(7.0))
 
     # Service times for Class1
-    node[1].set_service(jobclass[0], Exp.fit_mean(0.3))
-    node[2].set_service(jobclass[0], Exp.fit_mean(1.1))
-    node[3].set_service(jobclass[0], Exp.fit_mean(2.0))
-    node[4].set_service(jobclass[0], Exp.fit_mean(1.5))
+    node[1].setService(jobclass[0], Exp.fitMean(0.3))
+    node[2].setService(jobclass[0], Exp.fitMean(1.1))
+    node[3].setService(jobclass[0], Exp.fitMean(2.0))
+    node[4].setService(jobclass[0], Exp.fitMean(1.5))
 
     # Service times for Class2
-    node[1].set_service(jobclass[1], Exp.fit_mean(0.5))
-    node[2].set_service(jobclass[1], Exp.fit_mean(1.3))
-    node[3].set_service(jobclass[1], Exp.fit_mean(2.1))
-    node[4].set_service(jobclass[1], Exp.fit_mean(0.9))
+    node[1].setService(jobclass[1], Exp.fitMean(0.5))
+    node[2].setService(jobclass[1], Exp.fitMean(1.3))
+    node[3].setService(jobclass[1], Exp.fitMean(2.1))
+    node[4].setService(jobclass[1], Exp.fitMean(0.9))
 
     # Service times for Class3
-    node[1].set_service(jobclass[2], Exp.fit_mean(0.6))
-    node[2].set_service(jobclass[2], Exp.fit_mean(1.5))
-    node[3].set_service(jobclass[2], Exp.fit_mean(1.9))
-    node[4].set_service(jobclass[2], Exp.fit_mean(2.3))
+    node[1].setService(jobclass[2], Exp.fitMean(0.6))
+    node[2].setService(jobclass[2], Exp.fitMean(1.5))
+    node[3].setService(jobclass[2], Exp.fitMean(1.9))
+    node[4].setService(jobclass[2], Exp.fitMean(2.3))
 
     # Routing
-    P = model.init_routing_matrix()
+    P = model.initRoutingMatrix()
 
     # Class 1 routing
     P.set(jobclass[0], jobclass[0], node[0], node[1], 1.0)
@@ -90,13 +90,14 @@ if __name__ == "__main__":
 
     # Run multiple solvers
     solver = np.array([], dtype=object)
-    solver = np.append(solver, CTMC(model, cutoff=1, seed=23000))
-    solver = np.append(solver, MVA(model, seed=23000))
-    solver = np.append(solver, MAM(model, seed=23000))
-    solver = np.append(solver, JMT(model, seed=23000, samples=1000000))
-    solver = np.append(solver, DES(model, seed=23000, samples=1000000))
+    solver = np.append(solver, SolverCTMC(model, cutoff=1, seed=23000))
+    solver = np.append(solver, SolverMVA(model, seed=23000))
+    solver = np.append(solver, SolverMAM(model, seed=23000))
+    solver = np.append(solver, SolverJMT(model, seed=23000, samples=1000000))
+    solver = np.append(solver, SolverDES(model, seed=23000, samples=1000000))
 
     avg_table = np.empty(len(solver), dtype=object)
     for s in range(len(solver)):
-        print(f'\nSOLVER: {solver[s].get_name()}')
-        avg_table[s] = solver[s].avg_table()
+        print(f'\nSOLVER: {solver[s].getName()}')
+        avg_table[s] = solver[s].getAvgTable()
+        print(avg_table[s])

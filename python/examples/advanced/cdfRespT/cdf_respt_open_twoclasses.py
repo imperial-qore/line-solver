@@ -33,14 +33,14 @@ queue2.setService(job_class1, Exp.fit_mean(1.0))
 queue2.setService(job_class2, Exp.fit_mean(1.0))
 
 # Block 3: topology
-P = model.initRoutingMatrix()
-P[0][0][0, 1] = 1  # Class1: Source -> Queue1
-P[0][1][1, 2] = 1  # Class1: Queue1 -> Queue2
-P[1][0][2, 3] = 1  # Class1: Queue2 -> Sink
-
-P[1][1][0, 1] = 1  # Class2: Source -> Queue1
-P[1][0][1, 2] = 1  # Class2: Queue1 -> Queue2
-P[0][1][2, 3] = 1  # Class2: Queue2 -> Sink
+# MATLAB routing: P{r,s}(i,j) means job in class r at node i goes to class s at node j
+P = model.init_routing_matrix()
+P.set(job_class1, job_class1, source, queue1, 1)    # P{1,1}(1,2) = 1
+P.set(job_class1, job_class2, queue1, queue2, 1)    # P{1,2}(2,3) = 1
+P.set(job_class2, job_class1, queue2, sink, 1)      # P{2,1}(3,4) = 1
+P.set(job_class2, job_class2, source, queue1, 1)    # P{2,2}(1,2) = 1
+P.set(job_class2, job_class1, queue1, queue2, 1)    # P{2,1}(2,3) = 1
+P.set(job_class1, job_class2, queue2, sink, 1)      # P{1,2}(3,4) = 1
 
 model.link(P)
 
@@ -55,38 +55,38 @@ print('Computing transient CDF with JMT simulation...')
 rd_sim = JMT(model, samples=int(1e4), seed=23000).get_tran_cdf_resp_t()
 
 # Compute average response time from CDFs
-avg_resp_t_from_cdf_fluid = []
-avg_resp_t_from_cdf_sim = []
+avg_respt_from_cdf_fluid = []
+avg_respt_from_cdf_sim = []
 
 for i in range(model.getNumberOfStations()):
-    avg_resp_t_from_cdf_fluid.append([])
-    avg_resp_t_from_cdf_sim.append([])
+    avg_respt_from_cdf_fluid.append([])
+    avg_respt_from_cdf_sim.append([])
     for c in range(model.getNumberOfClasses()):
         # Fluid
         cdf_data = rd_fluid[i][c]
         if cdf_data is not None and len(cdf_data) > 1:
             mean_val = sum((cdf_data[j+1][0] - cdf_data[j][0]) * cdf_data[j+1][1]
                           for j in range(len(cdf_data)-1))
-            avg_resp_t_from_cdf_fluid[i].append(mean_val)
+            avg_respt_from_cdf_fluid[i].append(mean_val)
         else:
-            avg_resp_t_from_cdf_fluid[i].append(0)
+            avg_respt_from_cdf_fluid[i].append(0)
 
         # Simulation
         cdf_data = rd_sim[i][c]
         if cdf_data is not None and len(cdf_data) > 1:
             mean_val = sum((cdf_data[j+1][0] - cdf_data[j][0]) * cdf_data[j+1][1]
                           for j in range(len(cdf_data)-1))
-            avg_resp_t_from_cdf_sim[i].append(mean_val)
+            avg_respt_from_cdf_sim[i].append(mean_val)
         else:
-            avg_resp_t_from_cdf_sim[i].append(0)
+            avg_respt_from_cdf_sim[i].append(0)
 
 print('\nAverage Response Time from CDF (Fluid):')
-for i, station_avg in enumerate(avg_resp_t_from_cdf_fluid):
+for i, station_avg in enumerate(avg_respt_from_cdf_fluid):
     if i > 0:  # Skip source
         print(f'Station {i}: {station_avg}')
 
 print('\nAverage Response Time from CDF (Simulation):')
-for i, station_avg in enumerate(avg_resp_t_from_cdf_sim):
+for i, station_avg in enumerate(avg_respt_from_cdf_sim):
     if i > 0:  # Skip source
         print(f'Station {i}: {station_avg}')
 

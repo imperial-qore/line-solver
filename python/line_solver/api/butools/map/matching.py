@@ -8,12 +8,20 @@ Created on Thu Mar 21 12:12:05 2013
 import numpy as np
 import numpy.matlib as ml
 import numpy.linalg as la
-import butools
 import math
 from math import sqrt
-from butools.ph import MEFromMoments, PH2From3Moments, APHFrom2Moments, APHFrom3Moments
-from butools.map import CheckMAPRepresentation, MarginalMomentsFromMAP, LagCorrelationsFromMAP
-from butools.moments import MomsFromReducedMoms
+from ..ph.appie import MEFromMoments
+from ..ph.canonical import PH2From3Moments, APHFrom2Moments, APHFrom3Moments
+from .check import CheckMAPRepresentation
+from .basemap import MarginalMomentsFromMAP, LagCorrelationsFromMAP
+from ..moments.conv import MomsFromReducedMoms
+
+from .. import checkInput, checkPrecision
+class _butools_settings:
+    checkInput = checkInput
+    checkPrecision = checkPrecision
+butools = _butools_settings()
+
 
 def MRAPFromMoments (moms, Nm):
     """

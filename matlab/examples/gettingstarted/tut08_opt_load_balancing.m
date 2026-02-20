@@ -23,4 +23,5 @@ model.link(P);
         R = MVA(model,'exact','verbose',false).getAvgSysRespT;
     end
 p_opt = fminbnd(@(p) objFun(p), 0,1);
+fprintf(1,'%d',p_opt);
 end

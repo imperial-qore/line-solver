@@ -231,8 +231,8 @@ classdef SolverENV < EnsembleSolver
             end
 
             E = self.getNumberOfModels;
-            M = size(self.results{it,1}.Tran.Avg.Q, 1);  % number of stations
-            K = size(self.results{it,1}.Tran.Avg.Q, 2);  % number of classes
+            M = self.ensemble{1}.getNumberOfStations;
+            K = self.ensemble{1}.getNumberOfClasses;
 
             % Check convergence per class (aligned with JAR structure)
             for k = 1:K
@@ -240,14 +240,23 @@ classdef SolverENV < EnsembleSolver
                 QEntry = zeros(M, E);
                 QExit = zeros(M, E);
                 for e = 1:E
+                    % Skip stages where analysis failed
+                    res_curr = self.results{it,e};
+                    res_prev = self.results{it-1,e};
                     for i = 1:M
-                        Qik_curr = self.results{it,e}.Tran.Avg.Q{i,k};
-                        if isstruct(Qik_curr) && isfield(Qik_curr, 'metric') && ~isempty(Qik_curr.metric)
-                            QExit(i,e) = Qik_curr.metric(1);
+                        if ~isempty(res_curr) && isfield(res_curr, 'Tran') ...
+                                && isstruct(res_curr.Tran.Avg) && isfield(res_curr.Tran.Avg, 'Q')
+                            Qik_curr = res_curr.Tran.Avg.Q{i,k};
+                            if isstruct(Qik_curr) && isfield(Qik_curr, 'metric') && ~isempty(Qik_curr.metric)
+                                QExit(i,e) = Qik_curr.metric(1);
+                            end
                         end
-                        Qik_prev = self.results{it-1,e}.Tran.Avg.Q{i,k};
-                        if isstruct(Qik_prev) && isfield(Qik_prev, 'metric') && ~isempty(Qik_prev.metric)
-                            QEntry(i,e) = Qik_prev.metric(1);
+                        if ~isempty(res_prev) && isfield(res_prev, 'Tran') ...
+                                && isstruct(res_prev.Tran.Avg) && isfield(res_prev.Tran.Avg, 'Q')
+                            Qik_prev = res_prev.Tran.Avg.Q{i,k};
+                            if isstruct(Qik_prev) && isfield(Qik_prev, 'metric') && ~isempty(Qik_prev.metric)
+                                QEntry(i,e) = Qik_prev.metric(1);
+                            end
                         end
                     end
                 end
@@ -735,23 +744,30 @@ classdef SolverENV < EnsembleSolver
 
             if it==1
                 for e=list(self)
-                    if isinf(self.getSolver(e).options.timespan(2))
-                        [QN,~,~,~] = self.getSolver(e).getAvg();
-                    else
-                        [QNt,~,~] = self.getSolver(e).getTranAvg();
-                        % Handle case where getTranAvg returns NaN for disabled/empty results
-                        QN = zeros(size(QNt));
-                        for i = 1:size(QNt,1)
-                            for k = 1:size(QNt,2)
-                                if isstruct(QNt{i,k}) && isfield(QNt{i,k}, 'metric')
-                                    QN(i,k) = QNt{i,k}.metric(end);
-                                else
-                                    QN(i,k) = 0; % Default to 0 for NaN/invalid entries
+                    try
+                        if isinf(self.getSolver(e).options.timespan(2))
+                            [QN,~,~,~] = self.getSolver(e).getAvg();
+                        else
+                            [QNt,~,~] = self.getSolver(e).getTranAvg();
+                            % Handle case where getTranAvg returns NaN for disabled/empty results
+                            QN = zeros(size(QNt));
+                            for i = 1:size(QNt,1)
+                                for k = 1:size(QNt,2)
+                                    if isstruct(QNt{i,k}) && isfield(QNt{i,k}, 'metric')
+                                        QN(i,k) = QNt{i,k}.metric(end);
+                                    else
+                                        QN(i,k) = 0; % Default to 0 for NaN/invalid entries
+                                    end
                                 end
                             end
                         end
+                        if ~isa(self.solvers{e}, 'SolverFluid')
+                            QN = self.roundMarginalForDiscreteSolver(QN, self.sn{e});
+                        end
+                        self.ensemble{e}.initFromMarginal(QN);
+                    catch
+                        % Skip pre-initialization for stages where getAvg fails
                     end
-                    self.ensemble{e}.initFromMarginal(QN);
                 end
             end
         end
@@ -765,12 +781,16 @@ classdef SolverENV < EnsembleSolver
             T0 = tic;
             runtime = toc(T0);
             %% initialize
-            [Qt,Ut,Tt] = self.ensemble{e}.getTranHandles;
-            self.solvers{e}.reset();
-            [QNt,UNt,TNt] = self.solvers{e}.getTranAvg(Qt,Ut,Tt);
-            results_e.Tran.Avg.Q = QNt; 
-            results_e.Tran.Avg.U = UNt; 
-            results_e.Tran.Avg.T = TNt; 
+            try
+                [Qt,Ut,Tt] = self.ensemble{e}.getTranHandles;
+                self.solvers{e}.reset();
+                [QNt,UNt,TNt] = self.solvers{e}.getTranAvg(Qt,Ut,Tt);
+                results_e.Tran.Avg.Q = QNt;
+                results_e.Tran.Avg.U = UNt;
+                results_e.Tran.Avg.T = TNt;
+            catch
+                % Skip analysis for stages where transient analysis fails
+            end
         end
 
 
@@ -778,7 +798,18 @@ classdef SolverENV < EnsembleSolver
             % POST(IT)
 
             E = self.getNumberOfModels;
+            M = self.ensemble{1}.getNumberOfStations;
+            K = self.ensemble{1}.getNumberOfClasses;
             for e=1:E
+                if isempty(self.results{it,e}) || ~isfield(self.results{it,e}, 'Tran') ...
+                        || ~isstruct(self.results{it,e}.Tran.Avg) || ~isfield(self.results{it,e}.Tran.Avg, 'Q')
+                    for h = 1:E
+                        Qexit{e,h} = zeros(M, K);
+                        Uexit{e,h} = zeros(M, K);
+                        Texit{e,h} = zeros(M, K);
+                    end
+                    continue
+                end
                 for h = 1:E
                     Qexit{e,h} = zeros(size(self.results{it,e}.Tran.Avg.Q));
                     Uexit{e,h} = zeros(size(self.results{it,e}.Tran.Avg.U));
@@ -814,12 +845,20 @@ classdef SolverENV < EnsembleSolver
 
             Qentry = cell(1,E); % average entry queue-length
             for e = 1:E
+                % Skip stages where analysis failed (no valid Tran results)
+                if isempty(self.results{it,e}) || ~isfield(self.results{it,e}, 'Tran') ...
+                        || ~isstruct(self.results{it,e}.Tran.Avg) || ~isfield(self.results{it,e}.Tran.Avg, 'Q')
+                    continue
+                end
                 Qentry{e} = zeros(size(Qexit{e}));
                 for h=1:E
                     % probability of coming from h to e \times resetFun(Qexit from h to e
                     if self.envObj.probOrig(h,e) > 0
                         Qentry{e} = Qentry{e} + self.envObj.probOrig(h,e) * self.resetFromMarginal{h,e}(Qexit{h,e});
                     end
+                end
+                if ~isa(self.solvers{e}, 'SolverFluid')
+                    Qentry{e} = self.roundMarginalForDiscreteSolver(Qentry{e}, self.sn{e});
                 end
                 self.solvers{e}.reset();
                 self.ensemble{e}.initFromMarginal(Qentry{e});
@@ -847,11 +886,14 @@ classdef SolverENV < EnsembleSolver
 
             it = size(self.results,1); % use last iteration
             E = self.getNumberOfModels;
+            M = self.ensemble{1}.getNumberOfStations;
+            K = self.ensemble{1}.getNumberOfClasses;
             for e=1:E
-                QExit{e}=[];
-                UExit{e}=[];
-                TExit{e}=[];
-                if it>0
+                QExit{e}=zeros(M, K);
+                UExit{e}=zeros(M, K);
+                TExit{e}=zeros(M, K);
+                if it>0 && ~isempty(self.results{it,e}) && isfield(self.results{it,e}, 'Tran') ...
+                        && isstruct(self.results{it,e}.Tran.Avg) && isfield(self.results{it,e}.Tran.Avg, 'Q')
                     for i=1:size(self.results{it,e}.Tran.Avg.Q,1)
                         for r=1:size(self.results{it,e}.Tran.Avg.Q,2)
                             Qir = self.results{it,e}.Tran.Avg.Q{i,r};
@@ -1351,10 +1393,53 @@ classdef SolverENV < EnsembleSolver
             sn = self.model.getStruct();
             allMethods = {'default'};
         end
+
+        function Q = roundMarginalForDiscreteSolver(self, Q, snRef)
+            % ROUNDMARGINALFORDISCRETESOLVER Round fractional queue lengths
+            % to integers using the largest remainder method, preserving
+            % closed chain populations exactly.
+            for c = 1:snRef.nchains
+                chainClasses = find(snRef.chains(c,:) > 0);
+                njobs_chain = sum(snRef.njobs(chainClasses));
+                if isinf(njobs_chain)
+                    % Open chain: simple rounding
+                    for idx = 1:length(chainClasses)
+                        k = chainClasses(idx);
+                        for i = 1:size(Q,1)
+                            Q(i,k) = round(Q(i,k));
+                        end
+                    end
+                else
+                    % Closed chain: largest remainder method
+                    vals = [];
+                    indices = [];
+                    for i = 1:size(Q,1)
+                        for idx = 1:length(chainClasses)
+                            k = chainClasses(idx);
+                            vals(end+1) = Q(i,k);
+                            indices(end+1,:) = [i, k];
+                        end
+                    end
+                    floored = floor(vals);
+                    remainders = vals - floored;
+                    deficit = njobs_chain - sum(floored);
+                    deficit = round(deficit); % ensure integer
+                    if deficit > 0
+                        [~, sortIdx] = sort(remainders, 'descend');
+                        for d = 1:min(deficit, length(sortIdx))
+                            floored(sortIdx(d)) = floored(sortIdx(d)) + 1;
+                        end
+                    end
+                    for j = 1:length(vals)
+                        Q(indices(j,1), indices(j,2)) = floored(j);
+                    end
+                end
+            end
+        end
     end
 
     methods (Static)
-        
+
         function [bool, featSupported] = supports(model)
             % [BOOL, FEATSUPPORTED] = SUPPORTS(MODEL)
 

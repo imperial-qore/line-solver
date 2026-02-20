@@ -38,3 +38,4 @@ if __name__ == "__main__":
     solver = MVA(model)
     print(f'\nSOLVER: {solver.get_name()}')
     avg_table = solver.avg_table()
+    print(avg_table)

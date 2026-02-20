@@ -107,20 +107,15 @@ options = Solver.defaultOptions;
 options.keep = true;
 options.verbose = 1;
 
-disp('Closed QN with 3 chains, 5 classes, and class switching (product-form):');
-disp('- Chain 1 (N=3): HighPriorityA and HighPriorityB (switch at WebServer)');
-disp('- Chain 2 (N=5): RegularA and RegularB (switch at WebServer)');
-disp('- Chain 3 (N=2): Background');
-disp('Network maintains BCMP product-form property (exponential, FCFS/PS)');
-disp(' ');
-
+% Note: CTMC is not included because the state space is too large for this model
+% (10 jobs across 4 stations with 5 classes and class switching).
+% Use MVA for analytical solution or SSA for simulation.
 solver = {};
 solver{end+1} = MVA(model, options);
-solver{end+1} = CTMC(model, options);
 solver{end+1} = SSA(model, options);
 
 for s = 1:length(solver)
-    fprintf('SOLVER: %s\n', solver{s}.getName());
+    fprintf('SOLVER: %s\n', strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgChainTable();
     AvgTable{s}
     fprintf('\n');

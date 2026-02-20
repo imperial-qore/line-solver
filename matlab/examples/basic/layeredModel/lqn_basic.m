@@ -16,4 +16,5 @@ A1 =  Activity(model, 'AS1',  Exp(10)).on(T1).boundTo(E1).synchCall(E2, 1);
 A2 =  Activity(model, 'AS2',  Exp(20)).on(T2).boundTo(E2).synchCall(E3, 5).repliesTo(E2);
 A3 =  Activity(model, 'AS3',  Exp(50)).on(T3).boundTo(E3).repliesTo(E3);
 
-LN(model).getAvgTable;
+AvgTable = LN(model, 'verbose', false).getAvgTable;
+disp(AvgTable)

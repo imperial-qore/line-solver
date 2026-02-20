@@ -1,6 +1,6 @@
 function MAP=mmpp2_fit2(mean,scv,skew,g2)
 if scv==1
-    MAP=mmpp2_exponential(mean);
+    MAP=map_exponential(mean);
     return
 end
 

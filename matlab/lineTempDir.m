@@ -3,7 +3,10 @@ function tmpdir = lineTempDir
 %
 % Directories are prefixed with 'tmp_' to identify them as temporary.
 
-basedir = [lineRootFolder, filesep, 'workspace'];
+basedir = fullfile(tempdir, 'line_workspace');
+if ~exist(basedir, 'dir')
+    mkdir(basedir);
+end
 
 % Generate temp name and add 'tmp_' prefix to the directory name
 rawname = tempname(basedir);

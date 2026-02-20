@@ -1,7 +1,13 @@
-import butools
+from ..reptrans.mocanu import TransformToMonocyclic, TransformToAcyclic, ExtendToMarkovian
+from ..reptrans.similarity import SimilarityMatrix
+from .check import CheckPHRepresentation, CheckMERepresentation
 import numpy as np
-from butools.reptrans import TransformToMonocyclic, TransformToAcyclic, SimilarityMatrix, ExtendToMarkovian
-from butools.ph import CheckPHRepresentation, CheckMERepresentation
+
+from .. import checkPrecision
+class _butools_settings:
+    checkPrecision = checkPrecision
+butools = _butools_settings()
+
 
 def MonocyclicPHFromME (alpha, A, maxSize=100, precision=1e-14):
     """

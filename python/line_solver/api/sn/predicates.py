@@ -556,7 +556,10 @@ def sn_has_multi_class_heter_fcfs(sn: NetworkStruct) -> bool:
 
     rates = sn.rates
     for station_id, strategy in sn.sched.items():
-        if strategy != SchedStrategy.FCFS:
+        # Use integer comparison for cross-module SchedStrategy compatibility
+        # Both lang.base.SchedStrategy and api.sn.network_struct.SchedStrategy use FCFS=0
+        strategy_val = int(strategy) if hasattr(strategy, '__int__') else strategy
+        if strategy_val != int(SchedStrategy.FCFS):
             continue
         if station_id >= rates.shape[0]:
             continue
@@ -803,6 +806,7 @@ def sn_has_product_form(sn: NetworkStruct) -> bool:
             SchedStrategy.INF,
             SchedStrategy.PS,
             SchedStrategy.FCFS,
+            SchedStrategy.LCFS,
             SchedStrategy.LCFSPR,
             SchedStrategy.EXT,
         }
@@ -839,6 +843,7 @@ def sn_has_product_form_not_het_fcfs(sn: NetworkStruct) -> bool:
             SchedStrategy.INF,
             SchedStrategy.PS,
             SchedStrategy.FCFS,
+            SchedStrategy.LCFS,
             SchedStrategy.LCFSPR,
             SchedStrategy.EXT,
         }

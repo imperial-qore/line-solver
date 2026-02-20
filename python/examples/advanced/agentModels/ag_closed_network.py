@@ -1,8 +1,8 @@
 """
-Closed Network with MAM (INAP method)
+Closed Network with MAM
 
-This example demonstrates MAM with INAP method on a closed queueing network
-with processor-sharing (PS) queues using the RCAT/INAP algorithm.
+This example demonstrates MAM with RCAT methods on a closed queueing network
+with processor-sharing (PS) queues using the INAP algorithm.
 
 The RCAT (Reversed Compound Agent Theorem) decomposes the network
 into interacting stochastic processes and uses fixed-point iteration
@@ -15,9 +15,9 @@ All rights reserved.
 from line_solver import *
 
 # Parameters
-N = 10         # Number of jobs
-mu1 = 2.0      # Service rate at queue 1
-mu2 = 1.0      # Service rate at queue 2
+N = 10       # Number of jobs
+mu1 = 2.0    # Service rate at queue 1
+mu2 = 1.0    # Service rate at queue 2
 
 # Create model: Queue1 <-> Queue2 (closed loop)
 model = Network('Closed-2Q')
@@ -31,21 +31,13 @@ queue2.setService(cclass, Exp(mu2))
 
 model.link(Network.serial_routing([queue1, queue2]))
 
-print(f'=== Closed Network (2 PS Queues, {N} jobs) ===\n')
-
 # Solve with MAM using INAP method
+print('=== Closed Network ===\n')
 solver_inap = MAM(model, 'inap')
 avg_table_inap = solver_inap.get_avg_table()
 
 print('MAM (method=inap):')
 print(avg_table_inap)
-
-# Solve with MAM using exact method
-solver_exact = MAM(model, 'exact')
-avg_table_exact = solver_exact.get_avg_table()
-
-print('\nMAM (method=exact):')
-print(avg_table_exact)
 
 # Solve with MVA for comparison
 solver_mva = MVA(model)
@@ -58,5 +50,6 @@ print(avg_table_mva)
 if N <= 20:
     solver_ctmc = CTMC(model)
     avg_table_ctmc = solver_ctmc.get_avg_table()
-    print('\nCTMC (exact):')
+
+    print('\nCTMC:')
     print(avg_table_ctmc)

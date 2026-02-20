@@ -27,11 +27,7 @@ if __name__ == "__main__":
     trace_file = '/home/gcasale/Dropbox/code/line-dev.git/matlab/examples/basic/openQN/example_trace.txt'
     queue.set_service(jobclass, Replayer(trace_file))
 
-    routing = Network.serial_routing([source, queue, sink])
-    P = model.init_routing_matrix()
-    P.set(jobclass, jobclass, source, queue, routing[0][1])
-    P.set(jobclass, jobclass, queue, sink, routing[1][2])
-    model.link(P)
+    model.link(Network.serial_routing([source, queue, sink]))
 
     # Run solvers
     avg_table_1 = JMT(model, seed=23000).avg_table()

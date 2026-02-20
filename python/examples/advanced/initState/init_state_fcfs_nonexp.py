@@ -58,10 +58,10 @@ solver_fluid = FLD(model, options)
 # Prior 1: Default initialization
 print('--- Prior 1: Default initialization ---')
 model.initDefault()
-sn = model.getStruct()
+state = model.getState()
 print('Initial state is:')
-print(f'Class 1 state: {sn.space[0][0]}')
-print(f'Class 2 state: {sn.space[1][0]}')
+print(f'Station 1 (Delay): {state[0][0]}')
+print(f'Station 2 (Queue): {state[1][0]}')
 
 QNt_ctmc_1, _, _ = solver_ctmc.getTranAvg(Qt, Ut, Tt)
 solver_ctmc.reset()
@@ -71,14 +71,18 @@ solver_fluid.reset()
 
 print(f'CTMC queue length at t=0: {QNt_ctmc_1[1][0].metric[0] if len(QNt_ctmc_1[1][0].metric) > 0 else "N/A"}')
 print(f'FLD queue length at t=0: {QNt_fluid_1[1][0].metric[0] if len(QNt_fluid_1[1][0].metric) > 0 else "N/A"}')
+if len(QNt_ctmc_1[1][0].metric) > 0:
+    print(f'SteadyStateQLen[CTMC/Prior1]: {QNt_ctmc_1[1][0].metric[-1]:.6f}')
+if len(QNt_fluid_1[1][0].metric) > 0:
+    print(f'SteadyStateQLen[FLD/Prior1]: {QNt_fluid_1[1][0].metric[-1]:.6f}')
 
 # Prior 2: Prior on first state with given marginal
 print('\n--- Prior 2: First state with marginal [0,0; 4,1] ---')
 model.initFromMarginal([[0, 0], [4, 1]])
-sn = model.getStruct()
+state = model.getState()
 print('Initial state is:')
-print(f'Class 1 state: {sn.space[0][0]}')
-print(f'Class 2 state: {sn.space[1][0]}')
+print(f'Station 1 (Delay): {state[0][0]}')
+print(f'Station 2 (Queue): {state[1][0]}')
 
 solver_ctmc.reset()
 QNt_ctmc_2, _, _ = solver_ctmc.getTranAvg(Qt, Ut, Tt)
@@ -90,13 +94,14 @@ solver_fluid.reset()
 
 print(f'CTMC queue length at t=0: {QNt_ctmc_2[1][0].metric[0] if len(QNt_ctmc_2[1][0].metric) > 0 else "N/A"}')
 print(f'FLD queue length at t=0: {QNt_fluid_2[1][0].metric[0] if len(QNt_fluid_2[1][0].metric) > 0 else "N/A"}')
+if len(QNt_ctmc_2[1][0].metric) > 0:
+    print(f'SteadyStateQLen[CTMC/Prior2]: {QNt_ctmc_2[1][0].metric[-1]:.6f}')
+if len(QNt_fluid_2[1][0].metric) > 0:
+    print(f'SteadyStateQLen[FLD/Prior2]: {QNt_fluid_2[1][0].metric[-1]:.6f}')
 
 # Prior 3: Uniform prior over all states with the same marginal
 print('\n--- Prior 3: Uniform prior over states with marginal [0,0; 4,1] ---')
 model.initFromMarginal([[0, 0], [4, 1]])
-sn = model.getStruct()
-print('Initial states include:')
-print(f'Number of possible states: {len(sn.space[1])}')
 
 # Set uniform prior
 prior = queue.getStatePrior()
@@ -104,6 +109,8 @@ if prior is not None:
     uniform_prior = [1.0 / len(prior)] * len(prior)
     queue.setStatePrior(uniform_prior)
     print(f'Set uniform prior over {len(uniform_prior)} states')
+else:
+    print('State prior not available, using default')
 
 solver_ctmc.reset()
 QNt_ctmc_3, _, _ = solver_ctmc.getTranAvg(Qt, Ut, Tt)
@@ -113,6 +120,10 @@ QNt_fluid_3, _, _ = solver_fluid.getTranAvg(Qt, Ut, Tt)
 
 print(f'CTMC queue length at t=0: {QNt_ctmc_3[1][0].metric[0] if len(QNt_ctmc_3[1][0].metric) > 0 else "N/A"}')
 print(f'FLD queue length at t=0: {QNt_fluid_3[1][0].metric[0] if len(QNt_fluid_3[1][0].metric) > 0 else "N/A"}')
+if len(QNt_ctmc_3[1][0].metric) > 0:
+    print(f'SteadyStateQLen[CTMC/Prior3]: {QNt_ctmc_3[1][0].metric[-1]:.6f}')
+if len(QNt_fluid_3[1][0].metric) > 0:
+    print(f'SteadyStateQLen[FLD/Prior3]: {QNt_fluid_3[1][0].metric[-1]:.6f}')
 
 print('\nNote: This example shows three types of initial state specification:')
 print('  1. Default: All jobs at reference stations')

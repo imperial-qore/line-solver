@@ -64,7 +64,7 @@ classdef rl_td_agent < handle
 
             while j < num_episodes
                 if mod(j, 1e3)==0
-                    line_printf(mfilename,sprintf('running episode #%d .\n',j));
+                    line_printf('[%s] running episode #%d .\n',mfilename,j);
                 end
                 
                 % if mod(j, 100) == 0

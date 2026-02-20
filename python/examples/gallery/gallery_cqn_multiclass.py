@@ -4,7 +4,8 @@
 import random
 from line_solver import *
 
-def gallery_cqn_multiclass(m=1, r=2, wantdelay=True):
+def gallery_cqn_multiclass(m=1, r=2, wantdelay=True, seed=23000):
+    random.seed(seed)
     model = Network('Multi-class CQN')
 
     # Block 1: nodes

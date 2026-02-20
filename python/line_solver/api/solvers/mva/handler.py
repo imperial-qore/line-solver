@@ -23,6 +23,7 @@ from ...sn import (
 )
 from ...pfqn.mva import pfqn_mva
 from ...pfqn.mvald import pfqn_mvams
+from ...pfqn.lcfs import pfqn_lcfsqn_mva
 
 
 def _sched_matches(sched_value, *strategies) -> bool:
@@ -56,7 +57,9 @@ def _sched_matches(sched_value, *strategies) -> bool:
 class SolverMVAOptions:
     """Options for MVA solver."""
     method: str = 'exact'
-    tol: float = 1e-8
+    tol: float = 1e-4      # Match MATLAB lineDefaults tol=1e-4
+    iter_tol: float = 1e-4 # Match MATLAB lineDefaults iter_tol=1e-4
+    iter_max: int = 100    # Match MATLAB lineDefaults iter_max=100
     verbose: bool = False
 
 
@@ -87,6 +90,110 @@ class SolverMVAReturn:
     runtime: float = 0.0
     method: str = "exact"
     it: int = 0
+
+
+def _solver_mva_lcfsqn(
+    sn: NetworkStruct,
+    options: Optional[SolverMVAOptions],
+    lcfs_stat: int,
+    lcfspr_stat: int
+) -> SolverMVAReturn:
+    """
+    Specialized MVA solver for LCFS + LCFS-PR 2-station networks.
+
+    Wraps the pfqn_lcfsqn_mva algorithm and maps LINE's data structures
+    to/from the algorithm's expected format.
+
+    Args:
+        sn: Network structure
+        options: Solver options
+        lcfs_stat: Index of the LCFS station
+        lcfspr_stat: Index of the LCFS-PR station
+
+    Returns:
+        SolverMVAReturn with performance metrics
+    """
+    start_time = time.time()
+
+    if options is None:
+        options = SolverMVAOptions()
+
+    M = sn.nstations
+    nclasses = sn.nclasses
+    njobs = sn.njobs if sn.njobs is not None else np.zeros(nclasses)
+
+    # Extract service times for each class at each station
+    # alpha(r) = mean service time at LCFS station for class r
+    # beta(r) = mean service time at LCFS-PR station for class r
+    alpha = np.zeros(nclasses)
+    beta = np.zeros(nclasses)
+
+    rates = sn.rates
+    for r in range(nclasses):
+        if njobs[r] > 0:
+            mu_lcfs = rates[lcfs_stat, r]
+            mu_lcfspr = rates[lcfspr_stat, r]
+
+            if mu_lcfs <= 0 or not np.isfinite(mu_lcfs):
+                raise RuntimeError(f"Invalid service rate at LCFS station for class {r+1}.")
+            if mu_lcfspr <= 0 or not np.isfinite(mu_lcfspr):
+                raise RuntimeError(f"Invalid service rate at LCFS-PR station for class {r+1}.")
+
+            alpha[r] = 1.0 / mu_lcfs
+            beta[r] = 1.0 / mu_lcfspr
+
+    # Get population vector
+    N = njobs.copy()
+
+    # Call the LCFS MVA algorithm
+    result = pfqn_lcfsqn_mva(alpha, beta, N)
+
+    # Map results back to LINE format
+    Q = np.zeros((M, nclasses))
+    U = np.zeros((M, nclasses))
+    T = np.zeros((M, nclasses))
+    R = np.zeros((M, nclasses))
+    X = np.zeros((1, nclasses))
+    C = np.zeros((1, nclasses))
+
+    # Map queue lengths
+    Q[lcfs_stat, :] = result.Q[0, :]
+    Q[lcfspr_stat, :] = result.Q[1, :]
+
+    # Map utilizations
+    U[lcfs_stat, :] = result.U[0, :]
+    U[lcfspr_stat, :] = result.U[1, :]
+
+    # Throughput is the same at all stations in a closed network
+    for r in range(nclasses):
+        if njobs[r] > 0:
+            X[0, r] = result.T[0, r]
+            T[lcfs_stat, r] = result.T[0, r]
+            T[lcfspr_stat, r] = result.T[0, r]
+
+    # Compute response times: R = Q / T (Little's Law)
+    for k in [lcfs_stat, lcfspr_stat]:
+        for r in range(nclasses):
+            if T[k, r] > 0:
+                R[k, r] = Q[k, r] / T[k, r]
+
+    # Compute cycle times: C = sum of response times at all stations
+    for r in range(nclasses):
+        if njobs[r] > 0:
+            C[0, r] = R[lcfs_stat, r] + R[lcfspr_stat, r]
+
+    return SolverMVAReturn(
+        Q=Q,
+        U=U,
+        R=R,
+        T=T,
+        C=C,
+        X=X,
+        lG=np.nan,  # Log of normalizing constant not computed by this method
+        runtime=time.time() - start_time,
+        method=options.method,
+        it=0
+    )
 
 
 def solver_mva(
@@ -121,12 +228,39 @@ def solver_mva(
     M = sn.nstations
     K = sn.nclasses
 
-    # Check for LCFS scheduling - not supported in this version
+    # Check for LCFS scheduling
     sched_dict = sn.sched if sn.sched else {}
+    lcfs_stats = []
+    lcfspr_stats = []
     for i in range(M):
         station_sched = sched_dict.get(i)
-        if _sched_matches(station_sched, SchedStrategy.LCFS, SchedStrategy.LCFSPR):
-            raise RuntimeError("LCFS queueing networks are not supported in this version.")
+        if _sched_matches(station_sched, SchedStrategy.LCFS):
+            lcfs_stats.append(i)
+        elif _sched_matches(station_sched, SchedStrategy.LCFSPR):
+            lcfspr_stats.append(i)
+
+    # Handle LCFS + LCFS-PR 2-station network
+    if lcfs_stats and lcfspr_stats:
+        if len(lcfs_stats) != 1 or len(lcfspr_stats) != 1:
+            raise RuntimeError("LCFS MVA requires exactly one LCFS and one LCFS-PR station.")
+
+        # Check for closed network
+        Nchain = sn.njobs if sn.njobs is not None else np.zeros(K)
+        if np.any(np.isinf(Nchain)):
+            raise RuntimeError("LCFS MVA requires a closed queueing network.")
+
+        # Check for self-loops
+        rt = sn.rt
+        nclasses = sn.nclasses
+        for ist in lcfs_stats + lcfspr_stats:
+            for r in range(nclasses):
+                if rt is not None and rt[(ist) * nclasses + r, (ist) * nclasses + r] > 0:
+                    raise RuntimeError("LCFS MVA does not support self-loops at stations.")
+
+        # Call specialized LCFS MVA solver
+        return _solver_mva_lcfsqn(sn, options, lcfs_stats[0], lcfspr_stats[0])
+    elif lcfs_stats:
+        raise RuntimeError("LCFS scheduling requires a paired LCFS-PR station.")
 
     # For non-LCFS models, check product-form requirement
     if not sn_has_product_form(sn):

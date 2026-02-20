@@ -7,9 +7,14 @@ Created on Wed Mar 20 08:21:05 2013
 
 import numpy as np
 from numpy import linalg as la
-import butools
-from butools.ph import CheckMERepresentation
-from butools.reptrans import FindMarkovianRepresentation
+from .check import CheckMERepresentation
+from ..reptrans.findmarkovian import FindMarkovianRepresentation
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 def PHFromME (alpha, A, precision=1e-14):
     """

@@ -17,17 +17,18 @@ addpath(genpath(cwd)); % Add all subfolders to path
 addpath(genpath([cwd,filesep,'..',filesep,'common',filesep])); % Add all subfolders to path
 
 format compact
-warning on backtrace
 
 %% --- Clean up temporary files from past executions ---
 try
+    warning off
     lineClearWorkspace;
 catch
     % Ignore errors if workspace folder doesn't exist yet
 end
+warning on backtrace
 
 %% --- Default Configuration Values ---
-LINE_VERSION     = '3.0.2';
+LINE_VERSION     = '3.0.3';
 LINE_STDOUT      = 1;        % 1 = console
 LINE_VERBOSE     = VerboseLevel.STD;
 LINE_DO_CHECKS   = true;

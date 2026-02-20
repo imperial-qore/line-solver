@@ -209,6 +209,7 @@ def solver_amva(
         SolverMVAReturn with performance metrics
     """
     from ...pfqn.mva import pfqn_aql, pfqn_bs, pfqn_sqni
+    from .amvald import solver_amvald, AmvaldOptions
 
     start_time = time.time()
 
@@ -230,6 +231,54 @@ def solver_amva(
     Vchain = chain_result.Vchain
     alpha = chain_result.alpha
     Nchain_float = chain_result.Nchain.flatten()
+
+    # Check if this is a mixed model (has both open and closed chains)
+    has_open = np.any(np.isinf(Nchain_float))
+    has_closed = np.any(np.isfinite(Nchain_float) & (Nchain_float > 0))
+    is_mixed = has_open and has_closed
+
+    # Use solver_amvald for mixed models, pure open models, or advanced methods (lin, qdlin, egflin, etc.)
+    # Pure open networks (has_open and not has_closed) must also use solver_amvald
+    # to match MATLAB behavior which falls through to solver_amvald at line 268
+    if has_open or method in ('lin', 'qdlin', 'fli', 'gflin', 'egflin', 'qd', 'qli'):
+        # Use solver_amvald which properly handles mixed models with class switching
+        amvald_options = AmvaldOptions(
+            method=method if method in ('lin', 'qdlin', 'fli', 'gflin', 'egflin', 'qd', 'qli') else 'egflin',
+            iter_tol=options.iter_tol if hasattr(options, 'iter_tol') and options.iter_tol else 1e-4,  # Match MATLAB lineDefaults
+            iter_max=options.iter_max if hasattr(options, 'iter_max') and options.iter_max else 100,  # Match MATLAB lineDefaults
+        )
+
+        # Get SCVchain and refstatchain
+        SCVchain = chain_result.SCVchain if hasattr(chain_result, 'SCVchain') and chain_result.SCVchain is not None else np.ones((M, sn.nchains))
+        refstatchain = chain_result.refstatchain if hasattr(chain_result, 'refstatchain') and chain_result.refstatchain is not None else np.zeros((sn.nchains, 1))
+
+        amvald_result = solver_amvald(
+            sn, Lchain, STchain, Vchain, alpha,
+            Nchain_float, SCVchain, refstatchain, amvald_options
+        )
+
+        # Disaggregate to class level
+        Xchain = amvald_result.X.reshape(1, -1) if amvald_result.X.ndim == 1 else amvald_result.X
+        deagg_result = sn_deaggregate_chain_results(
+            sn, Lchain, amvald_result.Q, STchain, Vchain, alpha,
+            amvald_result.U, None, amvald_result.R, amvald_result.T, None, Xchain
+        )
+
+        result = SolverMVAReturn(
+            Q=deagg_result.Q,
+            U=deagg_result.U,
+            R=deagg_result.R,
+            T=deagg_result.T,
+            C=deagg_result.C,
+            X=deagg_result.X,
+            lG=amvald_result.lG,
+            runtime=time.time() - start_time,
+            method=amvald_options.method,
+            it=amvald_result.totiter
+        )
+        return result
+
+    # For closed-only networks, use simpler methods
     Nchain_float = np.where(np.isfinite(Nchain_float), Nchain_float, 0)
     Nchain = Nchain_float.astype(int)
 
@@ -257,7 +306,9 @@ def solver_amva(
 
     # Choose algorithm
     if method == 'bs':
-        XN, CN, QN, UN, RN, TN, AN = pfqn_bs(L, Nchain, Z)
+        XN, QN, UN, RN, _ = pfqn_bs(L, Nchain, Z)
+        TN = np.tile(XN, (QN.shape[0], 1))
+        AN = TN.copy()
     elif method == 'sqni' and L.shape[0] == 1:
         Q, U, X = pfqn_sqni(L.flatten(), Nchain, Z)
         XN = X

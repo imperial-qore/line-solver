@@ -71,9 +71,9 @@ for ist=1:Mz
     for r=1:R
         c = find(sn.chains(:,r),1);
         if sn.refclass(c)>0
-            Z(r) = sn.visits{c}(sn.nodeToStateful(delayIndices(ist)),r) / sn.rates(sn.nodeToStation(delayIndices(ist)),r) / sn.visits{c}(sn.stationToStateful(sn.refstat(r)),sn.refclass(c));
+            Z(ist,r) = sn.visits{c}(sn.nodeToStateful(delayIndices(ist)),r) / sn.rates(sn.nodeToStation(delayIndices(ist)),r) / sn.visits{c}(sn.stationToStateful(sn.refstat(r)),sn.refclass(c));
         else
-            Z(r) = sn.visits{c}(sn.nodeToStateful(delayIndices(ist)),r) / sn.rates(sn.nodeToStation(delayIndices(ist)),r);
+            Z(ist,r) = sn.visits{c}(sn.nodeToStateful(delayIndices(ist)),r) / sn.rates(sn.nodeToStation(delayIndices(ist)),r);
         end
     end
 end

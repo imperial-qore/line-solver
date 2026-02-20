@@ -171,17 +171,31 @@ public abstract class EnsembleSolver extends Solver {
                 }
                 this.results.put(i, tempMap);
             }
+            double solveTime = (System.nanoTime() - solveStartTime) / 1000000000.0;
             if (options.verbose != VerboseLevel.SILENT) {
-                solveRuntimes.add(((System.nanoTime() - solveStartTime) / 1000000000.0));
+                solveRuntimes.add(solveTime);
                 totalRuntime = (System.nanoTime() - outerStartTime) / 1000000000.0;
+                System.out.printf("\nIter %2d. ", it);
             }
 
             long synchStartTime = System.nanoTime();
             post(it);
-            synchRuntimes.add((System.nanoTime() - synchStartTime) / 1000000000.0);
+            double synchTime = (System.nanoTime() - synchStartTime) / 1000000000.0;
+            synchRuntimes.add(synchTime);
+            if (options.verbose != VerboseLevel.SILENT) {
+                System.out.printf(" Analyze time: %.3fs. Update time: %.3fs. Runtime: %.3fs. ", solveTime, synchTime, totalRuntime);
+            }
         }
 
         finish();
+
+        // Print summary if verbose
+        if (options.verbose != VerboseLevel.SILENT && !solveRuntimes.isEmpty()) {
+            double avgSolve = solveRuntimes.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+            double avgSynch = synchRuntimes.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+            System.out.printf("\nSummary: Analyze avg time: %.3fs. Update avg time: %.3fs. Total runtime: %.3fs. ",
+                       avgSolve, avgSynch, totalRuntime);
+        }
 
         // Cleanup thread pool
         if (threadPool != null && !threadPool.isShutdown()) {

@@ -11,9 +11,10 @@ fun QBD_CR(A0: Matrix,
            Verbose_: Int?,
            Mode_: String?,
            RAPComp_: Int?): Map<String?, Matrix?> {
-    var A0 = A0
-    var A1 = A1
-    var A2 = A2
+    // Copy input matrices to avoid modifying them (matching MATLAB behavior)
+    var A0 = A0.copy()
+    var A1 = A1.copy()
+    var A2 = A2.copy()
     var Mode = "Shift"
     var MaxNumIt = 50
     var Verbose = false
@@ -95,8 +96,8 @@ fun QBD_CR(A0: Matrix,
         var Atemp = Matrix.eye(m).add(-1.0, A).inv()
         val BAtemp = B.mult(Atemp)
         Atemp = C.mult(Atemp)
-        Ahat = A.add(1.0, BAtemp.mult(C))
-        A = A.add(1.0, BAtemp.mult(A)).add(1.0, Atemp.mult(B))
+        Ahat = Ahat.add(1.0, BAtemp.mult(C))
+        A = A.add(1.0, BAtemp.mult(C)).add(1.0, Atemp.mult(B))
         B = BAtemp.mult(B)
         C = Atemp.mult(C)
         numit = numit + 1

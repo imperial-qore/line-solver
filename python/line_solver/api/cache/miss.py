@@ -7,7 +7,7 @@ including exact methods, fixed-point iteration, and approximations.
 Key functions:
     cache_miss: Basic miss rate computation using exact recursive method
     cache_miss_fpi: Miss rates via fixed-point iteration
-    cache_miss_spm: Miss rates via saddle-point method
+    cache_miss_spm: Miss rates via singular perturbation method
     cache_miss_is: Miss rates via importance sampling
     cache_mva_miss: Miss rates via Mean Value Analysis
 
@@ -230,7 +230,7 @@ def cache_miss_spm(gamma: np.ndarray, m: np.ndarray,
                    lambd: Optional[np.ndarray] = None
                    ) -> Tuple[float, Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], float]:
     """
-    Compute cache miss rates using saddle-point method.
+    Compute cache miss rates using singular perturbation method.
 
     Args:
         gamma: Item popularity probabilities (n x h)

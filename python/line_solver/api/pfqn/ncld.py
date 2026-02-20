@@ -104,7 +104,9 @@ def pfqn_gldsingle(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
     Raises:
         RuntimeError: If multiclass model is detected
     """
-    L = np.atleast_2d(np.asarray(L, dtype=float))
+    L_arr = np.asarray(L)
+    L_dtype = complex if np.iscomplexobj(L_arr) else float
+    L = np.atleast_2d(np.asarray(L, dtype=L_dtype))
     N = np.asarray(N, dtype=float).flatten()
     mu = np.atleast_2d(np.asarray(mu, dtype=float))
 
@@ -121,8 +123,8 @@ def pfqn_gldsingle(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
         return PfqnNcResult(G=1.0, lG=0.0)
 
     # Use dictionary for sparse storage with tuple keys
-    # g[(m, n, tm)] maps to the value
-    g: Dict[Tuple[int, int, int], float] = {}
+    # g[(m, n, tm)] maps to the value (complex if L is complex)
+    g = {}
 
     # Initialize boundary conditions: g(0, n, 1) = 0 for n=1:N
     for n in range(1, N_val + 1):
@@ -145,13 +147,20 @@ def pfqn_gldsingle(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
                 else:
                     mu_val = 1.0
 
-                if mu_val > 0:
+                # MATLAB divides by mu even when negative, so we should too
+                if mu_val != 0:
                     g[(m, n, tm)] = g_prev + L[m - 1, 0] * g_curr / mu_val
                 else:
                     g[(m, n, tm)] = g_prev
 
     G = g.get((M, N_val, 1), 0.0)
-    lG = log(G) if G > 0 else NEG_INF
+    if abs(G) > 0:
+        # Use complex log to handle negative G values (MATLAB's log does this)
+        # The caller should use np.real() if they need only the real part
+        import cmath
+        lG = cmath.log(G)
+    else:
+        lG = NEG_INF
 
     return PfqnNcResult(G=G, lG=lG)
 
@@ -175,7 +184,9 @@ def pfqn_gld(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
     """
     from .nc import pfqn_nc
 
-    L = np.atleast_2d(np.asarray(L, dtype=float))
+    L_arr = np.asarray(L)
+    L_dtype = complex if np.iscomplexobj(L_arr) else float
+    L = np.atleast_2d(np.asarray(L, dtype=L_dtype))
     N = np.asarray(N, dtype=float).flatten()
     mu = np.atleast_2d(np.asarray(mu, dtype=float)) if mu is not None else None
 
@@ -198,9 +209,9 @@ def pfqn_gld(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
         N_tmp = []
         L_tmp = []
         for i in range(R):
-            if L[0, i] > FINE_TOL:
+            if abs(L[0, i]) > FINE_TOL:
                 N_tmp.append(N[i])
-                L_tmp.append(log(L[0, i]))
+                L_tmp.append(np.log(L[0, i]))
 
         if len(N_tmp) == 0:
             return PfqnNcResult(G=1.0, lG=0.0)
@@ -224,7 +235,7 @@ def pfqn_gld(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
 
         lG = (_factln(np.sum(N_tmp)) - np.sum(_factln_array(N_tmp)) +
               np.dot(N_tmp, L_tmp) - np.sum(log_mu[:Ntot]))
-        G = exp(lG) if lG > -700 else 0.0
+        G = np.exp(lG) if np.real(lG) > -700 else 0.0
 
         return PfqnNcResult(G=G, lG=lG)
 
@@ -301,7 +312,11 @@ def pfqn_gld(L: np.ndarray, N: np.ndarray, mu: np.ndarray,
             if mu[M - 1, 0] > 0:
                 G += (L[M - 1, r] / mu[M - 1, 0]) * pfqn_gld(L, N_1, mu_shifted, options).G
 
-    lG = log(G) if G > 0 else NEG_INF
+    if np.iscomplex(G):
+        lG = np.log(G) if abs(G) > 0 else NEG_INF
+    else:
+        G = float(np.real(G))
+        lG = log(G) if G > 0 else NEG_INF
 
     return PfqnNcResult(G=G, lG=lG)
 
@@ -348,12 +363,15 @@ def pfqn_comomrm_ld(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
     # Handle case where Z is negligible
     if np.sum(Z) < ZERO:
         # Identify delay stations (mu = [1, 2, 3, ...])
-        OneToNt = np.arange(1, mu.shape[1] + 1, dtype=float)
+        # A delay station has mu[j] = j+1 for ALL columns, not just the first Nt
+        # This prevents false positives when Nt is small
+        OneToMuCols = np.arange(1, mu.shape[1] + 1, dtype=float)
 
         zset = []
         non_zset = []
         for i in range(M):
-            if mu.shape[1] >= Nt and np.linalg.norm(mu[i, :Nt] - OneToNt[:Nt]) < atol:
+            # Compare the FULL mu row with expected delay pattern [1, 2, 3, ..., mu_cols]
+            if np.linalg.norm(mu[i, :] - OneToMuCols) < atol:
                 zset.append(i)
             else:
                 non_zset.append(i)
@@ -728,9 +746,26 @@ def _compute_norm_const_ld(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
             lG = result.lG
             method = "exact/comomld"
         elif M == 2 and np.max(Z) < FINE_TOL:
-            result = pfqn_comomrm_ld(L, N, np.zeros_like(N), mu, options)
-            lG = result.lG
-            method = "exact/comomld"
+            # For M==2 with no Z, pfqn_comomrm_ld assumes one station is a delay
+            # Check if exactly one station matches the delay pattern [1, 2, 3, ...]
+            # If mu was trimmed to small Ntot, both stations might falsely match
+            delay_count = 0
+            OneToMuCols = np.arange(1, mu.shape[1] + 1, dtype=float)
+            atol = options.get('tol', 1e-6)
+            for i in range(M):
+                if np.linalg.norm(mu[i, :] - OneToMuCols) < atol:
+                    delay_count += 1
+
+            if delay_count == 1:
+                result = pfqn_comomrm_ld(L, N, np.zeros_like(N), mu, options)
+                lG = result.lG
+                method = "exact/comomld"
+            else:
+                # Either no delays or both stations appear as delays (e.g., small Ntot)
+                # Fall back to general solver
+                result = pfqn_gld(Lz, N, muz, options)
+                lG = result.lG
+                method = "exact/gld"
         else:
             result = pfqn_gld(Lz, N, muz, options)
             lG = result.lG
@@ -786,7 +821,10 @@ def _compute_norm_const_ld(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
         lG = result.lG
         method = "exact/gld"
 
-    G = exp(lG) if lG is not None and lG > -700 else 0.0
+    # Handle complex lG by taking real part for comparison
+    lG_real = np.real(lG) if lG is not None else NEG_INF
+    G = exp(lG_real) if lG_real > -700 else 0.0
+    lG = lG_real  # Use real part for result
 
     return PfqnNcResult(G=G, lG=lG if lG is not None else NEG_INF, method=method)
 

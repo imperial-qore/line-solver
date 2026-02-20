@@ -24,16 +24,6 @@ if options.verbose ~= VerboseLevel.SILENT && ~GlobalConstants.isLibraryAttributi
     end
 end
 
-% Check if the model is mixed (has both open and closed classes)
-hasOpen = self.model.hasOpenClasses();
-hasClosed = self.model.hasClosedClasses();
-isMixed = hasOpen && hasClosed;
-
-if isMixed
-    line_error(mfilename,'SolverMAM does not support mixed models with both open and closed classes.\n');
-    return;
-end
-
 %options.lang = 'java';
 
 switch options.lang

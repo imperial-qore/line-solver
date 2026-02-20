@@ -293,7 +293,7 @@ class TestResultAccessors(unittest.TestCase):
         self.assertTrue(np.all(util >= 0))
         self.assertTrue(np.all(util <= 1.1))  # Allow small overshoot
 
-    def test_get_avg_resp_t(self):
+    def test_get_avg_respt(self):
         """Test getAvgRespT accessor."""
         resp_t = self.solver.getAvgRespT()
 

@@ -1,4 +1,5 @@
 package jline.examples.advanced;
+import jline.GlobalConstants;
 
 import jline.examples.java.advanced.InitStateModel;
 import jline.lang.ClosedClass;
@@ -43,6 +44,7 @@ public class InitStateExamplesTest {
     public static void setUp() {
         // Ensure MATLAB-compatible random number generation
         Maths.setRandomNumbersMatlab(true);
+        GlobalConstants.setVerbose(VerboseLevel.SILENT);
     }
     
     

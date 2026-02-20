@@ -269,7 +269,9 @@ def cache_ttl_lrua(lambd: np.ndarray, R: list, m: np.ndarray,
 
     Args:
         lambd: Arrival rates per user per item per list (u x n x h+1)
-        R: Routing probability structure (list of n matrices, each (h+1 x h+1))
+        R: Routing probability structure. Can be either:
+           - 1D list: R[i] is the (h+1 x h+1) routing matrix for item i
+           - 2D list: R[v][i] is the routing matrix for user v, item i
         m: Cache capacity vector (h,)
         seed: Random seed for initialization (default: 23000)
 
@@ -288,6 +290,10 @@ def cache_ttl_lrua(lambd: np.ndarray, R: list, m: np.ndarray,
     n = lambd.shape[1]  # number of items
     h = lambd.shape[2] - 1  # number of lists
 
+    # Determine if R is 1D (R[i]) or 2D (R[v][i]) structure
+    # Check if R[0] is a numpy array (1D case) or a list (2D case)
+    is_2d_structure = isinstance(R[0], list)
+
     def ttl_tree_time(x):
         """Compute capacity difference for given characteristic times."""
         steadystateprob = np.zeros((n, h + 1))
@@ -298,7 +304,9 @@ def cache_ttl_lrua(lambd: np.ndarray, R: list, m: np.ndarray,
 
         for i in range(n):
             # Build transition matrix
-            Ri = R[i]
+            # MATLAB uses R{1,i} which accesses user 1 (first user), item i
+            # In Python: R[0][i] for 2D structure, R[i] for 1D structure
+            Ri = R[0][i] if is_2d_structure else R[i]
             transmatrix = np.zeros((h + 1, h + 1))
 
             for j in range(h + 1):

@@ -41,31 +41,22 @@ P.set(low_priority, low_priority, queue2, sink, 1.0)
 model.link(P)
 
 # Add Finite Capacity Region with multiple constraints
-fcr = model.add_region('FCR', queue1, queue2)
+fcr = model.add_region(queue1, queue2)
 
-# Global constraint: max 6 jobs total in the region
-fcr.set_global_max_jobs(6)
+# Global constraint: max 2 jobs total in the region
+fcr.set_global_max_jobs(2)
 
 # Per-class constraints: high priority gets more space
-fcr.set_class_max_jobs(high_priority, 4)  # HighPriority: max 4 jobs
-fcr.set_class_max_jobs(low_priority, 3)   # LowPriority: max 3 jobs
+fcr.set_class_max_jobs(high_priority, 2)  # HighPriority: max 2 jobs
+fcr.set_class_max_jobs(low_priority, 2)   # LowPriority: max 2 jobs
 # Note: per-class limits must sum to >= global limit for consistent behavior
 
-# Drop rules: high priority jobs wait, low priority jobs are dropped
-fcr.set_drop_rule(high_priority, False)  # False = block (wait)
+# Drop rules: all classes use the same rule (required by LINE)
+# true = drop jobs when limit reached, false = block (wait)
+fcr.set_drop_rule(high_priority, True)   # True = drop
 fcr.set_drop_rule(low_priority, True)    # True = drop
 
-# Display constraint summary
-print('\n=== FCR Constraint Configuration ===')
-print('Region covers: Queue1, Queue2')
-print('Global max jobs: 6')
-print('HighPriority max: 4 (blocking)')
-print('LowPriority max: 3 (dropping)\n')
-
 # Solve with JMT
-solver = JMT(model, seed=23000, samples=100000, verbose=VerboseLevel.SILENT)
+solver = JMT(model, seed=23000, samples=100000)
 avg_table = solver.get_avg_table()
 print(avg_table)
-
-print('\nNote: HighPriority jobs experience delays when region is full.')
-print('LowPriority jobs are dropped when their class limit or global limit is reached.')

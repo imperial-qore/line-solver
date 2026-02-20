@@ -751,9 +751,12 @@ class Replayer(DiscreteDistribution):
     def __init__(self, trace: Union[str, list, np.ndarray], loop: bool = True):
         super().__init__()
         self._name = 'Replayer'
+        self._file_path = None  # Store file path for JMT if provided
 
         # Handle file path string
         if isinstance(trace, str):
+            # Store file path for JMT
+            self._file_path = trace
             # Read trace from file
             self._trace = np.loadtxt(trace, dtype=float)
         else:
@@ -787,6 +790,12 @@ class Replayer(DiscreteDistribution):
         """Get the variance of the trace."""
         return float(np.var(self._trace))
 
+    def getSkewness(self) -> float:
+        """Get the skewness of the trace."""
+        from scipy.stats import skew
+        # Use bias=False for sample skewness (matches MATLAB's skewness(data,0))
+        return float(skew(self._trace, bias=False))
+
     def getSupport(self) -> Tuple[float, float]:
         """Get the support [min, max] of trace values."""
         return (float(np.min(self._trace)), float(np.max(self._trace)))
@@ -819,12 +828,12 @@ class Replayer(DiscreteDistribution):
             samples[i] = self.next_value()
         return samples
 
-    def fit_aph(self, order: int = 2):
+    def fit_aph(self):
         """
         Fit an acyclic phase-type (APH) distribution to the trace data.
 
-        Args:
-            order: Number of phases for the APH distribution (default: 2).
+        Uses 3-moment matching (mean, SCV, skewness) to determine the
+        optimal APH representation, matching MATLAB's behavior.
 
         Returns:
             APH distribution fitted to the trace data.
@@ -834,9 +843,129 @@ class Replayer(DiscreteDistribution):
         mean = self.getMean()
         var = self.getVar()
         scv = var / (mean ** 2) if mean > 0 else 1.0
+        skewness = self.getSkewness()
 
-        # APH uses moment matching - just pass mean and scv
-        return APH(mean=mean, scv=scv)
+        # Compute raw moments from central moments
+        e1 = mean
+        e2 = (1 + scv) * e1 ** 2
+        e3 = -(2 * e1 ** 3 - 3 * e1 * e2 - skewness * (e2 - e1 ** 2) ** (3 / 2))
+
+        # Use APHFrom3Moments for 3-moment matching (matches MATLAB)
+        try:
+            alpha, T = self._aph_from_3_moments([e1, e2, e3])
+            # Convert from matrix to array format
+            alpha = np.asarray(alpha).flatten()
+            T = np.asarray(T)
+            return APH(alpha, T)
+        except Exception:
+            # Fall back to 2-moment matching if 3-moment fails
+            return APH(mean=mean, scv=scv)
+
+    @staticmethod
+    def _aph_from_3_moments(moms, maxSize=100):
+        """
+        Returns an acyclic PH which has the same 3 moments as given.
+        Determines the order and structure automatically to match the given moments.
+        Based on BUTools APHFrom3Moments.
+        """
+        import numpy.matlib as ml
+        import math
+        import cmath
+
+        def _aph_2nd_moment_lower_bound(m1, n):
+            return float(m1) * m1 * (n + 1) / n
+
+        def _aph_3rd_moment_lower_bound(m1, m2, n):
+            n2 = m2 / m1 / m1
+            if n2 < (n + 1.0) / n:
+                return np.inf
+            elif n2 < (n + 4.0) / (n + 1.0):
+                p = ((n + 1.0) * (n2 - 2.0)) / (3.0 * n2 * (n - 1.0)) * (
+                    (-2.0 * math.sqrt(n + 1.0)) / cmath.sqrt(-3.0 * n * n2 + 4.0 * n + 4.0) - 1.0)
+                a = (n2 - 2.0) / (p * (1.0 - n2) + cmath.sqrt(p * p + p * n * (n2 - 2.0) / (n - 1.0)))
+                l = ((3.0 + a) * (n - 1.0) + 2.0 * a) / ((n - 1.0) * (1.0 + a * p)) - (2.0 * a * (n + 1.0)) / (
+                    2.0 * (n - 1.0) + a * p * (n * a + 2.0 * n - 2.0))
+                return l.real * m1 * m2
+            else:
+                return (n + 1.0) / n * n2 * m1 * m2
+
+        def _aph_3rd_moment_upper_bound(m1, m2, n):
+            n2 = m2 / m1 / m1
+            if n2 < (n + 1.0) / n:
+                return -np.inf
+            elif n2 <= n / (n - 1.0):
+                return m1 * m2 * (2.0 * (n - 2.0) * (n * n2 - n - 1.0) * math.sqrt(1.0 + (n * (n2 - 2.0)) / (n - 1.0)) + (
+                    n + 2.0) * (3.0 * n * n2 - 2.0 * n - 2.0)) / (n * n * n2)
+            else:
+                return np.inf
+
+        def _norm_moms_from_moms(m):
+            return [float(m[i]) / m[i - 1] / m[0] if i > 0 else m[0] for i in range(len(m))]
+
+        m1, m2, m3 = moms
+
+        # detect number of phases needed
+        n = 2
+        while n < maxSize and (_aph_2nd_moment_lower_bound(m1, n) > m2 or _aph_3rd_moment_lower_bound(m1, m2, n) >= m3 or _aph_3rd_moment_upper_bound(m1, m2, n) <= m3):
+            n = n + 1
+
+        # if PH is too large, adjust moment to bounds
+        if _aph_2nd_moment_lower_bound(m1, n) > m2:
+            m2 = _aph_2nd_moment_lower_bound(m1, n)
+
+        if _aph_3rd_moment_lower_bound(m1, m2, n) > m3:
+            m3 = _aph_3rd_moment_lower_bound(m1, m2, n)
+
+        if _aph_3rd_moment_upper_bound(m1, m2, n) < m3:
+            m3 = _aph_3rd_moment_upper_bound(m1, m2, n)
+
+        # compute normalized moments
+        n1, n2, n3 = _norm_moms_from_moms([m1, m2, m3])
+
+        if n2 > 2.0 or n3 < 2.0 * n2 - 1.0:
+            b = (2.0 * (4.0 - n * (3.0 * n2 - 4.0)) / (n2 * (4.0 + n - n * n3) + math.sqrt(n * n2) * math.sqrt(
+                12.0 * n2 * n2 * (n + 1.0) + 16.0 * n3 * (n + 1.0) + n2 * (n * (n3 - 15.0) * (n3 + 1.0) - 8.0 * (n3 + 3.0))))).real
+            a = (b * n2 - 2.0) * (n - 1.0) * b / (b - 1.0) / n
+            p = (b - 1.0) / a
+            lamb = (p * a + 1.0) / n1
+            mu = (n - 1.0) * lamb / a
+            # construct representation
+            alpha = ml.zeros((1, n))
+            alpha[0, 0] = p
+            alpha[0, n - 1] = 1.0 - p
+            A = ml.zeros((n, n))
+            A[n - 1, n - 1] = -lamb
+            for i in range(n - 1):
+                A[i, i] = -mu
+                A[i, i + 1] = mu
+            return (alpha, A)
+        else:
+            c4 = n2 * (3.0 * n2 - 2.0 * n3) * (n - 1.0) * (n - 1.0)
+            c3 = 2.0 * n2 * (n3 - 3.0) * (n - 1.0) * (n - 1.0)
+            c2 = 6.0 * (n - 1.0) * (n - n2)
+            c1 = 4.0 * n * (2.0 - n)
+            c0 = n * (n - 2.0)
+            fs = np.roots([c4, c3, c2, c1, c0])
+            for f in fs:
+                if abs((n - 1) * (n2 * f * f * 2 - 2 * f + 2) - n) < 1e-14:
+                    continue
+                a = 2.0 * (f - 1.0) * (n - 1.0) / ((n - 1.0) * (n2 * f * f - 2.0 * f + 2.0) - n)
+                p = (f - 1.0) * a
+                lamb = (a + p) / n1
+                mu = (n - 1.0) / (n1 - p / lamb)
+                if np.isreal(p) and np.isreal(lamb) and np.isreal(mu) and p >= 0 and p <= 1 and lamb > 0 and mu > 0:
+                    alpha = ml.zeros((1, n))
+                    alpha[0, 0] = p.real
+                    alpha[0, 1] = 1.0 - p.real
+                    A = ml.zeros((n, n))
+                    A[0, 0] = -lamb.real
+                    A[0, 1] = lamb.real
+                    for i in range(1, n):
+                        A[i, i] = -mu.real
+                        if i < n - 1:
+                            A[i, i + 1] = mu.real
+                    return (alpha, A)
+        raise Exception("No APH found for the given 3 moments!")
 
 
 class Trace(Replayer):

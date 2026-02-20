@@ -1,5 +1,6 @@
 function [Q,U,R,T,C,X,lG,totiter] = solver_amvald(sn, Lchain,STchain,Vchain,alpha,Nchain,SCVchain,refstatchain, options)
 totiter = 0;
+max_totiter = min(options.iter_max, 10000); % Hard cap for stability
 
 M = sn.nstations;
 K = sn.nchains;
@@ -63,7 +64,7 @@ end
 %% main loop
 omicron = 0.5; % under-relaxation parameter
 outer_iter = 0;
-while (outer_iter < 2 || max(max(abs(Qchain-QchainOuter_1))) > tol) && outer_iter < sqrt(options.iter_max)
+while (outer_iter < 2 || max(max(abs(Qchain-QchainOuter_1))) > tol) && outer_iter < sqrt(options.iter_max) && totiter <= max_totiter
     outer_iter = outer_iter + 1;
     QchainOuter_1 = Qchain;
     XchainOuter_1 = Xchain;
@@ -91,7 +92,7 @@ while (outer_iter < 2 || max(max(abs(Qchain-QchainOuter_1))) > tol) && outer_ite
 
                             [Wchain_s, STeff_s] = solver_amvald_forward(M, K, nservers, schedparam, lldscaling, cdscaling, ljdscaling, ljdcutoffs, ljcdscaling, ljcdcutoffs, sched, classprio, gamma, tau, Qchain_s_1, Xchain_s_1, Uchain_s_1, STchain, Vchain, Nchain_s, SCVchain, options);
                             totiter = totiter + 1;
-                            if totiter > options.iter_max
+                            if totiter >= max_totiter
                                 break
                             end
 
@@ -139,8 +140,16 @@ while (outer_iter < 2 || max(max(abs(Qchain-QchainOuter_1))) > tol) && outer_ite
                             tau(s,r) = Xchain_s_1(r) - XchainOuter_1(r); % save throughput for priority AMVA
                         end
                     end
+                    % Check if iteration limit exceeded (break out of for s loop)
+                    if totiter >= max_totiter
+                        break
+                    end
                 end
         end
+    end
+    % Check if iteration limit exceeded (break out of outer while loop)
+    if totiter >= max_totiter
+        break
     end
 
     iter = 0;
@@ -154,7 +163,7 @@ while (outer_iter < 2 || max(max(abs(Qchain-QchainOuter_1))) > tol) && outer_ite
 
         [Wchain, STeff] = solver_amvald_forward(M, K, nservers, schedparam, lldscaling, cdscaling, ljdscaling, ljdcutoffs, ljcdscaling, ljcdcutoffs, sched, classprio, gamma, tau, Qchain_1, Xchain_1, Uchain_1, STchain, Vchain, Nchain, SCVchain, options);
         totiter = totiter + 1;
-        if totiter > options.iter_max
+        if totiter >= max_totiter
             break
         end
 

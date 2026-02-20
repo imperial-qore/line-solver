@@ -23,7 +23,8 @@ public class Collector {
     private static final Logger logger = Logger.getLogger(Collector.class.getName());
 
     private final StreamingOptions options;
-    private final OtlpMetricsClient client;
+    private final OtlpMetricsClient grpcClient;
+    private final HttpMetricsClient httpClient;
     private final NetworkStruct sn;
 
     // For SAMPLED mode
@@ -48,14 +49,49 @@ public class Collector {
     public Collector(StreamingOptions options, NetworkStruct sn) {
         this.options = options;
         this.sn = sn;
-        this.client = new OtlpMetricsClient(options.endpoint, options.serviceName, options.failOnConnectionError);
+
+        // Initialize the appropriate client based on transport type
+        if (options.transport == StreamingOptions.TransportType.HTTP) {
+            this.httpClient = new HttpMetricsClient(options.endpoint, options.serviceName, options.failOnConnectionError);
+            this.grpcClient = null;
+        } else {
+            this.grpcClient = new OtlpMetricsClient(options.endpoint, options.serviceName, options.failOnConnectionError);
+            this.httpClient = null;
+        }
+
         this.queueLengthAccum = new HashMap<String, Double>();
         this.timeAccum = new HashMap<String, Double>();
         this.throughputAccum = new HashMap<String, Double>();
         this.arrivalRateAccum = new HashMap<String, Double>();
 
-        logger.log(Level.INFO, "Collector initialized: mode={0}, endpoint={1}",
-                new Object[] { options.mode, options.endpoint });
+        logger.log(Level.INFO, "Collector initialized: mode={0}, transport={1}, endpoint={2}",
+                new Object[] { options.mode, options.transport, options.endpoint });
+    }
+
+    /**
+     * Send metrics using the appropriate transport client.
+     * @param metrics List of metrics to send
+     * @return true if successful
+     */
+    private boolean sendMetrics(List<SSAMetricPoint> metrics) {
+        if (httpClient != null) {
+            return httpClient.sendMetrics(metrics);
+        } else if (grpcClient != null) {
+            return grpcClient.sendMetrics(metrics);
+        }
+        return false;
+    }
+
+    /**
+     * Shutdown the appropriate transport client.
+     */
+    private void shutdownClient() {
+        if (httpClient != null) {
+            httpClient.shutdown();
+        }
+        if (grpcClient != null) {
+            grpcClient.shutdown();
+        }
     }
 
     /**
@@ -168,7 +204,7 @@ public class Collector {
         }
 
         if (!metrics.isEmpty()) {
-            boolean success = client.sendMetrics(metrics);
+            boolean success = sendMetrics(metrics);
             if (!success) {
                 logger.log(Level.WARNING, "Failed to push {0} metrics at time {1}",
                         new Object[] { metrics.size(), time });
@@ -316,7 +352,7 @@ public class Collector {
         }
 
         if (!metrics.isEmpty()) {
-            boolean success = client.sendMetrics(metrics);
+            boolean success = sendMetrics(metrics);
             if (!success) {
                 logger.log(Level.WARNING, "Failed to push {0} window-averaged metrics at time {1}",
                         new Object[] { metrics.size(), time });
@@ -410,7 +446,7 @@ public class Collector {
      */
     public void shutdown() {
         logger.log(Level.INFO, "Shutting down Collector");
-        client.shutdown();
+        shutdownClient();
     }
 
     /**

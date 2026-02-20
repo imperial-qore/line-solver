@@ -343,6 +343,10 @@ public class Workflow extends Model {
 
         Matrix[] blockAlpha = new Matrix[n];
         Matrix[] blockT = new Matrix[n];
+        // isConsumed tracks activities that have been absorbed into another block
+        // (should be skipped in final composition)
+        boolean[] isConsumed = new boolean[n];
+        // isProcessed tracks activities whose blocks have been updated with composite results
         boolean[] isProcessed = new boolean[n];
 
         for (int i = 0; i < n; i++) {
@@ -377,14 +381,14 @@ public class Workflow extends Model {
             if (loop.endAct >= 0) {
                 Pair<Matrix, Matrix> endPh = activities.get(loop.endAct).getPHRepresentation();
                 result = composeSerial(result.getLeft(), result.getRight(), endPh.getLeft(), endPh.getRight());
-                isProcessed[loop.endAct] = true;
+                isConsumed[loop.endAct] = true;
             }
 
             blockAlpha[preIdx] = result.getLeft();
             blockT[preIdx] = result.getRight();
             isProcessed[preIdx] = true;
             for (int idx : loop.loopActs) {
-                isProcessed[idx] = true;
+                isConsumed[idx] = true;
             }
         }
 
@@ -405,7 +409,7 @@ public class Workflow extends Model {
                         result = parResult;
                     }
 
-                    if (!isProcessed[postIdx]) {
+                    if (!isConsumed[postIdx] && !isProcessed[postIdx]) {
                         result = composeSerial(result.getLeft(), result.getRight(), blockAlpha[postIdx], blockT[postIdx]);
                     }
 
@@ -413,9 +417,9 @@ public class Workflow extends Model {
                     blockT[preIdx] = result.getRight();
                     isProcessed[preIdx] = true;
                     for (int idx : fork.postActs) {
-                        isProcessed[idx] = true;
+                        isConsumed[idx] = true;
                     }
-                    isProcessed[postIdx] = true;
+                    isConsumed[postIdx] = true;
                 }
             }
         }
@@ -437,9 +441,9 @@ public class Workflow extends Model {
 
                 if (matchingJoin != null) {
                     int postIdx = matchingJoin.postAct;
-                    if (!isProcessed[postIdx]) {
+                    if (!isConsumed[postIdx] && !isProcessed[postIdx]) {
                         result = composeSerial(result.getLeft(), result.getRight(), blockAlpha[postIdx], blockT[postIdx]);
-                        isProcessed[postIdx] = true;
+                        isConsumed[postIdx] = true;
                     }
                 }
 
@@ -447,7 +451,7 @@ public class Workflow extends Model {
                 blockT[preIdx] = result.getRight();
                 isProcessed[preIdx] = true;
                 for (int idx : fork.postActs) {
-                    isProcessed[idx] = true;
+                    isConsumed[idx] = true;
                 }
             }
         }
@@ -456,12 +460,14 @@ public class Workflow extends Model {
         Matrix alpha = null;
         Matrix T = null;
 
+        // Compose all non-consumed activities in topological order
+        // Block roots (isProcessed but not isConsumed) contain composite results
         for (int idx : order) {
-            if (!isProcessed[idx] || alpha == null) {
+            if (!isConsumed[idx]) {
                 if (alpha == null) {
                     alpha = blockAlpha[idx];
                     T = blockT[idx];
-                } else if (!isProcessed[idx]) {
+                } else {
                     Pair<Matrix, Matrix> composed = composeSerial(alpha, T, blockAlpha[idx], blockT[idx]);
                     alpha = composed.getLeft();
                     T = composed.getRight();

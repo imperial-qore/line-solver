@@ -11,6 +11,7 @@ import jline.GlobalConstants;
 import jline.lang.constant.*;
 import jline.lang.layered.LayeredNetwork;
 import jline.lang.layered.LayeredNetworkElement;
+import jline.lang.NetworkStruct;
 import jline.lang.layered.LayeredNetworkStruct;
 import jline.lang.nodes.*;
 import jline.lang.nodes.Queue;
@@ -201,7 +202,37 @@ public class SolverLN extends EnsembleSolver {
 
         construct();
         solvers = new NetworkSolver[nlayers];
+
+        // Check if model has FunctionTasks (matches MATLAB SolverLN.m lines 138-148)
+        boolean hasFunctionTasks = false;
+        if (lqn.isfunction != null) {
+            for (int i = 0; i < lqn.isfunction.getNumCols(); i++) {
+                if (lqn.isfunction.get(0, i) == 1) {
+                    hasFunctionTasks = true;
+                    break;
+                }
+            }
+        }
+
         for (int i = 0; i < nlayers; i++) {
+            // For FunctionTask layers with setupTime, use SolverMAM with dec.poisson method
+            // This is required because standard MVA doesn't handle setup/delayoff queue semantics
+            // (matches MATLAB SolverLN.m lines 138-148: checks stations{2}.setupTime)
+            if (hasFunctionTasks && ensemble[i].getStations().size() > 1) {
+                // MATLAB checks stations{2} (1-indexed) = station index 1 (0-indexed)
+                Station station2 = ensemble[i].getStations().get(1);
+                if (station2 instanceof Queue) {
+                    Queue serverQueue = (Queue) station2;
+                    if (serverQueue.isDelayOffEnabled()) {
+                        // Use SolverMAM with dec.poisson for FunctionTask layers
+                        SolverOptions mamOptions = new SolverOptions(SolverType.MAM);
+                        mamOptions.verbose = VerboseLevel.SILENT;
+                        mamOptions.method = "dec.poisson";
+                        solvers[i] = new SolverMAM(ensemble[i], mamOptions);
+                        continue;
+                    }
+                }
+            }
             solvers[i] = solverFactory.at(ensemble[i]);
         }
         this.solverFactory = solverFactory; // Store for later use
@@ -214,6 +245,7 @@ public class SolverLN extends EnsembleSolver {
     @Override
     public SolverResult analyze(int it, int e) {
         SolverResult result1 = new SolverResult();
+        System.out.flush();
         solvers[e].getAvg();
 
         if (e == 1 && solvers[e].options.verbose != VerboseLevel.SILENT) {
@@ -318,17 +350,19 @@ public class SolverLN extends EnsembleSolver {
         this.taskLayerIndices = new ArrayList<>();
 
         // Host layers: indices 1:nhosts (before idxhash remapping)
+        // Note: idxhash uses 1-based indexing (NaN at index 0), so use hidx directly
         for (int hidx = 1; hidx <= lqn.nhosts; hidx++) {
-            if (!Double.isNaN(idxhash.get(hidx - 1))) {
-                hostLayerIndices.add(idxhash.get(hidx - 1).intValue() - 1); // Convert to 0-indexed
+            if (!Double.isNaN(idxhash.get(hidx))) {
+                hostLayerIndices.add(idxhash.get(hidx).intValue() - 1); // Convert to 0-indexed
             }
         }
 
         // Task layers: indices tshift+1:tshift+ntasks
+        // Note: idxhash uses 1-based indexing (NaN at index 0), so use tidx directly
         for (int t = 1; t <= lqn.ntasks; t++) {
             int tidx = lqn.tshift + t;
-            if (tidx - 1 < idxhash.size() && !Double.isNaN(idxhash.get(tidx - 1))) {
-                taskLayerIndices.add(idxhash.get(tidx - 1).intValue() - 1); // Convert to 0-indexed
+            if (tidx < idxhash.size() && !Double.isNaN(idxhash.get(tidx))) {
+                taskLayerIndices.add(idxhash.get(tidx).intValue() - 1); // Convert to 0-indexed
             }
         }
     }
@@ -472,14 +506,14 @@ public class SolverLN extends EnsembleSolver {
                     successors.add(i);
                 }
             }
-            boolean flag = false;
+            int postAndCount = 0;
             for (int i : successors) {
                 if (isPostAndAct.get(0, i) == 1) {
-                    flag = true;
+                    postAndCount++;
                 }
             }
-            if (flag) {
-                maxfanout = FastMath.max(maxfanout, (int) isPostAndAct.elementSum());
+            if (postAndCount > 0) {
+                maxfanout = FastMath.max(maxfanout, postAndCount);
             }
         }
 
@@ -526,29 +560,54 @@ public class SolverLN extends EnsembleSolver {
         Matrix entryOpenClasses = new Matrix(lqn.nentries + 1, 3, lqn.nentries); // track entry-level open arrivals
         final int[] entryOpenClassesAssignedLine = {0}; // counter for entry open classes
         //  first pass: create the classes
-        boolean issynccaller = false;
-        if (!ishostlayer) {
-            for (int tidx_caller : callers) {
+        double njobs;
+        Map<Integer, Double> callmean = new HashMap<>();
+        for (int tidx_caller : callers) {
+            // Per-caller: check if this caller is a sync caller to entries of idx (task layer path)
+            // For host layers, idx is a host index with no entries, so isSyncCallerToEntries is always false
+            boolean isSyncCallerToEntries = false;
+            if (!ishostlayer && lqn.entriesof.get(idx) != null) {
                 for (int entry_idx : lqn.entriesof.get(idx)) {
                     if (lqn.issynccaller.get(tidx_caller, entry_idx) != 0) {
-                        issynccaller = true;
+                        isSyncCallerToEntries = true;
                         break;
                     }
                 }
             }
-        }
-        double njobs;
-        Map<Integer, Double> callmean = new HashMap<>();
-        for (int tidx_caller : callers) {
-            if (ishostlayer || issynccaller) {
+            // Per-caller: for host layers, check if this caller task has direct callers
+            // (matching MATLAB buildLayersRecursive hasDirectCallers logic)
+            boolean hasDirectCallers = false;
+            if (ishostlayer) {
+                if (lqn.isref.get(tidx_caller) != 0) {
+                    hasDirectCallers = true;
+                } else {
+                    for (int eidx : lqn.entriesof.get(tidx_caller)) {
+                        // Check if any task is a sync or async caller to this entry
+                        for (int row = 1; row <= lqn.ntasks; row++) {
+                            int tidx_row = row + lqn.tshift;
+                            if (lqn.issynccaller.get(tidx_row, eidx) != 0 || lqn.isasynccaller.get(tidx_row, eidx) != 0) {
+                                hasDirectCallers = true;
+                                break;
+                            }
+                        }
+                        if (hasDirectCallers) break;
+                        // Check for open arrivals on this entry
+                        if (lqn.arrival != null && lqn.arrival.containsKey(eidx) && lqn.arrival.get(eidx) != null) {
+                            hasDirectCallers = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if ((ishostlayer && hasDirectCallers) || isSyncCallerToEntries) {
                 if (this.njobs.get(tidx_caller, idx) == 0) {
                     njobs = mult.get(0, tidx_caller) * lqn.repl.get(0, tidx_caller);
                     if (isInf(njobs)) {
                         njobs = 0;
-                        for (int col = 0; col < lqn.taskgraph.getNumCols(); col++) {
-                            if ((int) lqn.taskgraph.get(col, tidx_caller) != 0) {
-                                int caller_of_tidx_caller = col;
-                                njobs += mult.get(caller_of_tidx_caller);
+                        for (int row = 0; row < lqn.taskgraph.getNumRows(); row++) {
+                            if ((int) lqn.taskgraph.get(row, tidx_caller) != 0) {
+                                int caller_of_tidx_caller = row;
+                                njobs += mult.get(0, caller_of_tidx_caller);
                             }
                         }
                         if (isInf(njobs)) {
@@ -561,7 +620,7 @@ public class SolverLN extends EnsembleSolver {
                                     }
                                 }
                             }
-                            njobs = FastMath.min(njobs, 100);
+                            njobs = FastMath.min(njobs, 1000);  // Match MATLAB cap
                         }
                     }
                     this.njobs.set(tidx_caller, idx, njobs);
@@ -635,7 +694,7 @@ public class SolverLN extends EnsembleSolver {
             }
             // for each activity of the calling task
             for (int aidx : lqn.actsof.get(tidx_caller)) {
-                if (ishostlayer || issynccaller) {
+                if (ishostlayer || isSyncCallerToEntries) {
                     aidxclass.put(aidx, new ClosedClass(model, lqn.hashnames.get(aidx), 0, clientDelay));
                     clientDelay.setService(aidxclass.get(aidx), Disabled.getInstance());
                     for (int m = 1; m <= nreplicas; m++) {
@@ -1038,14 +1097,17 @@ public class SolverLN extends EnsembleSolver {
                                             }
                                         }
                                         serverStation.get(m).setService(aidxclass.get(nextaidx), lqn.hostdem.get(nextaidx));
-                                        if (finalIsFunctionLayer) {
-                                            int parentIdx = (int) lqn.parent.get(0, nextaidx);
-                                            if (parentIdx >= 0 && lqn.setuptime != null && lqn.delayofftime != null) {
-                                                Distribution setupTime = lqn.setuptime.get(parentIdx);
-                                                Distribution delayoffTime = lqn.delayofftime.get(parentIdx);
-                                                if (setupTime != null && delayoffTime != null) {
-                                                    serverStation.get(m).setDelayOff(aidxclass.get(nextaidx), setupTime, delayoffTime);
-                                                }
+                                        // Check if the task owning this activity is a FunctionTask (has setup/delayoff)
+                                        // This is different from finalIsFunctionLayer which checks all callers
+                                        int nextaidxParentIdx = (int) lqn.parent.get(0, nextaidx);
+                                        boolean isNextaidxParentFunctionTask = nextaidxParentIdx >= 0 && lqn.isfunction != null &&
+                                                                        lqn.isfunction.getNumCols() > nextaidxParentIdx &&
+                                                                        lqn.isfunction.get(0, nextaidxParentIdx) == 1;
+                                        if (isNextaidxParentFunctionTask && lqn.setuptime != null && lqn.delayofftime != null) {
+                                            Distribution setupTime = lqn.setuptime.get(nextaidxParentIdx);
+                                            Distribution delayoffTime = lqn.delayofftime.get(nextaidxParentIdx);
+                                            if (setupTime != null && delayoffTime != null) {
+                                                serverStation.get(m).setDelayOff(aidxclass.get(nextaidx), setupTime, delayoffTime);
                                             }
                                         }
                                         }
@@ -1162,22 +1224,22 @@ public class SolverLN extends EnsembleSolver {
                                                 }
                                             }
                                             Distribution baseService = lqn.hostdem.get(nextaidx);
-                                            if (finalIsFunctionLayer) {
-                                                int parentIdx = (int) lqn.parent.get(0, nextaidx);
-                                                if (parentIdx >= 0 && lqn.setuptime != null && lqn.delayofftime != null) {
-                                                    Distribution setupTime = lqn.setuptime.get(parentIdx);
-                                                    Distribution delayoffTime = lqn.delayofftime.get(parentIdx);
-                                                    if (setupTime != null && delayoffTime != null) {
-                                                        // For function layers, the effective service time includes setup and delay-off times
-                                                        // Create a combined distribution that represents setup + service + delayoff
-                                                        double totalMean = baseService.getMean() + setupTime.getMean() + delayoffTime.getMean();
-                                                        // For now, use exponential approximation with combined mean
-                                                        Distribution effectiveService = new jline.lang.processes.Exp(1.0 / totalMean);
-                                                        serverStation.get(m).setService(aidxclass.get(nextaidx), effectiveService);
-                                                        serverStation.get(m).setDelayOff(aidxclass.get(nextaidx), setupTime, delayoffTime);
-                                                    } else {
-                                                        serverStation.get(m).setService(aidxclass.get(nextaidx), baseService);
-                                                    }
+                                            // Check if the task owning this activity is a FunctionTask (has setup/delayoff)
+                                            int nextaidxParentId = (int) lqn.parent.get(0, nextaidx);
+                                            boolean isNextaidxParentFunc = nextaidxParentId >= 0 && lqn.isfunction != null &&
+                                                                            lqn.isfunction.getNumCols() > nextaidxParentId &&
+                                                                            lqn.isfunction.get(0, nextaidxParentId) == 1;
+                                            if (isNextaidxParentFunc && lqn.setuptime != null && lqn.delayofftime != null) {
+                                                Distribution setupTime = lqn.setuptime.get(nextaidxParentId);
+                                                Distribution delayoffTime = lqn.delayofftime.get(nextaidxParentId);
+                                                if (setupTime != null && delayoffTime != null) {
+                                                    // For function tasks, the effective service time includes setup and delay-off times
+                                                    // Create a combined distribution that represents setup + service + delayoff
+                                                    double totalMean = baseService.getMean() + setupTime.getMean() + delayoffTime.getMean();
+                                                    // For now, use exponential approximation with combined mean
+                                                    Distribution effectiveService = new jline.lang.processes.Exp(1.0 / totalMean);
+                                                    serverStation.get(m).setService(aidxclass.get(nextaidx), effectiveService);
+                                                    serverStation.get(m).setDelayOff(aidxclass.get(nextaidx), setupTime, delayoffTime);
                                                 } else {
                                                     serverStation.get(m).setService(aidxclass.get(nextaidx), baseService);
                                                 }
@@ -1216,19 +1278,21 @@ public class SolverLN extends EnsembleSolver {
                                             }
                                         }
                                         serverStation.get(m).setService(aidxclass.get(nextaidx), lqn.hostdem.get(nextaidx));
-                                        if (finalIsFunctionLayer) {
-                                            int parentIdx = (int) lqn.parent.get(0, nextaidx);
-                                            if (parentIdx >= 0 && lqn.setuptime != null && lqn.delayofftime != null) {
-                                                Distribution setupTime = lqn.setuptime.get(parentIdx);
-                                                Distribution delayoffTime = lqn.delayofftime.get(parentIdx);
-                                                if (setupTime != null && delayoffTime != null) {
-                                                    serverStation.get(m).setDelayOff(aidxclass.get(nextaidx), setupTime, delayoffTime);
-                                                }
+                                        // Check if the task owning this activity is a FunctionTask (has setup/delayoff)
+                                        int nextaidxParent = (int) lqn.parent.get(0, nextaidx);
+                                        boolean isNextaidxParentFunction = nextaidxParent >= 0 && lqn.isfunction != null &&
+                                                                        lqn.isfunction.getNumCols() > nextaidxParent &&
+                                                                        lqn.isfunction.get(0, nextaidxParent) == 1;
+                                        if (isNextaidxParentFunction && lqn.setuptime != null && lqn.delayofftime != null) {
+                                            Distribution setupTime = lqn.setuptime.get(nextaidxParent);
+                                            Distribution delayoffTime = lqn.delayofftime.get(nextaidxParent);
+                                            if (setupTime != null && delayoffTime != null) {
+                                                serverStation.get(m).setDelayOff(aidxclass.get(nextaidx), setupTime, delayoffTime);
                                             }
                                         }
                                         }
                                     }
-                                    
+
                                     if (finalIsCacheLayer) {
                                         jobPos = atServer;
                                         curClass = aidxclass.get(nextaidx);
@@ -1316,7 +1380,40 @@ public class SolverLN extends EnsembleSolver {
         int jobPos = atClient; // start at client
         // second pass: setup the routing out of entries
         for (int tidx_caller : callers) {
-            if (lqn.issynccaller.get(tidx_caller, idx) == 1 || ishostlayer) { // if it is only an asynch caller the closed classes are not needed
+            // Per-caller: check if this caller is a sync caller to entries of idx
+            // For host layers, idx is a host index with no entries, so this is always false
+            boolean isSyncCallerToTargetEntries = false;
+            if (!ishostlayer && lqn.entriesof.get(idx) != null) {
+                for (int entry_idx : lqn.entriesof.get(idx)) {
+                    if (lqn.issynccaller.get(tidx_caller, entry_idx) != 0) {
+                        isSyncCallerToTargetEntries = true;
+                        break;
+                    }
+                }
+            }
+            // Per-caller: recompute hasDirectCallers for host layers (same as first pass)
+            boolean hasDirectCallers2 = false;
+            if (ishostlayer) {
+                if (lqn.isref.get(tidx_caller) != 0) {
+                    hasDirectCallers2 = true;
+                } else {
+                    for (int eidx : lqn.entriesof.get(tidx_caller)) {
+                        for (int row = 1; row <= lqn.ntasks; row++) {
+                            int tidx_row = row + lqn.tshift;
+                            if (lqn.issynccaller.get(tidx_row, eidx) != 0 || lqn.isasynccaller.get(tidx_row, eidx) != 0) {
+                                hasDirectCallers2 = true;
+                                break;
+                            }
+                        }
+                        if (hasDirectCallers2) break;
+                        if (lqn.arrival != null && lqn.arrival.containsKey(eidx) && lqn.arrival.get(eidx) != null) {
+                            hasDirectCallers2 = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if ((ishostlayer && hasDirectCallers2) || isSyncCallerToTargetEntries) { // if it is only an asynch caller the closed classes are not needed
                 int ncaller_entries = lqn.entriesof.get(tidx_caller).size();
                 for (int eidx : lqn.entriesof.get(tidx_caller)) {
                     JobClass aidxClass_eidx = aidxclass.get(eidx);
@@ -1645,6 +1742,18 @@ public class SolverLN extends EnsembleSolver {
         return getEnsembleAvg();
     }
 
+    public AvgTable avgTable() {
+        return getAvgTable();
+    }
+
+    public AvgTable avgT() {
+        return getAvgTable();
+    }
+
+    public AvgTable aT() {
+        return getAvgTable();
+    }
+
     public Matrix getCall_classes_updmap() {
         return call_classes_updmap;
     }
@@ -1666,9 +1775,24 @@ public class SolverLN extends EnsembleSolver {
         if (this.ensemble == null || this.ensemble.length == 0) {
             return null;
         }
-        this.iterate();
+        try {
+            this.iterate();
+        } catch (Exception e) {
+            line_warning(mfilename(new Object(){}.getClass().getEnclosingMethod()),
+                "SolverLN iteration failed: %s at %s", e.getMessage(),
+                e.getStackTrace().length > 0 ? e.getStackTrace()[0].toString() : "unknown");
+            e.printStackTrace();
+            return null;
+        }
         // NOTE: TestSolverLN, TestSolverLN2, TestSolverLN3, had problems here due to
         // different values returned by getAvg() in MATLAB and LINE on these examples
+
+        // Check if results were populated during iteration
+        if (this.results == null || this.results.isEmpty()) {
+            line_warning(mfilename(new Object(){}.getClass().getEnclosingMethod()),
+                "SolverLN iteration did not produce results. Returning null AvgTable.");
+            return null;
+        }
 
         Matrix QN = new Matrix(1, this.lqn.nidx + 1, this.lqn.nidx);
         for (int i = 1; i <= this.lqn.nidx; i++)
@@ -1705,6 +1829,10 @@ public class SolverLN extends EnsembleSolver {
         Matrix AN = new Matrix(1, this.lqn.nidx + 1, this.lqn.nidx);
         for (int i = 1; i <= this.lqn.nidx; i++)
             AN.set(i, Double.NaN);
+
+        // Track which activities have already been accumulated into task WN
+        // to prevent double-counting when an activity appears in multiple layers
+        boolean[] wnProcessed = new boolean[this.lqn.nidx + 1];
 
         int E = this.nlayers;
 
@@ -1768,7 +1896,8 @@ public class SolverLN extends EnsembleSolver {
                         task_q = (Queue) task_s;
                         if (task_q.getAttribute().getIsHost()) {
                             if (Double.isNaN(TN.get(tidx)) && clientIdx != -1) {
-                                // store the result in th eprocessor model
+                                // Read task throughput from layer results (like MATLAB)
+                                // this.tput is not populated for REF tasks
                                 TN.set(tidx, this.results.get(this.results.size()).get(e).TN.get(clientIdx - 1, c));
                             }
                         }
@@ -1779,10 +1908,11 @@ public class SolverLN extends EnsembleSolver {
 //                        tidx = (int) this.lqn.parent.get(eidx);  //unused parameter
                         // For phase-2 models, use residt (caller's view with overtaking)
                         // Otherwise use servt (total service time = response time)
+                        // Use 1D access (idx) since servt/residt can be row or column vectors
                         if (this.hasPhase2 && this.servt_ph2 != null && this.servt_ph2.get(eidx - 1) > GlobalConstants.FineTol) {
-                            SN.set(eidx, this.residt.get(0, eidx - 1));  // Phase-1 + overtaking correction
+                            SN.set(eidx, this.residt.get(eidx - 1));  // Phase-1 + overtaking correction
                         } else {
-                            SN.set(eidx, this.servt.get(0, eidx - 1));
+                            SN.set(eidx, this.servt.get(eidx - 1));
                         }
                         entry_s = this.ensemble[e].getStations().get(serverIdx - 1);
                         entry_q = (Queue) entry_s;
@@ -1808,9 +1938,39 @@ public class SolverLN extends EnsembleSolver {
                         break;
 
                     case LayeredNetworkElement.ACTIVITY:
-
                         aidx = this.ensemble[e].getClasses().get(c).getAttribute()[1];
+
+                        // For activities with Immediate host demand, set RespT to 0 explicitly.
+                        // These activities have zero service time by definition.
+                        // The NC solver may return non-zero RN due to how it handles Immediate
+                        // service, so we override with 0 and skip RN accumulation.
+                        Distribution hostDemand = this.lqn.hostdem.get(aidx);
+                        boolean skipRNAccumulation = (hostDemand instanceof Immediate);
+
+                        // Also skip RN accumulation if this class has Disabled service at the server station.
+                        // This happens for RefTask activities in non-host layers where they are callers,
+                        // not the ones being served. Accumulating RN from these layers would incorrectly
+                        // add non-zero response times to activities that have Immediate host demand.
+                        // Note: We only skip RN/SN, not other metrics like QN, TN, WN.
+                        Station serverStation_check = this.ensemble[e].getStations().get(serverIdx - 1);
+                        JobClass activityClass_check = this.ensemble[e].getClasses().get(c);
+                        if (serverStation_check instanceof ServiceStation) {
+                            Distribution serverService_check = ((ServiceStation) serverStation_check).getServiceProcess(activityClass_check);
+                            if (serverService_check instanceof Disabled) {
+                                skipRNAccumulation = true;  // Skip RN/SN but continue with other metrics
+                            }
+                        }
+                        if (skipRNAccumulation) {
+                            if (Double.isNaN(SN.get(aidx))) {
+                                SN.set(aidx, 0);  // Set RespT = 0 for Immediate host demand
+                            }
+                            if (Double.isNaN(RN.get(aidx))) {
+                                RN.set(aidx, 0);  // Set RN = 0 for Immediate host demand
+                            }
+                            // Continue to process other metrics but skip RN accumulation below
+                        }
                         tidx = (int) this.lqn.parent.get(0, aidx);
+                        if (Double.isNaN(QN.get(tidx))) QN.set(tidx, 0);
                         QN.set(tidx, QN.get(tidx) + this.results.get(this.results.size()).get(e).QN.get(serverIdx - 1, c));
 
                         if (Double.isNaN(TN.get(aidx))) {
@@ -1818,6 +1978,81 @@ public class SolverLN extends EnsembleSolver {
                         }
                         if (Double.isNaN(QN.get(aidx))) {
                             QN.set(aidx, 0);
+                        }
+
+                        // For forwarding targets: propagate activity metrics to task
+                        // Check if task has its own class (non-forwarding targets do)
+                        boolean hasTaskClass = false;
+                        Map<Integer, Integer[]> tasks = this.ensemble[e].getAttribute().getTasks();
+                        if (tasks != null) {
+                            for (Integer[] taskAttr : tasks.values()) {
+                                if (taskAttr.length > 1 && taskAttr[1] != null && taskAttr[1].intValue() == tidx) {
+                                    hasTaskClass = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!hasTaskClass) {
+                            // Propagate activity throughput to task for forwarding targets
+                            if (Double.isNaN(TN.get(tidx))) {
+                                TN.set(tidx, 0);
+                            }
+                            switch (this.ensemble[e].getClasses().get(c).getJobClassType()) {
+                                case CLOSED:
+                                    TN.set(tidx, TN.get(tidx) + this.results.get(this.results.size()).get(e).TN.get(serverIdx - 1, c));
+                                    break;
+                                case OPEN:
+                                    if (sourceIdx != -1) {
+                                        TN.set(tidx, TN.get(tidx) + this.results.get(this.results.size()).get(e).TN.get(sourceIdx - 1, c));
+                                    }
+                                    break;
+                                default:
+                            }
+                        }
+
+                        // Find the entry this activity is bound to (matches MATLAB lines 130-153)
+                        List<Integer> entriesOfTask = this.lqn.entriesof.get(tidx);
+                        if (entriesOfTask != null) {
+                            for (int eidx_check : entriesOfTask) {
+                                // Check if activity is bound to this entry via graph
+                                if (this.lqn.graph.get(eidx_check, aidx) > 0) {
+                                    if (Double.isNaN(TN.get(eidx_check))) TN.set(eidx_check, 0);
+                                    if (Double.isNaN(QN.get(eidx_check))) QN.set(eidx_check, 0);
+                                    if (Double.isNaN(SN.get(eidx_check))) SN.set(eidx_check, 0);
+
+                                    // Get activity throughput
+                                    double actTput = 0;
+                                    switch (this.ensemble[e].getClasses().get(c).getJobClassType()) {
+                                        case CLOSED:
+                                            actTput = this.results.get(this.results.size()).get(e).TN.get(serverIdx - 1, c);
+                                            break;
+                                        case OPEN:
+                                            if (sourceIdx != -1) {
+                                                actTput = this.results.get(this.results.size()).get(e).TN.get(sourceIdx - 1, c);
+                                            }
+                                            break;
+                                        default:
+                                    }
+
+                                    // Only add if entry doesn't have its own class (forwarding target case)
+                                    boolean hasEntryClass = false;
+                                    Map<Integer, Integer[]> entries = this.ensemble[e].getAttribute().getEntries();
+                                    if (entries != null) {
+                                        for (Integer[] entryAttr : entries.values()) {
+                                            if (entryAttr.length > 1 && entryAttr[1] != null && entryAttr[1].intValue() == eidx_check) {
+                                                hasEntryClass = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (!hasEntryClass) {
+                                        TN.set(eidx_check, TN.get(eidx_check) + actTput);
+                                        QN.set(eidx_check, QN.get(eidx_check) + this.results.get(this.results.size()).get(e).QN.get(serverIdx - 1, c));
+                                        SN.set(eidx_check, SN.get(eidx_check) + this.results.get(this.results.size()).get(e).RN.get(serverIdx - 1, c));
+                                    }
+                                    break;
+                                }
+                            }
                         }
 
                         switch (this.ensemble[e].getClasses().get(c).getJobClassType()) {
@@ -1833,15 +2068,19 @@ public class SolverLN extends EnsembleSolver {
 
                             default:
                         }
-                        if (Double.isNaN(SN.get(aidx))) {
-                            SN.set(aidx, 0);
-                        }
-                        SN.set(aidx, SN.get(aidx) + this.results.get(this.results.size()).get(e).RN.get(serverIdx - 1, c));
+                        // Skip RN accumulation for activities with Immediate host demand
+                        // (skipRNAccumulation flag was set earlier in this case block)
+                        if (!skipRNAccumulation) {
+                            if (Double.isNaN(SN.get(aidx))) {
+                                SN.set(aidx, 0);
+                            }
+                            SN.set(aidx, SN.get(aidx) + this.results.get(this.results.size()).get(e).RN.get(serverIdx - 1, c));
 
-                        if (Double.isNaN(RN.get(aidx))) {
-                            RN.set(aidx, 0);
+                            if (Double.isNaN(RN.get(aidx))) {
+                                RN.set(aidx, 0);
+                            }
+                            RN.set(aidx, RN.get(aidx) + this.results.get(this.results.size()).get(e).RN.get(serverIdx - 1, c));
                         }
-                        RN.set(aidx, RN.get(aidx) + this.results.get(this.results.size()).get(e).RN.get(serverIdx - 1, c));
 
                         if (Double.isNaN(WN.get(aidx))) {
                             WN.set(aidx, 0);
@@ -1850,8 +2089,14 @@ public class SolverLN extends EnsembleSolver {
                         if (Double.isNaN(WN.get(tidx))) {
                             WN.set(tidx, 0);
                         }
-                        WN.set(aidx, WN.get(aidx) + this.results.get(this.results.size()).get(e).WN.get(serverIdx - 1, c));
-                        WN.set(tidx, WN.get(tidx) + this.results.get(this.results.size()).get(e).WN.get(serverIdx - 1, c));
+                        // Use this.residt (computed via QN/TN_ref in updateMetricsDefault)
+                        // instead of layer WN to avoid fork+loop visit distortion
+                        // (matches MATLAB getEnsembleAvg.m)
+                        WN.set(aidx, this.residt.get(aidx - 1));
+                        if (!wnProcessed[aidx]) {
+                            WN.set(tidx, WN.get(tidx) + this.residt.get(aidx - 1));
+                            wnProcessed[aidx] = true;
+                        }
                         if (Double.isNaN(QN.get(aidx))) {
                             QN.set(aidx, 0);
                         }
@@ -1922,7 +2167,11 @@ public class SolverLN extends EnsembleSolver {
                     nodeTypes.add("Processor");
                     break;
                 case LayeredNetworkElement.TASK:
-                    nodeTypes.add("Task");
+                    if (lqn.sched.get(1 + o) == SchedStrategy.REF) {
+                        nodeTypes.add("RefTask");
+                    } else {
+                        nodeTypes.add("Task");
+                    }
                     break;
                 case LayeredNetworkElement.ENTRY:
                     nodeTypes.add("Entry");
@@ -2055,9 +2304,10 @@ public class SolverLN extends EnsembleSolver {
 //                this.unique_route_prob_updmap.set(k, numSet.get(k));
         }
 
-        this.tput = new Matrix(this.lqn.nidx, 1, this.lqn.nidx);
-        this.util = new Matrix(this.lqn.nidx, 1, this.lqn.nidx);
-        this.servt = new Matrix(this.lqn.nidx, 1, this.lqn.nidx);
+        // Use row vectors (1 x nidx) consistently for all metric arrays
+        this.tput = new Matrix(1, this.lqn.nidx, this.lqn.nidx);
+        this.util = new Matrix(1, this.lqn.nidx, this.lqn.nidx);
+        this.servt = new Matrix(1, this.lqn.nidx, this.lqn.nidx);
         this.servtmatrix = this.getEntryServiceMatrix();
         for (int e = 0; e < this.nlayers; e++)
             this.solvers[e].enableChecks = false;
@@ -2128,6 +2378,8 @@ public class SolverLN extends EnsembleSolver {
 
         for (int e : routereset) {
             ensemble[e - 1].refreshChains(true);
+            // Note: refreshChains(true) already calls snRefreshVisits() internally,
+            // matching MATLAB's refreshChains() behavior. No additional visit refresh needed.
             solvers[e - 1].reset();
         }
 
@@ -2303,6 +2555,11 @@ public class SolverLN extends EnsembleSolver {
         LayeredNetworkStruct lqn = this.lqn;
         int rLen = this.results.size();
 
+        // Safety check: if results is empty, skip metric updates
+        if (this.results == null || this.results.isEmpty() || rLen == 0) {
+            return;
+        }
+
         // obtain the activity service times
         this.servt = new Matrix(1, lqn.nidx, lqn.nidx);
         this.residt = new Matrix(1, lqn.nidx, lqn.nidx);
@@ -2315,6 +2572,26 @@ public class SolverLN extends EnsembleSolver {
             // store the residence times and tput at this layer to become
             // the servt / tputs of aidx in another layer, as needed
             // this.servt starts from 0 for JLineMatrix Multiplication
+
+            // Compute residt from QN/TN_ref instead of WN to avoid
+            // fork+loop visit distortion (WN uses visits from DTMC solve
+            // which are distorted when Fork non-stochastic rows coexist
+            // with loop back-edges in the routing matrix)
+            // (matches MATLAB updateMetricsDefault.m)
+            int layerIdx_0 = this.idxhash.get(idx).intValue() - 1;
+            NetworkStruct layerSn = this.ensemble[layerIdx_0].getStruct(false);
+            int chainIdx = -1;
+            if (layerSn != null && layerSn.chains != null && !layerSn.chains.isEmpty()) {
+                for (int ch = 0; ch < layerSn.nchains; ch++) {
+                    if (layerSn.chains.get(ch, classidx - 1) > 0) {
+                        chainIdx = ch;
+                        break;
+                    }
+                }
+            }
+            int refclass_c = (chainIdx >= 0 && layerSn.refclass != null) ? (int) layerSn.refclass.get(chainIdx) : classidx - 1;
+            int refstat_k = (layerSn != null && layerSn.refstat != null) ? (int) layerSn.refstat.get(classidx - 1) : 0;
+
             int iter_min = (int) FastMath.min(30, FastMath.ceil(this.options.iter_max / 4.0));
             if (this.averagingstart != null && it >= iter_min) {
                 int wnd_size = it - this.averagingstart + 1;
@@ -2322,15 +2599,63 @@ public class SolverLN extends EnsembleSolver {
                 this.residt.set(aidx - 1, 0);
                 this.tput.set(aidx - 1, 0);
                 for (int w = 1; w < wnd_size; w++) {
-                    this.servt.set(aidx - 1, this.servt.get(aidx - 1) + this.results.get(rLen - w).get(this.idxhash.get(idx).intValue() - 1).RN.get(nodeidx - 1, classidx - 1) / wnd_size);
-                    this.residt.set(aidx - 1, this.residt.get(aidx - 1) + this.results.get(rLen - w).get(this.idxhash.get(idx).intValue() - 1).WN.get(nodeidx - 1, classidx - 1) / wnd_size);
-                    this.tput.set(aidx - 1, this.tput.get(aidx - 1) + this.results.get(rLen - w).get(this.idxhash.get(idx).intValue() - 1).TN.get(nodeidx - 1, classidx - 1) / wnd_size);
+                    this.servt.set(aidx - 1, this.servt.get(aidx - 1) + this.results.get(rLen - w).get(layerIdx_0).RN.get(nodeidx - 1, classidx - 1) / wnd_size);
+                    double TN_ref_w = this.results.get(rLen - w).get(layerIdx_0).TN.get(refstat_k, refclass_c);
+                    if (TN_ref_w > GlobalConstants.FineTol) {
+                        this.residt.set(aidx - 1, this.residt.get(aidx - 1) + this.results.get(rLen - w).get(layerIdx_0).QN.get(nodeidx - 1, classidx - 1) / TN_ref_w / wnd_size);
+                    } else {
+                        this.residt.set(aidx - 1, this.residt.get(aidx - 1) + this.results.get(rLen - w).get(layerIdx_0).WN.get(nodeidx - 1, classidx - 1) / wnd_size);
+                    }
+                    this.tput.set(aidx - 1, this.tput.get(aidx - 1) + this.results.get(rLen - w).get(layerIdx_0).TN.get(nodeidx - 1, classidx - 1) / wnd_size);
                 }
             } else {
-                this.servt.set(aidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).RN.get(nodeidx - 1, classidx - 1));
-                this.residt.set(aidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).WN.get(nodeidx - 1, classidx - 1));
-                
-                this.tput.set(aidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).TN.get(nodeidx - 1, classidx - 1));
+                this.servt.set(aidx - 1, this.results.get(results.size()).get(layerIdx_0).RN.get(nodeidx - 1, classidx - 1));
+                double TN_ref = this.results.get(results.size()).get(layerIdx_0).TN.get(refstat_k, refclass_c);
+                if (TN_ref > GlobalConstants.FineTol) {
+                    this.residt.set(aidx - 1, this.results.get(results.size()).get(layerIdx_0).QN.get(nodeidx - 1, classidx - 1) / TN_ref);
+                } else {
+                    this.residt.set(aidx - 1, this.results.get(results.size()).get(layerIdx_0).WN.get(nodeidx - 1, classidx - 1));
+                }
+                this.tput.set(aidx - 1, this.results.get(results.size()).get(layerIdx_0).TN.get(nodeidx - 1, classidx - 1));
+            }
+
+            // Force servt/residt to 0 for activities with Immediate service time
+            // The NC solver may return non-zero RN due to numerical issues, but
+            // Immediate activities have zero service time by definition
+            if (lqn.hostdem.get(aidx) instanceof Immediate) {
+                this.servt.set(aidx - 1, 0);
+                this.residt.set(aidx - 1, 0);
+            }
+
+            // Fix for async-only entry targets: use RN (response time per visit) for residt
+            // The host layer closed model incorrectly splits residence time (WN) between
+            // activities when an entry only receives async calls (no sync callers).
+            // For async-only entries, use RN instead of WN since the async arrivals
+            // don't share the closed chain's visit ratio - each async arrival gets
+            // the full response time per visit.
+            if (aidx > lqn.ashift && aidx <= lqn.ashift + lqn.nacts) {
+                // This is an activity - find its bound entry
+                for (int eidx = lqn.eshift + 1; eidx <= lqn.eshift + lqn.nentries; eidx++) {
+                    if (lqn.graph.get(eidx, aidx) > 0) {
+                        // Found bound entry - check if async-only
+                        boolean hasSyncCallers = false;
+                        boolean hasAsyncCallers = false;
+                        for (int i = 1; i <= lqn.nidx; i++) {
+                            if (lqn.issynccaller.get(i, eidx) > 0) {
+                                hasSyncCallers = true;
+                            }
+                            if (lqn.isasynccaller.get(i, eidx) > 0) {
+                                hasAsyncCallers = true;
+                            }
+                        }
+                        if (hasAsyncCallers && !hasSyncCallers) {
+                            // Async-only target: use RN (response time per visit)
+                            // instead of WN (residence time with visit ratio)
+                            this.residt.set(aidx - 1, this.servt.get(aidx - 1)); // servt already has RN
+                        }
+                        break;
+                    }
+                }
             }
 
             // Apply under-relaxation if enabled and not first iteration
@@ -2351,7 +2676,12 @@ public class SolverLN extends EnsembleSolver {
             this.residt_prev.set(aidx - 1, this.residt.get(aidx - 1));
             this.tput_prev.set(aidx - 1, this.tput.get(aidx - 1));
 
-            this.servtproc.put(aidx, Exp.fitMean(this.servt.get(aidx - 1)));
+            // Preserve Immediate type for activities that originally had Immediate service times
+            if (lqn.hostdem.get(aidx) instanceof Immediate) {
+                this.servtproc.put(aidx, Immediate.getInstance());
+            } else {
+                this.servtproc.put(aidx, Exp.fitMean(this.servt.get(aidx - 1)));
+            }
             this.tputproc.put(aidx, Exp.fitRate(this.tput.get(aidx - 1)));
         }
 
@@ -2614,6 +2944,10 @@ public class SolverLN extends EnsembleSolver {
                 }
 
                 Matrix caller_tput = new Matrix(lqn.ntasks + 1, 1, lqn.ntasks);
+                // Skip tasks without a valid layer mapping (ignored, isolated, etc.)
+                if (tidx >= idxhash.size() || Double.isNaN(idxhash.get(tidx))) {
+                    continue;
+                }
                 for (int caller_idx : callers) {
                     List<Double> caller_idxclass = new ArrayList<Double>();
                     List<Integer> keys = new ArrayList<Integer>();
@@ -2626,6 +2960,11 @@ public class SolverLN extends EnsembleSolver {
                         if (keys.get(i) == caller_idx) {
                             caller_idx_found_index = i + 1;
                         }
+                    }
+                    // Skip callers that are not in the taskmap (e.g., async-only callers)
+                    // In MATLAB, find() returns empty and the loop body is effectively skipped
+                    if (caller_idx_found_index == 0) {
+                        continue;
                     }
                     caller_idxclass.add((double) taskmap.get(1 + caller_idx_found_index)[0]);
 
@@ -2685,8 +3024,7 @@ public class SolverLN extends EnsembleSolver {
         P = dtmc_makestochastic(P); // hold mass at reference stations when there
 
         this.ptaskcallers_step.put(1, P.copy()); // configure step = 1
-        // TODO: GC: Up to here the code has been validated, the block below has a bug
-        // Updated in the commit after d933b73416c5d3af9e88f94969e5fdd315895883 unclear if bug still there
+        // Random walk block validated: indexing matches MATLAB updateMetricsDefault.m lines 319-351
         for (int h = 1; h <= lqn.nhosts; h++) {
             int hidx = h;
             for (int i = 0; i < lqn.tasksof.get(hidx).size(); i++) {
@@ -2740,6 +3078,7 @@ public class SolverLN extends EnsembleSolver {
 
             // First obtain servt of activities at hostlayers
             this.servt = new Matrix(1, lqn.nidx, lqn.nidx);
+            this.residt = new Matrix(1, lqn.nidx, lqn.nidx);
             for (int r = 1; r < this.servt_classes_updmap.getNumRows(); r++) {
                 int idx = (int) this.servt_classes_updmap.get(r, 1);     // layer
                 int aidx = (int) this.servt_classes_updmap.get(r, 2);    // activity
@@ -2750,10 +3089,32 @@ public class SolverLN extends EnsembleSolver {
                 this.servt.set(aidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).RN.get(nodeidx - 1, classidx - 1));
                 this.tput.set(aidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).TN.get(nodeidx - 1, classidx - 1));
                 this.servtproc.put(aidx, Exp.fitMean(this.servt.get(aidx - 1)));
+
+                // Compute residt from QN/TN_ref (matching MATLAB updateMetricsMomentBased)
+                int layerIdx_0 = this.idxhash.get(idx).intValue() - 1;
+                NetworkStruct layerSn = this.ensemble[layerIdx_0].getStruct(false);
+                int chainIdx = -1;
+                if (layerSn != null && layerSn.chains != null && !layerSn.chains.isEmpty()) {
+                    for (int ch = 0; ch < layerSn.nchains; ch++) {
+                        if (layerSn.chains.get(ch, classidx - 1) > 0) {
+                            chainIdx = ch;
+                            break;
+                        }
+                    }
+                }
+                int refclass_c = (chainIdx >= 0 && layerSn.refclass != null) ? (int) layerSn.refclass.get(chainIdx) : classidx - 1;
+                int refstat_k = (layerSn != null && layerSn.refstat != null) ? (int) layerSn.refstat.get(classidx - 1) : 0;
+                double TN_ref = this.results.get(results.size()).get(layerIdx_0).TN.get(refstat_k, refclass_c);
+                if (TN_ref > GlobalConstants.FineTol) {
+                    this.residt.set(aidx - 1, this.results.get(results.size()).get(layerIdx_0).QN.get(nodeidx - 1, classidx - 1) / TN_ref);
+                } else {
+                    this.residt.set(aidx - 1, this.results.get(results.size()).get(layerIdx_0).WN.get(nodeidx - 1, classidx - 1));
+                }
             }
 
             // Estimate call response times at hostlayers
             this.callservt = new Matrix(1, lqn.ncalls, lqn.ncalls);
+            this.callresidt = new Matrix(1, lqn.ncalls, lqn.ncalls);
             for (int r = 1; r < this.call_classes_updmap.getNumRows(); r++) {
                 int idx = (int) this.call_classes_updmap.get(r, 1);     // layer
                 int cidx = (int) this.call_classes_updmap.get(r, 2);    // call
@@ -2763,8 +3124,12 @@ public class SolverLN extends EnsembleSolver {
                 if (this.call_classes_updmap.get(r, 3) > 1) {
                     if (nodeidx == 1) {
                         this.callservt.set(cidx - 1, 0.0);
+                        this.callresidt.set(cidx - 1, 0.0);
                     } else {
-                        this.callservt.set(cidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).RN.get(nodeidx - 1, classidx - 1));
+                        // Include call multiplicity in callservt (matching MATLAB)
+                        this.callservt.set(cidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).RN.get(nodeidx - 1, classidx - 1) * this.lqn.callproc_mean.getOrDefault(cidx, 1.0));
+                        // callresidt uses WN which already includes visit multiplicity
+                        this.callresidt.set(cidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).WN.get(nodeidx - 1, classidx - 1));
                     }
                 }
             }
@@ -2785,6 +3150,16 @@ public class SolverLN extends EnsembleSolver {
                 entry_servt.set(i, 0, 0);
             }
 
+            // Propagate forwarding calls: add target entry's service time to source entry
+            for (int cidx = 1; cidx <= lqn.ncalls; cidx++) {
+                if (lqn.calltype.get(cidx) == CallType.FWD) {
+                    int source_eidx = (int) lqn.callpair.get(cidx, 1);
+                    int target_eidx = (int) lqn.callpair.get(cidx, 2);
+                    double fwd_prob = this.lqn.callproc_mean.getOrDefault(cidx, 1.0);
+                    entry_servt.set(source_eidx - 1, 0, entry_servt.get(source_eidx - 1, 0) + fwd_prob * entry_servt.get(target_eidx - 1, 0));
+                }
+            }
+
             // Update servt for entries
             for (int i = lqn.eshift; i < lqn.eshift + lqn.nentries; i++) {
                 this.servt.set(i, entry_servt.get(i, 0));
@@ -2793,6 +3168,59 @@ public class SolverLN extends EnsembleSolver {
             // Clear activities after ashift
             for (int i = lqn.ashift; i < entry_servt.getNumRows(); i++) {
                 entry_servt.set(i, 0, 0);
+            }
+
+            // Compute entry-level residt using servtmatrix and activity residt
+            Matrix residt_out = new Matrix(1, lqn.nidx + lqn.ncalls + 1, lqn.nidx + lqn.ncalls);
+            Matrix.concatColumns(this.residt, this.callresidt, residt_out);
+            Matrix entry_residt = new Matrix(this.servtmatrix.getNumRows(), 1, this.servtmatrix.getNumRows());
+            this.servtmatrix.mult(residt_out.transpose(), entry_residt);
+            for (int i = 0; i < lqn.eshift; i++) {
+                entry_residt.set(i, 0, 0);
+            }
+
+            // Scale entry residt (and servt) by task/entry throughput ratio
+            for (int eidx = lqn.eshift + 1; eidx < lqn.eshift + lqn.nentries + 1; eidx++) {
+                int tidx = (int) lqn.parent.get(0, eidx);
+                if (tidx < 0) continue;
+                int hidx = (int) lqn.parent.get(0, tidx);
+                if (this.ignore.get(tidx) != 0 || this.ignore.get(hidx) != 0) continue;
+
+                boolean hasSyncCallers = false;
+                for (int ii = 1; ii <= lqn.nidx; ii++) {
+                    if (lqn.issynccaller.get(ii, eidx) > 0) {
+                        hasSyncCallers = true;
+                        break;
+                    }
+                }
+
+                if (hasSyncCallers) {
+                    List<Integer> tidxclass = new ArrayList<Integer>();
+                    List<Integer> eidxclass = new ArrayList<Integer>();
+                    for (int ii = 1; ii <= ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getTasks().size(); ii++) {
+                        if (tidx == ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getTasks().get(ii)[1]) {
+                            if (ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getTasks().get(ii)[0] != null)
+                                tidxclass.add(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getTasks().get(ii)[0]);
+                        }
+                    }
+                    for (int ii = 1; ii <= ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getEntries().size(); ii++) {
+                        if (eidx == ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getEntries().get(ii)[1]) {
+                            eidxclass.add(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getEntries().get(ii)[0]);
+                        }
+                    }
+                    double task_tput = 0;
+                    double entry_tput = 0;
+                    for (int ii = 0; ii < tidxclass.size(); ii++) {
+                        task_tput += this.results.get(results.size()).get(this.idxhash.get(hidx).intValue() - 1).TN.get(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getClientIdx() - 1, tidxclass.get(ii) - 1);
+                    }
+                    for (int ii = 0; ii < eidxclass.size(); ii++) {
+                        entry_tput += this.results.get(results.size()).get(this.idxhash.get(hidx).intValue() - 1).TN.get(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getClientIdx() - 1, eidxclass.get(ii) - 1);
+                    }
+                    this.servt.set(eidx - 1, entry_servt.get(eidx - 1, 0) * task_tput / FastMath.max(GlobalConstants.Zero, entry_tput));
+                    this.residt.set(eidx - 1, entry_residt.get(eidx - 1, 0) * task_tput / FastMath.max(GlobalConstants.Zero, entry_tput));
+                } else {
+                    this.residt.set(eidx - 1, entry_residt.get(eidx - 1, 0));
+                }
             }
 
             // Update servtproc for entries based on call classes
@@ -2828,6 +3256,7 @@ public class SolverLN extends EnsembleSolver {
 
             // First obtain servt of activities at hostlayers
             this.servt = new Matrix(1, lqn.nidx, lqn.nidx);
+            this.residt = new Matrix(1, lqn.nidx, lqn.nidx);
             for (int r = 1; r < this.servt_classes_updmap.getNumRows(); r++) {
                 int idx = (int) this.servt_classes_updmap.get(r, 1);
                 int aidx = (int) this.servt_classes_updmap.get(r, 2);
@@ -2836,17 +3265,41 @@ public class SolverLN extends EnsembleSolver {
 
                 this.tput.set(aidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).TN.get(nodeidx - 1, classidx - 1));
 
+                // Compute residt from QN/TN_ref (matching updateMetricsDefault)
+                int layerIdx_0 = this.idxhash.get(idx).intValue() - 1;
+                NetworkStruct layerSn = this.ensemble[layerIdx_0].getStruct(false);
+                int chainIdx = -1;
+                if (layerSn != null && layerSn.chains != null && !layerSn.chains.isEmpty()) {
+                    for (int ch = 0; ch < layerSn.nchains; ch++) {
+                        if (layerSn.chains.get(ch, classidx - 1) > 0) {
+                            chainIdx = ch;
+                            break;
+                        }
+                    }
+                }
+                int refclass_c = (chainIdx >= 0 && layerSn.refclass != null) ? (int) layerSn.refclass.get(chainIdx) : classidx - 1;
+                int refstat_k = (layerSn != null && layerSn.refstat != null) ? (int) layerSn.refstat.get(classidx - 1) : 0;
+                double TN_ref = this.results.get(results.size()).get(layerIdx_0).TN.get(refstat_k, refclass_c);
+                if (TN_ref > GlobalConstants.FineTol) {
+                    this.residt.set(aidx - 1, this.results.get(results.size()).get(layerIdx_0).QN.get(nodeidx - 1, classidx - 1) / TN_ref);
+                } else {
+                    this.residt.set(aidx - 1, this.results.get(results.size()).get(layerIdx_0).WN.get(nodeidx - 1, classidx - 1));
+                }
+
                 int submodelidx = this.idxhash.get(idx).intValue();
                 if (!repo.containsKey(submodelidx)) {
+                    // Try SolverFluid first for actual response time CDFs with
+                    // higher-moment information; fall back to layer solver's
+                    // exponential approximation if Fluid fails on the layer model
                     try {
-                        // Get CDF from layer solver
-                        DistributionResult cdfResult = this.solvers[submodelidx - 1].getCdfRespT();
-                        repo.put(submodelidx, cdfResult);
+                        SolverOptions fluidOpts = SolverFluid.defaultOptions();
+                        fluidOpts.iter_max = 1000;
+                        SolverFluid fluidSolver = new SolverFluid(ensemble[submodelidx - 1], fluidOpts);
+                        repo.put(submodelidx, fluidSolver.getCdfRespT());
                     } catch (Exception e) {
-                        // Fallback to SolverFluid
                         try {
-                            SolverFluid fallback = new SolverFluid(ensemble[submodelidx - 1]);
-                            repo.put(submodelidx, fallback.getCdfRespT());
+                            DistributionResult cdfResult = this.solvers[submodelidx - 1].getCdfRespT();
+                            repo.put(submodelidx, cdfResult);
                         } catch (Exception e2) {
                             // Skip if cannot get CDF
                             continue;
@@ -2866,6 +3319,7 @@ public class SolverLN extends EnsembleSolver {
             // Initialize callservtcdf
             this.callservtcdf = new HashMap<Integer, Matrix>();
             this.callservt = new Matrix(1, lqn.ncalls, lqn.ncalls);
+            this.callresidt = new Matrix(1, lqn.ncalls, lqn.ncalls);
 
             // Estimate call response times at hostlayers
             for (int r = 1; r < this.call_classes_updmap.getNumRows(); r++) {
@@ -2878,11 +3332,17 @@ public class SolverLN extends EnsembleSolver {
                     int submodelidx = this.idxhash.get(idx).intValue();
                     if (!repo.containsKey(submodelidx)) {
                         try {
-                            DistributionResult cdfResult = this.solvers[submodelidx - 1].getCdfRespT();
-                            repo.put(submodelidx, cdfResult);
+                            SolverOptions fluidOpts2 = SolverFluid.defaultOptions();
+                            fluidOpts2.iter_max = 1000;
+                            SolverFluid fluidSolver = new SolverFluid(ensemble[submodelidx - 1], fluidOpts2);
+                            repo.put(submodelidx, fluidSolver.getCdfRespT());
                         } catch (Exception e) {
-                            // Create placeholder for error case
-                            continue;
+                            try {
+                                DistributionResult cdfResult = this.solvers[submodelidx - 1].getCdfRespT();
+                                repo.put(submodelidx, cdfResult);
+                            } catch (Exception e2) {
+                                continue;
+                            }
                         }
                     }
 
@@ -2900,6 +3360,11 @@ public class SolverLN extends EnsembleSolver {
                         defaultCdf.set(1, 0, 0.5); defaultCdf.set(1, 1, 0);
                         defaultCdf.set(2, 0, 1); defaultCdf.set(2, 1, 0);
                         this.callservtcdf.put(cidx, defaultCdf);
+                    }
+
+                    // Also set callresidt from WN (includes visit multiplicity)
+                    if (nodeidx > 1) {
+                        this.callresidt.set(cidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).WN.get(nodeidx - 1, classidx - 1));
                     }
                 }
             }
@@ -2949,14 +3414,19 @@ public class SolverLN extends EnsembleSolver {
                     double m2 = moments[1];
                     double m3 = moments[2];
 
-                    if (m1 > GlobalConstants.FineTol) {
+                    if (m1 > GlobalConstants.CoarseTol) {
                         // Fit APH from raw moments
                         APH fitdist = APH.fitRawMoments(m1, m2, m3);
                         Matrix alpha = fitdist.getInitProb();
                         Matrix T = (Matrix) fitdist.getParam(3).getValue();
 
-                        // Handle repetitions (integer and fractional parts)
+                        // For call indices, multiply repetitions by mean number of calls
+                        // servtmatrix has 1.0 for calls, but we need callproc_mean repetitions
                         double repetitions = matrix.get(eidx - 1, fitidx - 1);
+                        if (fitidx > lqn.nidx) {
+                            int cidx_local = fitidx - lqn.nidx;
+                            repetitions = repetitions * this.lqn.callproc_mean.getOrDefault(cidx_local, 1.0);
+                        }
                         int integerRepetitions = (int) Math.floor(repetitions);
                         double fractionalPart = repetitions - integerRepetitions;
 
@@ -3027,6 +3497,69 @@ public class SolverLN extends EnsembleSolver {
                 }
             }
 
+            // Propagate forwarding calls: add target entry's service time to source entry
+            for (int cidx = 1; cidx <= lqn.ncalls; cidx++) {
+                if (lqn.calltype.get(cidx) == CallType.FWD) {
+                    int source_eidx = (int) lqn.callpair.get(cidx, 1);
+                    int target_eidx = (int) lqn.callpair.get(cidx, 2);
+                    double fwd_prob = this.lqn.callproc_mean.getOrDefault(cidx, 1.0);
+                    this.servt.set(source_eidx - 1, this.servt.get(source_eidx - 1) + fwd_prob * this.servt.get(target_eidx - 1));
+                    this.servtproc.put(source_eidx, Exp.fitMean(this.servt.get(source_eidx - 1)));
+                }
+            }
+
+            // Compute entry-level residt using servtmatrix and activity residt
+            Matrix residt_out_pc = new Matrix(1, lqn.nidx + lqn.ncalls + 1, lqn.nidx + lqn.ncalls);
+            Matrix.concatColumns(this.residt, this.callresidt, residt_out_pc);
+            Matrix entry_residt_pc = new Matrix(this.servtmatrix.getNumRows(), 1, this.servtmatrix.getNumRows());
+            this.servtmatrix.mult(residt_out_pc.transpose(), entry_residt_pc);
+            for (int i = 0; i < lqn.eshift; i++) {
+                entry_residt_pc.set(i, 0, 0);
+            }
+
+            // Scale entry residt by task/entry throughput ratio
+            for (int eidx = lqn.eshift + 1; eidx < lqn.eshift + lqn.nentries + 1; eidx++) {
+                int tidx = (int) lqn.parent.get(0, eidx);
+                if (tidx < 0) continue;
+                int hidx = (int) lqn.parent.get(0, tidx);
+                if (this.ignore.get(tidx) != 0 || this.ignore.get(hidx) != 0) continue;
+
+                boolean hasSyncCallers = false;
+                for (int ii = 1; ii <= lqn.nidx; ii++) {
+                    if (lqn.issynccaller.get(ii, eidx) > 0) {
+                        hasSyncCallers = true;
+                        break;
+                    }
+                }
+
+                if (hasSyncCallers) {
+                    List<Integer> tidxclass = new ArrayList<Integer>();
+                    List<Integer> eidxclass = new ArrayList<Integer>();
+                    for (int ii = 1; ii <= ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getTasks().size(); ii++) {
+                        if (tidx == ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getTasks().get(ii)[1]) {
+                            if (ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getTasks().get(ii)[0] != null)
+                                tidxclass.add(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getTasks().get(ii)[0]);
+                        }
+                    }
+                    for (int ii = 1; ii <= ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getEntries().size(); ii++) {
+                        if (eidx == ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getEntries().get(ii)[1]) {
+                            eidxclass.add(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getEntries().get(ii)[0]);
+                        }
+                    }
+                    double task_tput = 0;
+                    double entry_tput = 0;
+                    for (int ii = 0; ii < tidxclass.size(); ii++) {
+                        task_tput += this.results.get(results.size()).get(this.idxhash.get(hidx).intValue() - 1).TN.get(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getClientIdx() - 1, tidxclass.get(ii) - 1);
+                    }
+                    for (int ii = 0; ii < eidxclass.size(); ii++) {
+                        entry_tput += this.results.get(results.size()).get(this.idxhash.get(hidx).intValue() - 1).TN.get(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getClientIdx() - 1, eidxclass.get(ii) - 1);
+                    }
+                    this.residt.set(eidx - 1, entry_residt_pc.get(eidx - 1, 0) * task_tput / FastMath.max(GlobalConstants.Zero, entry_tput));
+                } else {
+                    this.residt.set(eidx - 1, entry_residt_pc.get(eidx - 1, 0));
+                }
+            }
+
             // Determine call response times processes (final loop)
             for (int r = 1; r < this.call_classes_updmap.getNumRows(); r++) {
                 int cidx = (int) this.call_classes_updmap.get(r, 2);
@@ -3074,13 +3607,13 @@ public class SolverLN extends EnsembleSolver {
                         // but since the ref task has finite multiplicity it is treated
                         // as normal
 
-                        int remidx = remidxDouble.intValue();
+                        int remidx = remidxDouble.intValue() + 1;
                         if (lqn.sched.get(remidx) == SchedStrategy.INF && lqn.isref.get(remidx) == 0) {
                             multremote = Integer.MAX_VALUE;
                         } else {
                             // now we multiply the probability that a request to hidx
                             // originates from remidx
-                            multremote += this.ptaskcallers_step.get(hops).get(hidx - 1, remidx) * call_mult_count.get(remidx + 1, hidx);
+                            multremote += this.ptaskcallers_step.get(hops).get(hidx - 1, remidx - 1) * call_mult_count.get(remidx, hidx);
                         }
                     }
                     if ((multcallers > multremote && multremote > GlobalConstants.CoarseTol) && (multremote != Integer.MAX_VALUE) && multremote < minremote) {
@@ -3219,9 +3752,13 @@ public class SolverLN extends EnsembleSolver {
                 idx = (int) this.unique_route_prob_updmap.get(this.unique_route_prob_updmap.length() - u + 1);
             }
             boolean idx_updated = false;
+            java.util.Set<String> updatedArcs = new java.util.HashSet<>();
 
             Network nt = this.ensemble[this.idxhash.get(idx).intValue() - 1];
-            RoutingMatrix P = new RoutingMatrix(nt, nt.getJobClasses(), nt.getNodes());
+            List<jline.lang.nodes.Node> ntNodes = nt.getNodes();
+            // MATLAB: P = self.ensemble{self.idxhash(idx)}.getLinkedRoutingMatrix;
+            // Get existing routing matrix instead of creating new empty one
+            Map<JobClass, Map<JobClass, Matrix>> rtorig = nt.getLinkedRoutingMatrix();
 
             Matrix tmp_rpu = Matrix.extractColumn(this.route_prob_updmap, 1, null);
             Matrix tmp_rpu_find = tmp_rpu.countEachRow(idx).find();
@@ -3264,11 +3801,24 @@ public class SolverLN extends EnsembleSolver {
                                         if (Xtot > 0) {
                                             // MATLAB: hm_tput = sum(self.results{end,self.idxhash(host)}.TN(self.ensemble{self.idxhash(host)}.attribute.serverIdx,classidxto))
                                             double hm_tput = TN_copy.get(hostNetwork.getAttribute().getServerIdx() - 1, (int) classidxto - 1);
+                                            double prob = hm_tput / Xtot;
                                             // MATLAB: P{classidxfrom,classidxto}(nodefrom, nodeto) = hm_tput / Xtot;
-                                            P.addConnection(nt.getNodeByStatefulIndex((int) nodefrom), nt.getNodeByStatefulIndex((int) nodeto),
-                                                    nt.getJobClassFromIndex((int) classidxfrom - 1), nt.getJobClassFromIndex((int) classidxto - 1),
-                                                    hm_tput / Xtot);
-                                            idx_updated = true;
+                                            // Directly modify rtorig instead of creating new RoutingMatrix
+                                            JobClass classFrom = nt.getJobClassFromIndex((int) classidxfrom - 1);
+                                            JobClass classTo = nt.getJobClassFromIndex((int) classidxto - 1);
+                                            if (rtorig.containsKey(classFrom) && rtorig.get(classFrom).containsKey(classTo)) {
+                                                Matrix routingMatrix = rtorig.get(classFrom).get(classTo);
+                                                routingMatrix.set((int) nodefrom - 1, (int) nodeto - 1, prob);
+                                                idx_updated = true;
+                                                // Track arc for ClassSwitch node update
+                                                int nodeFromIdx = (int) nodefrom - 1;
+                                                int nodeToIdx = (int) nodeto - 1;
+                                                if (nodeFromIdx >= 0 && nodeFromIdx < ntNodes.size() &&
+                                                    nodeToIdx >= 0 && nodeToIdx < ntNodes.size()) {
+                                                    String arcKey = ntNodes.get(nodeFromIdx).getName() + "_TO_" + ntNodes.get(nodeToIdx).getName();
+                                                    updatedArcs.add(arcKey);
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -3283,21 +3833,45 @@ public class SolverLN extends EnsembleSolver {
                                         double Xtot = TN_copy.sumRows(callerNetwork.getAttribute().getServerIdx() - 1);
                                         if (Xtot > 0) {
                                             Map<Integer, Integer[]> call_map = callerNetwork.getAttribute().getCalls();
-                                            // Find the entry class for this call
-                                            int k;
-                                            for (k = 0; k < call_map.size(); k++) {
-                                                if (eidx == call_map.get(k)[4])
+                                            // Find the entry class for this call - MATLAB: calls(:,4) == eidx
+                                            // MATLAB column 4 is 1-indexed, so in Java 0-indexed array it's index 3
+                                            Integer foundEidxclass = null;
+                                            for (Map.Entry<Integer, Integer[]> entry : call_map.entrySet()) {
+                                                Integer[] callInfo = entry.getValue();
+                                                if (callInfo.length > 3 && callInfo[3] == (int) eidx) {
+                                                    // MATLAB: calls(..., 1) - column 1 = index 0
+                                                    foundEidxclass = callInfo[0];
                                                     break;
+                                                }
                                             }
-                                            if (k < call_map.size()) {
-                                                int eidxclass = call_map.get(k)[1];
+                                            if (foundEidxclass != null) {
+                                                int eidxclass = foundEidxclass;
                                                 // MATLAB: entry_tput = sum(self.results{end,self.idxhash(tidx_caller)}.TN(self.ensemble{self.idxhash(tidx_caller)}.attribute.serverIdx,eidxclass))
                                                 double entry_tput = TN_copy.get(callerNetwork.getAttribute().getServerIdx() - 1, eidxclass - 1);
+                                                double prob = entry_tput / Xtot;
                                                 // MATLAB: P{classidxfrom,classidxto}(nodefrom, nodeto) = entry_tput / Xtot;
-                                                P.addConnection(nt.getNodeByStatefulIndex((int) nodefrom), nt.getNodeByStatefulIndex((int) nodeto),
-                                                        nt.getJobClassFromIndex((int) classidxfrom - 1), nt.getJobClassFromIndex((int) classidxto - 1),
-                                                        entry_tput / Xtot);
-                                                idx_updated = true;
+                                                // Directly modify rtorig instead of creating new RoutingMatrix
+                                                JobClass classFrom = nt.getJobClassFromIndex((int) classidxfrom - 1);
+                                                JobClass classTo = nt.getJobClassFromIndex((int) classidxto - 1);
+                                                if (rtorig.containsKey(classFrom) && rtorig.get(classFrom).containsKey(classTo)) {
+                                                    Matrix routingMatrix = rtorig.get(classFrom).get(classTo);
+                                                    // nodefrom and nodeto are stateful indices (1-indexed from MATLAB)
+                                                    if (GlobalConstants.getVerbose() == VerboseLevel.DEBUG) {
+                                                        System.out.println("[DEBUG] updateRoutingProbabilities: setting rtorig[" + classFrom.getName() +
+                                                            "][" + classTo.getName() + "][" + ((int) nodefrom - 1) + "," + ((int) nodeto - 1) +
+                                                            "] = " + prob + " (entry_tput=" + entry_tput + ", Xtot=" + Xtot + ")");
+                                                    }
+                                                    routingMatrix.set((int) nodefrom - 1, (int) nodeto - 1, prob);
+                                                    idx_updated = true;
+                                                    // Track arc for ClassSwitch node update
+                                                    int nodeFromIdx = (int) nodefrom - 1;
+                                                    int nodeToIdx = (int) nodeto - 1;
+                                                    if (nodeFromIdx >= 0 && nodeFromIdx < ntNodes.size() &&
+                                                        nodeToIdx >= 0 && nodeToIdx < ntNodes.size()) {
+                                                        String arcKey = ntNodes.get(nodeFromIdx).getName() + "_TO_" + ntNodes.get(nodeToIdx).getName();
+                                                        updatedArcs.add(arcKey);
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -3311,19 +3885,110 @@ public class SolverLN extends EnsembleSolver {
                 }
             }
 
+            // MATLAB: self.ensemble{self.idxhash(idx)}.relink(P)
             if (idx_updated) {
-                try {
-                    int idxInt = (int) idx;
-                    if (idxInt >= 0 && idxInt < this.idxhash.size()) {
-                        Double idxValue = this.idxhash.get(idxInt);
-                        if (idxValue != null && !Double.isNaN(idxValue)) {
-                            this.ensemble[idxValue.intValue() - 1].relink(P);
-                        }
-                    }
-                } catch (Exception e) {
-                    // Fallback to avoid breaking existing functionality
+                nt.relinkFromRtorig(rtorig);
+            }
+        }
+    }
+
+    /**
+     * Updates ClassSwitch nodes' switching matrices based on rtorig.
+     * This is needed because updating rtorig alone doesn't propagate to ClassSwitch nodes,
+     * which are used when refreshChains recomputes rtnodes from network topology.
+     * Matches Python-native behavior in solver_ln.py lines 4200-4210.
+     *
+     * @param nt The network containing ClassSwitch nodes
+     * @param updatedArcs Set of (nodefrom, nodeto) pairs that had routing updates
+     */
+    private void updateClassSwitchNodes(Network nt, java.util.Set<String> updatedArcs) {
+        if (updatedArcs == null || updatedArcs.isEmpty()) {
+            return;
+        }
+
+        NetworkStruct ntSn = nt.getStruct(false);
+        if (ntSn == null || ntSn.rtorig == null || ntSn.rtorig.isEmpty()) {
+            return;
+        }
+
+        List<jline.lang.nodes.Node> nodes = nt.getNodes();
+        int K = ntSn.nclasses;
+
+        // For each updated arc, find and update the corresponding ClassSwitch node
+        for (String arcKey : updatedArcs) {
+            String[] parts = arcKey.split("_TO_");
+            if (parts.length != 2) continue;
+            String nodeFromName = parts[0];
+            String nodeToName = parts[1];
+
+            // Find ClassSwitch node with name pattern CS_{nodeFrom}_to_{nodeTo}
+            String csName = "CS_" + nodeFromName + "_to_" + nodeToName;
+            jline.lang.nodes.ClassSwitch csNode = null;
+            for (jline.lang.nodes.Node node : nodes) {
+                if (node instanceof jline.lang.nodes.ClassSwitch && node.getName().equals(csName)) {
+                    csNode = (jline.lang.nodes.ClassSwitch) node;
+                    break;
                 }
             }
+
+            if (csNode == null) {
+                continue;
+            }
+
+            // Find node indices
+            int nodeFromIdx = -1;
+            int nodeToIdx = -1;
+            for (int i = 0; i < nodes.size(); i++) {
+                if (nodes.get(i).getName().equals(nodeFromName)) {
+                    nodeFromIdx = i;
+                }
+                if (nodes.get(i).getName().equals(nodeToName)) {
+                    nodeToIdx = i;
+                }
+            }
+            if (nodeFromIdx < 0 || nodeToIdx < 0) continue;
+
+            // Build ClassSwitch matrix from rtorig for this arc
+            jline.lang.ClassSwitchMatrix csMatrix = csNode.initClassSwitchMatrix();
+
+            // First, compute row sums for normalization
+            double[] rowSums = new double[K];
+            for (int r = 0; r < K; r++) {
+                JobClass fromClass = nt.getJobClassFromIndex(r);
+                if (fromClass == null || !ntSn.rtorig.containsKey(fromClass)) continue;
+                Map<JobClass, Matrix> fromMap = ntSn.rtorig.get(fromClass);
+                for (int s = 0; s < K; s++) {
+                    JobClass toClass = nt.getJobClassFromIndex(s);
+                    if (toClass == null || !fromMap.containsKey(toClass)) continue;
+                    Matrix routeMat = fromMap.get(toClass);
+                    if (routeMat == null || nodeFromIdx >= routeMat.getNumRows() || nodeToIdx >= routeMat.getNumCols()) continue;
+                    double prob = routeMat.get(nodeFromIdx, nodeToIdx);
+                    if (prob > 0) {
+                        rowSums[r] += prob;
+                    }
+                }
+            }
+
+            // Build the ClassSwitch matrix with normalized probabilities
+            for (int r = 0; r < K; r++) {
+                JobClass fromClass = nt.getJobClassFromIndex(r);
+                if (fromClass == null || !ntSn.rtorig.containsKey(fromClass)) continue;
+                Map<JobClass, Matrix> fromMap = ntSn.rtorig.get(fromClass);
+                for (int s = 0; s < K; s++) {
+                    JobClass toClass = nt.getJobClassFromIndex(s);
+                    if (toClass == null || !fromMap.containsKey(toClass)) continue;
+                    Matrix routeMat = fromMap.get(toClass);
+                    if (routeMat == null || nodeFromIdx >= routeMat.getNumRows() || nodeToIdx >= routeMat.getNumCols()) continue;
+                    double prob = routeMat.get(nodeFromIdx, nodeToIdx);
+                    if (prob > 0 && rowSums[r] > 0) {
+                        // Normalize to ensure row sums to 1
+                        csMatrix.set(r, s, prob / rowSums[r]);
+                    }
+                }
+            }
+
+            // Update the ClassSwitch node
+            csNode.setClassSwitchingMatrix(csMatrix);
         }
     }
 
@@ -3354,7 +4019,7 @@ public class SolverLN extends EnsembleSolver {
 //                            get(this.ensemble[this.idxhash.get(tidx).intValue() - 1].getAttribute().getServerIdx());
 //                    Matrix.extractRows(matrixExtracted, extractRowIndex, extractRowIndex + 1, serverIdxRow);
                     // lqn.repl has padded 0 index, while tput does not.
-                    this.tput.set(tidx - 1, this.lqn.repl.get(tidx) * matrixExtracted.sumRows(this.ensemble[this.idxhash.get(tidx).intValue() - 1].getAttribute().getServerIdx() - 1));
+                    this.tput.set(tidx - 1, this.lqn.repl.get(0, tidx) * matrixExtracted.sumRows(this.ensemble[this.idxhash.get(tidx).intValue() - 1].getAttribute().getServerIdx() - 1));
 
                     // obtain total self.utilization of task t
                     Matrix UmatrixExtracted = this.results.get(this.results.size()).get(this.idxhash.get(tidx).intValue() - 1).UN;
@@ -3713,6 +4378,142 @@ public class SolverLN extends EnsembleSolver {
         }
 
         return prOt;
+    }
+
+    /**
+     * Get the fork fanout correction factor for an activity.
+     *
+     * For activities that are in a fork branch (after fork, before join),
+     * returns the number of parallel branches so throughput can be corrected.
+     * For fork sources, join targets, and non-fork activities, returns 1.
+     *
+     * Without Fork/Join nodes, probabilistic routing divides throughput by
+     * the number of branches. This function identifies activities that need
+     * correction (multiplication by fanout) to recover the correct throughput.
+     *
+     * Activities needing correction:
+     * 1. Fork sources - routing normalization divides their throughput
+     * 2. POST_AND activities (fork branch targets)
+     * 3. Activities in fork branch chains (successors of POST_AND before join)
+     *
+     * Activities NOT needing correction:
+     * - Join targets - receive sum from all branches
+     *
+     * @param aidx The activity index
+     * @return The fork fanout correction factor (1 if no correction needed)
+     */
+    private int getForkFanout(int aidx) {
+        if (this.lqn == null || this.lqn.graph == null) {
+            return 1;
+        }
+
+        Matrix graph = this.lqn.graph;
+        if (graph.getNumRows() == 0 || graph.getNumCols() == 0) {
+            return 1;
+        }
+
+        return getForkFanoutRecursive(aidx, new HashSet<Integer>());
+    }
+
+    /**
+     * Recursive helper for getForkFanout.
+     */
+    private int getForkFanoutRecursive(int aidx, Set<Integer> visited) {
+        if (visited.contains(aidx)) {
+            return 1;
+        }
+        visited.add(aidx);
+
+        Matrix graph = this.lqn.graph;
+
+        // Check if this activity is a join target (has PRE_AND predecessors)
+        // Join targets don't need correction - they receive from all branches
+        if (isJoinTarget(aidx)) {
+            return 1;
+        }
+
+        // Check if this activity is a fork source (has POST_AND successors)
+        int postAndSuccessors = countPostAndSuccessors(aidx);
+        if (postAndSuccessors > 1 && !isPostAndActivity(aidx)) {
+            return postAndSuccessors;
+        }
+
+        // Check if this activity is POST_AND (fork branch target)
+        if (isPostAndActivity(aidx)) {
+            // Find predecessor (fork source) and count its POST_AND successors
+            for (int predIdx = 1; predIdx < graph.getNumRows(); predIdx++) {
+                if (predIdx != aidx && graph.get(predIdx, aidx) != 0) {
+                    int fanout = countPostAndSuccessors(predIdx);
+                    if (fanout > 1) {
+                        return fanout;
+                    }
+                }
+            }
+            return 1;
+        }
+
+        // Check if this activity is in a fork branch chain (predecessor has fanout)
+        for (int predIdx = 1; predIdx < graph.getNumRows(); predIdx++) {
+            if (predIdx != aidx && graph.get(predIdx, aidx) != 0) {
+                int predFanout = getForkFanoutRecursive(predIdx, visited);
+                if (predFanout > 1) {
+                    return predFanout;
+                }
+            }
+        }
+
+        return 1;
+    }
+
+    /**
+     * Check if an activity is POST_AND (fork branch target).
+     */
+    private boolean isPostAndActivity(int aidx) {
+        if (this.lqn.actposttype == null) {
+            return false;
+        }
+        if (aidx < 0 || aidx >= this.lqn.actposttype.getNumCols()) {
+            return false;
+        }
+        return this.lqn.actposttype.get(0, aidx) == ActivityPrecedenceType.ID_POST_AND;
+    }
+
+    /**
+     * Check if an activity is a join target (has PRE_AND predecessors).
+     */
+    private boolean isJoinTarget(int aidx) {
+        if (this.lqn.actpretype == null || this.lqn.graph == null) {
+            return false;
+        }
+        Matrix graph = this.lqn.graph;
+
+        // Check if ANY predecessor of this activity is PRE_AND
+        for (int predIdx = 1; predIdx < graph.getNumRows(); predIdx++) {
+            if (predIdx != aidx && graph.get(predIdx, aidx) != 0) {
+                if (predIdx < this.lqn.actpretype.getNumCols() &&
+                    this.lqn.actpretype.get(0, predIdx) == ActivityPrecedenceType.ID_PRE_AND) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Count POST_AND successors of an activity.
+     */
+    private int countPostAndSuccessors(int aidx) {
+        if (this.lqn.actposttype == null || this.lqn.graph == null) {
+            return 0;
+        }
+        Matrix graph = this.lqn.graph;
+        int count = 0;
+        for (int succIdx = 1; succIdx < graph.getNumCols(); succIdx++) {
+            if (graph.get(aidx, succIdx) != 0 && isPostAndActivity(succIdx)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /**

@@ -205,6 +205,23 @@ class Det(ContinuousDistribution):
         """Check if this is an immediate (zero) service."""
         return self._value == 0.0
 
+    @classmethod
+    def fit_mean(cls, mean: float) -> 'Det':
+        """
+        Create a deterministic distribution with the given mean.
+
+        Since Det has zero variance, the mean equals the constant value.
+
+        Args:
+            mean: The mean (and constant value) of the distribution.
+
+        Returns:
+            Det distribution with the specified mean.
+        """
+        return cls(mean)
+
+    # MATLAB-compatible alias
+    fitMean = fit_mean
 
 
 class Immediate(Det):
@@ -477,11 +494,81 @@ class HyperExp(ContinuousDistribution, Markovian):
         self._means = 1.0 / self._rates
 
     @classmethod
-    def fit_mean_and_scv(cls, mean: float, scv: float) -> 'HyperExp':
+    def fit_mean_and_scv(cls, mean: float, scv: float, p: float = 0.99) -> 'HyperExp':
         """
         Create a 2-phase hyperexponential distribution from mean and SCV.
 
-        Uses balanced means representation for SCV >= 1.
+        Uses the same algorithm as MATLAB's map_hyperexp function.
+
+        Args:
+            mean: Target mean (MEAN).
+            scv: Target squared coefficient of variation (must be >= 1).
+            p: Probability of being served in phase 1 (default: 0.99).
+
+        Returns:
+            HyperExp distribution with given mean and SCV.
+        """
+        if scv < 1.0:
+            raise ValueError("HyperExp requires SCV >= 1")
+        if mean <= 0:
+            raise ValueError("Mean must be positive")
+
+        # Port of MATLAB's map_hyperexp algorithm
+        # E2 = (1 + SCV) * MEAN^2
+        E2 = (1.0 + scv) * mean * mean
+
+        # Delta = -4*p*MEAN^2 + 4*p^2*MEAN^2 + 2*E2*p - 2*E2*p^2
+        Delta = -4.0 * p * mean * mean + 4.0 * p * p * mean * mean + 2.0 * E2 * p - 2.0 * E2 * p * p
+
+        if Delta < 0:
+            # Try decreasing p if solution not feasible
+            if p > 1e-6:
+                return cls.fit_mean_and_scv(mean, scv, p / 10.0)
+            else:
+                raise ValueError(f"Cannot fit HyperExp with mean={mean}, scv={scv}")
+
+        # Try first root
+        denom = E2 * p - 2.0 * mean * mean
+        if abs(denom) < 1e-12:
+            # Avoid division by zero
+            if p > 1e-6:
+                return cls.fit_mean_and_scv(mean, scv, p / 10.0)
+            else:
+                raise ValueError(f"Cannot fit HyperExp with mean={mean}, scv={scv}")
+
+        mu2 = (-2.0 * mean + 2.0 * p * mean + np.sqrt(Delta)) / denom
+        denom2 = p - 1.0 + mean * mu2
+        if abs(denom2) < 1e-12:
+            # Try second root
+            mu2 = (-2.0 * mean + 2.0 * p * mean - np.sqrt(Delta)) / denom
+            denom2 = p - 1.0 + mean * mu2
+
+        mu1 = mu2 * p / denom2
+
+        # Check feasibility (all rates must be positive)
+        if mu1 <= 0 or mu2 <= 0 or p < 0 or p > 1:
+            # Try second root
+            mu2 = (-2.0 * mean + 2.0 * p * mean - np.sqrt(Delta)) / denom
+            denom2 = p - 1.0 + mean * mu2
+            if abs(denom2) > 1e-12:
+                mu1 = mu2 * p / denom2
+
+            # Still not feasible? Try decreasing p
+            if mu1 <= 0 or mu2 <= 0:
+                if p > 1e-6:
+                    return cls.fit_mean_and_scv(mean, scv, p / 10.0)
+                else:
+                    raise ValueError(f"Cannot fit HyperExp with mean={mean}, scv={scv}")
+
+        # Return HyperExp with p, mu1, mu2
+        return cls(p, mu1, mu2)
+
+    @classmethod
+    def fit_mean_and_scv_balanced(cls, mean: float, scv: float) -> 'HyperExp':
+        """
+        Create a 2-phase hyperexponential distribution with balanced means.
+
+        Uses balanced means representation where p/mu1 = (1-p)/mu2.
 
         Args:
             mean: Target mean.
@@ -495,21 +582,20 @@ class HyperExp(ContinuousDistribution, Markovian):
         if mean <= 0:
             raise ValueError("Mean must be positive")
 
-        # For 2-phase HyperExp with balanced means:
-        # p1 = 0.5 * (1 + sqrt((scv-1)/(scv+1)))
-        # p2 = 1 - p1
-        # mu1 = 2 * p1 / mean
-        # mu2 = 2 * p2 / mean
-        cv = np.sqrt(scv)
-        p1 = 0.5 * (1.0 + np.sqrt((scv - 1.0) / (scv + 1.0)))
-        p2 = 1.0 - p1
+        # Port of MATLAB's fitMeanAndSCVBalanced
+        mu1 = -(2.0 * (np.sqrt((scv - 1.0) / (scv + 1.0)) / 2.0 - 0.5)) / mean
+        p = 0.5 - np.sqrt((scv - 1.0) / (scv + 1.0)) / 2.0
 
-        # Rates
-        mu1 = 2.0 * p1 / mean
-        mu2 = 2.0 * p2 / mean
+        if mu1 < 0 or p < 0 or p > 1:
+            p = np.sqrt((scv - 1.0) / (scv + 1.0)) / 2.0 + 0.5
+            mu1 = (2.0 * (np.sqrt((scv - 1.0) / (scv + 1.0)) / 2.0 + 0.5)) / mean
 
-        # Use the 3-argument form: HyperExp(p, rate1, rate2)
-        return cls(p1, mu1, mu2)
+        mu2 = (1.0 - p) / p * mu1
+
+        return cls(float(np.real(p)), float(np.real(mu1)), float(np.real(mu2)))
+
+    # CamelCase alias
+    fitMeanAndScvBalanced = fit_mean_and_scv_balanced
 
     # CamelCase alias
     fitMeanAndScv = fit_mean_and_scv
@@ -665,6 +751,29 @@ class Gamma(ContinuousDistribution):
             rng = np.random.default_rng()
         return rng.gamma(shape=self._shape, scale=self._scale, size=n)
 
+    @classmethod
+    def fit_mean_and_scv(cls, mean: float, scv: float) -> 'Gamma':
+        """
+        Create a Gamma distribution from mean and SCV.
+
+        Args:
+            mean: Target mean.
+            scv: Target squared coefficient of variation.
+
+        Returns:
+            Gamma distribution with given mean and SCV.
+        """
+        # For Gamma: SCV = 1/shape, mean = shape * scale
+        # So: shape = 1/scv, scale = mean * scv
+        if scv <= 0:
+            raise ValueError("SCV must be positive")
+        shape = 1.0 / scv
+        scale = mean * scv
+        return cls(shape, scale)
+
+    # CamelCase alias
+    fitMeanAndSCV = fit_mean_and_scv
+    fitMeanAndScv = fit_mean_and_scv
 
 
 class Lognormal(ContinuousDistribution):
@@ -796,6 +905,46 @@ class Pareto(ContinuousDistribution):
             rng = np.random.default_rng()
         return (rng.pareto(a=self._alpha, size=n) + 1) * self._scale
 
+    @classmethod
+    def fit_mean_and_scv(cls, mean: float, scv: float) -> 'Pareto':
+        """
+        Create a Pareto distribution from mean and SCV.
+
+        Args:
+            mean: Target mean.
+            scv: Target squared coefficient of variation.
+
+        Returns:
+            Pareto distribution with given mean and SCV.
+
+        Note:
+            For Pareto with alpha > 2:
+            mean = alpha * scale / (alpha - 1)
+            var = scale^2 * alpha / ((alpha - 1)^2 * (alpha - 2))
+            scv = var / mean^2 = 1 / (alpha * (alpha - 2))
+
+            Solving for alpha: alpha = (1 + sqrt(1 + 4*scv)) / (2*scv)
+            Then: scale = mean * (alpha - 1) / alpha
+        """
+        if scv <= 0:
+            raise ValueError("SCV must be positive")
+
+        # Solve quadratic: scv * alpha^2 - 2*scv*alpha - 1 = 0
+        # Using quadratic formula: alpha = (2*scv + sqrt(4*scv^2 + 4*scv)) / (2*scv)
+        #                                = 1 + sqrt(1 + 1/scv)
+        discriminant = 1.0 + 1.0 / scv
+        alpha = 1.0 + np.sqrt(discriminant)
+
+        if alpha <= 2:
+            # For very high SCV, use minimum alpha = 2.01 to ensure finite variance
+            alpha = 2.01
+
+        scale = mean * (alpha - 1) / alpha
+        return cls(alpha, scale)
+
+    # CamelCase alias
+    fitMeanAndSCV = fit_mean_and_scv
+    fitMeanAndScv = fit_mean_and_scv
 
 
 class Uniform(ContinuousDistribution):

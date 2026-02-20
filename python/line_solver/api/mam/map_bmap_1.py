@@ -71,9 +71,9 @@ def solver_mam_map_bmap_1(C0: np.ndarray, C1: np.ndarray,
     ```
 
     Where:
-      A0 = C1 \otimes I_ms           (MAP arrival, level +1)
-      A1 = C0 \otimes I_ms + I_ma \otimes D0  (phase changes, level 0)
-      A_{k+1} = I_ma \otimes D_k     (batch size k service, level -k)
+      A0 = C1 otimes I_ms           (MAP arrival, level +1)
+      A1 = C0 otimes I_ms + I_ma otimes D0  (phase changes, level 0)
+      A_{k+1} = I_ma otimes D_k     (batch size k service, level -k)
 
     Args:
         C0: MAP matrix for transitions without arrivals

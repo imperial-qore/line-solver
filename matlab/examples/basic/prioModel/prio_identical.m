@@ -41,7 +41,7 @@ solver{end+1} = JMT(model,'seed',23000,'samples',3e4,'keep',true);
 % solver{end+1} = MAM(model);
 % solver{end+1} = LINE(model);
 for s=1:length(solver)
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());
+    fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgTable();
     AvgTable{s}
 end

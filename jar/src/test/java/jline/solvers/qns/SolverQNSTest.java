@@ -17,7 +17,10 @@ import jline.lang.processes.HyperExp;
 import jline.solvers.NetworkAvgTable;
 import jline.solvers.SolverOptions;
 import jline.solvers.jmt.SolverJMT;
+import jline.GlobalConstants;
 import jline.VerboseLevel;
+import jline.util.Maths;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
@@ -30,6 +33,14 @@ import org.junit.jupiter.api.condition.EnabledIf;
  * properly handle open queueing networks with Source/Sink nodes.
  */
 public class SolverQNSTest {
+
+    @BeforeAll
+    public static void setUp() {
+        // Ensure MATLAB-compatible random number generation
+        Maths.setRandomNumbersMatlab(true);
+        // Set verbose level to SILENT to suppress warnings during tests
+        GlobalConstants.setVerbose(VerboseLevel.SILENT);
+    }
 
     double tolerance = 1e-2;  // QNS is an approximation method, use relaxed tolerance
     double relaxedTolerance = 5e-2;  // For multiserver approximations
@@ -100,12 +111,9 @@ public class SolverQNSTest {
     /**
      * Test M/M/c multiserver queue with 3 servers
      * Validates multiserver approximation methods
-     *
-     * DISABLED: JMVA does not support open classes in load-dependent (multiserver) models
      */
     @Test
     @EnabledIf("isQNSAvailable")
-    @Disabled("JMVA limitation: does not support open classes in load-dependent (multiserver) models")
     public void testOQN_MMc_Multiserver() {
         Network model = new Network("M/M/3");
 
@@ -132,13 +140,17 @@ public class SolverQNSTest {
 
         assertNotNull(avgTable, "avgTable should not be null");
 
+        // Get results by station name (qnsolver doesn't output Source/Sink)
+        NetworkAvgTable queueResults = avgTable.tget("Queue");
+        assertNotNull(queueResults, "Queue results should not be null");
+
         // Throughput should equal arrival rate
-        double tput = avgTable.getTput().get(1);
+        double tput = queueResults.getTput().get(0);
         assertEquals(lambda, tput, tolerance, "Throughput should equal arrival rate");
 
         // Utilization: rho = lambda/(c*mu)
         double expectedUtil = lambda / (c * mu);
-        double actualUtil = avgTable.getUtil().get(1);
+        double actualUtil = queueResults.getUtil().get(0);
         assertEquals(expectedUtil, actualUtil, relaxedTolerance, "Utilization should be lambda/(c*mu)");
     }
 
@@ -246,14 +258,9 @@ public class SolverQNSTest {
     /**
      * Test open network with multiclass
      * Validates handling of multiple job classes
-     *
-     * DISABLED: External qnsolver tool crashes with assertion failure on multiclass open networks.
-     * The crash occurs in server.cc:301 with "Assertion `k <= K && 0 < e && e <= E' failed".
-     * This is a known limitation of the external qnsolver binary, not a LINE implementation issue.
      */
     @Test
     @EnabledIf("isQNSAvailable")
-    @Disabled("External qnsolver crashes on multiclass open networks (qnsolver binary limitation)")
     public void testOQN_Multiclass() {
         Network model = new Network("OQN_Multiclass");
 
@@ -286,9 +293,10 @@ public class SolverQNSTest {
 
         assertNotNull(avgTable, "avgTable should not be null");
 
-        // Throughput checks for both classes
-        double tput_class1 = avgTable.getTput().get(1);  // Queue, Class1
-        double tput_class2 = avgTable.getTput().get(2);  // Queue, Class2
+        // Throughput checks for both classes (use named access since qnsolver omits Source/Sink)
+        NetworkAvgTable queueResults = avgTable.tget("Queue");
+        double tput_class1 = queueResults.getTput().get(0);  // Queue, Class1
+        double tput_class2 = queueResults.getTput().get(1);  // Queue, Class2
         assertEquals(lambda1, tput_class1, tolerance, "Class1 throughput");
         assertEquals(lambda2, tput_class2, tolerance, "Class2 throughput");
     }
@@ -590,13 +598,9 @@ public class SolverQNSTest {
     /**
      * Test mixed network with multiserver queues
      * Validates multiserver handling in mixed models
-     *
-     * DISABLED: JMVA does not support open classes in load-dependent (multiserver) models.
-     * This is the same limitation as testOQN_MMc_Multiserver and testSolverOptions.
      */
     @Test
     @EnabledIf("isQNSAvailable")
-    @Disabled("JMVA limitation: does not support open classes in load-dependent (multiserver) models")
     public void testMQN_Multiserver() {
         Network model = new Network("MQN_Multiserver");
 
@@ -698,12 +702,9 @@ public class SolverQNSTest {
 
     /**
      * Test that solver options are properly handled
-     *
-     * DISABLED: JMVA does not support open classes in load-dependent (multiserver) models
      */
     @Test
     @EnabledIf("isQNSAvailable")
-    @Disabled("JMVA limitation: does not support open classes in load-dependent (multiserver) models")
     public void testSolverOptions() {
         Network model = new Network("Options_Test");
 
@@ -730,6 +731,10 @@ public class SolverQNSTest {
         NetworkAvgTable avgTable = solver.getAvgTable();
 
         assertNotNull(avgTable, "avgTable should not be null with Conway method");
-        assertEquals(0.8, avgTable.getTput().get(1), tolerance, "Throughput with Conway method");
+
+        // Get results by station name (qnsolver doesn't output Source/Sink)
+        NetworkAvgTable queueResults = avgTable.tget("Queue");
+        assertNotNull(queueResults, "Queue results should not be null with Conway method");
+        assertEquals(0.8, queueResults.getTput().get(0), tolerance, "Throughput with Conway method");
     }
 }

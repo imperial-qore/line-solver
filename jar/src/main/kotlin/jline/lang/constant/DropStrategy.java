@@ -55,9 +55,9 @@ public enum DropStrategy implements Serializable {
             case Drop:
                 return "drop";
             case BlockingAfterService:
-                return "blocking after service";
+                return "BAS blocking";
             case BlockingBeforeService:
-                return "blocking before service";
+                return "BBS blocking";
             case ReServiceOnRejection:
                 return "re-service on rejection";
             case Retrial:

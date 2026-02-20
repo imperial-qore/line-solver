@@ -36,6 +36,7 @@ from .prob import (
 from .analyzers import (
     solver_nc_analyzer,
     solver_ncld_analyzer,
+    solver_nc_lossn_analyzer,
     NCResult,
     NCResultProb,
 )
@@ -54,6 +55,7 @@ __all__ = [
     'SolverNCJointReturn',
     'solver_nc_analyzer',
     'solver_ncld_analyzer',
+    'solver_nc_lossn_analyzer',
     'NCResult',
     'NCResultProb',
 ]

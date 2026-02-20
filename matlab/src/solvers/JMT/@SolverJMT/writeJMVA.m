@@ -123,11 +123,15 @@ for i=1:sn.nstations
             statSrvTimeElem = mvaDoc.createElement('servicetimes');
             statSrvTimeElem.setAttribute('customerclass',sprintf('Chain%02d',c));
             ldSrvString = num2str(STchain(i,c));
+            % For open models (Inf population), use nservers as cutoff
+            % since service time is constant at S/c for n >= c
             if any(isinf(NK))
-                line_error(mfilename,'JMVA does not support open classes in load-dependent models;');
+                ldLimit = sn.nservers(i);
+            else
+                ldLimit = sum(NK);
             end
 
-            for n=2:sum(NK)
+            for n=2:ldLimit
                 ldSrvString = sprintf('%s;%s',ldSrvString,num2str(STchain(i,c)/min( n, sn.nservers(i) )));
             end
             statSrvTimeElem.appendChild(mvaDoc.createTextNode(ldSrvString));
@@ -165,8 +169,21 @@ end
 
 for c=1:sn.nchains
     classRefElem = mvaDoc.createElement('Class');
-    classRefElem.setAttribute('name',sprintf('Chain%d',c));
-    classRefElem.setAttribute('refStation',sn.nodenames{sn.stationToNode(refstatchain(c))});
+    classRefElem.setAttribute('name',sprintf('Chain%02d',c));
+    % For open chains, the refstat is Source which is excluded from JMVA output.
+    % Use the first non-Source station as the reference station instead.
+    refIdx = refstatchain(c);
+    refNodeType = sn.nodetype(sn.stationToNode(refIdx));
+    if refNodeType == NodeType.Source
+        for ii=1:sn.nstations
+            nt = sn.nodetype(sn.stationToNode(ii));
+            if nt ~= NodeType.Source && nt ~= NodeType.Sink
+                refIdx = ii;
+                break;
+            end
+        end
+    end
+    classRefElem.setAttribute('refStation',sn.nodenames{sn.stationToNode(refIdx)});
     refStationsElem.appendChild(classRefElem);
 end
 

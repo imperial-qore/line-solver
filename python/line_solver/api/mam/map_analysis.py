@@ -1372,7 +1372,7 @@ def map_sum(D0: np.ndarray, D1: np.ndarray, n: int
 
 
 def _krons(A: np.ndarray, B: np.ndarray) -> np.ndarray:
-    """Kronecker sum: A ⊕ B = A \otimes I + I \otimes B."""
+    """Kronecker sum: A oplus B = A otimes I + I otimes B."""
     return np.kron(A, np.eye(B.shape[0])) + np.kron(np.eye(A.shape[0]), B)
 
 

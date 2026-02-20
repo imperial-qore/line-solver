@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-__version__ = "3.0.2"
+__version__ = "3.0.3"
 
 # =============================================================================
 # Data Models
@@ -110,7 +110,7 @@ SOLVERS: Dict[str, Dict[str, Any]] = {
     },
     "lqns": {
         "name": "LQN Solver",
-        "description": "External LQN solver integration",
+        "description": "External LQNS solver integration",
         "formats": ["lqnx", "xml"],
     },
     "mam": {

@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional, Tuple, Union
 import numpy as np
 
+from line_solver.constants import GlobalConstants
+
 
 class Distribution(ABC):
     """
@@ -62,10 +64,15 @@ class Distribution(ABC):
         return self.getVar() / (mean ** 2)
 
     def getRate(self) -> float:
-        """Get the rate parameter (1/mean)."""
+        """Get the rate parameter (1/mean).
+
+        For immediate (zero-mean) distributions, returns GlobalConstants.Immediate
+        (a large but finite value) to avoid numerical issues with infinite rates.
+        This matches MATLAB's behavior.
+        """
         mean = self.getMean()
         if mean == 0:
-            return float('inf')
+            return GlobalConstants.Immediate
         return 1.0 / mean
 
     def getSkew(self) -> float:

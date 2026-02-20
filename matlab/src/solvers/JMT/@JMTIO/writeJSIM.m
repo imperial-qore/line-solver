@@ -57,8 +57,10 @@ for i=1:numOfNodes
                     [simXMLDoc, xml_section] = saveHeteroSchedPolicy(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = saveServiceStrategy(self, simXMLDoc, xml_section, ind);
                     [simXMLDoc, xml_section] = saveDelayOffStrategy(self, simXMLDoc, xml_section, ind);
+                    % Note: SwitchoverStrategy is only supported by PollingServer in JMT
+                    % Regular Server class does not support switchover times
                     if ~isempty(currentNode.switchoverTime)
-                        [simXMLDoc, xml_section] = saveSwitchoverStrategy(self, simXMLDoc, xml_section, ind);
+                        line_warning(mfilename, 'JMT does not support switchover times for non-polling queues. Switchover times will be ignored for node %s.', currentNode.name);
                     end
                 case 'PreemptiveServer'
                     [simXMLDoc, xml_section] = saveNumberOfServers(self, simXMLDoc, xml_section, ind);

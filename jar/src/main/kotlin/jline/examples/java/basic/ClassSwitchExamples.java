@@ -56,8 +56,49 @@ public class ClassSwitchExamples {
     
     public static void cs_transient_class() throws Exception {
         Network model = ClassSwitchingModel.cs_transient_class();
+        model.printRoutingMatrix();
+
+        jline.lang.NetworkStruct sn = model.getStruct(true);
+        System.out.println("\n=== rt (station routing matrix) ===");
+        sn.rt.print();
+
+        // Debug SCC
+        int K = sn.nclasses;
+        int M = sn.nstateful;
+        jline.util.matrix.Matrix inchain = sn.inchain.get(0);
+        java.util.List<Integer> cols = new java.util.ArrayList<>();
+        for (int ist = 0; ist < M; ist++) {
+            for (int ik = 0; ik < inchain.length(); ik++) {
+                cols.add(ist * K + (int) inchain.get(ik));
+            }
+        }
+        jline.util.matrix.Matrix Pchain = new jline.util.matrix.Matrix(cols.size(), cols.size());
+        for (int row = 0; row < cols.size(); row++) {
+            for (int col = 0; col < cols.size(); col++) {
+                Pchain.set(row, col, sn.rt.get(cols.get(row), cols.get(col)));
+            }
+        }
+        jline.util.graph.DirectedGraph graph = new jline.util.graph.DirectedGraph(Pchain);
+        jline.util.graph.DirectedGraph.SCCResult sccResult = graph.stronglyconncomp();
+        System.out.println("\n=== Java SCC ===");
+        for (int i = 0; i < sccResult.I.length; i++) System.out.print(sccResult.I[i] + " ");
+        System.out.println("\n=== Java isrec ===");
+        for (boolean b : sccResult.recurrent) System.out.print((b ? "1" : "0") + " ");
+        System.out.println();
+
+        System.out.println("\n=== visits ===");
+        for (int c = 0; c < sn.nchains; c++) {
+            System.out.println("Chain " + c + ":");
+            if (sn.visits.get(c) != null) {
+                sn.visits.get(c).print();
+            }
+        }
+
         MVA solver = new MVA(model);
-        
+
+        System.out.println("\n=== Per-Class Table ===");
+        solver.getAvgTable().print();
+        System.out.println("\n=== Chain Table ===");
         solver.getAvgChainTable().print();
         pauseForUser();
     }

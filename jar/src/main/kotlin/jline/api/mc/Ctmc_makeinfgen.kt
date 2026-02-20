@@ -22,12 +22,13 @@ fun ctmc_makeinfgen(Q: Matrix): Matrix {
     // Extract diagonal elements and create off-diagonal matrix
     val diagonalValues = DoubleArray(Q.length()) { i -> Q[i, i] }
     val offDiagonal = Q.sub(Matrix.diagMatrix(null, diagonalValues, 0, diagonalValues.size))
-    
+
     // Create new diagonal from negative row sums to ensure row sums = 0
+    // Use toArray1D() to get ALL row sums (including zeros) to create correct-sized diagonal
     val rowSums = offDiagonal.sumRows()
-    val newDiagonal = Matrix(0, 0)
-    Matrix.diagMatrix(newDiagonal, rowSums.nonZeroValues, 0, rowSums.nonZeroLength)
-    
+    val rowSumsArray = rowSums.toArray1D()
+    val newDiagonal = Matrix.diagMatrix(null, rowSumsArray, 0, rowSumsArray.size)
+
     // Combine off-diagonal elements with corrected diagonal
     val result = offDiagonal.sub(newDiagonal)
     result.removeZeros(0.0)

@@ -48,7 +48,7 @@ solver{end+1} = LINE(model,'seed',23000);
 solver{end+1} = DES(model,'seed',23000,'samples',5e3,'verbose',true);
 
 for s=1:length(solver)
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());
+    fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgTable();
     AvgChainTable{s} = solver{s}.getAvgChainTable();
     AvgSysChainTable{s} = solver{s}.getAvgSysTable();

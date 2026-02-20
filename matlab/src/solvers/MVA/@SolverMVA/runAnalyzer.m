@@ -56,7 +56,6 @@ switch options.lang
         return
     case 'matlab'
         sn = getStruct(self); % doesn't need initial state
-        %snorig = sn;
         forkLoop = true;
         forkIter = 0;
         % create artificial classes arrival rates
@@ -77,24 +76,25 @@ switch options.lang
                     end
                 elseif ~strcmp(options.config.fork_join, 'heidelberger-trivedi') & ~strcmp(options.config.fork_join, 'ht')
                     %line_printf('Fork-join iteration %d\n',forkIter);
+                    nonfjSource = nonfjmodel.getSource;
                     for r=1:length(fjclassmap) % r is the auxiliary class
                         s = fjclassmap(r);
                         if s>0
-                            nonfjSource = nonfjmodel.getSource;
                             if fanout(r)>0
                                 if ~nonfjSource.arrivalProcess{r}.isDisabled
                                     nonfjSource.arrivalProcess{r}.setRate((fanout(r)-1)*forkLambda(r));
                                 end
                             end
                         end
-                        % TODO: this was changed without too many checks into refreshRates in both MATLAB and Java,
-                        % to be validated further especially for CacheTasks but the results seem unchanged.
-                        %  nonfjmodel.refreshStruct();
-                        nonfjmodel.refreshRates();
                     end
+                    nonfjmodel.refreshRates();
                 end
                 sn = nonfjmodel.getStruct(false); % this ensures that we solve nonfjmodel instead of the original model
-                if max(abs(1-QN_1./ QN)) < GlobalConstants.CoarseTol & (forkIter > 2) %#ok<AND2>
+                % Convergence check: handle zero/NaN queue lengths from size mismatch and Immediate activities
+                qn_ratio = QN_1 ./ QN;
+                qn_ratio(isnan(qn_ratio)) = 1; % 0/0 = NaN → treat as converged (ratio=1)
+                qn_ratio(isinf(qn_ratio)) = 0; % x/0 = Inf → treat as not converged (ratio=0, error=1)
+                if isequal(size(QN_1), size(QN)) && max(abs(1 - qn_ratio(:))) < GlobalConstants.CoarseTol && (forkIter > 2)
                     forkLoop = false;
                 else
                     if self.model.hasOpenClasses
@@ -194,6 +194,11 @@ switch options.lang
             if self.model.hasFork
                 nonfjstruct = sn;
                 sn = self.getStruct;
+                % Pre-compute linked routing matrix once (loop-invariant)
+                switch options.config.fork_join
+                    case {'mmt', 'default', 'fjt'}
+                        Pcs = cell2mat(nonfjmodel.getLinkedRoutingMatrix);
+                end
                 for f=find(sn.nodetype == NodeType.Fork)'
                     switch options.config.fork_join
                         case {'mmt', 'default', 'fjt'}
@@ -212,6 +217,7 @@ switch options.lang
                                 if isempty(joinIdx)
                                     forkLambda(s) = mean([forkLambda(s); TNfork(r)],1);
                                 else
+                                    joinStat = sn.nodeToStation(joinIdx);
                                     TN(sn.nodeToStation(joinIdx),r) = TN(sn.nodeToStation(joinIdx),r) + sum(TN(sn.nodeToStation(joinIdx), find(fjclassmap == r))) - TN(sn.nodeToStation(joinIdx), s);
                                     forkLambda(s) = mean([forkLambda(s); TN(sn.nodeToStation(joinIdx),r)],1);
                                 end
@@ -220,20 +226,26 @@ switch options.lang
                                     continue;
                                 end
                                 % Find the parallel paths coming out of the fork
-                                %ri = ModelAdapter.findPaths(sn, nonfjmodel.getLinkedRoutingMatrix{r,r}, f, joinIdx, r, [r,s], QN, TN, 0, fjclassmap, fjforkmap, nonfjmodel)
-                                % The code below seems functional but it has not been tested
-                                ri = ModelAdapter.findPathsCS(sn, cell2mat(nonfjmodel.getLinkedRoutingMatrix), f, joinIdx, r, [r,s], QN, TN, 0, fjclassmap, fjforkmap, nonfjmodel);
-                                lambdai = 1./ri;
-                                d0 = 0;
-                                parallel_branches = length(ri);
-                                for pow=0:(parallel_branches - 1)
-                                    current_sum = sum(1./sum(nchoosek(lambdai, pow + 1),2));
-                                    d0 = d0 + (-1)^pow * current_sum;
+                                ri = ModelAdapter.findPathsCS(sn, Pcs, f, joinIdx, r, [r,s], QN, TN, 0, fjclassmap, fjforkmap, nonfjmodel);
+                                if isempty(ri)
+                                    % No routing from fork for this class - set sync delay to 0 (Immediate)
+                                    % Matches JAR behavior where empty Matrix gives syncDelay = 0
+                                    syncDelay = 0;
+                                else
+                                    lambdai = 1./ri;
+                                    d0 = 0;
+                                    parallel_branches = length(ri);
+                                    for pow=0:(parallel_branches - 1)
+                                        current_sum = sum(1./sum(nchoosek(lambdai, pow + 1),2));
+                                        d0 = d0 + (-1)^pow * current_sum;
+                                    end
+                                    syncDelay = d0*sn.nodeparam{f}.fanOut - mean(ri);
                                 end
                                 % Set the synchronisation delays
-                                nonfjmodel.nodes{joinIdx}.setService(nonfjmodel.classes{s}, Exp.fitMean(d0*sn.nodeparam{f}.fanOut - mean(ri)));
-                                nonfjmodel.nodes{joinIdx}.setService(nonfjmodel.classes{r}, Exp.fitMean(d0*sn.nodeparam{f}.fanOut - mean(ri)));
-                                nonfjmodel.refreshRates(); % added by GC
+                                nonfjmodel.nodes{joinIdx}.setService(nonfjmodel.classes{s}, Exp.fitMean(syncDelay));
+                                if outer_forks(f, r)
+                                    nonfjmodel.nodes{joinIdx}.setService(nonfjmodel.classes{r}, Exp.fitMean(syncDelay));
+                                end
                             end
                         case {'heidelberger-trivedi', 'ht'}
                             joinIdx = find(sn.fj(f,:));
@@ -270,6 +282,11 @@ switch options.lang
                                 end
                             end
                     end
+                end
+                % Batch refreshRates after all sync delay updates (moved out of inner loops for performance)
+                switch options.config.fork_join
+                    case {'mmt', 'default', 'fjt'}
+                        nonfjmodel.refreshRates();
                 end
                 switch options.config.fork_join
                     case {'heidelberger-trivedi', 'ht'}
@@ -328,6 +345,11 @@ switch options.lang
                 XN(:,fjclassmap>0) = [];
             end
             iter = iter + lastiter;
+            % Cap accumulated iterations for stability (Python parity)
+            if iter > 10000
+                iter = 10000;
+                break; % Exit forkLoop early
+            end
         end
 
         sn = self.model.getStruct();

@@ -147,6 +147,7 @@ public class State implements Serializable {
                             firing_ctr++;
                             outspace = Matrix.extractRows(outspace, firing_ctr, firing_ctr + 1, null);
                             double outrate_val = outrate.elementSum();
+                            outrate = new Matrix(1, 1);
                             outrate.set(0, 0, outrate_val);
                             outprob = Matrix.extractRows(outprob, firing_ctr, firing_ctr + 1, null);
                         }
@@ -323,9 +324,12 @@ public class State implements Serializable {
             }
         }
         if (sn.isstation.get(ind) == 1) {
-            return AfterEventStation.afterEventStation(sn, ind, inspace, event, jobClass, isSimulation, outspace, outrate, outprob, eventCache,
+            Ret.EventResult stationResult = AfterEventStation.afterEventStation(sn, ind, inspace, event, jobClass, isSimulation, outspace, outrate, outprob, eventCache,
                     M, R, S, phasessz, phaseshift, pie, ismkvmodclass, lldscaling, lldlimit, cdscaling,
                     hasOnlyExp, ist, K, Ks, mu, phi, proc, capacity, classcap, V, spaceBuf, spaceSrv, spaceVar, key);
+            outspace = stationResult.outspace;
+            outrate = stationResult.outrate;
+            outprob = stationResult.outprob;
         } else if (sn.isstateful.get(ind) == 1) {
             switch (sn.nodetype.get(ind)) {
                 case Router:
@@ -350,6 +354,15 @@ public class State implements Serializable {
                     outprob = transitionResult.outprob;
                     break;
             }
+        }
+
+        // Ensure outprob has the same number of rows as outspace
+        // In MATLAB, outprob is often scalar (1) which gets expanded to match outspace rows
+        // In Java, we need to explicitly create a properly-sized outprob matrix
+        if (!outspace.isEmpty() && outprob.getNumRows() < outspace.getNumRows()) {
+            double probVal = (outprob.getNumRows() == 1 && outprob.getNumCols() == 1) ? outprob.get(0, 0) : 1.0;
+            outprob = new Matrix(outspace.getNumRows(), 1);
+            outprob.fill(probVal);
         }
 
         return new Ret.EventResult(outspace, outrate, outprob);
@@ -973,6 +986,33 @@ public class State implements Serializable {
         return new EventHandleResult(outspace, outrate, outprob);
     }
 
+    public static Map<StatefulNode, Map<String, Integer>> buildSpaceHashMap(Map<StatefulNode, Matrix> space) {
+        if (space == null) return null;
+        Map<StatefulNode, Map<String, Integer>> spaceHash = new HashMap<StatefulNode, Map<String, Integer>>();
+        for (Map.Entry<StatefulNode, Matrix> entry : space.entrySet()) {
+            StatefulNode node = entry.getKey();
+            Matrix spaceMatrix = entry.getValue();
+            if (spaceMatrix == null) continue;
+            int nrows = spaceMatrix.getNumRows();
+            int ncols = spaceMatrix.getNumCols();
+            Map<String, Integer> rowIndex = new HashMap<String, Integer>(nrows * 2);
+            for (int i = 0; i < nrows; i++) {
+                StringBuilder sb = new StringBuilder();
+                for (int j = 0; j < ncols; j++) {
+                    if (j > 0) sb.append(',');
+                    sb.append(spaceMatrix.get(i, j));
+                }
+                rowIndex.put(sb.toString(), i);
+            }
+            spaceHash.put(node, rowIndex);
+        }
+        return spaceHash;
+    }
+
+    public static void buildSpaceHash(NetworkStruct sn) {
+        sn.spaceHash = buildSpaceHashMap(sn.space);
+    }
+
     private static Matrix getHash(NetworkStruct sn, int ind, Matrix inspace) {
         if (inspace == null) {
             Matrix hashid = new Matrix(1, 1);
@@ -1002,13 +1042,23 @@ public class State implements Serializable {
             }
         }
         Matrix hashid = new Matrix(inspace.getNumRows(), 1);
+        StatefulNode sfNode = sn.stateful.get(isf);
+        Map<String, Integer> rowIndex = (sn.spaceHash != null) ? sn.spaceHash.get(sfNode) : null;
+        int spaceCols = sn.space.get(sfNode).getNumCols();
         for (int j = 0; j < inspace.getNumRows(); j++) {
-            Matrix inspaceRows = inspace.getRow(j);
-            if (sn.space.get(sn.stateful.get(isf)).getNumCols() < inspaceRows.getNumCols()) {
+            Matrix inspaceRow = inspace.getRow(j);
+            if (spaceCols < inspaceRow.getNumCols()) {
                 hashid.set(j, 0, -1);
+            } else if (rowIndex != null) {
+                StringBuilder sb = new StringBuilder();
+                for (int k = 0; k < spaceCols; k++) {
+                    if (k > 0) sb.append(',');
+                    sb.append(inspace.get(j, k));
+                }
+                Integer idx = rowIndex.get(sb.toString());
+                hashid.set(j, 0, (idx != null) ? idx : -1);
             } else {
-                Matrix a = sn.space.get(sn.stateful.get(isf));
-                int value = Matrix.matchrow(sn.space.get(sn.stateful.get(isf)), inspace.getRow(j));
+                int value = Matrix.matchrow(sn.space.get(sfNode), inspaceRow);
                 hashid.set(j, 0, value);
             }
         }
@@ -1777,6 +1827,7 @@ public class State implements Serializable {
         }
         StateSpaceGeneratorResult result = new StateSpaceGeneratorResult(SS, SSh, sn);
         result.ST.space = sgresult.nodeStateSpace;
+        result.ST.spaceHash = buildSpaceHashMap(sgresult.nodeStateSpace);
         return result;
     }
 
@@ -1843,13 +1894,14 @@ public class State implements Serializable {
                     }
                     Matrix ret = FromMarginal.fromMarginalBounds(sn, ind, capacityc.getRow(ind), sn.cap.get((int) ist, 0), options);
                     sn.space.put(sn.stateful.get((int) isf), ret);
-                    sn.stateful.get((int) isf).setStateSpace(ret);
+                    // Do NOT call setStateSpace on node objects — it would contaminate the model's
+                    // state space for other solvers. In MATLAB, sn is a value-type struct so modifications
+                    // don't propagate; in Java we must avoid modifying the shared model nodes.
                 } else {
                     Matrix state_bufsrv = FromMarginal.fromMarginalBounds(sn, ind, capacityc.getRow(ind), sn.cap.get((int) ist, 0), options);
                     Matrix state_var = State.spaceLocalVars(sn, ind);
                     Matrix value = Matrix.cartesian(state_bufsrv, state_var);
                     sn.space.put(sn.stateful.get((int) isf), value);
-                    sn.stateful.get((int) isf).setStateSpace(value);
                 }
                 if (Double.isInfinite(sn.nservers.get((int) ist, 0))) {
                     sn.nservers.set((int) ist, 0, capacityc.sumRows(ind));
@@ -1858,11 +1910,24 @@ public class State implements Serializable {
                 isf = sn.nodeToStateful.get(ind);
                 switch (sn.nodetype.get(ind)) {
                     case Cache:
+                        // Cache does class switching: jobs arrive as one class and leave as another
+                        // All classes (input and output) need capacity=1 at Cache node
+                        // to allow state space to include HitClass/MissClass states during
+                        // READ event transitions (matches MATLAB spaceGeneratorNodes.m)
                         for (int r = 0; r < sn.nclasses; r++) {
-                            if (((CacheNodeParam) sn.nodeparam.get(sn.nodes.get(ind))).pread.get(r) == null) {
+                            capacityc.set(ind, r, 1);
+                        }
+                        break;
+                    case Router:
+                        // For Router nodes, only allow capacity for classes that have
+                        // actual routing defined (not DISABLED) at this Router
+                        for (int r = 0; r < sn.nclasses; r++) {
+                            RoutingStrategy routingStrategy = sn.routing.get(sn.nodes.get(ind)).get(sn.jobclasses.get(r));
+                            // Only allow capacity if routing is not DISABLED
+                            if (routingStrategy != null && routingStrategy != RoutingStrategy.DISABLED) {
                                 capacityc.set(ind, r, 1);
                             } else {
-                                capacityc.set(ind, r, 1);
+                                capacityc.set(ind, r, 0);
                             }
                         }
                         break;
@@ -1875,7 +1940,6 @@ public class State implements Serializable {
                 Matrix state_var = State.spaceLocalVars(sn, ind);
                 Matrix value = Matrix.cartesian(state_bufsrv, state_var);
                 sn.space.put(sn.stateful.get((int) isf), value);
-                sn.stateful.get((int) isf).setStateSpace(value);
             }
         }
         Map<StatefulNode, Matrix> nodeStateSpace = sn.space;
@@ -1960,6 +2024,7 @@ public class State implements Serializable {
 
         public static class QNC {
             public Map<StatefulNode, Matrix> space;
+            public Map<StatefulNode, Map<String, Integer>> spaceHash;
         }
     }
 

@@ -71,6 +71,10 @@ solver_fluid.reset()
 
 print(f'CTMC queue length at t=0: {QNt_ctmc_1[1][0].metric[0] if len(QNt_ctmc_1[1][0].metric) > 0 else "N/A"}')
 print(f'FLD queue length at t=0: {QNt_fluid_1[1][0].metric[0] if len(QNt_fluid_1[1][0].metric) > 0 else "N/A"}')
+if len(QNt_ctmc_1[1][0].metric) > 0:
+    print(f'SteadyStateQLen[CTMC/Prior1]: {QNt_ctmc_1[1][0].metric[-1]:.6f}')
+if len(QNt_fluid_1[1][0].metric) > 0:
+    print(f'SteadyStateQLen[FLD/Prior1]: {QNt_fluid_1[1][0].metric[-1]:.6f}')
 
 # Prior 2: Prior on first state with given marginal
 print('\n--- Prior 2: First state with marginal [0,0; 4,1] ---')
@@ -90,6 +94,10 @@ solver_fluid.reset()
 
 print(f'CTMC queue length at t=0: {QNt_ctmc_2[1][0].metric[0] if len(QNt_ctmc_2[1][0].metric) > 0 else "N/A"}')
 print(f'FLD queue length at t=0: {QNt_fluid_2[1][0].metric[0] if len(QNt_fluid_2[1][0].metric) > 0 else "N/A"}')
+if len(QNt_ctmc_2[1][0].metric) > 0:
+    print(f'SteadyStateQLen[CTMC/Prior2]: {QNt_ctmc_2[1][0].metric[-1]:.6f}')
+if len(QNt_fluid_2[1][0].metric) > 0:
+    print(f'SteadyStateQLen[FLD/Prior2]: {QNt_fluid_2[1][0].metric[-1]:.6f}')
 
 # Prior 3: Uniform prior over all states with the same marginal
 print('\n--- Prior 3: Uniform prior over states with marginal [0,0; 4,1] ---')
@@ -113,6 +121,10 @@ QNt_fluid_3, _, _ = solver_fluid.getTranAvg(Qt, Ut, Tt)
 
 print(f'CTMC queue length at t=0: {QNt_ctmc_3[1][0].metric[0] if len(QNt_ctmc_3[1][0].metric) > 0 else "N/A"}')
 print(f'FLD queue length at t=0: {QNt_fluid_3[1][0].metric[0] if len(QNt_fluid_3[1][0].metric) > 0 else "N/A"}')
+if len(QNt_ctmc_3[1][0].metric) > 0:
+    print(f'SteadyStateQLen[CTMC/Prior3]: {QNt_ctmc_3[1][0].metric[-1]:.6f}')
+if len(QNt_fluid_3[1][0].metric) > 0:
+    print(f'SteadyStateQLen[FLD/Prior3]: {QNt_fluid_3[1][0].metric[-1]:.6f}')
 
 print('\nNote: This example shows three types of initial state specification:')
 print('  1. Default: All jobs at reference stations')

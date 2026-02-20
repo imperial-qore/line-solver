@@ -33,21 +33,21 @@ for N in n_jobs_list:
     queue1.setService(job_class, Exp(1/2))
     queue2.setService(job_class, Exp(1/2))
 
-    # Serial routing through all stations
-    P = Network.serial_routing([delay, queue1, queue2])
-    model.link(P)
+    # Circular routing through all stations (circul(M))
+    # circul(3) = [[0,1,0], [0,0,1], [1,0,0]]
+    model.link([[0, 1, 0], [0, 0, 1], [1, 0, 0]])
 
     # Solve with Fluid solver
     solver = FLD(model, {'iter_max': 100})
-    avg_resp_t = solver.get_avg_resp_t()
+    avg_respt = solver.get_avg_respt()
     rd_fluid = solver.get_cdf_resp_t()
 
     # Compute statistics from CDF
-    avg_resp_t_from_cdf = []
+    avg_respt_from_cdf = []
     sq_coeff_of_variation_resp_t_from_cdf = []
 
     for c in range(model.getNumberOfClasses()):
-        avg_resp_t_from_cdf.append([])
+        avg_respt_from_cdf.append([])
         sq_coeff_of_variation_resp_t_from_cdf.append([])
         for i in range(model.getNumberOfStations()):
             cdf_data = rd_fluid[i][c]
@@ -55,7 +55,7 @@ for N in n_jobs_list:
                 # Mean
                 mean_val = sum((cdf_data[j+1][0] - cdf_data[j][0]) * cdf_data[j+1][1]
                               for j in range(len(cdf_data)-1))
-                avg_resp_t_from_cdf[c].append(mean_val)
+                avg_respt_from_cdf[c].append(mean_val)
 
                 # Second moment and variance
                 power_moment_2 = sum((cdf_data[j+1][0] - cdf_data[j][0]) * (cdf_data[j+1][1] ** 2)
@@ -64,17 +64,17 @@ for N in n_jobs_list:
                 scv = variance / (mean_val ** 2) if mean_val > 0 else 0
                 sq_coeff_of_variation_resp_t_from_cdf[c].append(scv)
             else:
-                avg_resp_t_from_cdf[c].append(0)
+                avg_respt_from_cdf[c].append(0)
                 sq_coeff_of_variation_resp_t_from_cdf[c].append(0)
 
-    print(f'Average Response Time: {avg_resp_t}')
-    print(f'Average Response Time from CDF: {avg_resp_t_from_cdf}')
+    print(f'Average Response Time: {avg_respt}')
+    print(f'Average Response Time from CDF: {avg_respt_from_cdf}')
     print(f'Squared Coefficient of Variation from CDF: {sq_coeff_of_variation_resp_t_from_cdf}')
 
     results.append({
         'N': N,
-        'avg_resp_t': avg_resp_t,
-        'avg_resp_t_from_cdf': avg_resp_t_from_cdf,
+        'avg_respt': avg_respt,
+        'avg_respt_from_cdf': avg_respt_from_cdf,
         'scv_from_cdf': sq_coeff_of_variation_resp_t_from_cdf,
         'cdf': rd_fluid
     })
@@ -84,4 +84,4 @@ print('\nAs population increases, response times increase due to queueing effect
 print('The CDF shifts to the right, showing higher probability of longer response times.')
 print('\nResponse time statistics for each population:')
 for result in results:
-    print(f"\nN = {result['N']}: Mean Response Times = {result['avg_resp_t_from_cdf']}")
+    print(f"\nN = {result['N']}: Mean Response Times = {result['avg_respt_from_cdf']}")

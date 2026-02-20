@@ -32,7 +32,8 @@ for id=uIDs
     %if ~isempty(jobClassData{1+id})
     try
         if length(jobData)>2
-            jobData = sortrows(jobData,1);
+            [jobData, sortIdx] = sortrows(jobData,1);
+            jobClassData{1+id} = jobClassData{1+id}(sortIdx);
             firstTS=find(jobData(:,2)>0,1,'first'); % ts of first arrival
             lastTS=find(jobData(:,2)<0,1,'last'); % ts of last departure
             jobData=jobData(firstTS:lastTS,1);

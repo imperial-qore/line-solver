@@ -9,6 +9,7 @@ import jline.lang.*;
 import jline.lang.constant.*;
 import jline.lang.nodeparam.*;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import jline.lang.sections.PollingServer;
 import jline.lang.nodes.Cache;
@@ -31,7 +32,9 @@ import javax.xml.parsers.ParserConfigurationException;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Handles the generation and serialization of JMT (Java Modelling Tools) simulation models.
@@ -163,6 +166,94 @@ public class SaveHandlers {
         this.sn = sn;
     }
 
+    /**
+     * Returns a boolean array indicating which classes should be exported to JMT.
+     * Classes with 0 customers are normally skipped unless they are used as
+     * cache hit/miss classes (since jobs will switch into them) or can receive
+     * jobs via class-switching from another class in the same chain.
+     *
+     * @return boolean array of length nclasses, true for classes to export
+     */
+    public boolean[] getExportableClasses() {
+        int numOfClasses = sn.nclasses;
+
+        // Build set of classes used as cache hit/miss classes
+        Set<Integer> cacheClasses = new HashSet<Integer>();
+        for (Map.Entry<Node, NodeParam> entry : sn.nodeparam.entrySet()) {
+            NodeParam param = entry.getValue();
+            if (param instanceof CacheNodeParam) {
+                CacheNodeParam cacheParam = (CacheNodeParam) param;
+                // hitclass/missclass are 0-indexed in JAR (-1 = invalid)
+                if (cacheParam.hitclass != null) {
+                    for (int k = 0; k < cacheParam.hitclass.length(); k++) {
+                        int h = (int) cacheParam.hitclass.get(k);
+                        if (h >= 0) {
+                            cacheClasses.add(h);
+                        }
+                    }
+                }
+                if (cacheParam.missclass != null) {
+                    for (int k = 0; k < cacheParam.missclass.length(); k++) {
+                        int m = (int) cacheParam.missclass.get(k);
+                        if (m >= 0) {
+                            cacheClasses.add(m);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Build set of classes that can receive jobs via class-switching
+        Set<Integer> classSwitchClasses = new HashSet<Integer>();
+        for (int c = 0; c < sn.nchains; c++) {
+            List<Integer> classesInChain = new ArrayList<Integer>();
+            for (int r = 0; r < numOfClasses; r++) {
+                if (sn.chains.get(c, r) > 0) {
+                    classesInChain.add(r);
+                }
+            }
+            if (classesInChain.size() > 1) {
+                boolean chainHasJobs = false;
+                for (int r : classesInChain) {
+                    if (sn.njobs.get(r) > 0) {
+                        chainHasJobs = true;
+                        break;
+                    }
+                }
+                if (chainHasJobs) {
+                    classSwitchClasses.addAll(classesInChain);
+                }
+            }
+        }
+
+        // If the model has ClassSwitch nodes, all classes must be exported because
+        // the ClassSwitch matrix must include all classes (even 0-job classes that
+        // pass through with identity routing)
+        boolean hasClassSwitch = false;
+        for (NodeType t : sn.nodetype) {
+            if (t == NodeType.ClassSwitch) {
+                hasClassSwitch = true;
+                break;
+            }
+        }
+
+        // Determine which classes to export
+        boolean[] exportClasses = new boolean[numOfClasses];
+        for (int r = 0; r < numOfClasses; r++) {
+            // Skip closed classes with 0 customers unless they are cache classes,
+            // can receive jobs via class-switching, or the model has ClassSwitch nodes
+            if (!Double.isInfinite(sn.njobs.get(r)) && sn.njobs.get(r) == 0
+                    && !cacheClasses.contains(r) && !classSwitchClasses.contains(r)
+                    && !hasClassSwitch) {
+                exportClasses[r] = false;
+            } else {
+                exportClasses[r] = true;
+            }
+        }
+
+        return exportClasses;
+    }
+
     private String cacheStrategyMap(ReplacementStrategy method) {
         Map<ReplacementStrategy, String> cacheStrategyMap = new HashMap<>();
         cacheStrategyMap.put(ReplacementStrategy.FIFO, "jmt.engine.NetStrategies.CacheStrategies.FIFOCache");
@@ -186,8 +277,10 @@ public class SaveHandlers {
         strategyNode.setAttribute("name", "ServiceStrategy");
         int numOfClasses = sn.nclasses;
         int ist = (int) sn.nodeToStation.get(ind);
+        boolean[] exportClasses = getExportableClasses();
 
         for (int r = 0; r < numOfClasses; r++) {
+            if (!exportClasses[r]) continue;
             Element refClassNode2 = simDoc.createElement("refClass");
             refClassNode2.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
             strategyNode.appendChild(refClassNode2);
@@ -417,7 +510,7 @@ public class SaveHandlers {
                         case DET:
                             subParNodeAlpha.setAttribute("classPath", "java.lang.Double");
                             subParNodeAlpha.setAttribute("name", "t");
-                            subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", sn.rates.get(ist, r))));
+                            subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", 1.0 / sn.rates.get(ist, r))));
                             subParNodeAlpha.appendChild(subParValue);
                             distrParNode.appendChild(subParNodeAlpha);
                             break;
@@ -563,8 +656,7 @@ public class SaveHandlers {
     /**
      * Saves buffer capacity for JMT XML.
      * LINE uses Kendall notation where cap = K = total system capacity (queue + in-service).
-     * JMT's "size" parameter represents queue buffer capacity only (waiting customers).
-     * Therefore: JMT_size = LINE_cap - numServers
+     * JMT's "size" parameter also represents total capacity K.
      */
     public DocumentSectionPair saveBufferCapacity(DocumentSectionPair documentSectionPair, int ind) {
         Document simDoc = documentSectionPair.simDoc;
@@ -593,9 +685,8 @@ public class SaveHandlers {
                 // Infinite servers (delay node) - no buffer constraint
                 valueNode.appendChild(simDoc.createTextNode(String.valueOf(-1)));
             } else {
-                // JMT size = queue buffer only = cap - numServers
-                int jmtSize = Math.max(0, cap - numServers);
-                valueNode.appendChild(simDoc.createTextNode(String.valueOf(jmtSize)));
+                // Send LINE's total capacity K directly to JMT
+                valueNode.appendChild(simDoc.createTextNode(String.valueOf(cap)));
             }
         }
         sizeNode.appendChild(valueNode);
@@ -972,7 +1063,9 @@ public class SaveHandlers {
         Matrix conn_i = new Matrix(0, 0);
         Matrix.extractRows(sn.connmatrix, ind, ind + 1, conn_i);
         Matrix jset = conn_i.find();
+        boolean[] exportClasses = getExportableClasses();
         for (int r = 0; r < K; r++) {
+            if (!exportClasses[r]) continue;
             Element refClassNode = simDoc.createElement("refClass");
             refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
             paramNode.appendChild(refClassNode);
@@ -982,6 +1075,7 @@ public class SaveHandlers {
             subParNodeRow.setAttribute("classPath", "java.lang.Float");
             subParNodeRow.setAttribute("name", "row");
             for (int s = 0; s < K; s++) {
+                if (!exportClasses[s]) continue;
                 refClassNode = simDoc.createElement("refClass");
                 refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(s)));
                 subParNodeRow.appendChild(refClassNode);
@@ -1024,8 +1118,10 @@ public class SaveHandlers {
 
         // JMT uses higher priority value = higher priority, while LINE uses lower value = higher priority
         // We need to invert priorities when writing to JMT
+        boolean[] exportClasses = getExportableClasses();
         int maxPrio = 0;
         for (int r = 0; r < numOfClasses; r++) {
+            if (!exportClasses[r]) continue;
             int prio = (int) sn.classprio.get(r);
             if (prio > maxPrio) {
                 maxPrio = prio;
@@ -1033,6 +1129,7 @@ public class SaveHandlers {
         }
 
         for (int r = 0; r < numOfClasses; r++) {
+            if (!exportClasses[r]) continue;
             Element userClass = simDoc.createElement("userClass");
             userClass.setAttribute("name", sn.classnames.get(r));
             if (sn.jobclasses.get(r) instanceof OpenClass) {
@@ -1086,8 +1183,10 @@ public class SaveHandlers {
 
         int numOfClasses = sn.nclasses;
         int i = (int) sn.nodeToStation.get(ind);
+        boolean[] exportClasses = getExportableClasses();
 
         for (int r = 0; r < numOfClasses; r++) {
+            if (!exportClasses[r]) continue;
             Element refClassNode = simDoc.createElement("refClass");
             refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
             schedStrategyNode.appendChild(refClassNode);
@@ -1111,6 +1210,7 @@ public class SaveHandlers {
         Element section = documentSectionPair.section;
 
         int numOfClasses = sn.nclasses;
+        boolean[] exportClasses = getExportableClasses();
 
         Element schedStrategyNode = simDoc.createElement("parameter");
         schedStrategyNode.setAttribute("array", "true");
@@ -1118,6 +1218,7 @@ public class SaveHandlers {
         schedStrategyNode.setAttribute("name", "dropStrategies");
         double i = sn.nodeToStation.get(ind);
         for (int r = 0; r < numOfClasses; r++) {
+            if (!exportClasses[r]) continue;
             Element refClassNode = simDoc.createElement("refClass");
             refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
             schedStrategyNode.appendChild(refClassNode);
@@ -1424,7 +1525,9 @@ public class SaveHandlers {
         strategyNode.setAttribute("name", "ForkStrategy");
 
         int numOfClasses = sn.nclasses;
+        boolean[] exportClasses = getExportableClasses();
         for (int r = 0; r < numOfClasses; r++) {
+            if (!exportClasses[r]) continue;
             JobClass rstJobClass = sn.jobclasses.get(r);
             Element refClassNode = simDoc.createElement("refClass");
             refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
@@ -1523,10 +1626,20 @@ public class SaveHandlers {
     public DocumentSectionPair saveGetStrategy(DocumentSectionPair documentSectionPair, int ind) {
         Document simDoc = documentSectionPair.simDoc;
         Element section = documentSectionPair.section;
-        
+
         int ist = (int) sn.nodeToStation.get(ind);
-        
-        if (sn.nodetype.get(ind) == NodeType.Queue && sn.sched.get(ist) == SchedStrategy.POLLING) {
+        // For non-station nodes (e.g., Logger nodes have nodeToStation = -1),
+        // use default FCFS strategy since they're not real queues
+        if (ist < 0) {
+            Element queueGetStrategyNode = simDoc.createElement("parameter");
+            queueGetStrategyNode.setAttribute("classPath", "jmt.engine.NetStrategies.QueueGetStrategies.FCFSstrategy");
+            queueGetStrategyNode.setAttribute("name", "FCFSstrategy");
+            section.appendChild(queueGetStrategyNode);
+            return documentSectionPair;
+        }
+        Station istStation = sn.stations.get(ist);
+
+        if (sn.nodetype.get(ind) == NodeType.Queue && sn.sched.get(istStation) == SchedStrategy.POLLING) {
             Element queueGetStrategyNode = simDoc.createElement("parameter");
             // Get the polling server from the queue to determine polling type
             Node node = simModel.getNodes().get(ind);
@@ -1600,11 +1713,12 @@ public class SaveHandlers {
     public DocumentSectionPair saveSwitchoverStrategy(DocumentSectionPair documentSectionPair, int ind) {
         Document simDoc = documentSectionPair.simDoc;
         Element section = documentSectionPair.section;
-        
+
         int numOfClasses = sn.nclasses;
         int isf = (int) sn.nodeToStation.get(ind);
-        
-        if (sn.sched.get(isf) == SchedStrategy.POLLING) {
+        Station isfStation = sn.stations.get(isf);
+
+        if (sn.sched.get(isfStation) == SchedStrategy.POLLING) {
             Element paramNode = simDoc.createElement("parameter");
             paramNode.setAttribute("array", "true");
             paramNode.setAttribute("classPath", "jmt.engine.NetStrategies.ServiceStrategy");
@@ -1793,12 +1907,14 @@ public class SaveHandlers {
                 section.appendChild(paramNode);
             } else {
                 // Non-polling case - simplified implementation
+                boolean[] exportClasses = getExportableClasses();
                 Element paramNode = simDoc.createElement("parameter");
                 paramNode.setAttribute("array", "true");
                 paramNode.setAttribute("classPath", "java.lang.Object");
                 paramNode.setAttribute("name", "SwitchoverStrategy");
-                
+
                 for (int r = 0; r < numOfClasses; r++) {
+                    if (!exportClasses[r]) continue;
                     Element refClassNode = simDoc.createElement("refClass");
                     refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
                     paramNode.appendChild(refClassNode);
@@ -2292,9 +2408,11 @@ public class SaveHandlers {
         Element simElem = elementDocumentPair.simElem;
         Document simDoc = elementDocumentPair.simDoc;
 
+        boolean[] exportClasses = getExportableClasses();
         for (int i = 0; i < handles.keySet().size(); i++) {
             Station istStation = sn.stations.get(i);
             for (int r = 0; r < handles.get(istStation).size(); r++) {
+                if (!exportClasses[r]) continue;
                 JobClass rstJobClass = sn.jobclasses.get(r);
                 Metric currentPerformanceIndex = handles.get(istStation).get(rstJobClass);
                 if (!currentPerformanceIndex.isDisabled) {
@@ -2423,7 +2541,14 @@ public class SaveHandlers {
         if (sn.sched.get(istStation) == SchedStrategy.LPS) {
             maxJobs = (int) sn.schedparam.get(istStation, 0);  // LPS limit stored in first column
         } else {
-            maxJobs = (int) sn.nservers.get(istStation);  // Regular server count
+            // Use the maximum of nservers and lldscaling (for load-dependent models).
+            // Load-dependent scaling with min(1:N,c) represents a c-server queue,
+            // where max(lldscaling) = c.
+            maxJobs = (int) sn.nservers.get(istStation);
+            if (sn.lldscaling != null && sn.lldscaling.getNumRows() > istStation) {
+                int effectiveServers = (int) sn.lldscaling.getRow(istStation).elementMax();
+                maxJobs = Math.max(maxJobs, effectiveServers);
+            }
         }
 
         Element valueNode = simDoc.createElement("value");
@@ -2677,8 +2802,10 @@ public class SaveHandlers {
         placeCapacityNode.setAttribute("classPath", "java.lang.Integer");
         placeCapacityNode.setAttribute("name", "capacities");
         int numOfClasses = sn.nclasses;
+        boolean[] exportClasses = getExportableClasses();
         double i = sn.nodeToStation.get(ind);
         for (int r = 0; r < numOfClasses; r++) {
+            if (!exportClasses[r]) continue;
             Element refClassNode = simDoc.createElement("refClass");
             refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
             placeCapacityNode.appendChild(refClassNode);
@@ -2713,8 +2840,10 @@ public class SaveHandlers {
 
         int numOfClasses = sn.nclasses;
         Station istStation = sn.stations.get((int) sn.nodeToStation.get(ind));
+        boolean[] exportClasses = getExportableClasses();
 
         for (int r = 0; r < numOfClasses; r++) {
+            if (!exportClasses[r]) continue;
             Element refClassNode = simDoc.createElement("refClass");
             refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
             visitsNode.appendChild(refClassNode);
@@ -2768,7 +2897,9 @@ public class SaveHandlers {
 
         int numOfClasses = sn.nclasses;
         int i = (int) sn.nodeToStation.get(ind);
+        boolean[] exportClasses = getExportableClasses();
         for (int r = 0; r < numOfClasses; r++) {
+            if (!exportClasses[r]) continue;
             Element refClassNode = simDoc.createElement("refClass");
             refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
             visitsNode.appendChild(refClassNode);
@@ -2778,7 +2909,7 @@ public class SaveHandlers {
             subParameterNode.setAttribute("name", "serviceWeight");
 
             Element valueNode2 = simDoc.createElement("value");
-            valueNode2.appendChild(simDoc.createTextNode(String.valueOf((int) sn.schedparam.get(i, r))));
+            valueNode2.appendChild(simDoc.createTextNode(String.valueOf(sn.schedparam.get(i, r))));
 
             subParameterNode.appendChild(valueNode2);
             visitsNode.appendChild(subParameterNode);
@@ -2799,8 +2930,10 @@ public class SaveHandlers {
         int numOfClasses = sn.nclasses;
         int i = (int) sn.nodeToStation.get(ind);
         Station istStation = sn.stations.get(i);
+        boolean[] exportClasses = getExportableClasses();
 
         for (int r = 0; r < numOfClasses; r++) {
+            if (!exportClasses[r]) continue;
             Element refClassNode2 = simDoc.createElement("refClass");
             refClassNode2.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
             queuePutStrategyNode.appendChild(refClassNode2);
@@ -2836,7 +2969,9 @@ public class SaveHandlers {
         queuePutStrategyNode.setAttribute("name", "QueuePutStrategy");
 
         int numOfClasses = sn.nclasses;
+        boolean[] exportClasses = getExportableClasses();
         for (int r = 0; r < numOfClasses; r++) {
+            if (!exportClasses[r]) continue;
             Element refClassNode2 = simDoc.createElement("refClass");
             refClassNode2.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
             queuePutStrategyNode.appendChild(refClassNode2);
@@ -2957,6 +3092,7 @@ public class SaveHandlers {
         impatienceNode.setAttribute("name", "Impatience");
 
         int numOfClasses = sn.nclasses;
+        boolean[] exportClasses = getExportableClasses();
         int ist = (int) sn.nodeToStation.get(ind);
 
         // Check if this node has a valid station mapping
@@ -2970,6 +3106,7 @@ public class SaveHandlers {
         Station istStation = sn.stations.get(ist);
 
         for (int r = 0; r < numOfClasses; r++) {
+            if (!exportClasses[r]) continue;
             Element refClassNode = simDoc.createElement("refClass");
             refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
             impatienceNode.appendChild(refClassNode);
@@ -3412,6 +3549,7 @@ public class SaveHandlers {
 
         int K = sn.nclasses;
         Node indNode = simModel.getNodes().get(ind);
+        boolean[] exportClasses = getExportableClasses();
         // since the class switch node always outputs to a single node, it is faster to translate it to RAND. Also some problems with sn.rt value otherwise.
         if (sn.nodetype.get(ind) == NodeType.ClassSwitch) {
             for (JobClass jobClass : sn.routing.get(indNode).keySet()) {
@@ -3419,6 +3557,7 @@ public class SaveHandlers {
             }
         }
         for (int r = 0; r < K; r++) {
+            if (!exportClasses[r]) continue;
             Element refClassNode = simDoc.createElement("refClass");
             refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
             strategyNode.appendChild(refClassNode);
@@ -3431,6 +3570,7 @@ public class SaveHandlers {
             RoutingStrategy routingStrategy = sn.routing.get(indNode).get(sn.jobclasses.get(r));
             switch (routingStrategy) {
                 case RAND:
+                    // MATLAB uses RandomStrategy for RAND routing (see saveRoutingStrategy.m lines 31-34)
                     concStratNode = simDoc.createElement("subParameter");
                     concStratNode.setAttribute("classPath", "jmt.engine.NetStrategies.RoutingStrategies.RandomStrategy");
                     concStratNode.setAttribute("name", "Random");
@@ -3575,8 +3715,10 @@ public class SaveHandlers {
         visitsNode.setAttribute("name", "numberOfVisits");
 
         int numOfClasses = sn.nclasses;
+        boolean[] exportClasses = getExportableClasses();
 
         for (int r = 0; r < numOfClasses; r++) {
+            if (!exportClasses[r]) continue;
             Element refClassNode = simDoc.createElement("refClass");
             refClassNode.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
             visitsNode.appendChild(refClassNode);
@@ -3609,8 +3751,10 @@ public class SaveHandlers {
         int numOfClasses = sn.nclasses;
         int i = (int) sn.nodeToStation.get(ind);
         Station istStation = sn.stations.get(i);
+        boolean[] exportClasses = getExportableClasses();
 
         for (int r = 0; r < numOfClasses; r++) {
+            if (!exportClasses[r]) continue;
             JobClass rstJobClass = sn.jobclasses.get(r);
             Element refClassNode2 = simDoc.createElement("refClass");
             refClassNode2.appendChild(simDoc.createTextNode(sn.classnames.get(r)));
@@ -3840,7 +3984,7 @@ public class SaveHandlers {
                     case DET:
                         subParNodeAlpha.setAttribute("classPath", "java.lang.Double");
                         subParNodeAlpha.setAttribute("name", "t");
-                        subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", sn.rates.get(i, r))));
+                        subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", 1.0 / sn.rates.get(i, r))));
                         subParNodeAlpha.appendChild(subParValue);
                         distrParNode.appendChild(subParNodeAlpha);
                         break;
@@ -4247,7 +4391,7 @@ public class SaveHandlers {
                         subParNodeAlpha.setAttribute("classPath", "java.lang.Double");
                         subParNodeAlpha.setAttribute("name", "t");
                         subParValue = simDoc.createElement("value");
-                        subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", Map_lambdaKt.map_lambda(matrixMap.get(0), matrixMap.get(1)))));
+                        subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", 1.0 / Map_lambdaKt.map_lambda(matrixMap.get(0), matrixMap.get(1)))));
                         subParNodeAlpha.appendChild(subParValue);
                         distrParNode.appendChild(subParNodeAlpha);
                         break;
@@ -4331,16 +4475,125 @@ public class SaveHandlers {
                         subParNodeAlpha.appendChild(subParValue);
                         distrParNode.appendChild(subParNodeAlpha);
                         break;
-                    case GAMMA:
                     case PARETO:
+                        subParNodeAlpha = simDoc.createElement("subParameter");
+                        subParNodeAlpha.setAttribute("classPath", "java.lang.Double");
+                        subParNodeAlpha.setAttribute("name", "alpha");
+                        subParValue = simDoc.createElement("value");
+                        subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", matrixMap.get(0).value())));
+                        subParNodeAlpha.appendChild(subParValue);
+                        distrParNode.appendChild(subParNodeAlpha);
+                        subParNodeAlpha = simDoc.createElement("subParameter");
+                        subParNodeAlpha.setAttribute("classPath", "java.lang.Double");
+                        subParNodeAlpha.setAttribute("name", "k");
+                        subParValue = simDoc.createElement("value");
+                        subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", matrixMap.get(1).value())));
+                        subParNodeAlpha.appendChild(subParValue);
+                        distrParNode.appendChild(subParNodeAlpha);
+                        break;
+                    case GAMMA:
+                        // Parameters from MAP representation: mean = 1/lambda, scv = c^2
+                        double gammaLambda = Map_lambdaKt.map_lambda(matrixMap.get(0), matrixMap.get(1));
+                        double gammaMean = 1.0 / gammaLambda;
+                        double gammaScv = Map_scvKt.map_scv(matrixMap.get(0), matrixMap.get(1));
+                        double gammaAlpha = 1.0 / gammaScv;  // shape
+                        double gammaBeta = gammaScv / gammaLambda;  // scale = scv * mean
+                        subParNodeAlpha = simDoc.createElement("subParameter");
+                        subParNodeAlpha.setAttribute("classPath", "java.lang.Double");
+                        subParNodeAlpha.setAttribute("name", "alpha");
+                        subParValue = simDoc.createElement("value");
+                        subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", gammaAlpha)));
+                        subParNodeAlpha.appendChild(subParValue);
+                        distrParNode.appendChild(subParNodeAlpha);
+                        subParNodeAlpha = simDoc.createElement("subParameter");
+                        subParNodeAlpha.setAttribute("classPath", "java.lang.Double");
+                        subParNodeAlpha.setAttribute("name", "beta");
+                        subParValue = simDoc.createElement("value");
+                        subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", gammaBeta)));
+                        subParNodeAlpha.appendChild(subParValue);
+                        distrParNode.appendChild(subParNodeAlpha);
+                        break;
                     case WEIBULL:
+                        // Weibull shape from SCV using Justus approximation (1976)
+                        double weibullLambda = Map_lambdaKt.map_lambda(matrixMap.get(0), matrixMap.get(1));
+                        double weibullScv = Map_scvKt.map_scv(matrixMap.get(0), matrixMap.get(1));
+                        double weibullR = FastMath.pow(FastMath.sqrt(weibullScv), -1.086);
+                        double weibullAlpha = 1.0 / weibullLambda / Maths.gammaFunction(1 + 1.0 / weibullR);
+                        subParNodeAlpha = simDoc.createElement("subParameter");
+                        subParNodeAlpha.setAttribute("classPath", "java.lang.Double");
+                        subParNodeAlpha.setAttribute("name", "alpha");
+                        subParValue = simDoc.createElement("value");
+                        subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", weibullAlpha)));
+                        subParNodeAlpha.appendChild(subParValue);
+                        distrParNode.appendChild(subParNodeAlpha);
+                        subParNodeAlpha = simDoc.createElement("subParameter");
+                        subParNodeAlpha.setAttribute("classPath", "java.lang.Double");
+                        subParNodeAlpha.setAttribute("name", "r");
+                        subParValue = simDoc.createElement("value");
+                        subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", weibullR)));
+                        subParNodeAlpha.appendChild(subParValue);
+                        distrParNode.appendChild(subParNodeAlpha);
+                        break;
                     case LOGNORMAL:
+                        double lognormalLambda = Map_lambdaKt.map_lambda(matrixMap.get(0), matrixMap.get(1));
+                        double lognormalScv = Map_scvKt.map_scv(matrixMap.get(0), matrixMap.get(1));
+                        double lognormalMean = 1.0 / lognormalLambda;
+                        double lognormalMu = FastMath.log(lognormalMean / FastMath.sqrt(lognormalScv + 1));
+                        double lognormalSigma = FastMath.sqrt(FastMath.log(lognormalScv + 1));
+                        subParNodeAlpha = simDoc.createElement("subParameter");
+                        subParNodeAlpha.setAttribute("classPath", "java.lang.Double");
+                        subParNodeAlpha.setAttribute("name", "mu");
+                        subParValue = simDoc.createElement("value");
+                        subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", lognormalMu)));
+                        subParNodeAlpha.appendChild(subParValue);
+                        distrParNode.appendChild(subParNodeAlpha);
+                        subParNodeAlpha = simDoc.createElement("subParameter");
+                        subParNodeAlpha.setAttribute("classPath", "java.lang.Double");
+                        subParNodeAlpha.setAttribute("name", "sigma");
+                        subParValue = simDoc.createElement("value");
+                        subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", lognormalSigma)));
+                        subParNodeAlpha.appendChild(subParValue);
+                        distrParNode.appendChild(subParNodeAlpha);
+                        break;
                     case UNIFORM:
+                        double uniformLambda = Map_lambdaKt.map_lambda(matrixMap.get(0), matrixMap.get(1));
+                        double uniformScv = Map_scvKt.map_scv(matrixMap.get(0), matrixMap.get(1));
+                        double uniformMean = 1.0 / uniformLambda;
+                        double uniformMax = (FastMath.sqrt(12 * uniformScv * uniformMean * uniformMean) + 2 * uniformMean) / 2;
+                        double uniformMin = 2 * uniformMean - uniformMax;
+                        subParNodeAlpha = simDoc.createElement("subParameter");
+                        subParNodeAlpha.setAttribute("classPath", "java.lang.Double");
+                        subParNodeAlpha.setAttribute("name", "min");
+                        subParValue = simDoc.createElement("value");
+                        subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", uniformMin)));
+                        subParNodeAlpha.appendChild(subParValue);
+                        distrParNode.appendChild(subParNodeAlpha);
+                        subParNodeAlpha = simDoc.createElement("subParameter");
+                        subParNodeAlpha.setAttribute("classPath", "java.lang.Double");
+                        subParNodeAlpha.setAttribute("name", "max");
+                        subParValue = simDoc.createElement("value");
+                        subParValue.appendChild(simDoc.createTextNode(String.format("%.12f", uniformMax)));
+                        subParNodeAlpha.appendChild(subParValue);
+                        distrParNode.appendChild(subParNodeAlpha);
+                        break;
                     case REPLAYER:
                     case TRACE:
+                        subParNodeAlpha = simDoc.createElement("subParameter");
+                        subParNodeAlpha.setAttribute("classPath", "java.lang.String");
+                        subParNodeAlpha.setAttribute("name", "fileName");
+                        subParValue = simDoc.createElement("value");
+                        // Use fileName from ServiceNodeParam parent class if available
+                        TransitionNodeParam transParam = (TransitionNodeParam) sn.nodeparam.get(istNode);
+                        String traceFileName = "";
+                        if (transParam != null && transParam.fileName != null && m < transParam.fileName.size()) {
+                            traceFileName = transParam.fileName.get(m);
+                        }
+                        subParValue.appendChild(simDoc.createTextNode(traceFileName));
+                        subParNodeAlpha.appendChild(subParValue);
+                        distrParNode.appendChild(subParNodeAlpha);
+                        break;
                     default:
-                        // TODO: not implemented
-                        throw new RuntimeException(String.format("Unsupported firing distribution for mode %d", m));
+                        throw new RuntimeException(String.format("Unsupported firing distribution type for mode %d", m));
                 }
                 timimgStrategyNode.appendChild(distrParNode);
             }

@@ -8,9 +8,14 @@ Created on Wed Mar 20 08:21:05 2013
 import numpy as np
 from numpy import linalg as la
 import numpy.matlib as ml
-import butools
-from butools.reptrans import FindMarkovianRepresentation
-from butools.dmap import CheckDRAPRepresentation, CheckDMRAPRepresentation
+from ..reptrans.findmarkovian import FindMarkovianRepresentation
+from .check import CheckDRAPRepresentation, CheckDMRAPRepresentation
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 def DMMAPFromDMRAP (H, prec=1e-14):
     """

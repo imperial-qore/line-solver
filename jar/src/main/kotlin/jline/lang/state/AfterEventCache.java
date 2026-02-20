@@ -43,20 +43,27 @@ public class AfterEventCache implements Serializable {
                     }
                     switch (sn.routing.get(sn.nodes.get(ind)).get(sn.jobclasses.get(jobClass))) {
                         case RROBIN:
-                            Matrix nvar_ind = new Matrix(1, R + jobClass);
-                            Matrix.extract(sn.nvars, ind, ind + 1, 0, R + jobClass, nvar_ind, 0, 0);
+                            // MATLAB: sn.nvars(ind,1:(R+class)) extracts columns 1 to R+class (1-based)
+                            // Java: columns 0 to R+jobClass (0-based), same logical data
+                            int nvarCols = R + jobClass + 1;
+                            Matrix nvar_ind = new Matrix(1, nvarCols);
+                            Matrix.extract(sn.nvars, ind, ind + 1, 0, nvarCols, nvar_ind, 0, 0);
                             int nvar_sum = (int) nvar_ind.elementSum();
+                            // MATLAB uses 1-based indexing, Java needs 0-based
+                            int spaceVarIdx = nvar_sum - 1;
                             int idx = -1;
                             Matrix outlinks = sn.nodeparam.get(sn.nodes.get(ind)).outlinks.get(sn.jobclasses.get(jobClass));
-                            for (int row = 0; row < outlinks.getNumRows(); row++) {
-                                if (spaceVar.get(nvar_sum) == outlinks.get(row)) {
+                            int numOutlinks = (int) outlinks.length();
+                            for (int row = 0; row < numOutlinks; row++) {
+                                if (spaceVar.get(spaceVarIdx) == outlinks.get(row)) {
                                     idx = row;
+                                    break;
                                 }
                             }
-                            if (idx < outlinks.getNumRows()) {
-                                spaceVar.set(nvar_sum, outlinks.get(idx + 1));
+                            if (idx >= 0 && idx < numOutlinks - 1) {
+                                spaceVar.set(spaceVarIdx, outlinks.get(idx + 1));
                             } else {
-                                spaceVar.set(nvar_sum, outlinks.get(0));
+                                spaceVar.set(spaceVarIdx, outlinks.get(0));
                             }
                             break;
                     }
@@ -165,7 +172,9 @@ public class AfterEventCache implements Serializable {
                                                     int tailPos = cpos(m, listidx, (int) m.get(listidx) - 1);
                                                     varp = var.copy();
                                                     // Shift items in list listidx to make room at the head
-                                                    Matrix.extract(var, 0, 1, headPos, tailPos, varp, 0, headPos + 1);
+                                                    if (m.get(listidx) > 1) {
+                                                        Matrix.extract(var, 0, 1, headPos, tailPos, varp, 0, headPos + 1);
+                                                    }
                                                     varp.set(headPos, k + 1); // head of list listidx
                                                     if (spaceSrvK.isEmpty()) {
                                                         spaceSrvK = spaceSrvE.copy();
@@ -195,7 +204,9 @@ public class AfterEventCache implements Serializable {
                                                         int tailPos = cpos(m, listidx, (int) m.get(listidx) - 1);
                                                         varp = var.copy();
                                                         // Shift items in list listidx to make room at the head
-                                                        Matrix.extract(var, 0, 1, headPos, tailPos, varp, 0, headPos + 1);
+                                                        if (m.get(listidx) > 1) {
+                                                            Matrix.extract(var, 0, 1, headPos, tailPos, varp, 0, headPos + 1);
+                                                        }
                                                         varp.set(headPos, k + 1); // head of list listidx
                                                         if (spaceSrvK.isEmpty()) {
                                                             spaceSrvK = spaceSrvE.copy();
@@ -338,10 +349,14 @@ public class AfterEventCache implements Serializable {
                                                         outrate = Matrix.concatRows(outrate, bottom_row, null);
                                                     }
                                                 } else {
+                                                    // MATLAB: for inew = i:h (h = numel(m), 1-indexed)
+                                                    // In Java (0-indexed): inew goes from i to h-1
                                                     for (int inew = i; inew < h; inew++) {
                                                         Matrix varp = var.copy();
                                                         varp.set(cpos(m, i, j), var.get(cpos(m, inew, (int) m.get(inew) - 1)));
-                                                        Matrix.extract(var, 0, 1, cpos(m, inew, 0), cpos(m, inew, (int) m.get(inew) - 1), varp, 0, cpos(m, inew, 1));
+                                                        if (m.get(inew) > 1) {
+                                                            Matrix.extract(var, 0, 1, cpos(m, inew, 0), cpos(m, inew, (int) m.get(inew) - 1), varp, 0, cpos(m, inew, 1));
+                                                        }
                                                         varp.set(cpos(m, inew, 0), k + 1);
 
                                                         if (spaceSrvK.isEmpty()) {
@@ -471,9 +486,13 @@ public class AfterEventCache implements Serializable {
                                                 } else {
                                                     for (int inew = i; inew < h; inew++) {
                                                         Matrix varp = var.copy();
-                                                        Matrix.extract(var, 0, 1, cpos(m, i, 0), cpos(m, i, j), varp, 0, cpos(m, i, 1));
+                                                        if (j > 0) {
+                                                            Matrix.extract(var, 0, 1, cpos(m, i, 0), cpos(m, i, j), varp, 0, cpos(m, i, 1));
+                                                        }
                                                         varp.set(cpos(m, i, 0), var.get(cpos(m, inew, (int) m.get(inew) - 1)));
-                                                        Matrix.extract(var, 0, 1, cpos(m, inew, 0), cpos(m, inew, (int) m.get(inew) - 1), varp, 0, cpos(m, inew, 1));
+                                                        if (m.get(inew) > 1) {
+                                                            Matrix.extract(var, 0, 1, cpos(m, inew, 0), cpos(m, inew, (int) m.get(inew) - 1), varp, 0, cpos(m, inew, 1));
+                                                        }
                                                         varp.set(cpos(m, inew, 0), k + 1);
 
                                                         if (spaceSrvK.isEmpty()) {

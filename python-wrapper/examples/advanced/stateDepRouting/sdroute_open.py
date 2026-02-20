@@ -41,13 +41,13 @@ print('=== State-Dependent Routing - Open Network ===\n')
 # Solve with JMT
 print('JMT Simulation:')
 solver_jmt = JMT(model, seed=23000)
-avg_table_jmt = solver_jmt.get_avg_node_table()
+avg_table_jmt = solver_jmt.getAvgNodeTable()
 print(avg_table_jmt)
 
 # Solve with CTMC (with cutoff to limit state space)
 print('\nCTMC (with cutoff=5):')
 solver_ctmc = CTMC(model, cutoff=5)
-avg_table_ctmc = solver_ctmc.get_avg_node_table()
+avg_table_ctmc = solver_ctmc.getAvgNodeTable()
 print(avg_table_ctmc)
 
 print('\nNote: Round-robin routing alternates jobs between Queue1 and Queue2.')

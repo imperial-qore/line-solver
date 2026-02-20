@@ -63,32 +63,32 @@ print('  Started:  [[0,0], [1,0]] - Number of jobs in service at each station\n'
 # Solve with multiple solvers
 print('CTMC Solver:')
 solver_ctmc = CTMC(model, options)
-avg_table_ctmc = solver_ctmc.get_avg_table()
+avg_table_ctmc = solver_ctmc.getAvgTable()
 print(avg_table_ctmc)
 
 print('\nJMT Simulation:')
 solver_jmt = JMT(model, options)
-avg_table_jmt = solver_jmt.get_avg_table()
+avg_table_jmt = solver_jmt.getAvgTable()
 print(avg_table_jmt)
 
 print('\nSSA (Stochastic State-space Analysis):')
 solver_ssa = SSA(model, options)
-avg_table_ssa = solver_ssa.get_avg_table()
+avg_table_ssa = solver_ssa.getAvgTable()
 print(avg_table_ssa)
 
 print('\nFLD (Fluid) Solver:')
 solver_fluid = FLD(model, options)
-avg_table_fluid = solver_fluid.get_avg_table()
+avg_table_fluid = solver_fluid.getAvgTable()
 print(avg_table_fluid)
 
 print('\nMVA Solver:')
 solver_mva = MVA(model, options)
-avg_table_mva = solver_mva.get_avg_table()
+avg_table_mva = solver_mva.getAvgTable()
 print(avg_table_mva)
 
 print('\nNC (Normalizing Constant) Solver:')
 solver_nc = NC(model, options)
-avg_table_nc = solver_nc.get_avg_table()
+avg_table_nc = solver_nc.getAvgTable()
 print(avg_table_nc)
 
 print('\nNote: Initial state affects transient behavior but not steady-state metrics.')

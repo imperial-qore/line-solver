@@ -15,19 +15,40 @@ for r=1:size(self.servt_classes_updmap,1)
     % the servt / tputs of aidx in another layer, as needed
     iter_min = min(30,ceil(self.options.iter_max/4));
     wnd_size = (it-self.averagingstart+1);
+
+    % Compute residt from QN/TN_ref instead of WN to avoid
+    % fork+loop visit distortion (WN uses visits from DTMC solve
+    % which are distorted when Fork non-stochastic rows coexist
+    % with loop back-edges in the routing matrix)
+    layerIdx = self.idxhash(idx);
+    layerSn = ensemble{layerIdx}.getStruct();
+    c = find(layerSn.chains(:, classidx), 1);
+    refclass_c = layerSn.refclass(c);
+    refstat_k = layerSn.refstat(classidx);
+
     if ~isempty(self.averagingstart) && it>=iter_min % assume steady-state
         self.servt(aidx) = 0;
         self.residt(aidx) = 0;
         self.tput(aidx) = 0;
         for w=1:(wnd_size-1)
-            self.servt(aidx) = self.servt(aidx) + self.results{end-w,self.idxhash(idx)}.RN(nodeidx,classidx) / wnd_size;
-            self.residt(aidx) = self.residt(aidx) + self.results{end-w,self.idxhash(idx)}.WN(nodeidx,classidx) / wnd_size;
-            self.tput(aidx) = self.tput(aidx) + self.results{end-w,self.idxhash(idx)}.TN(nodeidx,classidx) / wnd_size;
+            self.servt(aidx) = self.servt(aidx) + self.results{end-w,layerIdx}.RN(nodeidx,classidx) / wnd_size;
+            TN_ref = self.results{end-w,layerIdx}.TN(refstat_k, refclass_c);
+            if TN_ref > GlobalConstants.FineTol
+                self.residt(aidx) = self.residt(aidx) + self.results{end-w,layerIdx}.QN(nodeidx,classidx) / TN_ref / wnd_size;
+            else
+                self.residt(aidx) = self.residt(aidx) + self.results{end-w,layerIdx}.WN(nodeidx,classidx) / wnd_size;
+            end
+            self.tput(aidx) = self.tput(aidx) + self.results{end-w,layerIdx}.TN(nodeidx,classidx) / wnd_size;
         end
     else
-        self.servt(aidx) = self.results{end,self.idxhash(idx)}.RN(nodeidx,classidx);
-        self.residt(aidx) = self.results{end,self.idxhash(idx)}.WN(nodeidx,classidx);
-        self.tput(aidx) = self.results{end,self.idxhash(idx)}.TN(nodeidx,classidx);
+        self.servt(aidx) = self.results{end,layerIdx}.RN(nodeidx,classidx);
+        TN_ref = self.results{end,layerIdx}.TN(refstat_k, refclass_c);
+        if TN_ref > GlobalConstants.FineTol
+            self.residt(aidx) = self.results{end,layerIdx}.QN(nodeidx,classidx) / TN_ref;
+        else
+            self.residt(aidx) = self.results{end,layerIdx}.WN(nodeidx,classidx);
+        end
+        self.tput(aidx) = self.results{end,layerIdx}.TN(nodeidx,classidx);
     end
 
     % Fix for async-only entry targets: use RN (response time per visit) for residt
@@ -165,6 +186,7 @@ end
 %entry_servt = zeros(lqn.nidx,1);
 entry_servt = self.servtmatrix*[self.residt;self.callresidt(:)]; % Sum the residT of all the activities connected to this entry
 entry_servt(1:lqn.eshift) = 0;
+
 
 % Propagate forwarding calls: add target entry's service time to source entry
 % When e0 forwards to e1 with probability p, callers of e0 see:

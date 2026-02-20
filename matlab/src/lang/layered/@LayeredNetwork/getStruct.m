@@ -59,6 +59,7 @@ lsn.repl = zeros(lsn.nhosts+lsn.ntasks,1);
 lsn.type = zeros(lsn.nidx,1);
 lsn.graph = zeros(lsn.nidx,lsn.nidx);
 loop_back_edges = false(lsn.nidx,lsn.nidx);
+loop_info_list = []; % Nx2 matrix: [loopstartaidx, loopendaidx] per row
 %lsn.replies = [];
 lsn.replygraph = false(lsn.nacts,lsn.nentries);
 lsn.actphase = ones(lsn.nacts,1);  % Phase for each activity (default=1)
@@ -446,6 +447,7 @@ for t = 1:lsn.ntasks
                         loop_back_edges(curaidx, loopstartaidx) = true;
                         lsn.graph(curaidx, loopstartaidx) = 1.0 - 1.0 / counts;
                         lsn.graph(curaidx, loopendaidx) = 1.0 / counts;
+                        loop_info_list(end+1,:) = [loopstartaidx, loopendaidx];
                     end
                     lsn.actposttype(loopendaidx) = sparse((tasks{t}.precedences(ap).postType));
                 otherwise
@@ -563,7 +565,7 @@ end
 lsn.ncalls = size(lsn.calltype,1);
 
 % correct multiplicity for infinite server stations
-for tidx = find(lsn.sched == SchedStrategy.INF)
+for tidx = find(lsn.sched == SchedStrategy.INF)'  % transpose to iterate over each element
     if lsn.type(tidx) == LayeredNetworkElement.TASK
         callers = find(lsn.taskgraph(:, tidx));
         callers_inf = strcmp(lsn.mult(callers), SchedStrategy.INF);

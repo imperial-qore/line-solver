@@ -270,40 +270,63 @@ def aph_rand(K: int = 2, seed: int = None) -> Dict[str, np.ndarray]:
 
 
 def _map_renewal(MAP: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-    """Make MAP a renewal process (D1 = -D0*e*alpha)."""
+    """Make MAP a renewal process: MAPOUT{2} = MAPIN{2}*ones(n,1)*map_pie(MAPIN)."""
     D0 = MAP['D0']
     D1 = MAP['D1']
     n = D0.shape[0]
 
-    # Compute stationary distribution
-    P = D1.copy()
-    row_sums = np.sum(D1, axis=1)
-    for i in range(n):
-        if row_sums[i] > 0:
-            P[i, :] /= row_sums[i]
+    # Compute map_pie: steady-state of embedded DTMC at departure instants
+    # map_prob: stationary distribution of underlying CTMC Q = D0 + D1
+    Q = D0 + D1
+    try:
+        from .mc import ctmc_solve as _ctmc_solve
+        pi_q = _ctmc_solve(Q)
+    except Exception:
+        pi_q = np.ones(n) / n
 
-    # Simple alpha approximation
-    alpha = np.ones(n) / n
+    # map_pie: A = pi_q * D1, PIE = A / (A * ones(n,1))
+    if pi_q.ndim == 1:
+        pi_q = pi_q.reshape(1, -1)
+    A = pi_q @ D1  # row vector
+    A_sum = np.sum(A)
+    if A_sum > 0:
+        pie = A / A_sum
+    else:
+        pie = np.ones((1, n)) / n
 
-    # Exit rates
-    exit_rates = -np.sum(D0, axis=1)
+    # D1_new = D1 * ones(n,1) * pie
+    ones_col = np.ones((n, 1))
+    D1_ones = D1 @ ones_col  # column vector (n,1)
+    D1_new = D1_ones @ pie  # (n,1) @ (1,n) = (n,n)
 
-    # D1 = exit_rates * alpha
-    D1_new = np.outer(exit_rates, alpha)
-
-    return {'D0': D0, 'D1': D1_new}
+    return {'D0': D0.copy(), 'D1': D1_new}
 
 
 def _map_normalize(MAP: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-    """Normalize MAP to be valid."""
+    """Normalize MAP to be valid.
+
+    Following MATLAB map_normalize:
+    1. Take real part of all entries
+    2. Zero out all negative entries in both D0 and D1
+    3. Recompute D0 diagonal so each row of D0+D1 sums to zero
+    """
     D0 = MAP['D0'].copy()
     D1 = MAP['D1'].copy()
     n = D0.shape[0]
 
-    # Ensure D0 has negative diagonal
+    # Take real parts (handles complex values from sqrt of negative numbers)
+    D0 = np.real(D0)
+    D1 = np.real(D1)
+
+    # Zero out negative entries in both matrices
+    D0[D0 < 0] = 0
+    D1[D1 < 0] = 0
+
+    # Recompute D0 diagonal so each row of D0+D1 sums to zero
     for i in range(n):
-        off_diag_sum = np.sum(D0[i, :]) - D0[i, i] + np.sum(D1[i, :])
-        D0[i, i] = -off_diag_sum
+        D0[i, i] = 0
+        row_sum = np.sum(D0[i, :]) + np.sum(D1[i, :])
+        D0[i, i] = -row_sum
 
     return {'D0': D0, 'D1': D1}
 
@@ -342,41 +365,33 @@ def aph_fit(e1: float, e2: float, e3: float, nmax: int = 10
     n3_ub_feas = False
     n3_lb_feas = False
     n = 1
+    un = 0.0
+    un_1 = 0.0
 
     while (not n2_feas or not n3_lb_feas or not n3_ub_feas) and n < nmax:
         n += 1
+        pn = ((n + 1) * (n2 - 2) / (3 * n2 * (n - 1))) * \
+             (-2 * np.sqrt(n + 1.0) / np.sqrt(4.0 * (n + 1) - 3 * n * n2) - 1)
+        an = (n2 - 2) / (pn * (1 - n2) + np.sqrt(pn * pn + pn * n * (n2 - 2) / (n - 1)))
+        ln = ((3 + an) * (n - 1) + 2 * an) / ((n - 1) * (1 + an * pn)) - \
+             (2 * an * (n + 1)) / (2 * (n - 1) + an * pn * (n * an + 2 * n - 2))
+        un_1 = un
+        un = (1.0 / (n * n * n2)) * (2 * (n - 2) * (n * n2 - n - 1) *
+             np.sqrt(1 + n * (n2 - 2) / (n - 1)) + (n + 2) * (3 * n * n2 - 2 * n - 2))
 
-        # Check n2 feasibility conditions
         if n2 >= (n + 1.0) / n and n2 <= (n + 4.0) / (n + 1):
             n2_feas = True
-            # Compute lower bound on n3
-            try:
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    pn = ((n + 1) * (n2 - 2) / (3 * n2 * (n - 1))) * \
-                         (-2 * np.sqrt(n + 1.0) / np.sqrt(4.0 * (n + 1) - 3 * n * n2) - 1)
-                    an = (n2 - 2) / (pn * (1 - n2) + np.sqrt(pn * pn + pn * n * (n2 - 2) / (n - 1)))
-                    ln = ((3 + an) * (n - 1) + 2 * an) / ((n - 1) * (1 + an * pn)) - \
-                         (2 * an * (n + 1)) / (2 * (n - 1) + an * pn * (n * an + 2 * n - 2))
-                if np.isfinite(ln) and n3 >= ln:
-                    n3_lb_feas = True
-            except (ValueError, ZeroDivisionError):
-                pass
+            if n3 >= ln:
+                n3_lb_feas = True
         elif n2 >= (n + 4.0) / (n + 1):
             n2_feas = True
             if n3 >= n2 * (n + 1) / n:
                 n3_lb_feas = True
 
-        # Check n3 upper bound
         if n2 >= (n + 1.0) / n and n2 <= n / (n - 1):
             n2_feas = True
-            try:
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    un = (1.0 / (n * n * n2)) * (2 * (n - 2) * (n * n2 - n - 1) *
-                         np.sqrt(1 + n * (n2 - 2) / (n - 1)) + (n + 2) * (3 * n * n2 - 2 * n - 2))
-                if np.isfinite(un) and n3 <= un:
-                    n3_ub_feas = True
-            except (ValueError, ZeroDivisionError):
-                pass
+            if n3 <= un:
+                n3_ub_feas = True
         elif n2 >= n / (n - 1):
             n2_feas = True
             n3_ub_feas = True
@@ -392,25 +407,14 @@ def aph_fit(e1: float, e2: float, e3: float, nmax: int = 10
 
     # Fitting algorithm
     if fit_n2 <= n / (n - 1) or fit_n3 <= 2 * fit_n2 - 1:
-        # Case 1
-        try:
-            denom = fit_n2 * (4 + n - n * fit_n3) + \
-                    np.sqrt(n * fit_n2) * np.sqrt(max(0, 12 * fit_n2 * fit_n2 * (n + 1) +
-                    16 * fit_n3 * (n + 1) + fit_n2 * (n * (fit_n3 - 15) * (fit_n3 + 1) - 8 * (fit_n3 + 3))))
-
-            if abs(denom) > 1e-10:
-                b = 2 * (4 - n * (3 * fit_n2 - 4)) / denom
-            else:
-                b = 1.0
-
-            a = (b * fit_n2 - 2) * (n - 1) * b / max(1e-10, (b - 1) * n)
-            p = (b - 1) / max(1e-10, a)
-            lambda_val = 1.0
-            mu = lambda_val * (n - 1) / max(1e-10, a)
-        except (ValueError, ZeroDivisionError):
-            mu = n / e1
-            p = 0.5
-            lambda_val = 1.0
+        # Case 1 of 2
+        b = 2 * (4 - n * (3 * fit_n2 - 4)) / (fit_n2 * (4 + n - n * fit_n3) +
+                np.sqrt(n * fit_n2) * np.sqrt(12 * fit_n2 * fit_n2 * (n + 1) +
+                16 * fit_n3 * (n + 1) + fit_n2 * (n * (fit_n3 - 15) * (fit_n3 + 1) - 8 * (fit_n3 + 3))))
+        a = (b * fit_n2 - 2) * (n - 1) * b / ((b - 1) * n)
+        p = (b - 1) / a
+        lambda_val = 1.0
+        mu = lambda_val * (n - 1) / a
 
         alpha = np.zeros(n)
         alpha[0] = p
@@ -428,8 +432,93 @@ def aph_fit(e1: float, e2: float, e3: float, nmax: int = 10
         exit_rates = -np.sum(T, axis=1)
         D1 = np.outer(exit_rates, alpha)
 
+    elif fit_n2 > n / (n - 1) and fit_n3 > un_1:
+        # Case 2 of 2
+        K1 = n - 1.0
+        K2 = n - 2.0
+        K3 = 3 * fit_n2 - 2 * fit_n3
+        K4 = fit_n3 - 3
+        K5 = n - fit_n2
+        K6 = 1 + fit_n2 - fit_n3
+        K7 = n + fit_n2 - n * fit_n2
+        K8 = 3 + 3 * fit_n2**2 + fit_n3 - 3 * fit_n2 * fit_n3
+
+        inner_sqrt = -16 * K1**2 * K7**6 + \
+            (4 * K1 * K5**3 + K1**2 * K2 * K4**2 * n * fit_n2**2 +
+             4 * K2 * n * fit_n2 * (K4 * n**2 - 3 * K6 * fit_n2 + K8 * n))**2
+        K9 = 108 * K1**2 * (4 * K2**2 * K3 * n**2 * fit_n2 +
+             K1**2 * K2 * K4**2 * n * fit_n2**2 +
+             4 * K1 * K5 * (K5**2 - 3 * K2 * K6 * n * fit_n2) +
+             np.sqrt(complex(inner_sqrt, 0)).real)
+
+        K10 = K4**2 / (4 * K3**2) - K5 / (K1 * K3 * fit_n2)
+        # Use signed cube root for K9^(1/3) to handle negative values
+        K9_cbrt = np.abs(K9)**(1.0/3.0) * np.sign(K9) if K9 != 0 else 0.0
+        K11 = 2**(1.0/3.0) * (3 * K5**2 + K2 * (K3 + 2 * K4) * n * fit_n2) / \
+              (K3 * K9_cbrt * fit_n2) if K9_cbrt != 0 else 0.0
+        K12 = K9_cbrt / (3 * 2**(7.0/3.0) * K1**2 * K3 * fit_n2)
+        K13 = np.sqrt(K10 + K11 + K12)
+        K14 = (6 * K1 * K3 * K4 * K5 + 4 * K2 * K3**2 * n - K1**2 * K4**3 * fit_n2) / \
+              (4 * K1**2 * K3**3 * K13 * fit_n2)
+        K15 = -K4 / (2 * K3)
+        K16 = np.sqrt(2 * K10 - K11 - K12 - K14)
+        K17 = np.sqrt(2 * K10 - K11 - K12 + K14)
+
+        inner_sqrt18 = 81 * (4 * K5**3 + 4 * K2 * K4 * K5 * n * fit_n2 +
+                       K1 * K2 * K4**2 * n * fit_n2**2)**2 - \
+                       48 * (3 * K5**2 + 2 * K2 * K4 * n * fit_n2)**3
+        K18 = 36 * K5**3 + 36 * K2 * K4 * K5 * n * fit_n2 + \
+              9 * K1 * K2 * K4**2 * n * fit_n2**2 - np.sqrt(complex(inner_sqrt18, 0)).real
+        K18_cbrt = np.abs(K18)**(1.0/3.0) * np.sign(K18) if K18 != 0 else 0.0
+        K19 = -K5 / (K1 * K4 * fit_n2) - \
+              2**(2.0/3.0) * (3 * K5**2 + 2 * K2 * K4 * n * fit_n2) / \
+              (3**(1.0/3.0) * K1 * K4 * fit_n2 * K18_cbrt) - \
+              K18_cbrt / (6**(2.0/3.0) * K1 * K4 * fit_n2) if K18_cbrt != 0 else 0.0
+        K20 = 6 * K1 * K3 * K4 * K5 + 4 * K2 * K3**2 * n - K1**2 * K4**3 * fit_n2
+        K21 = K11 + K12 + K5 / (2 * n * K1 * K3)
+        K22 = np.sqrt(3 * K4**2 / (4 * K3**2) - 3 * K5 / (K1 * K3 * fit_n2) +
+              np.sqrt(4 * K21**2 - n * K2 / (fit_n2 * K1**2 * K3)))
+
+        if fit_n3 > un_1 and fit_n3 < 3 * fit_n2 / 2:
+            f = K13 + K15 - K17
+        elif fit_n3 == 2 * fit_n2 / 2:
+            f = K19
+        elif fit_n3 > 3 * fit_n2 / 2 and K20 > 0:
+            f = -K13 + K15 + K16
+        elif K20 == 0:
+            f = K15 + K22
+        else:
+            # K20 < 0
+            f = K13 + K15 + K17
+
+        a = 2 * (f - 1) * (n - 1) / ((n - 1) * (fit_n2 * f**2 - 2 * f + 2) - n)
+        p = (f - 1) * a
+        lambda_val = 1.0
+        mu = lambda_val * (n - 1) / a
+
+        alpha = np.zeros(n)
+        alpha[0] = p
+        alpha[1] = 1 - p
+
+        T = np.zeros((n, n))
+        for i in range(n):
+            T[i, i] = -mu
+            if i < n - 1:
+                T[i, i + 1] = mu
+        T[0, 0] = -lambda_val
+        T[0, 1] = lambda_val
+
+        # Build D0 = T and D1 = -T*e*alpha
+        D0 = T.copy()
+        exit_rates = -np.sum(T, axis=1)
+        D1 = np.outer(exit_rates, alpha)
+
     else:
-        # Case 2 - simplified implementation
+        # Moment set cannot be matched with an APH distribution
+        import warnings
+        warnings.warn('moment set cannot be matched with an APH distribution')
+        is_exact = False
+        # Fall back to Erlang approximation
         mu = n / e1
 
         alpha = np.zeros(n)
@@ -444,43 +533,46 @@ def aph_fit(e1: float, e2: float, e3: float, nmax: int = 10
         D0 = T.copy()
         exit_rates = -np.sum(T, axis=1)
         D1 = np.outer(exit_rates, alpha)
-        is_exact = False
 
-    # Scale to match mean
-    MAP = _map_scale({'D0': D0, 'D1': D1}, e1)
+    # Normalize then scale to match mean (matches MATLAB: map_scale(map_normalize({T,D1}), e1))
+    MAP = _map_scale(_map_normalize({'D0': D0, 'D1': D1}), e1)
 
     return MAP, is_exact
 
 
 def _map_scale(MAP: Dict[str, np.ndarray], target_mean: float
                ) -> Dict[str, np.ndarray]:
-    """Scale MAP to achieve target mean."""
-    D0 = MAP['D0']
-    D1 = MAP['D1']
+    """Scale MAP to achieve target mean: ratio = map_mean(MAP) / target_mean."""
+    D0 = MAP['D0'].copy()
+    D1 = MAP['D1'].copy()
     n = D0.shape[0]
 
-    # Compute current mean
+    # Compute current mean = 1 / map_lambda
+    # map_lambda = pi_q * D1 * ones(n,1) where pi_q = ctmc_solve(D0+D1)
     Q = D0 + D1
-    # Stationary distribution of embedded DTMC
-    P = np.zeros((n, n))
-    for i in range(n):
-        row_sum = np.sum(D1[i, :])
-        if row_sum > 0:
-            P[i, :] = D1[i, :] / row_sum
-
-    # Simple mean calculation
     try:
-        pi = dtmc_solve(P)
-        current_mean = np.sum(pi / np.maximum(-np.diag(D0), 1e-10))
+        from .mc import ctmc_solve as _ctmc_solve
+        pi_q = _ctmc_solve(Q)
     except Exception:
+        pi_q = np.ones(n) / n
+
+    if pi_q.ndim == 1:
+        pi_q = pi_q.reshape(1, -1)
+    ones_col = np.ones((n, 1))
+    lam = float(pi_q @ D1 @ ones_col)
+
+    if lam > 0:
+        current_mean = 1.0 / lam
+    else:
         current_mean = 1.0
 
-    if current_mean > 0:
-        scale = target_mean / current_mean
-    else:
-        scale = 1.0
+    ratio = current_mean / target_mean
 
-    return {'D0': D0 / scale, 'D1': D1 / scale}
+    # Scale and normalize
+    D0 *= ratio
+    D1 *= ratio
+    result = _map_normalize({'D0': D0, 'D1': D1})
+    return result
 
 
 def ph2hyper(PH: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:

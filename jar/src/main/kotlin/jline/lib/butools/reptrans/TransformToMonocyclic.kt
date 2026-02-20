@@ -78,7 +78,7 @@ fun transformToMonocyclic(A: Matrix, maxSize: Int = 100, precision: Double = 1e-
  * Computes eigenvalues and their algebraic multiplicity.
  */
 private fun eigvalc(A: Matrix, precision: Double): Pair<List<Complex>, List<Int>> {
-    val tol = sqrt(Double.MIN_VALUE) * 1e7
+    val tol = sqrt(Math.ulp(1.0))  // sqrt(machine epsilon), matches MATLAB's sqrt(eps)
 
     val eigenvalues = A.eig().toMutableList()
     eigenvalues.sortBy { it.real }
@@ -170,7 +170,8 @@ private fun generateFEBs(evalues: List<Complex>, repeats: List<Int>, maxSize: In
     }
 
     // Order according to the dominant eigenvalue (descending)
-    return febs.sortedByDescending { feb -> feb.evals.maxOfOrNull { it.real } ?: Double.MIN_VALUE }
+    // MATLAB max() on complex arrays selects by magnitude, then < compares real parts
+    return febs.sortedByDescending { feb -> feb.evals.maxByOrNull { it.abs() }?.real ?: Double.MIN_VALUE }
 }
 
 /**

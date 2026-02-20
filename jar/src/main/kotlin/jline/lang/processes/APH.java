@@ -73,6 +73,14 @@ public class APH extends Markovian {
             T.set(0, 0, -1.0 / mean);
             Matrix alpha = Matrix.singleton(1.0);
             ex = new APH(alpha, T);
+        } else if (Math.abs(scv - 1.0) < GlobalConstants.FineTol) {
+            // SCV = 1.0 is exactly an exponential distribution (1 phase)
+            double lambda = 1.0 / mean;
+            Matrix T = new Matrix(1, 1);
+            T.set(0, 0, -lambda);
+            Matrix alpha = Matrix.singleton(1.0);
+            ex = new APH(alpha, T);
+            ex.immediate = false;
         } else {
             double e1 = mean;
             double e2 = (1 + scv) * e1 * e1;

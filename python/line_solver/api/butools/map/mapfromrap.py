@@ -7,9 +7,14 @@ Created on Wed Mar 20 08:21:05 2013
 
 import numpy as np
 from numpy import linalg as la
-import butools
-from butools.reptrans import FindMarkovianRepresentation
-from butools.map import CheckRAPRepresentation, CheckMRAPRepresentation
+from ..reptrans.findmarkovian import FindMarkovianRepresentation
+from .check import CheckRAPRepresentation, CheckMRAPRepresentation
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 def MMAPFromMRAP (H, prec=1e-14):
     """

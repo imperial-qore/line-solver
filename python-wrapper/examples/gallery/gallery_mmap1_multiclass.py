@@ -3,12 +3,12 @@
 
 from line_solver import *
 
-def gallery_mmap1_multiclass(map1=None, map2=None):
+def gallery_mmap1_multiclass(map1=None, map2=None, seed=23000):
     if map1 is None:
-        map1 = MAP.rand(2)
+        map1 = MAP.rand(n=2, seed=seed)
         map1 = map1.set_mean(0.5)
     if map2 is None:
-        map2 = MAP.rand(3)
+        map2 = MAP.rand(n=3, seed=seed+1)
         map2 = map2.set_mean(0.5)
 
     model = Network('M/MAP/1')
@@ -29,8 +29,8 @@ def gallery_mmap1_multiclass(map1=None, map2=None):
 
     # Block 3: topology
     P = model.init_routing_matrix()
-    P[1] = Network.serial_routing([source, queue, sink])
-    P[2] = Network.serial_routing([source, queue, sink])
+    P[oclass1] = Network.serial_routing([source, queue, sink])
+    P[oclass2] = Network.serial_routing([source, queue, sink])
     model.link(P)
 
     return model

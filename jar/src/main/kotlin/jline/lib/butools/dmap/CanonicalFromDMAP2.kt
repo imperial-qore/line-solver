@@ -21,8 +21,8 @@ import kotlin.math.sqrt
  * @return Pair of (G0, G1) matrices of the canonical DMAP(2)
  */
 fun canonicalFromDMAP2(D0: Matrix, D1: Matrix, prec: Double = 1e-14): Pair<Matrix, Matrix> {
-    if (!checkDMAPRepresentation(D0, D1, prec)) {
-        throw IllegalArgumentException("CanonicalFromDMAP2: Input isn't a valid DMAP representation!")
+    if (!checkDRAPRepresentation(D0, D1, prec)) {
+        throw IllegalArgumentException("CanonicalFromDMAP2: Input isn't a valid DRAP representation!")
     }
 
     if (D0.numRows != 2) {

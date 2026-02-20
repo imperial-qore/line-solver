@@ -15,7 +15,13 @@ ist = sn.nodeToStation(ind);
 if sn.sched(ist) == SchedStrategy.LPS
     maxJobs = 1;  % LPS uses single server with FCR for admission control
 else
-    maxJobs = sn.nservers(ist);  % Regular server count
+    % Use the maximum of nservers and lldscaling (for load-dependent models).
+    % Load-dependent scaling with min(1:N,c) represents a c-server queue,
+    % where max(lldscaling) = c.
+    maxJobs = sn.nservers(ist);
+    if ~isempty(sn.lldscaling) && size(sn.lldscaling, 1) >= ist
+        maxJobs = max(maxJobs, max(sn.lldscaling(ist,:)));
+    end
 end
 
 valueNode = simDoc.createElement('value');

@@ -27,11 +27,9 @@ from ..utils.network_adapter import (
     check_closed_network,
     check_product_form,
 )
-from ....api.mam import (
-    map_lambda,
-    map_scv,
-    mmap_super_safe,
-    mmap_exponential,
+from ....api.solvers.mam.handler import (
+    solver_mam_basic as handler_solver_mam_basic,
+    SolverMAMOptions as HandlerOptions,
 )
 
 
@@ -74,137 +72,51 @@ class DecSourceAlgorithm(MAMAlgorithm):
     def solve(self, sn, options=None) -> MAMResult:
         """Solve the network using decomposition with MMAP arrivals.
 
+        Uses the handler implementation that matches MATLAB solver_mam_basic.m
+
         Args:
             sn: NetworkStruct from Network.compileStruct()
-            options: DecSourceOptions (optional)
+            options: DecSourceOptions or SolverMAMOptions (optional)
 
         Returns:
             MAMResult with QN, UN, RN, TN metrics
         """
-        if options is None:
-            options = DecSourceOptions()
-
         start_time = time.time()
 
-        # Extract network parameters
-        params = extract_mam_params(sn)
-        M = params['nstations']
-        K = params['nclasses']
-        rates = params['rates']
-        scv = params['scv']
-        nservers = params['nservers']
-        visits = extract_visit_counts(sn)
-        is_closed = check_closed_network(sn)
+        # Convert options to handler options
+        handler_opts = HandlerOptions()
+        if options is not None:
+            if hasattr(options, 'tol'):
+                handler_opts.tol = options.tol
+            if hasattr(options, 'max_iter'):
+                handler_opts.iter_max = options.max_iter
+            if hasattr(options, 'verbose'):
+                handler_opts.verbose = options.verbose
+            if hasattr(options, 'space_max'):
+                handler_opts.space_max = options.space_max
 
-        if options.verbose:
-            print(f"dec.source: M={M} stations, K={K} classes")
-            print(f"  Closed network: {is_closed}")
-
-        # Initialize result matrices
-        QN = np.zeros((M, K))
-        UN = np.zeros((M, K))
-        RN = np.zeros((M, K))
-        TN = np.zeros((1, K))
-        CN = np.zeros((1, K)) if is_closed else None
-        XN = np.zeros((1, K))
-
-        # Initialize arrival rates (lambda) - ensure it's always a proper K-length array
-        lambda_k = np.zeros(K, dtype=np.float64)
-
-        # Identify Source stations (for open networks)
-        source_stations = set()
-        if hasattr(sn, 'sched') and sn.sched is not None:
-            for ist in range(M):
-                sched = sn.sched.get(ist, None)
-                if sched is not None:
-                    sched_name = sched.name if hasattr(sched, 'name') else str(sched)
-                    if sched_name == 'EXT' or (hasattr(sched, 'value') and sched.value == 11):
-                        source_stations.add(ist)
-
-        if is_closed:
-            # For closed networks, use population / total demand
-            total_demand = np.sum(1.0 / np.maximum(rates, 1e-10))
-            lambda_init = float(np.mean(sn.njobs) / total_demand) if len(sn.njobs) > 0 else 1.0
-            for k in range(K):
-                lambda_k[k] = lambda_init
-        else:
-            # For open networks, extract arrival rate from Source station's rates
-            for ist in source_stations:
-                for k in range(K):
-                    if rates[ist, k] > 0:
-                        lambda_k[k] = rates[ist, k]
-
-            # Fallback: if no arrival rate found, use 1.0
-            for k in range(K):
-                if lambda_k[k] <= 0:
-                    lambda_k[k] = 1.0
-
-        TN_prev = TN.copy() + np.inf
-        iteration = 0
-
-        # Main iteration loop
-        while np.max(np.abs(TN - TN_prev)) > options.tol and iteration < options.max_iter:
-            iteration += 1
-            TN_prev = TN.copy()
-
-            if options.verbose and iteration <= 3:
-                print(f"  Iteration {iteration}: lambda = {lambda_k}")
-
-            # Update throughputs: TN(m,k) = visit_m,k * lambda_k
-            for m in range(M):
-                for k in range(K):
-                    if visits[m, k] > 0:
-                        TN[0, k] = lambda_k[k]
-                    else:
-                        TN[0, k] = 0.0
-
-            # Solve each station (skip Source stations)
-            for m in range(M):
-                if m in source_stations:
-                    # Source station: no queue, just throughput equals arrival rate
-                    QN[m, :] = 0.0
-                    UN[m, :] = 0.0
-                    RN[m, :] = 0.0
-                    XN[0, :] = lambda_k
-                else:
-                    QN[m, :], UN[m, :], RN[m, :], XN[0, :] = _solve_station(
-                        m, M, K, lambda_k, rates[m, :], scv[m, :],
-                        nservers[m], visits[m, :], options
-                    )
-
-            # Check for stability (utilization < 1)
-            max_util = np.max(UN)
-            if max_util >= 1.0 and not is_closed:
-                # Scale down lambda for open networks
-                lambda_k = lambda_k / max_util
-            elif is_closed:
-                # For closed networks, adjust lambda based on queue lengths
-                total_qlen = np.sum(QN)
-                if total_qlen > 0:
-                    total_demand = np.sum(1.0 / np.maximum(rates, 1e-10))
-                    lambda_val = float(np.mean(sn.njobs) / total_demand)
-                    # Update all K elements
-                    for k in range(K):
-                        lambda_k[k] = lambda_val
-                else:
-                    lambda_k = lambda_k * 1.1  # Slight increase
-
-        # Compute cycle times (closed networks)
-        if is_closed and CN is not None:
-            for k in range(K):
-                if TN[0, k] > 1e-10:
-                    CN[0, k] = np.sum(RN[:, k] * visits[:, k]) / TN[0, k]
+        # Call the handler implementation (matches MATLAB solver_mam_basic.m)
+        handler_result = handler_solver_mam_basic(sn, handler_opts)
 
         runtime = time.time() - start_time
 
+        # Convert handler result to MAMResult
+        M = handler_result.Q.shape[0]
+        K = handler_result.Q.shape[1]
+
+        # TN should be (M x K) for station-class throughputs
+        TN = handler_result.T
+        if TN.ndim == 1:
+            TN = TN.reshape(1, -1)
+
         return MAMResult(
-            QN=QN,
-            UN=UN,
-            RN=RN,
+            QN=handler_result.Q,
+            UN=handler_result.U,
+            RN=handler_result.R,
             TN=TN,
-            CN=CN,
-            XN=XN,
-            totiter=iteration,
+            CN=handler_result.C,
+            XN=handler_result.X,
+            totiter=handler_result.it,
             method="dec.source",
             runtime=runtime
         )

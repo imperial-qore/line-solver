@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "line-solver"
-version = "3.0.2"
+version = "3.0.3"
 description = "Queueing theory algorithms in Python"
 authors = [
     "Giuliano Casale <g.casale@imperial.ac.uk>"

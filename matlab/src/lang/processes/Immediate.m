@@ -47,9 +47,9 @@ classdef Immediate < Distribution
             % SCV = GETSCV()
 
             % Get distribution squared coefficient of variation (SCV = variance / mean^2)
+            % Return 1 to match native Python behavior which produces correct LQNS results
 
-
-            SCV = 0;
+            SCV = 1;
         end
 
         function mu = getMu(self)

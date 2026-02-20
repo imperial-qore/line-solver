@@ -176,6 +176,25 @@ class MetricType(Enum):
     SysTard = auto()
 
 
+class Metric:
+    """An output metric of a Solver, such as a performance index."""
+
+    def __init__(self, metric_type, job_class, station=None):
+        self.type = metric_type
+        self.job_class = job_class
+        self.station = station
+        self.disabled = False
+        self.transient = False
+
+
+class TranResult:
+    """Container for transient result time series with attribute access."""
+
+    def __init__(self, t, metric):
+        self.t = t
+        self.metric = metric
+
+
 class NodeType(Enum):
     """
     Types of nodes in queueing network models.
@@ -253,72 +272,72 @@ class ProcessType(Enum):
         return mapping.get(str(obj))
 
 
-class ReplacementStrategy(Enum):
-    """
-    Cache replacement strategies for evicting items.
-    """
-    RR = auto()
-    FIFO = auto()
-    SFIFO = auto()
-    LRU = auto()
-
-    def ordinal(self):
-        return list(ReplacementStrategy).index(self)
+# ReplacementStrategy is defined in lang/base.py to avoid circular imports
+# Import it from there: from line_solver.lang.base import ReplacementStrategy
 
 
 class RoutingStrategy(Enum):
     """
     Strategies for routing jobs between network nodes.
+    Values must match MATLAB's RoutingStrategy constants for JMT compatibility.
     """
-    RAND = auto()
-    PROB = auto()
-    RROBIN = auto()
-    WRROBIN = auto()
-    JSQ = auto()
-    DISABLED = auto()
-    FIRING = auto()
-    KCHOICES = auto()
+    RAND = 0
+    PROB = 1
+    RROBIN = 2
+    WRROBIN = 3
+    JSQ = 4
+    FIRING = 5
+    KCHOICES = 6
+    RL = 7
+    DISABLED = -1
 
 
 class SchedStrategy(Enum):
     """
     Scheduling strategies for service stations.
+
+    Values match lang/base.py SchedStrategy for consistency.
     """
-    INF = auto()
-    FCFS = auto()
-    LCFS = auto()
-    LCFSPR = auto()
-    SIRO = auto()
-    SJF = auto()
-    LJF = auto()
-    EDD = auto()
-    EDF = auto()
-    PS = auto()
-    DPS = auto()
-    GPS = auto()
-    SEPT = auto()
-    LEPT = auto()
-    SRPT = auto()
-    SRPTPRIO = auto()
-    HOL = auto()
-    FORK = auto()
-    EXT = auto()
-    REF = auto()
-    POLLING = auto()
-    PSPRIO = auto()
-    DPSPRIO = auto()
-    GPSPRIO = auto()
-    LCFSPRIO = auto()
-    LCFSPRPRIO = auto()
-    LCFSPIPRIO = auto()
-    FCFSPRPRIO = auto()
-    FCFSPIPRIO = auto()
-    FCFSPRIO = auto()
-    PSJF = auto()
-    FB = auto()
-    LAS = auto()
-    LRPT = auto()
-    SETF = auto()
+    FCFS = 0       # First-Come First-Served
+    LCFS = 1       # Last-Come First-Served
+    LCFSPR = 2     # LCFS with Preemptive Resume
+    LCFSPI = 3     # LCFS with Preemptive Interrupt
+    PS = 4         # Processor Sharing
+    DPS = 5        # Discriminatory Processor Sharing
+    GPS = 6        # Generalized Processor Sharing
+    INF = 7        # Infinite Server (Delay)
+    RAND = 8       # Random
+    HOL = 9        # Head of Line
+    SEPT = 10      # Shortest Expected Processing Time
+    LEPT = 11      # Longest Expected Processing Time
+    SIRO = 12      # Service In Random Order
+    SJF = 13       # Shortest Job First
+    LJF = 14       # Longest Job First
+    POLLING = 15   # Polling
+    EXT = 16       # External arrival stream
+    LPS = 17       # Limited Processor Sharing
+    SETF = 18      # Shortest Elapsed Time First
+    DPSPRIO = 19   # DPS with Priorities
+    GPSPRIO = 20   # GPS with Priorities
+    PSPRIO = 21    # PS with Priorities
+    FCFSPR = 22    # FCFS with Preemptive Resume
+    EDF = 23       # Earliest Deadline First
+    FORK = 24      # Fork node
+    JOIN = 25      # Join node
+    REF = 26       # Reference task
+    EDD = 27       # Earliest Due Date
+    SRPT = 28      # Shortest Remaining Processing Time
+    SRPTPRIO = 29  # SRPT with Priorities
+    LCFSPRIO = 30  # LCFS with Priorities
+    LCFSPRPRIO = 31  # LCFSPR with Priorities
+    LCFSPIPRIO = 32  # LCFSPI with Priorities
+    FCFSPRPRIO = 33  # FCFSPR with Priorities
+    FCFSPIPRIO = 34  # FCFSPI with Priorities
+    FCFSPRIO = 35  # FCFS with Priorities
+    PSJF = 36      # Preemptive Shortest Job First
+    FB = 37        # Foreground-Background
+    LAS = 38       # Least Attained Service
+    LRPT = 39      # Longest Remaining Processing Time
 
     @staticmethod
     def fromString(obj):
@@ -427,10 +446,10 @@ class GlobalConstants:
     """
     Zero = 1e-14
     CoarseTol = 1e-4
-    FineTol = 1e-10
-    Immediate = 1e-14
+    FineTol = 1e-8  # Match MATLAB's default
+    Immediate = 1e8  # 1/FineTol - large but finite rate for immediate service (matches MATLAB)
     MaxInt = 2**31 - 1
-    Version = "3.0.2"
+    Version = "3.0.3"
     DummyMode = False
 
     _instance = None

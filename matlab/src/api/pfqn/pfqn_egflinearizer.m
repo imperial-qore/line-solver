@@ -157,19 +157,16 @@ T = zeros(1,R);
 Q = zeros(M,R);
 
 % Compute residence time
+% Note: The PS formula W = D*(1+sum(Q)) is used for all scheduling types.
+% The FCFS correction (W = D + sum_s D_s*Q_s) requires per-visit service
+% times S = D/V, but only demands D (= V*S) are available at the chain level.
+% Using D in place of S produces incorrect results when visit ratios differ
+% across chains (e.g., self-looping classes). Since for exponential FCFS the
+% per-visit response time equals the PS formula, this is the correct approach
+% for the chain-level linearizer.
 for ist=1:M
     for r=1:R
-        if type(ist) == SchedStrategy.FCFS
-            W(ist,r) = L(ist,r);
-            if L(ist,r) ~= 0
-                for s=1:R
-                    W(ist,r) = W(ist,r) + L(ist,s)*Q_1(ist,s,1+r);
-                end
-            end
-        else
-            W(ist,r) = L(ist,r)*(1+sum(Q_1(ist,:,1+r)));
-        end
-
+        W(ist,r) = L(ist,r)*(1+sum(Q_1(ist,:,1+r)));
     end
 end
 

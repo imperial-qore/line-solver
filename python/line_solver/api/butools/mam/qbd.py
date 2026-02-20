@@ -8,8 +8,14 @@ Created on Fri Mar 22 17:44:47 2013
 import numpy as np
 import numpy.matlib as ml
 import numpy.linalg as la
-import butools
-from butools.mc import DTMCSolve
+# Use local butools settings instead of external package
+from .. import verbose, checkInput
+from ..mc.stst import DTMCSolve
+# Create butools-like namespace for backward compatibility
+class _butools_settings:
+    verbose = verbose
+    checkInput = checkInput
+butools = _butools_settings()
 
 def QBDFundamentalMatrices (B, L, F, matrices="G", precision=1e-14, maxNumIt=50, method="CR", shift=True):
     """

@@ -5,10 +5,16 @@ Created on Sun Aug 24 15:31:04 2014
 @author: gabor
 """
 
-import butools
-from butools.mc import CheckGenerator, CheckProbVector
 import numpy as np
 import scipy.linalg as la
+# Use local butools implementations instead of external package
+from .. import checkPrecision, verbose
+from ..mc.check import CheckGenerator, CheckProbVector
+# Create butools-like namespace for backward compatibility
+class _butools_settings:
+    checkPrecision = checkPrecision
+    verbose = verbose
+butools = _butools_settings()
 
 def CheckPHRepresentation (alpha, A, prec=None):
     """

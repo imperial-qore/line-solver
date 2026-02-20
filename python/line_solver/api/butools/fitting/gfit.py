@@ -7,9 +7,14 @@ Created on Wed Mar 20 08:24:03 2013
 import numpy as np
 import numpy.matlib as ml
 import math
-import butools
 import sys
 from IPython.display import clear_output
+
+from .. import verbose
+class _butools_settings:
+    verbose = verbose
+butools = _butools_settings()
+
 
 def PHFromTrace (trace, orders, weights=[], maxIter=200, stopCond=1e-7, initial=None, result="vecmat", retlogli=True):
     """

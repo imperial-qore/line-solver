@@ -166,6 +166,17 @@ ref= zeros(sn.nchains,1);
 for c=1:sn.nchains
     chain = find(sn.chains(c,:));
     Xchain(c)=Tchain(sn.refstat(c),c);
+    if Xchain(c) == 0
+        % For open chains where refstat is Source (not in qnsolver output),
+        % recover Xchain from any station with valid throughput:
+        % Xchain(c) = Tchain(i,c) / Vchain(i,c)
+        for i=1:sn.nstations
+            if Vchain(i,c) > 0 && Tchain(i,c) > 0
+                Xchain(c) = Tchain(i,c) / Vchain(i,c);
+                break;
+            end
+        end
+    end
 end
 %Rchain=Wchain./Vchain; % needs to be reinstated for starred output
 Rchain=Wchain;
@@ -176,7 +187,7 @@ for i=1:sn.nstations
     end
 end
 
-[QN,UN,RN,TN,CN,XN] = sn_deaggregate_chain_results(sn, Lchain, [], STchain, Vchain, alpha, [], [], Rchain, Tchain, [], Xchain);
+[QN,UN,RN,TN,CN,XN] = sn_deaggregate_chain_results(sn, Lchain, [], STchain, Vchain, alpha, Qchain, Uchain, Rchain, Tchain, [], Xchain);
 end
 
 function [Uchain, Qchain, Wchain, Tchain, statName] = parse_dollar_output(strline, Uchain, Qchain, Wchain, Tchain)

@@ -1,4 +1,6 @@
 package jline.examples.basic;
+import jline.GlobalConstants;
+import jline.VerboseLevel;
 
 import jline.examples.java.basic.StochPetriNetModel;
 import jline.lang.Network;
@@ -24,6 +26,7 @@ public class StochPetriNetExamplesTest {
     public static void setUp() {
         // Ensure MATLAB-compatible random number generation
         Maths.setRandomNumbersMatlab(true);
+        GlobalConstants.setVerbose(VerboseLevel.SILENT);
     }
     
 

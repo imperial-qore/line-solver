@@ -38,7 +38,8 @@ fun lsnMaxMultiplicity(lsn: LayeredNetworkStruct): Matrix {
             }
         }
     }
-    val mult = lsn.mult
+    // Make a copy of mult to avoid modifying lsn.mult directly
+    val mult = Matrix(lsn.mult)
     val type = lsn.type
     val isref = lsn.isref
 

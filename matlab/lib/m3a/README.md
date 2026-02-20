@@ -1,7 +1,7 @@
 M3A: Marked MAP Matching Algorithms
 ===
 <p><b>Codebase</b>
-<br>This fork of the main M3A repository offers a customized version of M3A in use within the <a href="https://github.com/imperial-qore/line-solver">LINE solver</>. In particular, the present version has several additional library functions and  does not print out messages on screen.
+<br>This fork of the main M3A repository offers a customized version of M3A in use within the <a href="https://line-solver.sf.net/">LINE solver</>. In particular, the present version has several additional library functions and  does not print out messages on screen.
 
 <p><b>Introduction</b>
 <br>Marked Markovian Arrival Processes (MMAPs) are a class of stochastic processes

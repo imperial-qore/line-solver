@@ -89,34 +89,52 @@ def sn_get_demands_chain(sn: NetworkStruct) -> SnGetDemandsResult:
     refclass = sn.refclass.flatten() if sn.refclass is not None else -np.ones(C, dtype=int)
 
     # Calculate Vchain and alpha for each chain
+    # NOTE: sn.visits[c] is indexed by STATEFUL NODE index (shape nstateful x K).
+    # We must convert station index 'i' to stateful index using stationToStateful.
     for c in range(C):
         if c not in sn.inchain:
             continue
         inchain = sn.inchain[c].flatten().astype(int)
 
+        # Check if reference class is specified and has non-zero visits
+        # Transient classes (like Class1 in class-switching models) have 0 visits
+        # in steady state, so we should fall back to using sum of chain visits
+        use_refclass = False
         if c < len(refclass) and refclass[c] > -1:
-            # Reference class is specified
+            visits = sn.visits.get(c)
+            if visits is not None:
+                ref_stat_idx = int(refstat[inchain[0]]) if len(refstat) > inchain[0] else 0
+                ref_sf = int(station_to_stateful[ref_stat_idx]) if ref_stat_idx < len(station_to_stateful) else ref_stat_idx
+                if ref_sf < visits.shape[0]:
+                    ref_class_idx = int(refclass[c])
+                    if ref_class_idx < visits.shape[1]:
+                        ref_visits = visits[ref_sf, ref_class_idx]
+                        use_refclass = ref_visits > 1e-10  # Only use refclass if it has visits
+
+        if use_refclass:
+            # Reference class is specified and has non-zero visits
             for i in range(M):
                 visits = sn.visits.get(c)
                 if visits is None:
                     continue
 
-                # visits matrix is indexed by station (not stateful node)
-                # Shape is (nstations, nclasses)
-                if i >= visits.shape[0]:
+                # Convert station index to stateful index
+                isf = int(station_to_stateful[i]) if i < len(station_to_stateful) else i
+                if isf >= visits.shape[0]:
                     continue
 
-                # Sum visits for all classes in chain at station i
-                sum_visits_i = np.sum(visits[i, inchain])
+                # Sum visits for all classes in chain at station i (using stateful index)
+                sum_visits_i = np.sum(visits[isf, inchain])
 
-                # Get reference station index
+                # Get reference station's stateful index
                 ref_stat_idx = int(refstat[inchain[0]]) if len(refstat) > inchain[0] else 0
-                if ref_stat_idx >= visits.shape[0]:
-                    ref_stat_idx = 0
+                ref_sf = int(station_to_stateful[ref_stat_idx]) if ref_stat_idx < len(station_to_stateful) else ref_stat_idx
+                if ref_sf >= visits.shape[0]:
+                    ref_sf = 0
 
                 # Get reference class visits
                 ref_class_idx = int(refclass[c])
-                ref_visits = visits[ref_stat_idx, ref_class_idx] if ref_class_idx < visits.shape[1] else 1.0
+                ref_visits = visits[ref_sf, ref_class_idx] if ref_class_idx < visits.shape[1] else 1.0
 
                 Vchain[i, c] = sum_visits_i / ref_visits if ref_visits != 0 else 0.0
 
@@ -124,7 +142,7 @@ def sn_get_demands_chain(sn: NetworkStruct) -> SnGetDemandsResult:
                 if sum_visits_i > 0:
                     for k in inchain:
                         if k < K:
-                            alpha[i, k] += visits[i, k] / sum_visits_i
+                            alpha[i, k] += visits[isf, k] / sum_visits_i
         else:
             # No reference class, use sum of visits in chain
             for i in range(M):
@@ -132,18 +150,20 @@ def sn_get_demands_chain(sn: NetworkStruct) -> SnGetDemandsResult:
                 if visits is None:
                     continue
 
-                # visits matrix is indexed by station (not stateful node)
-                if i >= visits.shape[0]:
+                # Convert station index to stateful index
+                isf = int(station_to_stateful[i]) if i < len(station_to_stateful) else i
+                if isf >= visits.shape[0]:
                     continue
 
-                # Sum visits for classes in chain at station i
-                sum_visits_i = np.sum(visits[i, inchain])
+                # Sum visits for classes in chain at station i (using stateful index)
+                sum_visits_i = np.sum(visits[isf, inchain])
 
-                # Get reference station visits
+                # Get reference station's stateful index
                 ref_stat_idx = int(refstat[inchain[0]]) if len(refstat) > inchain[0] else 0
-                if ref_stat_idx >= visits.shape[0]:
-                    ref_stat_idx = 0
-                sum_visits_ref = np.sum(visits[ref_stat_idx, inchain])
+                ref_sf = int(station_to_stateful[ref_stat_idx]) if ref_stat_idx < len(station_to_stateful) else ref_stat_idx
+                if ref_sf >= visits.shape[0]:
+                    ref_sf = 0
+                sum_visits_ref = np.sum(visits[ref_sf, inchain])
 
                 Vchain[i, c] = sum_visits_i / sum_visits_ref if sum_visits_ref != 0 else 0.0
 
@@ -151,21 +171,23 @@ def sn_get_demands_chain(sn: NetworkStruct) -> SnGetDemandsResult:
                 if sum_visits_i > 0:
                     for k in inchain:
                         if k < K:
-                            alpha[i, k] += visits[i, k] / sum_visits_i
+                            alpha[i, k] += visits[isf, k] / sum_visits_i
 
     # Clean up Vchain
     Vchain = np.where(np.isinf(Vchain), 0.0, Vchain)
     Vchain = np.where(np.isnan(Vchain), 0.0, Vchain)
 
-    # Normalize Vchain by reference station visits
+    # Normalize Vchain by reference station visits (MATLAB line 73-76)
     for c in range(C):
         if c not in sn.inchain:
             continue
         inchain = sn.inchain[c].flatten().astype(int)
         ref_stat_idx = int(refstat[inchain[0]]) if len(refstat) > inchain[0] else 0
-        vchain_ref = Vchain[ref_stat_idx, c]
-        if vchain_ref != 0:
-            Vchain[:, c] /= vchain_ref
+        # Note: Vchain is station-indexed, so use ref_stat_idx directly
+        if ref_stat_idx < M:
+            vchain_ref = Vchain[ref_stat_idx, c]
+            if vchain_ref != 0:
+                Vchain[:, c] /= vchain_ref
 
     # Clean up alpha
     alpha = np.where(np.isinf(alpha), 0.0, alpha)

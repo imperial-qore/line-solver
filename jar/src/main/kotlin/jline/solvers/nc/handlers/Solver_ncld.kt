@@ -447,6 +447,14 @@ fun solver_ncld(sn: NetworkStruct, options: SolverOptions): SolverNC.SolverNCLDR
                     for (i in 0..<M) {
                         snDeaggragatedChains.T.set(i, classIdx, ratio * snDeaggragatedChains.T.get(i, classIdx))
                     }
+                    for (i in 0..<M) {
+                        U.set(i, classIdx, ratio * U.get(i, classIdx))
+                    }
+                    for (i in 0..<M) {
+                        if (snDeaggragatedChains.T.get(i, classIdx) > 0) {
+                            R.set(i, classIdx, Q.get(i, classIdx) / snDeaggragatedChains.T.get(i, classIdx))
+                        }
+                    }
                 }
             }
         }

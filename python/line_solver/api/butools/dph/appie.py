@@ -1,8 +1,8 @@
 from numpy import linalg as la
 import numpy.matlib as ml
 import numpy as np
-from butools.moments import ReducedMomsFromMoms, FactorialMomsFromMoms
-from butools.ph import MEFromMoments
+from ..moments.conv import ReducedMomsFromMoms, FactorialMomsFromMoms
+from ..ph.appie import MEFromMoments
 
 def MGFromMoments (moms):
     """

@@ -39,13 +39,46 @@ fun solver_mva(sn: NetworkStruct, options: SolverOptions): MVAResult {
     val M = sn.nstations
     val K = sn.nchains
 
-    // Check for LCFS scheduling - not supported in this version
+    // Check for special LCFS + LCFS-PR 2-station network BEFORE product-form check
+    // because this configuration has a product-form solution but snHasProductForm
+    // doesn't recognize LCFS scheduling strategy
+    val lcfsStats = ArrayList<Int>()
+    val lcfsprStats = ArrayList<Int>()
     for (i in 0..<M) {
         when (sn.sched.get(sn.stations.get(i))) {
-            SchedStrategy.LCFS, SchedStrategy.LCFSPR ->
-                throw RuntimeException("LCFS queueing networks are not supported in this version.")
+            SchedStrategy.LCFS -> lcfsStats.add(i)
+            SchedStrategy.LCFSPR -> lcfsprStats.add(i)
             else -> {}
         }
+    }
+
+    if (lcfsStats.isNotEmpty() && lcfsprStats.isNotEmpty()) {
+        // Validate LCFS network topology
+        if (lcfsStats.size != 1 || lcfsprStats.size != 1) {
+            throw RuntimeException("LCFS MVA requires exactly one LCFS and one LCFS-PR station.")
+        }
+        // Validate closed network (no infinite population chains)
+        for (i in 0..<Nchain.numCols) {
+            if (Utils.isInf(Nchain.get(i))) {
+                throw RuntimeException("LCFS MVA requires a closed queueing network.")
+            }
+        }
+        // Check for self-loops in routing matrix
+        val rt = sn.rt
+        val nclasses = sn.nclasses
+        for (ist in listOf(lcfsStats[0], lcfsprStats[0])) {
+            for (r in 0..<nclasses) {
+                val idx = ist * nclasses + r
+                if (rt.get(idx, idx) > 0) {
+                    throw RuntimeException("LCFS MVA does not support self-loops at stations.")
+                }
+            }
+        }
+        // Call specialized LCFS MVA solver
+        return solver_mva_lcfsqn(sn, options, lcfsStats[0], lcfsprStats[0])
+    } else if (lcfsStats.isNotEmpty()) {
+        // LCFS without LCFS-PR is not supported
+        throw RuntimeException("LCFS scheduling requires a paired LCFS-PR station.")
     }
 
     // For non-LCFS models, check product-form requirement

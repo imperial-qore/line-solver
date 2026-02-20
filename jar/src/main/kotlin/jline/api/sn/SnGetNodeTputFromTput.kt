@@ -14,9 +14,22 @@ import jline.util.matrix.Matrix
 fun snGetNodeTputFromTput(sn: NetworkStruct, TN: Matrix, TH: AvgHandle?, ANn: Matrix): Matrix {
     val I = sn.nnodes
     val C = sn.nchains
-    sn.nstations
+    val M = sn.nstations
     val R = sn.nclasses
     val TNn = Matrix(I, R)
+
+    // First, copy station throughput to station nodes
+    // This preserves the TN values computed by the solver
+    for (ist in 0..<M) {
+        val ind = sn.stationToNode[ist].toInt()
+        if (ind >= 0 && ind < I) {
+            for (r in 0..<R) {
+                TNn[ind, r] = TN[ist, r]
+            }
+        }
+    }
+
+    // Process Cache hit/miss classes using nodevisits formula
     for (ind in 0..<I) {
         for (c in 0..<C) {
             val inchain = sn.inchain[c]
@@ -53,7 +66,12 @@ fun snGetNodeTputFromTput(sn: NetworkStruct, TN: Matrix, TH: AvgHandle?, ANn: Ma
         }
     }
 
+    // Process non-station nodes using routing formula
     for (ind in 0..<I) {
+        // Skip if this is a station node - keep the TN values copied above
+        val nodeToStation = sn.nodeToStation[ind].toInt()
+        if (nodeToStation >= 0) continue
+
         for (c in 0..<C) {
             val inchain = sn.inchain[c]
             for (r in 0..<inchain!!.length()) {
@@ -64,10 +82,7 @@ fun snGetNodeTputFromTput(sn: NetworkStruct, TN: Matrix, TH: AvgHandle?, ANn: Ma
                         for (s in 0..<inchain.length()) {
                             val sIdx = inchain[s].toInt()
                             for (jnd in 0..<I) {
-                                if (sn.nodetype[ind] == NodeType.Source) {
-                                    val ist = sn.nodeToStation[ind].toInt()
-                                    TNn[ind, sIdx] = TN[ist, sIdx]
-                                } else if (sn.nodetype[ind] == NodeType.Cache) {
+                                if (sn.nodetype[ind] == NodeType.Cache) {
                                     if (ind != jnd) {
                                         TNn[ind, sIdx] = TNn[ind, sIdx] + ANn[ind, rIdx] * sn.rtnodes[ind * R + rIdx, jnd * R + sIdx]
                                     }
@@ -80,12 +95,7 @@ fun snGetNodeTputFromTput(sn: NetworkStruct, TN: Matrix, TH: AvgHandle?, ANn: Ma
                         for (s in 0..<inchain.length()) {
                             val sIdx = inchain[s].toInt()
                             for (jnd in 0..<I) {
-                                if (sn.nodetype[ind] != NodeType.Source) {
-                                    TNn[ind, sIdx] = TNn[ind, sIdx] + ANn[ind, rIdx] * sn.rtnodes[(ind) * R + rIdx, (jnd) * R + sIdx]
-                                } else {
-                                    val ist = sn.nodeToStation[ind].toInt()
-                                    TNn[ind, sIdx] = TN[ist, sIdx]
-                                }
+                                TNn[ind, sIdx] = TNn[ind, sIdx] + ANn[ind, rIdx] * sn.rtnodes[(ind) * R + rIdx, (jnd) * R + sIdx]
                             }
                         }
                     }

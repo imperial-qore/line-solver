@@ -37,6 +37,7 @@ function R=qbd_R_logred(B,L,F,iter_max)
 if nargin<4
     iter_max = 100000;
 end
+r = size(L,1);
 iLF = -inv(L)*F;
 iLB = -inv(L)*B;
 T = iLF;

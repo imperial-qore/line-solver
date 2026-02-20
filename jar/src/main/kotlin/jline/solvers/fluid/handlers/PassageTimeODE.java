@@ -38,6 +38,16 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
     private final SolverOptions options;
     private final int numDimensions;
 
+    // Precomputed structures (computed once in constructor, reused in computeDerivatives)
+    private final boolean[][] cachedEnabled;
+    private final Matrix cachedQIndices;
+    private final Matrix cachedKic;
+    private final Matrix cachedW;
+    // Precomputed for the default (closing) method only
+    private final Matrix cachedAllJumps;
+    private final Matrix cachedRateBase;
+    private final Matrix cachedEventIdx;
+
     public PassageTimeODE(
             NetworkStruct sn,
             Map<Station, Map<JobClass, Matrix>> mu,
@@ -55,6 +65,83 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
         this.nservers = S;
         this.options = options;
         this.numDimensions = numDimensions;
+
+        // Precompute enabled, qIndices, Kic, w (these don't change between ODE steps)
+        int M = S.length();
+        int K = mu.get(sn.stations.get(0)).size();
+
+        this.cachedEnabled = new boolean[M][K];
+        this.cachedQIndices = new Matrix(M, K);
+        this.cachedKic = new Matrix(M, K);
+        this.cachedW = new Matrix(M, K);
+        int cumSum = 0;
+
+        for (int i = 0; i < M; i++) {
+            Station station = sn.stations.get(i);
+            for (int c = 0; c < K; c++) {
+                JobClass jobClass = sn.jobclasses.get(c);
+                cachedW.set(i, c, 1);
+                cachedEnabled[i][c] = false;
+                int numPhases = 0;
+
+                Matrix muMatrix = mu.get(station).get(jobClass);
+                if (muMatrix != null) {
+                    int numNans = 0;
+                    for (int row = 0; row < muMatrix.getNumRows(); row++) {
+                        for (int col = 0; col < muMatrix.getNumCols(); col++) {
+                            if (Double.isNaN(muMatrix.get(row, col))) {
+                                numNans++;
+                            }
+                        }
+                    }
+                    if ((numNans != muMatrix.getNumElements()) && !muMatrix.isEmpty()) {
+                        numPhases = muMatrix.length();
+                        cachedEnabled[i][c] = true;
+                    }
+                }
+
+                cachedQIndices.set(i, c, cumSum);
+                cachedKic.set(i, c, numPhases);
+                cumSum += numPhases;
+            }
+
+            if (sn.sched.get(station) == DPS) {
+                for (int k = 0; k < K; k++) {
+                    cachedW.set(i, k, sn.schedparam.get(i, k));
+                }
+                double sumWI = cachedW.sumRows(i);
+                if (sumWI > 0) {
+                    for (int k = 0; k < K; k++) {
+                        cachedW.set(i, k, cachedW.get(i, k) / sumWI);
+                    }
+                }
+            }
+        }
+
+        // Precompute allJumps, rateBase, eventIdx for the default (closing) method
+        if (!Objects.equals(options.method, "statedep") && !Objects.equals(options.method, "softmin")) {
+            Matrix tmpAllJumps = calculateJumps(cachedEnabled, cachedQIndices, cachedKic);
+            Matrix tmpRateBase = new Matrix(tmpAllJumps.getNumCols(), 1);
+            Matrix tmpEventIdx = new Matrix(tmpAllJumps.getNumCols(), 1);
+            calculateRateBaseAndEventIdxs(cachedEnabled, cachedQIndices, cachedKic, tmpRateBase, tmpEventIdx);
+
+            // Apply immediate elimination if configured (matching MATLAB solver_fluid_odes.m)
+            if (options.config != null && options.config.hide_immediate) {
+                ImmediateElimination.EliminationResult result =
+                        ImmediateElimination.eliminateImmediate(tmpAllJumps, tmpRateBase, tmpEventIdx, sn, options);
+                this.cachedAllJumps = result.allJumpsReduced;
+                this.cachedRateBase = result.rateBaseReduced;
+                this.cachedEventIdx = result.eventIdxReduced;
+            } else {
+                this.cachedAllJumps = tmpAllJumps;
+                this.cachedRateBase = tmpRateBase;
+                this.cachedEventIdx = tmpEventIdx;
+            }
+        } else {
+            this.cachedAllJumps = null;
+            this.cachedRateBase = null;
+            this.cachedEventIdx = null;
+        }
     }
 
     public PassageTimeODE(
@@ -277,7 +364,7 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
             }
         }
 
-        int numEventIndices = eventIdx.length();
+        int numEventIndices = eventIdx.getNumRows(); // Use getNumRows(), not length() which returns max(rows,cols)
         Matrix newRates = new Matrix(numEventIndices, 1);
         for (int i = 0; i < numEventIndices; i++) {
             newRates.set(i, 0, rates.get((int) eventIdx.get(i, 0), 0));
@@ -962,82 +1049,28 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
     public void computeDerivatives(double t, double[] x, double[] dxdt)
             throws MaxCountExceededException, DimensionMismatchException {
 
-        int M = sn.nservers.length(); // Number of stations
-        int K = mu.get(sn.stations.get(0)).size(); // Number of classes
-        
-
-        Matrix w = new Matrix(M, K);
-        boolean[][] enabled = new boolean[M][K]; // Indicates whether a class is served at a station
-        for (int i = 0; i < M; i++) {
-            for (int k = 0; k < K; k++) {
-                w.set(i, k, 1);
-                enabled[i][k] = false;
+        // Clamp state to non-negative before computing derivatives.
+        // Matches MATLAB's ode15s NonNegative option: prevents negative fluid
+        // levels from corrupting rate computations in the ODE dynamics.
+        for (int idx = 0; idx < x.length; idx++) {
+            if (x[idx] < 0) {
+                x[idx] = 0;
             }
         }
-        Matrix qIndices = new Matrix(M, K);
-        Matrix Kic = new Matrix(M, K);
-        int cumSum = 0;
 
-        for (int i = 0; i < M; i++) {
-            Station station = sn.stations.get(i);
-            for (int c = 0; c < K; c++) {
-                JobClass jobClass = sn.jobclasses.get(c);
-                int numPhases = 0;
-                int numNans = 0;
-                
-                Matrix muMatrix = mu.get(station).get(jobClass);
-                if (muMatrix != null) {
-                    int rows = muMatrix.getNumRows();
-                    int cols = muMatrix.getNumCols();
-                    for (int row = 0; row < rows; row++) {
-                        for (int col = 0; col < cols; col++) {
-                            if (Double.isNaN(muMatrix.get(row, col))) {
-                                numNans++;
-                            }
-                        }
-                    }
-                    if ((numNans != muMatrix.getNumElements()) && !muMatrix.isEmpty()) {
-                        numPhases = muMatrix.length();
-                        enabled[i][c] = true;
-                    }
-                }
-                
-                qIndices.set(i, c, cumSum);
-                Kic.set(i, c, numPhases);
-                cumSum += numPhases;
-            }
-
-            if (sn.sched.get(station) == DPS) {
-                // Set DPS weights from scheduling parameters
-                for (int k = 0; k < K; k++) {
-                    w.set(i, k, sn.schedparam.get(i, k));
-                }
-                // Normalize weights to sum to 1 (matching MATLAB: w(i,:) = w(i,:)/sum(w(i,:)))
-                double sumWI = w.sumRows(i);
-                if (sumWI > 0) {
-                    for (int k = 0; k < K; k++) {
-                        w.set(i, k, w.get(i, k) / sumWI);
-                    }
-                }
-            }
-        }
+        // Use precomputed structures (w is copied since some methods modify it in-place)
+        Matrix w = cachedW.copy();
 
         Matrix dxdtTmp;
         if (Objects.equals(options.method, "statedep")) {
-            dxdtTmp = calculatedxdtStateDepMethod(x, enabled, qIndices, Kic, w);
+            dxdtTmp = calculatedxdtStateDepMethod(x, cachedEnabled, cachedQIndices, cachedKic, w);
         } else if (Objects.equals(options.method, "softmin")) {
-            dxdtTmp = calculatedxdtSoftminMethod(x, enabled, qIndices, Kic, w);
+            dxdtTmp = calculatedxdtSoftminMethod(x, cachedEnabled, cachedQIndices, cachedKic, w);
         } else {
-            // Determine all the jumps and save them for later use
-            Matrix allJumps = calculateJumps(enabled, qIndices, Kic);
-            // Determines a vector with the fixed part of the rates and defines the indexes that
-            // correspond to the events that occur
-            Matrix rateBase = new Matrix(allJumps.getNumCols(), 1);
-            Matrix eventIdx = new Matrix(allJumps.getNumCols(), 1);
-            calculateRateBaseAndEventIdxs(enabled, qIndices, Kic, rateBase, eventIdx);
-
+            // Use precomputed (and potentially immediate-eliminated) allJumps/rateBase/eventIdx
             dxdtTmp =
-                    calculatedxdtClosingMethod(x, w, enabled, qIndices, Kic, allJumps, rateBase, eventIdx);
+                    calculatedxdtClosingMethod(x, w, cachedEnabled, cachedQIndices, cachedKic,
+                            cachedAllJumps, cachedRateBase, cachedEventIdx);
         }
 
         for (int i = 0; i < dxdt.length; i++) {

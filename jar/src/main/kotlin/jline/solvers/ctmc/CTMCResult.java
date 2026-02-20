@@ -21,6 +21,23 @@ public class CTMCResult extends SolverResult {
         this.tranProbSys = new TranProbSysResult();
         this.tranProbSysAggr = new TranProbSysAggrResult();
     }
+
+    @Override
+    public void reset() {
+        super.reset();
+        this.Tran = new TRAN();
+        this.Tran.Avg = new AVG();
+        this.tranProb = new TranProbResult();
+        this.tranProbAggr = new TranProbAggrResult();
+        this.tranProbSys = new TranProbSysResult();
+        this.tranProbSysAggr = new TranProbSysAggrResult();
+        this.space = null;
+        this.infGen = null;
+        this.spaceAggr = null;
+        this.nodeSpace = null;
+        this.eventFilt = null;
+        this.solverSpecific = null;
+    }
     public Matrix space;
     public Matrix infGen;
     public Matrix spaceAggr;

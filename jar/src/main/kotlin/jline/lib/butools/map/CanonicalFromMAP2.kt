@@ -15,6 +15,7 @@ import jline.util.matrix.Matrix
  * @param prec Numerical precision to check the input
  * @return Pair of (G0, G1) matrices in canonical form
  */
+@JvmOverloads
 fun canonicalFromMAP2(D0: Matrix, D1: Matrix, prec: Double = 1e-14): Pair<Matrix, Matrix> {
     if (D0.numRows != 2) {
         throw IllegalArgumentException("CanonicalFromMAP2: size is not 2!")

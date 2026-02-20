@@ -38,10 +38,11 @@ if __name__ == "__main__":
 
     solver = np.array([], dtype=object)
     solver = np.append(solver, JMT(model, seed=23000))
-    # Use AMVA method for better convergence with fork-join
-    solver = np.append(solver, MVA(model, method='amva'))
+    # Use AMVA method with Heidelberger-Trivedi fork-join approximation for better convergence
+    solver = np.append(solver, MVA(model, method='amva', fork_join='ht'))
 
     avg_table = np.empty(len(solver), dtype=object)
     for s in range(len(solver)):
-        print(f'\nSOLVER: {solver[s].get_name()}')
+        print(f'\nSOLVER: {solver[s].get_name().replace("Solver", "")}')
         avg_table[s] = solver[s].avg_table()
+        print(avg_table[s])

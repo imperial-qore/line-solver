@@ -217,8 +217,8 @@ class SolverLNCoreTest extends SolverLNTestBase {
         assertEquals(lqn.hashnames.get(10), "A:A4");
 
         assertEquals(lqn.mult.getNumRows(), 1);
-        assertEquals(lqn.mult.getNumCols(), 11);
-        assertEquals(lqn.mult.getNonZeros(), 10);
+        assertEquals(lqn.mult.getNumCols(), 5);
+        assertEquals(lqn.mult.getNonZeros(), 4);
         assertEquals(lqn.mult.get(1), 1);
         assertEquals(lqn.mult.get(2), 1);
         assertEquals(lqn.mult.get(3), 10);

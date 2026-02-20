@@ -7,7 +7,7 @@ Created on Mon Jun 24 15:28:54 2013
 import numpy as np
 import numpy.matlib as ml
 import scipy.linalg as la
-from butools.utils import Linsolve
+from ..utils.misc import Linsolve
 
 def SimilarityMatrixForVectors (vecA, vecB):
     """

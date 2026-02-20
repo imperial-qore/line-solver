@@ -12,5 +12,7 @@ queue.setService(jobclass, Replayer([cwd,filesep,'example_trace.txt']));
 
 model.link(Network.serialRouting(source,queue,sink));
 
-AvgTable{1} = JMT(model,'seed',23000).getAvgTable
-AvgTable{2} = DES(model,'seed',23000).getAvgTable
+AvgTable{1} = JMT(model,'seed',23000).getAvgTable; 
+AvgTable{1}
+AvgTable{2} = DES(model,'seed',23000).getAvgTable;
+AvgTable{2}

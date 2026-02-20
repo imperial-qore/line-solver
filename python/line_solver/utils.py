@@ -9,7 +9,7 @@ and data processing functions.
 import pandas as pd
 import numpy as np
 from scipy.linalg import circulant
-from .io.indexed_table import IndexedTable
+from .indexed_table import IndexedTable
 
 __all__ = ['tget', 'circul', 'IndexedTable']
 
@@ -23,7 +23,7 @@ def tget(df, *args):
     identifiers.
 
     Args:
-        df (pandas.DataFrame): Input DataFrame with LINE results.
+        df (pandas.DataFrame or IndexedTable): Input DataFrame or IndexedTable with LINE results.
         *args: Variable arguments specifying filters (station names,
               job classes, or other identifiers).
 
@@ -35,6 +35,17 @@ def tget(df, *args):
         >>> queue_results = tget(results, 'Queue')
         >>> class1_results = tget(results, 'Class1')
     """
+    # Check if all args are strings (for string-based filtering)
+    all_strings = all(isinstance(arg, str) for arg in args)
+
+    # If df is an IndexedTable
+    if isinstance(df, IndexedTable):
+        if not all_strings:
+            # For object args, delegate to IndexedTable.tget
+            return df.tget(*args)
+        # For string args, extract the underlying DataFrame
+        df = df.data
+
     if not args:
         return df
 

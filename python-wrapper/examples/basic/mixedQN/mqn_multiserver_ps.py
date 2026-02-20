@@ -17,15 +17,15 @@ if __name__ == "__main__":
 
     node = np.empty(5, dtype=object)
     node[0] = Queue(model, 'Queue1', SchedStrategy.PS)
-    node[0].set_num_servers(1)
+    node[0].set_number_of_servers(1)
     node[1] = Queue(model, 'Queue2', SchedStrategy.PS)
-    node[1].set_num_servers(2)
+    node[1].set_number_of_servers(2)
     node[2] = Queue(model, 'Queue3', SchedStrategy.PS)
-    node[2].set_num_servers(3)
+    node[2].set_number_of_servers(3)
     node[3] = Queue(model, 'Queue4', SchedStrategy.PS)  # only closed class
-    node[3].set_num_servers(4)
+    node[3].set_number_of_servers(4)
     node[4] = Queue(model, 'Queue5', SchedStrategy.PS)  # only open class
-    node[4].set_num_servers(5)
+    node[4].set_number_of_servers(5)
 
     source = Source(model, 'Source')
     sink = Sink(model, 'Sink')
@@ -44,18 +44,10 @@ if __name__ == "__main__":
     P = model.init_routing_matrix()
 
     # Closed class: serial routing through queues 1-4
-    routing_closed = Network.serial_routing([node[0], node[1], node[2], node[3]])
-    for i in range(4):
-        for j in range(4):
-            P.set(jobclass[0], jobclass[0], node[i], node[j], routing_closed[i][j])
+    P.set(jobclass[0], jobclass[0], Network.serial_routing(node[0], node[1], node[2], node[3]))
 
     # Open class: source -> queue1 -> queue2 -> queue3 -> queue5 -> sink
-    routing_open = Network.serial_routing([source, node[0], node[1], node[2], node[4], sink])
-    P.set(jobclass[1], jobclass[1], source, node[0], routing_open[0][1])
-    P.set(jobclass[1], jobclass[1], node[0], node[1], routing_open[1][2])
-    P.set(jobclass[1], jobclass[1], node[1], node[2], routing_open[2][3])
-    P.set(jobclass[1], jobclass[1], node[2], node[4], routing_open[3][4])
-    P.set(jobclass[1], jobclass[1], node[4], sink, routing_open[4][5])
+    P.set(jobclass[1], jobclass[1], Network.serial_routing(source, node[0], node[1], node[2], node[4], sink))
 
     model.link(P)
 
@@ -68,5 +60,6 @@ if __name__ == "__main__":
 
     avg_table = np.empty(len(solver), dtype=object)
     for s in range(len(solver)):
-        print(f'\nSOLVER: {solver[s].get_name()}')
+        print(f'\nSOLVER: {solver[s].get_name().replace("Solver", "")}')
         avg_table[s] = solver[s].avg_table()
+        print(avg_table[s])

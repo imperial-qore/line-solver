@@ -47,21 +47,168 @@ def dtmc_solve(P: np.ndarray) -> np.ndarray:
     return ctmc_solve(Q)
 
 
-def dtmc_solve_reducible(P: np.ndarray) -> np.ndarray:
+def dtmc_solve_reducible(P: np.ndarray, pin: np.ndarray = None) -> np.ndarray:
     """
-    Solve reducible DTMCs.
+    Solve reducible DTMCs with transient states.
 
-    Handles DTMCs with multiple recurrent classes by decomposing
-    into strongly connected components.
+    Handles DTMCs with multiple recurrent classes and transient states by:
+    1. Decomposing into strongly connected components (SCCs)
+    2. Identifying recurrent vs transient SCCs
+    3. Computing limiting distribution considering absorption from transient states
+
+    For a reducible DTMC with a single transient SCC, this computes the limiting
+    distribution when starting from the transient states (e.g., class switching
+    networks where jobs start in a transient class).
 
     Args:
         P: Transition probability matrix (possibly reducible)
+        pin: Initial probability vector (optional)
 
     Returns:
         Steady-state probability vector
     """
-    # dtmc_solve already handles reducible chains via ctmc_solve
-    return dtmc_solve(P)
+    from scipy.sparse.csgraph import connected_components
+    from scipy.sparse import csc_matrix
+
+    P = np.asarray(P, dtype=np.float64)
+    n = P.shape[0]
+
+    if n == 1:
+        return np.array([1.0])
+
+    # Find strongly connected components
+    # Use 'strong' connection to properly identify recurrent vs transient
+    n_components, scc_labels = connected_components(
+        csc_matrix(P > 1e-10), directed=True, connection='strong', return_labels=True
+    )
+
+    if n_components == 1:
+        # Irreducible chain - use standard solve
+        return dtmc_solve(P)
+
+    # Identify recurrent vs transient SCCs
+    # A SCC is recurrent if all outgoing transitions stay within the SCC
+    num_scc = n_components
+    scc_idx = [np.where(scc_labels == i)[0] for i in range(num_scc)]
+
+    is_rec = np.zeros(num_scc, dtype=bool)
+    for i in range(num_scc):
+        states_i = scc_idx[i]
+        # Check if all outgoing transitions from SCC i stay within SCC i
+        outgoing_prob = 0.0
+        for s in states_i:
+            for j in range(num_scc):
+                if j != i:
+                    states_j = scc_idx[j]
+                    outgoing_prob += np.sum(P[s, states_j])
+        # If no outgoing transitions to other SCCs, this is recurrent
+        is_rec[i] = outgoing_prob < 1e-10
+
+    # Build lumped transition matrix between SCCs
+    Pl = np.zeros((num_scc, num_scc))
+    for i in range(num_scc):
+        states_i = scc_idx[i]
+        for j in range(num_scc):
+            if i != j:
+                states_j = scc_idx[j]
+                Pl[i, j] = np.sum(P[np.ix_(states_i, states_j)])
+
+    Pl = dtmc_makestochastic(Pl)
+
+    # Recurrent SCCs have self-loops with probability 1
+    for i in range(num_scc):
+        if is_rec[i]:
+            Pl[i, :] = 0.0
+            Pl[i, i] = 1.0
+
+    # Compute initial distribution over SCCs
+    # This matches MATLAB's dtmc_solve_reducible lines 72-89
+    if pin is None:
+        # Start with uniform over all SCCs
+        pinl = np.ones(num_scc)
+
+        # Find states with near-zero column sums (absorbing/unreachable states)
+        # These states have no incoming transitions from other states
+        col_sums = np.sum(P, axis=0)
+        z_cols = np.where(col_sums < 1e-12)[0]
+
+        # Zero out SCCs that contain only absorbing states
+        for j in z_cols:
+            pinl[scc_labels[j]] = 0
+
+        # Normalize
+        if np.sum(pinl) > 0:
+            pinl = pinl / np.sum(pinl)
+        else:
+            # Fallback to uniform
+            pinl = np.ones(num_scc) / num_scc
+    else:
+        # Lump initial vector by SCC
+        pinl = np.zeros(num_scc)
+        for i in range(num_scc):
+            pinl[i] = np.sum(pin[scc_idx[i]])
+
+    # Compute limiting distribution of lumped chain via power iteration
+    PI = _compute_limiting_matrix_power(Pl)
+
+    # Compute stationary distribution for each starting SCC
+    pis = np.zeros((num_scc, n))
+    for i in range(num_scc):
+        if pinl[i] > 1e-10:
+            # Compute limiting distribution starting from SCC i
+            pi0_l = np.zeros(num_scc)
+            pi0_l[i] = 1.0
+            pil_i = pi0_l @ PI
+
+            # For each SCC, solve internal stationary distribution
+            for j in range(num_scc):
+                if pil_i[j] > 1e-10:
+                    states_j = scc_idx[j]
+                    if len(states_j) == 1:
+                        pis[i, states_j[0]] = pil_i[j]
+                    else:
+                        # Solve internal DTMC
+                        Pj = P[np.ix_(states_j, states_j)]
+                        pij = dtmc_solve(Pj)
+                        pis[i, states_j] = pil_i[j] * pij
+
+    # Combine distributions weighted by initial SCC probabilities
+    pi = np.zeros(n)
+    for i in range(num_scc):
+        if pinl[i] > 1e-10:
+            pi += pis[i, :] * pinl[i]
+
+    # Special case: single transient SCC with no explicit initial distribution
+    transient_sccs = np.where(~is_rec)[0]
+    if len(transient_sccs) == 1 and pin is None:
+        pi = pis[transient_sccs[0], :]
+
+    return pi
+
+
+def _compute_limiting_matrix_power(P: np.ndarray, max_iter: int = 1000, tol: float = 1e-10) -> np.ndarray:
+    """
+    Compute limiting matrix using power iteration.
+
+    For DTMCs, P^n converges to a matrix where each row gives the limiting
+    distribution starting from that state.
+
+    Args:
+        P: Stochastic transition matrix
+        max_iter: Maximum iterations (default: 1000)
+        tol: Convergence tolerance (default: 1e-10)
+
+    Returns:
+        Limiting matrix (each row is limiting distribution from that start state)
+    """
+    Pk = P.copy()
+    for _ in range(max_iter):
+        Pk1 = Pk @ P
+        max_diff = np.max(np.abs(Pk1 - Pk))
+        Pk = Pk1
+        if max_diff < tol:
+            break
+    return Pk
 
 
 def dtmc_makestochastic(A: np.ndarray) -> np.ndarray:
@@ -77,20 +224,19 @@ def dtmc_makestochastic(A: np.ndarray) -> np.ndarray:
     Returns:
         Row-stochastic matrix
     """
-    A = np.asarray(A, dtype=np.float64)
-    A = np.maximum(A, 0.0)  # Ensure non-negative
+    P = np.asarray(A, dtype=np.float64).copy()
+    n = P.shape[0]
 
-    row_sums = A.sum(axis=1, keepdims=True)
+    for i in range(n):
+        row_sum = np.sum(P[i, :])
+        if row_sum > 0:
+            P[i, :] = P[i, :] / row_sum
+            P[i, i] = min(max(0.0, 1.0 - (np.sum(P[i, :]) - P[i, i])), 1.0)
+        else:
+            P[i, :] = 0.0
+            P[i, i] = 1.0
 
-    # Handle zero rows: replace with uniform
-    zero_rows = (row_sums == 0).flatten()
-    n = A.shape[1]
-    A[zero_rows] = 1.0 / n
-
-    # Re-compute row sums
-    row_sums = A.sum(axis=1, keepdims=True)
-
-    return A / row_sums
+    return P
 
 
 def dtmc_isfeasible(P: np.ndarray, tolerance: float = 1e-10) -> bool:

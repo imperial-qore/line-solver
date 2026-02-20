@@ -79,7 +79,6 @@ stations = model.getStations()
 for i in range(M):
     stations[i].setState(n[i])
 
-state = model.getState()
 print(f'Query state: All {sum(N)} jobs at station 3 (Queue2)')
 print(f'State configuration: {n}\n')
 
@@ -90,20 +89,20 @@ options = {
 }
 
 # Compute system-wide aggregated probabilities
-print('Computing get_prob_sys_aggr() with multiple solvers:\n')
+print('Computing getProbSysAggr() with multiple solvers:\n')
 
 solver_ctmc = CTMC(model, options)
-pr_ctmc = solver_ctmc.get_prob_sys_aggr()
+pr_ctmc = solver_ctmc.getProbSysAggr()
 print(f'CTMC: Pr_ctmc = {pr_ctmc}')
 
 solver_nc = NC(model, dict(options, method='exact'))
-pr_nc = solver_nc.get_prob_sys_aggr()
+pr_nc = solver_nc.getProbSysAggr()
 print(f'NC (exact): Pr_nc = {pr_nc}')
 
 solver_jmt = JMT(model, samples=int(1e4), seed=532733)
-pr_jmt = solver_jmt.get_prob_sys_aggr()
+pr_jmt = solver_jmt.getProbSysAggr()
 print(f'JMT: Pr_jmt = {pr_jmt}')
 
-print('\nNote: get_prob_sys_aggr() returns the joint probability of the entire')
+print('\nNote: getProbSysAggr() returns the joint probability of the entire')
 print('      system being in the specified aggregated state.')
 print('      This is useful for analyzing the likelihood of specific system configurations.')

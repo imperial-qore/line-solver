@@ -54,5 +54,5 @@ fcr.setDropRule(class1, false);     % false = block (wait)
 fcr.setDropRule(class2, false);     % false = block (wait)
 
 %% Run JMT
-solver = JMT(model, 'seed', 23000, 'samples', 50000);
+solver = JMT(model, 'seed', 23000, 'samples', 10000);
 avgTable = solver.getAvgTable()

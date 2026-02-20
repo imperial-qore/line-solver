@@ -8,9 +8,14 @@ import numpy as np
 import scipy.linalg as la
 import numpy.matlib as ml
 import math
-import butools
-from butools.mc import CTMCSolve
-from butools.utils import Diag, Linsolve
+# Use local butools settings instead of external package
+from .. import verbose
+from ..mc.stst import CTMCSolve
+from ..utils.misc import Diag, Linsolve
+# Create butools-like namespace for backward compatibility
+class _butools_settings:
+    verbose = verbose
+butools = _butools_settings()
 
 def FluidFundamentalMatrices (Fpp, Fpm, Fmp, Fmm, matrices, precision=1e-14, maxNumIt=50, method="CR"):
     """

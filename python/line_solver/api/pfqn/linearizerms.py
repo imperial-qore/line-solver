@@ -23,6 +23,37 @@ from .mva import pfqn_bs
 from .utils import oner
 
 
+def _get_max_finite_servers(nservers: np.ndarray) -> int:
+    """Get maximum server count, excluding infinite values (Delay nodes)."""
+    finite_servers = nservers[np.isfinite(nservers)]
+    return int(np.max(finite_servers)) if len(finite_servers) > 0 else 1
+
+
+def _is_fcfs(sched_val) -> bool:
+    """Check if scheduling strategy is FCFS (handles multiple enum/string formats)."""
+    if sched_val is None:
+        return False
+    if isinstance(sched_val, str):
+        # String: check for 'FCFS' or numeric '0'
+        upper_val = sched_val.upper()
+        if 'FCFS' in upper_val:
+            return True
+        # Handle numeric string '0' (FCFS = 0 in IntEnum)
+        try:
+            return int(sched_val) == 0
+        except ValueError:
+            return False
+    elif hasattr(sched_val, 'name'):
+        # IntEnum or Enum: use name attribute
+        return sched_val.name.upper() == 'FCFS'
+    elif isinstance(sched_val, (int, float)):
+        # Integer: FCFS is typically 0 in IntEnum definitions
+        return int(sched_val) == 0
+    else:
+        # Fallback: convert to string and check
+        return 'FCFS' in str(sched_val).upper()
+
+
 def pfqn_linearizerms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
                       nservers: np.ndarray,
                       type_sched: Optional[np.ndarray] = None,
@@ -69,7 +100,7 @@ def pfqn_linearizerms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
     if len(Z) == 0:
         Z = np.zeros(R)
 
-    max_servers = int(np.max(nservers))
+    max_servers = _get_max_finite_servers(nservers)
 
     # Initialize Q, PB, P, Delta
     Q = np.zeros((M, R, 1 + R))
@@ -78,18 +109,23 @@ def pfqn_linearizerms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
     Delta = np.zeros((M, R, R))
 
     # Initial estimates using Bard-Schweitzer
+    # pfqn_bs returns (XN, QN, UN, RN, it) matching MATLAB
+    # QN has shape (M, R), we need column r for Q[:, r, s]
     for r in range(R):
         for s in range(R + 1):
             N_1 = oner(N, s) if s < R else N.copy()
-            _, q = pfqn_bs(L, N_1, Z)
-            Q[:, r, s] = q.flatten()
+            result = pfqn_bs(L, N_1, Z)
+            q = result[1]  # QN is at index 1 (XN, QN, UN, RN, it), shape (M, R)
+            Q[:, r, s] = q[:, r]  # Extract column r
 
     for ist in range(M):
         for s in range(R + 1):
             N_1 = oner(N, s) if s < R else N.copy()
             pop = np.sum(N_1)
-            if nservers[ist] > 1:
-                for j in range(1, int(nservers[ist])):
+            # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
+            if nservers[ist] > 1 and np.isfinite(nservers[ist]):
+                ns = int(nservers[ist])
+                for j in range(1, ns):
                     P[ist, j, s] = 2 * np.sum(Q[ist, :, s]) / (pop * (pop + 1))
 
                 if pop > nservers[ist] - 1:
@@ -97,7 +133,7 @@ def pfqn_linearizerms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
                 else:
                     PB[ist, s] = 0.0
 
-                P[ist, 0, s] = 1 - PB[ist, s] - np.sum(P[ist, 1:int(nservers[ist]), s])
+                P[ist, 0, s] = 1 - PB[ist, s] - np.sum(P[ist, 1:ns, s])
 
     totiter = 0
 
@@ -119,11 +155,12 @@ def pfqn_linearizerms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
                 for s in range(R):
                     Ns = oner(N, s)
                     if Ns[r] > 0 and N[r] > 0:
+                        # Python stores full population at index R (unlike MATLAB which uses index 0)
                         Delta[ist, r, s] = Q[ist, r, s] / Ns[r] - Q[ist, r, R] / N[r]
                     else:
                         Delta[ist, r, s] = 0.0
 
-    # Final Core(N)
+    # Final Core(N) - Python stores full population at index R
     Q_final, W, X, _, _, iter_count = _core_ms(
         L, M, R, N, Z, nservers, Q[:, :, R], P[:, :, R], PB[:, R],
         Delta, type_sched, tol, maxiter - totiter
@@ -134,7 +171,10 @@ def pfqn_linearizerms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
     U = np.zeros((M, R))
     for ist in range(M):
         for r in range(R):
-            if nservers[ist] == 1:
+            if np.isinf(nservers[ist]):
+                # Delay node: utilization is 0 (infinite servers)
+                U[ist, r] = 0.0
+            elif nservers[ist] == 1:
                 U[ist, r] = X[r] * L[ist, r]
             else:
                 U[ist, r] = X[r] * L[ist, r] / nservers[ist]
@@ -148,7 +188,7 @@ def pfqn_linearizerms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
 
 def _core_ms(L, M, R, N_1, Z, nservers, Q, P, PB, Delta, type_sched, tol, maxiter):
     """Core iteration for multiserver linearizer."""
-    max_servers = int(np.max(nservers))
+    max_servers = _get_max_finite_servers(nservers)
     iter_count = 0
     hasConverged = False
 
@@ -170,14 +210,16 @@ def _core_ms(L, M, R, N_1, Z, nservers, Q, P, PB, Delta, type_sched, tol, maxite
 
 def _estimate_ms(M, R, N_1, nservers, Q, P, PB, Delta):
     """Estimate populations for linearizer."""
-    max_servers = int(np.max(nservers))
+    max_servers = _get_max_finite_servers(nservers)
     P_1 = np.zeros((M, max_servers, 1 + R))
     PB_1 = np.zeros((M, 1 + R))
     Q_1 = np.zeros((M, R, 1 + R))
 
     for ist in range(M):
-        if nservers[ist] > 1:
-            for j in range(int(nservers[ist])):
+        # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
+        if nservers[ist] > 1 and np.isfinite(nservers[ist]):
+            ns = int(nservers[ist])
+            for j in range(ns):
                 for s in range(R + 1):
                     P_1[ist, j, s] = P[ist, j]
 
@@ -188,16 +230,17 @@ def _estimate_ms(M, R, N_1, nservers, Q, P, PB, Delta):
             for s in range(R):
                 Ns = oner(N_1, s)
                 if N_1[r] > 0:
-                    Q_1[ist, r, s] = Ns[r] * (Q[ist, r] / N_1[r] + Delta[ist, r, s])
+                    # Store at s+1 to match MATLAB's 1+s indexing (1-based s=1:R -> 0-based indices 1:R)
+                    Q_1[ist, r, s + 1] = Ns[r] * (Q[ist, r] / N_1[r] + Delta[ist, r, s])
                 else:
-                    Q_1[ist, r, s] = 0.0
+                    Q_1[ist, r, s + 1] = 0.0
 
     return Q_1, P_1, PB_1
 
 
 def _forward_mva_ms(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1):
     """Forward MVA step for multiserver linearizer."""
-    max_servers = int(np.max(nservers))
+    max_servers = _get_max_finite_servers(nservers)
     W = np.zeros((M, R))
     T = np.zeros(R)
     Q = np.zeros((M, R))
@@ -206,25 +249,33 @@ def _forward_mva_ms(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1):
 
     for ist in range(M):
         for r in range(R):
+            # For Delay nodes (Inf servers), W = L (pure delay, no queueing)
+            if np.isinf(nservers[ist]):
+                W[ist, r] = L[ist, r]
+                continue
+
             W[ist, r] = L[ist, r] / nservers[ist]
             if L[ist, r] == 0:
                 continue
 
-            if type_sched[ist] == SchedStrategy.FCFS:
+            # Use r+1 for 3rd dim to match MATLAB's 1+r indexing (1-based r=1:R -> 0-based indices 1:R)
+            if _is_fcfs(type_sched[ist]):
                 for s in range(R):
-                    W[ist, r] += (L[ist, s] / nservers[ist]) * Q_1[ist, s, r]
+                    W[ist, r] += (L[ist, s] / nservers[ist]) * Q_1[ist, s, r + 1]
             else:
                 for s in range(R):
-                    W[ist, r] += (L[ist, r] / nservers[ist]) * Q_1[ist, s, r]
+                    W[ist, r] += (L[ist, r] / nservers[ist]) * Q_1[ist, s, r + 1]
 
-            if nservers[ist] > 1:
-                for j in range(int(nservers[ist]) - 1):
-                    if type_sched[ist] == SchedStrategy.FCFS:
+            # Multiserver probability contributions (only for finite servers > 1)
+            if nservers[ist] > 1 and np.isfinite(nservers[ist]):
+                ns = int(nservers[ist])
+                for j in range(ns - 1):
+                    if _is_fcfs(type_sched[ist]):
                         for s in range(R):
-                            W[ist, r] += L[ist, s] * (nservers[ist] - 1 - j) * P_1[ist, j, r]
+                            W[ist, r] += L[ist, s] * (nservers[ist] - 1 - j) * P_1[ist, j, r + 1]
                     else:
                         for s in range(R):
-                            W[ist, r] += L[ist, r] * (nservers[ist] - 1 - j) * P_1[ist, j, r]
+                            W[ist, r] += L[ist, r] * (nservers[ist] - 1 - j) * P_1[ist, j, r + 1]
 
     for r in range(R):
         denom = Z[r] + np.sum(W[:, r])
@@ -237,23 +288,30 @@ def _forward_mva_ms(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1):
             Q[ist, r] = T[r] * W[ist, r]
 
     for ist in range(M):
-        if nservers[ist] > 1:
+        # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
+        if nservers[ist] > 1 and np.isfinite(nservers[ist]):
+            ns = int(nservers[ist])
             P[ist, :] = 0
-            for j in range(1, int(nservers[ist])):
+            for j in range(1, ns):
                 for s in range(R):
-                    P[ist, j] += L[ist, s] * T[s] * P_1[ist, j - 1, s] / j
+                    # Use s+1 for 3rd dim to match MATLAB's 1+s indexing
+                    P[ist, j] += L[ist, s] * T[s] * P_1[ist, j - 1, s + 1] / j
 
     for ist in range(M):
-        if nservers[ist] > 1:
+        # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
+        if nservers[ist] > 1 and np.isfinite(nservers[ist]):
+            ns = int(nservers[ist])
             PB[ist] = 0
             for s in range(R):
-                ns = int(nservers[ist])
-                PB[ist] += L[ist, s] * T[s] * (PB_1[ist, s] + P_1[ist, ns - 1, s]) / ns
+                # Use s+1 for indices to match MATLAB's 1+s indexing
+                PB[ist] += L[ist, s] * T[s] * (PB_1[ist, s + 1] + P_1[ist, ns - 1, s + 1]) / ns
 
     for ist in range(M):
-        if nservers[ist] > 1:
+        # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
+        if nservers[ist] > 1 and np.isfinite(nservers[ist]):
+            ns = int(nservers[ist])
             P[ist, 0] = 1 - PB[ist]
-            for j in range(1, int(nservers[ist])):
+            for j in range(1, ns):
                 P[ist, 0] -= P[ist, j]
 
     return Q, W, T, P, PB
@@ -265,7 +323,7 @@ def pfqn_linearizermx(lam: np.ndarray, L: np.ndarray, N: np.ndarray,
                       tol: float = 1e-8,
                       maxiter: int = 1000,
                       method: str = 'egflin'
-                      ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+                      ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     """
     Linearizer for mixed open/closed queueing networks.
 
@@ -284,10 +342,11 @@ def pfqn_linearizermx(lam: np.ndarray, L: np.ndarray, N: np.ndarray,
         method: Linearizer variant ('lin', 'gflin', 'egflin', default: 'egflin')
 
     Returns:
-        Tuple of (QN, UN, WN, CN, XN, totiter):
+        Tuple of (QN, UN, WN, TN, CN, XN, totiter):
             QN: Mean queue lengths (M, R)
             UN: Utilization (M, R)
             WN: Waiting times (M, R)
+            TN: Throughputs per station (M, R)
             CN: Cycle times (R,)
             XN: System throughput (R,)
             totiter: Total iterations
@@ -319,14 +378,16 @@ def pfqn_linearizermx(lam: np.ndarray, L: np.ndarray, N: np.ndarray,
     UN = np.zeros((M, R))
     WN = np.zeros((M, R))
     QN = np.zeros((M, R))
+    TN = np.zeros((M, R))  # Throughput per station per class
     CN = np.zeros(R)
 
-    # Open class utilization
+    # Open class utilization - MATLAB uses TOTAL utilization (not per-server)
     for r in openClasses:
         for ist in range(M):
-            UN[ist, r] = lam[r] * L[ist, r]
+            UN[ist, r] = lam[r] * L[ist, r]  # Total utilization
         XN[r] = lam[r]
 
+    # Total utilization across open classes (for effective demand calculation)
     UNt = np.sum(UN, axis=1)
 
     if len(Z) == 0:
@@ -338,29 +399,36 @@ def pfqn_linearizermx(lam: np.ndarray, L: np.ndarray, N: np.ndarray,
     if len(closedClasses) > 0:
         Dc = L[:, closedClasses] / (1 - np.tile(UNt.reshape(-1, 1), (1, len(closedClasses))))
 
-        if np.max(nservers) == 1:
+        # Filter out infinite server counts (Delay nodes) for max_servers check
+        finite_servers = nservers[np.isfinite(nservers)]
+        max_servers = int(np.max(finite_servers)) if len(finite_servers) > 0 else 1
+
+        # MATLAB: For multiserver, call pfqn_linearizerms; for single-server, use linearizer variants
+        if max_servers == 1:
+            # Single-server: use linearizer variants based on method
             if method == 'lin' or method == 'default':
-                QNc, UNc, WNc, CNc, XNc, totiter = pfqn_linearizer(
+                QNc, UNc, WNc, TNc, CNc, XNc, totiter = pfqn_linearizer(
                     Dc, N[closedClasses], Z[closedClasses], type_sched, tol, maxiter
                 )
             elif method == 'gflin':
                 linAlpha = 2.0
-                QNc, UNc, WNc, CNc, XNc, totiter = pfqn_gflinearizer(
+                QNc, UNc, WNc, TNc, CNc, XNc, totiter = pfqn_gflinearizer(
                     Dc, N[closedClasses], Z[closedClasses], type_sched, tol, maxiter, linAlpha
                 )
             elif method == 'egflin':
                 alphaM = np.zeros(R)
                 for r in closedClasses:
                     alphaM[r] = 0.6 + 1.4 * np.exp(-8 * np.exp(-0.8 * N[r]))
-                QNc, UNc, WNc, CNc, XNc, totiter = pfqn_egflinearizer(
+                QNc, UNc, WNc, TNc, CNc, XNc, totiter = pfqn_egflinearizer(
                     Dc, N[closedClasses], Z[closedClasses], type_sched, tol, maxiter,
                     alphaM[closedClasses]
                 )
             else:
-                QNc, UNc, WNc, CNc, XNc, totiter = pfqn_linearizer(
+                QNc, UNc, WNc, TNc, CNc, XNc, totiter = pfqn_linearizer(
                     Dc, N[closedClasses], Z[closedClasses], type_sched, tol, maxiter
                 )
         else:
+            # Multiserver: call pfqn_linearizerms (Conway/De Souza-Muntz algorithm)
             QNc, UNc, WNc, CNc, XNc, totiter = pfqn_linearizerms(
                 Dc, N[closedClasses], Z[closedClasses], nservers, type_sched, tol, maxiter
             )
@@ -371,7 +439,7 @@ def pfqn_linearizermx(lam: np.ndarray, L: np.ndarray, N: np.ndarray,
         UN[:, closedClasses] = UNc
         CN[closedClasses] = CNc
 
-        # Update closed class utilization
+        # MATLAB: overwrite closed class utilization with total (not per-server)
         for ist in range(M):
             for r in closedClasses:
                 UN[ist, r] = XN[r] * L[ist, r]
@@ -391,7 +459,11 @@ def pfqn_linearizermx(lam: np.ndarray, L: np.ndarray, N: np.ndarray,
 
     CN[openClasses] = np.sum(WN[:, openClasses], axis=0)
 
-    return QN, UN, WN, CN, XN, totiter
+    # Compute throughput per station per class (same as system throughput for each class)
+    for r in range(R):
+        TN[:, r] = XN[r]
+
+    return QN, UN, WN, TN, CN, XN, totiter
 
 
 def sprod(R: int, n: int) -> Tuple[int, np.ndarray, np.ndarray, np.ndarray]:
@@ -516,7 +588,7 @@ def pfqn_conwayms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
         Z = np.zeros(R)
     Z = np.sum(Z.reshape(-1, R) if Z.ndim > 1 else Z.reshape(1, -1), axis=0)
 
-    max_servers = int(np.max(nservers))
+    max_servers = _get_max_finite_servers(nservers)
 
     # Initialize Q, PB, P, Delta indexed by population reduction
     Q = np.zeros((M, R, 1 + R))
@@ -536,8 +608,10 @@ def pfqn_conwayms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
         for s in range(R + 1):
             N_1 = oner(N, s) if s < R else N.copy()
             pop = np.sum(N_1)
-            if nservers[ist] > 1:
-                for j in range(1, int(nservers[ist])):
+            # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
+            if nservers[ist] > 1 and np.isfinite(nservers[ist]):
+                ns = int(nservers[ist])
+                for j in range(1, ns):
                     if pop * (pop + 1) > 0:
                         P[ist, j, s] = 2 * np.sum(Q[ist, :, s]) / (pop * (pop + 1))
 
@@ -547,7 +621,7 @@ def pfqn_conwayms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
                 else:
                     PB[ist, s] = 0.0
 
-                P[ist, 0, s] = max(0, 1 - PB[ist, s] - np.sum(P[ist, 1:int(nservers[ist]), s]))
+                P[ist, 0, s] = max(0, 1 - PB[ist, s] - np.sum(P[ist, 1:ns, s]))
 
     totiter = 0
 
@@ -569,11 +643,12 @@ def pfqn_conwayms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
                 for s in range(R):
                     Ns = oner(N, s)
                     if N[s] > 2 and N[r] > 0 and Ns[r] > 0:
+                        # Python stores full population at index R
                         Delta[ist, r, s] = Q[ist, r, s] / Ns[r] - Q[ist, r, R] / N[r]
                     else:
                         Delta[ist, r, s] = 0.0
 
-    # Final Core(N)
+    # Final Core(N) - Python stores full population at index R
     Q_final, W, X, P_final, PB_final, iter_count = _conway_core(
         L, M, R, N, Z, nservers, Q[:, :, R], P[:, :, R], PB[:, R],
         Delta, L.copy(), type_sched, tol, maxiter - totiter
@@ -584,7 +659,10 @@ def pfqn_conwayms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
     U = np.zeros((M, R))
     for ist in range(M):
         for r in range(R):
-            if nservers[ist] == 1:
+            if np.isinf(nservers[ist]):
+                # Delay node: utilization is 0 (infinite servers)
+                U[ist, r] = 0.0
+            elif nservers[ist] == 1:
                 U[ist, r] = X[r] * L[ist, r]
             else:
                 U[ist, r] = X[r] * L[ist, r] / nservers[ist]
@@ -598,7 +676,7 @@ def pfqn_conwayms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
 
 def _conway_core(L, M, R, N_1, Z, nservers, Q, P, PB, Delta, W, type_sched, tol, maxiter):
     """Core iteration for Conway multiserver linearizer."""
-    max_servers = int(np.max(nservers))
+    max_servers = _get_max_finite_servers(nservers)
     hasConverged = False
     iter_count = 0
 
@@ -621,15 +699,17 @@ def _conway_core(L, M, R, N_1, Z, nservers, Q, P, PB, Delta, W, type_sched, tol,
 
 def _conway_estimate(M, R, N_1, nservers, Q, P, PB, Delta, W):
     """Estimate populations for Conway linearizer."""
-    max_servers = int(np.max(nservers))
+    max_servers = _get_max_finite_servers(nservers)
     P_1 = np.zeros((M, max_servers, 1 + R))
     PB_1 = np.zeros((M, 1 + R))
     Q_1 = np.zeros((M, R, 1 + R))
     T_1 = np.zeros((R, 1 + R))
 
     for ist in range(M):
-        if nservers[ist] > 1:
-            for j in range(int(nservers[ist])):
+        # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
+        if nservers[ist] > 1 and np.isfinite(nservers[ist]):
+            ns = int(nservers[ist])
+            for j in range(ns):
                 for s in range(R + 1):
                     P_1[ist, j, s] = P[ist, j]
             for s in range(R + 1):
@@ -657,7 +737,7 @@ def _conway_estimate(M, R, N_1, nservers, Q, P, PB, Delta, W):
 
 def _conway_forward_mva(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1, T_1):
     """Forward MVA step for Conway multiserver linearizer."""
-    max_servers = int(np.max(nservers))
+    max_servers = _get_max_finite_servers(nservers)
     W = np.zeros((M, R))
     T = np.zeros(R)
     Q = np.zeros((M, R))
@@ -682,7 +762,8 @@ def _conway_forward_mva(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1, T
     # Compute XR (multi-server specific)
     for ist in range(M):
         for r in range(R):
-            if nservers[ist] > 1:
+            # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
+            if nservers[ist] > 1 and np.isfinite(nservers[ist]):
                 ns = int(nservers[ist])
                 XR[ist, r] = 0.0
                 C_val = 0.0
@@ -705,7 +786,8 @@ def _conway_forward_mva(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1, T
     # Compute XE
     for ist in range(M):
         for r in range(R):
-            if nservers[ist] > 1:
+            # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
+            if nservers[ist] > 1 and np.isfinite(nservers[ist]):
                 ns = int(nservers[ist])
                 for c in range(R):
                     XE[ist, r, c] = 0.0
@@ -729,8 +811,11 @@ def _conway_forward_mva(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1, T
     # Compute residence time
     for ist in range(M):
         for r in range(R):
-            if nservers[ist] == 1:
-                if type_sched[ist] == SchedStrategy.FCFS:
+            # Delay node (Inf servers): W = L (pure delay, no queueing)
+            if np.isinf(nservers[ist]):
+                W[ist, r] = L[ist, r]
+            elif nservers[ist] == 1:
+                if _is_fcfs(type_sched[ist]):
                     W[ist, r] = L[ist, r]
                     for c in range(R):
                         W[ist, r] += L[ist, c] * Q_1[ist, c, r]
@@ -739,6 +824,7 @@ def _conway_forward_mva(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1, T
                     for c in range(R):
                         W[ist, r] += L[ist, r] * Q_1[ist, c, r]
             else:
+                # Multiserver (finite servers > 1)
                 W[ist, r] = L[ist, r] + PB_1[ist, r] * XR[ist, r]
                 for c in range(R):
                     W[ist, r] += XE[ist, r, c] * (Q_1[ist, c, r] - L[ist, c] * T_1[c, r])
@@ -756,7 +842,8 @@ def _conway_forward_mva(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1, T
 
     # Compute marginal probabilities
     for ist in range(M):
-        if nservers[ist] > 1:
+        # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
+        if nservers[ist] > 1 and np.isfinite(nservers[ist]):
             ns = int(nservers[ist])
             P[ist, :] = 0
             for j in range(1, ns):
@@ -765,16 +852,19 @@ def _conway_forward_mva(L, M, R, N_1, Z, nservers, type_sched, Q_1, P_1, PB_1, T
                         P[ist, j] += L[ist, c] * T[c] * P_1[ist, j - 1, c] / j
 
     for ist in range(M):
-        if nservers[ist] > 1:
+        # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
+        if nservers[ist] > 1 and np.isfinite(nservers[ist]):
             ns = int(nservers[ist])
             PB[ist] = 0
             for c in range(R):
                 PB[ist] += L[ist, c] * T[c] * (PB_1[ist, c] + P_1[ist, ns - 1, c]) / ns
 
     for ist in range(M):
-        if nservers[ist] > 1:
+        # Only handle multiserver for finite server counts > 1 (skip Delay nodes with Inf)
+        if nservers[ist] > 1 and np.isfinite(nservers[ist]):
+            ns = int(nservers[ist])
             P[ist, 0] = max(0, 1 - PB[ist])
-            for j in range(1, int(nservers[ist])):
+            for j in range(1, ns):
                 P[ist, 0] = max(0, P[ist, 0] - P[ist, j])
 
     return Q, W, T, P, PB

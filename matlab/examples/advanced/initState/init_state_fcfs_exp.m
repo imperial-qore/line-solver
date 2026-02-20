@@ -39,8 +39,9 @@ disp('Initial state is:')
 state=model.getState();
 [state{1}(1,:),state{2}(1,:)]
 for s=1:length(solver)
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());
+    fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     [QNt,UNt,TNt] = solver{s}.getTranAvg(Qt,Ut,Tt);
+    fprintf('SteadyStateQLen[%s/Prior1]: %.6f\n', strrep(solver{s}.getName(),'Solver',''), QNt{2,1}.metric(end));
     subplot(1,2,1);
     plot(QNt{2,1}.t,QNt{2,1}.metric,dashing{s}); hold on
     solver{s}.reset();
@@ -60,8 +61,9 @@ state=model.getState();
 [state{1}(1,:),state{2}(1,:)]
 for s=1:length(solver)
     solver{s}.reset();
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());
+    fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     [QNt_marg,UNt_marg,TNt_marg] = solver{s}.getTranAvg(Qt,Ut,Tt);
+    fprintf('SteadyStateQLen[%s/Prior2]: %.6f\n', strrep(solver{s}.getName(),'Solver',''), QNt_marg{2,1}.metric(end));
     subplot(1,2,2);
     plot(QNt_marg{2,1}.t,QNt_marg{2,1}.metric,dashing{s}); hold on
     solver{s}.reset();

@@ -137,6 +137,10 @@ public final class Matrix implements Serializable {
      */
     public Matrix(double[][] arrays) {
         int numRows = arrays.length;
+        if (numRows == 0) {
+            this.delegate = new SparseMatrixImpl(new DMatrixSparseCSC(0, 0, 0));
+            return;
+        }
         int numCols = arrays[0].length;
 
         // Single-pass: estimate initial capacity and let triplet grow if needed
@@ -957,6 +961,18 @@ public final class Matrix implements Serializable {
      */
     public static List<Integer> findRows(Matrix matrix, Matrix row) {
         List<Integer> matchingRows = new ArrayList<>();
+
+        // Validate inputs
+        if (matrix == null || row == null) {
+            return matchingRows;
+        }
+        if (matrix.getNumRows() == 0 || row.getNumRows() == 0) {
+            return matchingRows;
+        }
+        if (matrix.getNumCols() != row.getNumCols()) {
+            return matchingRows;
+        }
+
         int numCols = matrix.getNumCols();
 
         for (int i = 0; i < matrix.getNumRows(); i++) {
@@ -1477,15 +1493,26 @@ public final class Matrix implements Serializable {
                     " but b is " + b.getNumRows() + "x" + b.getNumCols());
         }
 
-        // For small matrices (2x2 or 3x3), the determinant check is fast and reliable
-        // For larger matrices, determinant computation can overflow/underflow
-        // and is numerically unstable, so we skip it and let the solver handle singularity
-        if (a.getNumRows() <= 3) {
+        // Check if matrix is singular before attempting solve
+        // For small matrices use determinant (fast), for larger matrices use rank (numerically stable)
+        int n = a.getNumRows();
+        if (n <= 3) {
             double det = a.det();
             if (Math.abs(det) < 1e-14) {
-                x.reshape(a.getNumRows(), b.getNumCols());
+                x.reshape(n, b.getNumCols());
                 x.fill(Double.NaN);
                 return false;
+            }
+        } else {
+            try {
+                if (a.rank() < n) {
+                    x.reshape(n, b.getNumCols());
+                    x.fill(Double.NaN);
+                    return false;
+                }
+            } catch (RuntimeException e) {
+                // SVD decomposition can fail on large or ill-conditioned matrices;
+                // skip rank check and try solving directly — check result for validity below
             }
         }
 
@@ -1497,7 +1524,40 @@ public final class Matrix implements Serializable {
             return false;
         }
 
+        // Verify solution quality via residual check: ||A*x - b||_inf / ||b||_inf
+        // This catches cases where LU returns a wrong non-NaN answer for near-singular systems
+        // that slip past the rank check (e.g., when SVD fails and rank check is skipped).
+        double bNormInf = 0;
+        for (int i = 0; i < n; i++) {
+            bNormInf = Math.max(bNormInf, Math.abs(b.get(i, 0)));
+        }
+        if (bNormInf > 0) {
+            Matrix residual = a.mult(x).add(-1.0, b);
+            double resNormInf = 0;
+            for (int i = 0; i < n; i++) {
+                resNormInf = Math.max(resNormInf, Math.abs(residual.get(i, 0)));
+            }
+            if (resNormInf / bNormInf > 1e-6) {
+                x.fill(Double.NaN);
+                return false;
+            }
+        }
+
         return true;
+    }
+
+    /**
+     * Solves the linear system A*x = b directly using LU decomposition without
+     * singularity checks. Faster than {@link #solveSafe} for cases where the
+     * matrix is known to be non-singular or where the caller handles failures.
+     *
+     * @param a The coefficient matrix A (must be square)
+     * @param b The right-hand side matrix b
+     * @param x The solution matrix x (output)
+     * @return true if a solution was found, false if the LU solver failed
+     */
+    public static boolean solveDirect(Matrix a, Matrix b, Matrix x) {
+        return SparseMatrix.solveStatic(a.getData(), b.getData(), x.getData());
     }
 
     /**
@@ -2399,25 +2459,21 @@ public final class Matrix implements Serializable {
         int numRows = this.getNumRows();
         int numCols = this.getNumCols();
         if (numRows != matrix.getNumRows() || numCols != matrix.getNumCols()) {
-            System.out.println("Dimension not equal");
             return false;
         }
 
         boolean check = true;
-        int diff_num = 0;
         double epsilon = GlobalConstants.FineTol;
         for (int row = 0; row < numRows; row++) {
             for (int col = 0; col < numCols; col++) {
                 double diff = Math.abs(this.get(row, col) - matrix.get(row, col));
                 if (diff > epsilon) {
-                    System.out.printf("Row %d and col %d differ: this = %f, other = %f%n",
-                            row, col, this.get(row, col), matrix.get(row, col));
                     check = false;
-                    diff_num++;
+                    break;
                 }
             }
+            if (!check) break;
         }
-        System.out.println("diff_num = " + diff_num);
         return check;
     }
 
@@ -2732,9 +2788,6 @@ public final class Matrix implements Serializable {
             }
         }
 
-        if (D.hasNaN()) {
-            System.out.println("Complex eigenvalues detected, return NAN");
-        }
         return new Ret.Eigs(D, null);
     }
 
@@ -4463,6 +4516,15 @@ public final class Matrix implements Serializable {
     }
 
     /**
+     * Computes the Frobenius norm of a matrix (alias for norm()).
+     *
+     * @return - the Frobenius norm of the given matrix
+     */
+    public double normFrobenius() {
+        return norm();
+    }
+
+    /**
      * Fills the matrix with ones. Matrix must already be initialized with correct size.
      * Throws an exception if matrix cannot be fully filled.
      */
@@ -5126,20 +5188,50 @@ public final class Matrix implements Serializable {
             result.put("T", this.copy());
             return result;
         }
-        int it = (iter != null) ? iter : 1;
+        int n = getNumRows();
         Map<String, Matrix> result = new HashMap<>();
-        if (method.equals("default")) {
+
+        // Use Apache Commons Math3 SchurTransformer for numerical accuracy.
+        // SchurTransformer is package-private, so we access it via reflection.
+        try {
+            RealMatrix rm = MatrixUtils.createRealMatrix(this.toArray2D());
+            Class<?> stClass = Class.forName("org.apache.commons.math3.linear.SchurTransformer");
+            java.lang.reflect.Constructor<?> ctor = stClass.getDeclaredConstructor(RealMatrix.class);
+            ctor.setAccessible(true);
+            Object st = ctor.newInstance(rm);
+
+            java.lang.reflect.Method getT = stClass.getMethod("getT");
+            java.lang.reflect.Method getP = stClass.getMethod("getP");
+
+            RealMatrix tMat = (RealMatrix) getT.invoke(st);
+            RealMatrix pMat = (RealMatrix) getP.invoke(st);
+
+            Matrix T = new Matrix(n, n);
+            Matrix U = new Matrix(n, n);
+            for (int i = 0; i < n; i++) {
+                for (int j = 0; j < n; j++) {
+                    double tv = tMat.getEntry(i, j);
+                    if (tv != 0.0) T.set(i, j, tv);
+                    double uv = pMat.getEntry(i, j);
+                    if (uv != 0.0) U.set(i, j, uv);
+                }
+            }
+            result.put("T", T);
+            result.put("U", U);
+        } catch (Exception e) {
+            // Fallback to QR iteration if reflection fails
+            int it = (iter != null) ? iter : 200 * n;
             Matrix A = copy();
-            Matrix U = Matrix.eye(getNumRows());
+            Matrix U = Matrix.eye(n);
             for (int i = 0; i < it; i++) {
-                Matrix Q = A.qr().get("Q");
-                A = A.qr().get("R").mult(Q);
+                Map<String, Matrix> qrResult = A.qr();
+                Matrix Q = qrResult.get("Q");
+                Matrix R = qrResult.get("R");
+                A = R.mult(Q);
                 U = U.mult(Q);
             }
             result.put("T", A);
             result.put("U", U);
-        } else {
-            throw new RuntimeException("This method hasn't been implemented, use default instead");
         }
         return result;
     }
@@ -5151,6 +5243,141 @@ public final class Matrix implements Serializable {
      */
     public Map<String, Matrix> schur() {
         return schur("default", null);
+    }
+
+    /**
+     * Computes the complex Schur decomposition of this matrix, equivalent to MATLAB's
+     * {@code schur(A,'complex')}. The result has a truly upper-triangular T matrix with
+     * complex eigenvalues on the diagonal.
+     *
+     * <p>The method first computes the real Schur decomposition (which may have 2x2 blocks
+     * on the diagonal for complex eigenvalue pairs), then converts each 2x2 block to
+     * upper-triangular form using unitary Givens rotations.</p>
+     *
+     * @return a map with keys "U" (ComplexMatrix, unitary) and "T" (ComplexMatrix, upper triangular)
+     */
+    public Map<String, ComplexMatrix> schurComplex() {
+        Map<String, Matrix> realSchur = this.schur();
+        Matrix Tr = realSchur.get("T");
+        Matrix Ur = realSchur.get("U");
+        int n = Tr.getNumRows();
+
+        // Start with the real Schur form as complex matrices
+        ComplexMatrix T = new ComplexMatrix(Tr.copy(), new Matrix(n, n));
+        ComplexMatrix U = new ComplexMatrix(Ur.copy(), new Matrix(n, n));
+
+        // Scan for 2x2 blocks on the diagonal and diagonalize them
+        int k = 0;
+        while (k < n - 1) {
+            double subdiag = Tr.get(k + 1, k);
+            if (Math.abs(subdiag) > 1e-14) {
+                // Found a 2x2 block at rows/cols [k, k+1] with complex eigenvalue pair
+                double a = Tr.get(k, k);
+                double b = Tr.get(k, k + 1);
+                double c = Tr.get(k + 1, k);
+                double d = Tr.get(k + 1, k + 1);
+
+                // Eigenvalues of [a b; c d] are (a+d)/2 +/- sqrt(disc)/2
+                // where disc = (a-d)^2 + 4*b*c  (should be < 0 for complex pair)
+                double trace = a + d;
+                double disc = (a - d) * (a - d) + 4.0 * b * c;
+
+                // Complex eigenvalue: lambda = trace/2 + i*sqrt(-disc)/2
+                double realPart = trace / 2.0;
+                double imagPart = Math.sqrt(Math.abs(disc)) / 2.0;
+
+                // We need a unitary 2x2 matrix G such that G^H * [a b; c d] * G = upper triangular
+                // with eigenvalue lambda1 = realPart + i*imagPart on (0,0)
+                // and lambda2 = realPart - i*imagPart on (1,1).
+                //
+                // Eigenvector for lambda1 = realPart + i*imagPart:
+                //   (a - lambda1)*v1 + b*v2 = 0
+                //   v2/v1 = -(a - lambda1)/b = -(a - realPart - i*imagPart)/b
+                // Let v = [b, lambda1 - a]^T = [b, (realPart - a) + i*imagPart]^T
+                // Normalize: G's first column = v / ||v||
+                double vRe0 = b;
+                double vIm0 = 0.0;
+                double vRe1 = realPart - a;
+                double vIm1 = imagPart;
+                double norm = Math.sqrt(vRe0 * vRe0 + vIm0 * vIm0 + vRe1 * vRe1 + vIm1 * vIm1);
+                vRe0 /= norm;
+                vIm0 /= norm;
+                vRe1 /= norm;
+                vIm1 /= norm;
+
+                // G = [v, w] where w is orthogonal to v (conjugate of rotated v)
+                // w = [-conj(v2), conj(v1)]^T
+                double wRe0 = -vRe1;
+                double wIm0 = vIm1;
+                double wRe1 = vRe0;
+                double wIm1 = -vIm0;  // conj(v1) but v1 is real so this is just v1
+
+                // Build the full n x n Givens rotation: identity except at rows/cols k, k+1
+                // G_full[k,k] = v1, G_full[k,k+1] = w1, G_full[k+1,k] = v2, G_full[k+1,k+1] = w2
+                // T <- G^H * T * G, U <- U * G
+
+                // Apply T <- G^H * T (affects rows k and k+1)
+                for (int j = 0; j < n; j++) {
+                    org.apache.commons.math3.complex.Complex t_kj = T.get(k, j);
+                    org.apache.commons.math3.complex.Complex t_k1j = T.get(k + 1, j);
+                    // G^H row 0 = conj(v)^T: [conj(v0), conj(v1)]
+                    // G^H row 1 = conj(w)^T: [conj(w0), conj(w1)]
+                    org.apache.commons.math3.complex.Complex cv0 = new org.apache.commons.math3.complex.Complex(vRe0, -vIm0);
+                    org.apache.commons.math3.complex.Complex cv1 = new org.apache.commons.math3.complex.Complex(vRe1, -vIm1);
+                    org.apache.commons.math3.complex.Complex cw0 = new org.apache.commons.math3.complex.Complex(wRe0, -wIm0);
+                    org.apache.commons.math3.complex.Complex cw1 = new org.apache.commons.math3.complex.Complex(wRe1, -wIm1);
+
+                    org.apache.commons.math3.complex.Complex newRow0 = cv0.multiply(t_kj).add(cv1.multiply(t_k1j));
+                    org.apache.commons.math3.complex.Complex newRow1 = cw0.multiply(t_kj).add(cw1.multiply(t_k1j));
+                    T.set(k, j, newRow0);
+                    T.set(k + 1, j, newRow1);
+                }
+
+                // Apply T <- T * G (affects cols k and k+1)
+                for (int i = 0; i < n; i++) {
+                    org.apache.commons.math3.complex.Complex t_ik = T.get(i, k);
+                    org.apache.commons.math3.complex.Complex t_ik1 = T.get(i, k + 1);
+                    org.apache.commons.math3.complex.Complex gv0 = new org.apache.commons.math3.complex.Complex(vRe0, vIm0);
+                    org.apache.commons.math3.complex.Complex gv1 = new org.apache.commons.math3.complex.Complex(vRe1, vIm1);
+                    org.apache.commons.math3.complex.Complex gw0 = new org.apache.commons.math3.complex.Complex(wRe0, wIm0);
+                    org.apache.commons.math3.complex.Complex gw1 = new org.apache.commons.math3.complex.Complex(wRe1, wIm1);
+
+                    org.apache.commons.math3.complex.Complex newCol0 = t_ik.multiply(gv0).add(t_ik1.multiply(gv1));
+                    org.apache.commons.math3.complex.Complex newCol1 = t_ik.multiply(gw0).add(t_ik1.multiply(gw1));
+                    T.set(i, k, newCol0);
+                    T.set(i, k + 1, newCol1);
+                }
+
+                // Apply U <- U * G (affects cols k and k+1)
+                for (int i = 0; i < n; i++) {
+                    org.apache.commons.math3.complex.Complex u_ik = U.get(i, k);
+                    org.apache.commons.math3.complex.Complex u_ik1 = U.get(i, k + 1);
+                    org.apache.commons.math3.complex.Complex gv0 = new org.apache.commons.math3.complex.Complex(vRe0, vIm0);
+                    org.apache.commons.math3.complex.Complex gv1 = new org.apache.commons.math3.complex.Complex(vRe1, vIm1);
+                    org.apache.commons.math3.complex.Complex gw0 = new org.apache.commons.math3.complex.Complex(wRe0, wIm0);
+                    org.apache.commons.math3.complex.Complex gw1 = new org.apache.commons.math3.complex.Complex(wRe1, wIm1);
+
+                    org.apache.commons.math3.complex.Complex newCol0 = u_ik.multiply(gv0).add(u_ik1.multiply(gv1));
+                    org.apache.commons.math3.complex.Complex newCol1 = u_ik.multiply(gw0).add(u_ik1.multiply(gw1));
+                    U.set(i, k, newCol0);
+                    U.set(i, k + 1, newCol1);
+                }
+
+                // Clean up: force subdiagonal to zero and set diagonal to exact eigenvalues
+                T.set(k + 1, k, new org.apache.commons.math3.complex.Complex(0.0, 0.0));
+                T.set(k, k, new org.apache.commons.math3.complex.Complex(realPart, imagPart));
+                T.set(k + 1, k + 1, new org.apache.commons.math3.complex.Complex(realPart, -imagPart));
+
+                k += 2;  // Skip past the 2x2 block
+            } else {
+                k += 1;
+            }
+        }
+
+        Map<String, ComplexMatrix> result = new HashMap<>();
+        result.put("U", U);
+        result.put("T", T);
+        return result;
     }
 
     /**

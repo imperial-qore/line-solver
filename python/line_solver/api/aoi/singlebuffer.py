@@ -102,23 +102,61 @@ def solve_singlebuffer(
 
         # ==================== Stage 2: Full AoI MFQ ====================
         # Construct full AoI MFQ generator (Eqn 19)
-        # 5-phase state space: (Phase 1) arrival, (Phase 2) service, (Phase 3) waiting,
-        # (Phase 4) age accumulation, (Phase 5) normalization
+        # State space for AoI MFQ: follows Eqn (19) in the reference paper
+        # z = 4*l + 2: total system size
+        # Block structure:
+        # [0:l] - B phase (waiting time dynamics)
+        # [l:2l] - Service phase with arrivals
+        # [2l:3l] - Service phase
+        # [3l] - Idle state
+        # [3l+1:4l+1] - Final service phase
+        # [4l+1] - Absorption state
 
         z = 4 * l + 2  # Total state dimension
 
         Q_aoi = np.zeros((z, z))
 
-        # Block structure (row/column indices):
-        # [0:l]: arrival phase
-        # [l:2l]: current service phase
-        # [2l:3l]: waiting phase (Phase 3 in paper)
-        # [3l:4l]: accumulated age phase
-        # [4l:4l+2]: normalization/absorption states
+        # Build B matrix from waiting time analysis (Lemma 1)
+        # B = M^{-1} * wait_A * M where M = diag(-wait_A \ wait_H)
+        wait_A = A - r * arrival_rate * np.eye(l)
+        wait_H = H @ np.array([[0], [1], [r]]).flatten()[:H.shape[1]] if H.shape[1] >= 1 else np.zeros(l)
 
-        # Q_aoi[0:l, 0:l] = T (arrival phases)
-        Q_aoi[:l, :l] = np.kron(np.eye(l), np.ones(1))  # Placeholder, to be filled
-        # Actually: diagonal transition based on arrivals
+        try:
+            Mdiag = np.linalg.solve(-wait_A, wait_H.reshape(-1, 1)).flatten()
+        except np.linalg.LinAlgError:
+            Mdiag = np.ones(l)
+
+        Mdiag = np.maximum(np.abs(Mdiag), 1e-10)
+        M = np.diag(Mdiag)
+        M_inv = np.diag(1.0 / Mdiag)
+        B = M_inv @ wait_A @ M
+
+        # Compute psi for transitions
+        psi = -B @ np.ones(l)
+
+        # Construction of Q matrix following Eqn (19)
+        # Block (1,1): B
+        Q_aoi[:l, :l] = B
+        # Block (1,2): kron(psi, sigma)
+        Q_aoi[:l, l:2*l] = np.outer(psi, sigma)
+        # Block (2,2): S - lambda*I
+        Q_aoi[l:2*l, l:2*l] = S - arrival_rate * np.eye(l)
+        # Block (2,3): lambda*I
+        Q_aoi[l:2*l, 2*l:3*l] = arrival_rate * np.eye(l)
+        # Block (2,4): nu
+        Q_aoi[l:2*l, 3*l:3*l+1] = nu.reshape(-1, 1)
+        # Block (3,3): S
+        Q_aoi[2*l:3*l, 2*l:3*l] = S
+        # Block (3,5): kron(nu, sigma)
+        Q_aoi[2*l:3*l, 3*l+1:4*l+1] = np.outer(nu, sigma)
+        # Block (4,4): -lambda
+        Q_aoi[3*l, 3*l] = -arrival_rate
+        # Block (4,5): lambda*sigma
+        Q_aoi[3*l, 3*l+1:4*l+1] = arrival_rate * sigma
+        # Block (5,5): S
+        Q_aoi[3*l+1:4*l+1, 3*l+1:4*l+1] = S
+        # Block (5,6): nu
+        Q_aoi[3*l+1:4*l+1, 4*l+1:4*l+2] = nu.reshape(-1, 1)
 
         # Service dynamics (blocks [l:2l])
         # This is complex; simplified version for now

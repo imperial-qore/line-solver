@@ -41,7 +41,7 @@ if nargin<2
 end
 
 if length(Q) > 6000 && (nargin==1 || ~options.force)
-    fprintf(1,'ctmc_solve: the order of Q is greater than 6000, i.e., %d elements. Press key to continue.',length(Q));
+    fprintf(1,'ctmc_relsolve: the order of Q is large (%d). Press key to continue.\n',length(Q));
     pause;
 end
 

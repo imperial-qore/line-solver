@@ -1,14 +1,20 @@
 import numpy as np
 import numpy.matlib as ml
 import scipy.linalg as la
-import butools
 import math
-from butools.utils import Diag
-from butools.reptrans import SimilarityMatrixForVectors
-from butools.mam import QBDSolve
-from butools.moments import MomsFromFactorialMoms
-from butools.map import CheckMAPRepresentation
-from butools.mc import CTMCSolve, DTMCSolve, CheckGenerator
+from ..utils.misc import Diag
+from ..reptrans.similarity import SimilarityMatrixForVectors
+from ..mam.qbd import QBDSolve
+from ..moments.conv import MomsFromFactorialMoms
+from ..map.check import CheckMAPRepresentation
+from ..mc.stst import CTMCSolve, DTMCSolve
+from ..mc.check import CheckGenerator
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 def QBDQueue(B, L, F, L0, *argv):
     """

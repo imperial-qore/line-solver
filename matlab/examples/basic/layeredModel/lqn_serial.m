@@ -31,11 +31,14 @@ options.keep = true; % uncomment to keep the intermediate XML files generates wh
 
 solver{1} = LQNS(model);
 AvgTable{1} = solver{1}.getAvgTable();
-%AvgTable{1}
+fprintf(1, '\nLQNS Results:\n');
+disp(AvgTable{1});
 
 CallAvgTable = {};
 [AvgTable{2}, CallAvgTable{2}] = solver{1}.getRawAvgTables();
 %AvgTable{2}
 %CallAvgTable{2}
 
-AvgTable{3} = LN(model).getAvgTable;
+AvgTable{3} = LN(model,'verbose',false).getAvgTable;
+fprintf(1, '\nLN Results:\n');
+disp(AvgTable{3});

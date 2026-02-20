@@ -44,3 +44,5 @@ soptions.verbose = 0;
 soptions.stiff = false;
 envSolver = ENV(envModel, @(model) CTMC(model, soptions), options);
 [infGen,stageInfGen] = envSolver.getGenerator()
+
+envSolver.getAvgTable()

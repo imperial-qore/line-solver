@@ -91,9 +91,11 @@ def pfqn_kt(L: np.ndarray, N: np.ndarray,
 
     # Get throughput estimate
     if Ntot <= 4:
-        X, Q = pfqn_bs(L, N, Z)
+        result = pfqn_bs(L, N, Z)
+        X, Q = result[0], result[1]  # XN, QN
     else:
-        X, Q = pfqn_aql(L, N, Z)
+        result = pfqn_aql(L, N, Z)
+        X, Q = result[0], result[2]  # XN, QN (pfqn_aql still has old format)
 
     X = np.asarray(X).flatten()
     Q = np.atleast_2d(np.asarray(Q))

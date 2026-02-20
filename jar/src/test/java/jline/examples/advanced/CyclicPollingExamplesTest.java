@@ -1,4 +1,6 @@
 package jline.examples.advanced;
+import jline.GlobalConstants;
+import jline.VerboseLevel;
 
 import jline.examples.java.advanced.CyclicPollingModel;
 import jline.lang.Network;
@@ -35,6 +37,7 @@ public class CyclicPollingExamplesTest {
     public static void setUp() {
         // Ensure MATLAB-compatible random number generation
         Maths.setRandomNumbersMatlab(true);
+        GlobalConstants.setVerbose(VerboseLevel.SILENT);
     }
     
 
@@ -119,16 +122,9 @@ public class CyclicPollingExamplesTest {
             assertNotNull(avgTable);
 
             // Verify table size matches expected structure
-            assertEquals(6, avgTable.getQLen().size(),
-                "Expected 6 entries (3 stations × 2 classes) for polling_exhaustive_exp model");
-            
-            // Expected values based on model structure (Source, Queue, Sink × 2 classes)
-            double[] expectedQLen = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-            double[] expectedUtil = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-            double[] expectedRespT = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-            double[] expectedResidT = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-            double[] expectedArvR = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-            double[] expectedTput = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+            // 2 stations (Source, Queue) × 2 classes = 4 entries (Sink has all-zero metrics and is filtered)
+            assertEquals(4, avgTable.getQLen().size(),
+                "Expected 4 entries (2 stations × 2 classes) for polling_exhaustive_exp model");
             
             // If solver produces results, they should be non-negative
             for (int i = 0; i < avgTable.getQLen().size(); i++) {

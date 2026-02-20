@@ -24,10 +24,7 @@ isMixed = isOpen && isClosed;
 
 line_debug('MAM analyzer starting: method=%s, isOpen=%d, isClosed=%d', options.method, isOpen, isClosed);
 
-if isMixed
-    line_error(mfilename,'SolverMAM does not support mixed models with both open and closed classes.');
-    return;
-end
+% Mixed models are supported by the dec.source method
 
 if nargin<2 || isempty(options.config) || ~isfield(options.config,'merge')
     % Preserve existing config fields (like preserveDet) while setting defaults

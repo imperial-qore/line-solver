@@ -123,7 +123,7 @@ class JMTIO:
                 data.append(parts)
         return data
 
-    def parse_tran_resp_t(self, arv_data: List[List[str]], dep_data: List[List[str]],
+    def parse_tran_respt(self, arv_data: List[List[str]], dep_data: List[List[str]],
                           classnames: List[str]) -> Dict[int, Tuple[np.ndarray, np.ndarray]]:
         """
         Parse transient response time data from arrival and departure logs.
@@ -280,7 +280,7 @@ class JMTIO:
                     try:
                         arv_data = self.parse_csv_log(log_file_arv)
                         dep_data = self.parse_csv_log(log_file_dep)
-                        node_resp_t = self.parse_tran_resp_t(arv_data, dep_data, classnames)
+                        node_resp_t = self.parse_tran_respt(arv_data, dep_data, classnames)
                         result[ind] = node_resp_t
                     except Exception:
                         continue

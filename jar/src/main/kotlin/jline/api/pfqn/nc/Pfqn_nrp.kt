@@ -39,9 +39,18 @@ fun pfqn_nrp(L: Matrix, N: Matrix, Z: Matrix, alpha: Matrix, options: SolverOpti
     if (M == 1 && Z.elementSum() == 0.0) {
         return pfqn_gld(L, N, alpha, options).lG
     }
-    val Lmax = L.elementMax()
-    val Lmax_mat = Matrix.singleton(Lmax).repmat(1, R)
-    val L_final = L.elementDivide(Lmax_mat.repmat(M, 1))
+    // Compute per-column maximum (like MATLAB's max(L))
+    val Lmax_mat = Matrix(1, R)
+    for (col in 0 until R) {
+        var colMax = Double.NEGATIVE_INFINITY
+        for (row in 0 until L.numRows) {
+            if (L[row, col] > colMax) {
+                colMax = L[row, col]
+            }
+        }
+        Lmax_mat[0, col] = if (colMax == 0.0) 1.0 else colMax
+    }
+    val L_final = L.elementDivide(Lmax_mat.repmat(L.numRows, 1))
     val x0 = Matrix(1, R)
     x0.zero()
     val lG = Maths.laplaceapprox_h_complex(x0, infradius_hnorm(L_final, N, alpha)).logI.real

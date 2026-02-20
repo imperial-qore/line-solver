@@ -113,11 +113,22 @@ public class DirectedGraph {
         adjacencyMatrix.set(s, d, weight);  // Set the edge weight in the adjacency matrix
     }
 
-    // Find all neighbors of a given node that have outgoing edges
-    private List<Integer> find(int node) {
+    // Find all nodes with incoming edges to this node (matching MATLAB's find(e(:,i)) for SCC traversal)
+    private List<Integer> findIncoming(int node) {
         List<Integer> neighbors = new ArrayList<>();
         for (int j = 0; j < V; j++) {
-            if (adjacencyMatrix.get(node, j) > 0) {  // If there is an edge with weight > 0
+            if (adjacencyMatrix.get(j, node) > 0) {  // If there is an edge from j to node (column lookup)
+                neighbors.add(j);
+            }
+        }
+        return neighbors;
+    }
+
+    // Find all nodes with outgoing edges from this node (matching MATLAB's find(A(node,:)) for recurrence check)
+    private List<Integer> findOutgoing(int node) {
+        List<Integer> neighbors = new ArrayList<>();
+        for (int j = 0; j < V; j++) {
+            if (adjacencyMatrix.get(node, j) > 0) {  // If there is an edge from node to j (row lookup)
                 neighbors.add(j);
             }
         }
@@ -171,7 +182,7 @@ public class DirectedGraph {
 
             // Check if any node in the SCC has outgoing edges to nodes outside the SCC
             for (int node : scc) {
-                List<Integer> out_edges = find(node);
+                List<Integer> out_edges = findOutgoing(node);
                 for (int out_node : out_edges) {
                     if (!isInArray(out_node, scc)) {
                         is_recurrent = false;
@@ -196,9 +207,9 @@ public class DirectedGraph {
         stk.add(0, i);
         v_stk[i] = true;
 
-        List<Integer> out_edges = find(i);
+        List<Integer> in_edges = findIncoming(i);
 
-        for (int j : out_edges) {
+        for (int j : in_edges) {
             if (v_idx[j] == 0) {
                 SCCAuxResult auxResult = stronglyconncomp_aux(j, v_idx, v_low, v_stk, SCC, stk, idx);
                 v_idx = auxResult.v_idx;

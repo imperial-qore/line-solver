@@ -88,44 +88,28 @@ public class ToMarginal implements Serializable {
                 return new State.StateMarginalStatistics(ni, nir, sir, kir);
             }
 
-            /* --- Cache node ------------------------------------------------ */
-            if (sn.nodetype.get(ind) == NodeType.Cache) {
-                // For cache nodes, the state vector contains:
-                // [job counts for each class, cache item states]
-                // The job counts are the first sn.nclasses elements
-                int R = sn.nclasses;
-                Matrix nir = new Matrix(1, R);
-                double niVal = 0.0;
-                
-                // Extract job counts per class (first R elements of state_i)
-                for (int r = 0; r < R && r < state_i.length(); r++) {
-                    double v = state_i.get(r);
-                    nir.set(0, r, v);
-                    niVal += v;
-                }
-                
-                Matrix ni = new Matrix(1, 1);
-                ni.set(0, 0, niVal);
-                
-                Matrix sir = nir.copy();  // for cache, all jobs are "in service"
-                List<Matrix> kir = new ArrayList<Matrix>();
-                kir.add(sir);
-                
-                return new State.StateMarginalStatistics(ni, nir, sir, kir);
-            }
-
-            /* --- Generic stateful (non-transition) node ------------------- */
+            /* --- Generic stateful (non-transition, non-Transition) node ---- */
+            /* Note: Cache nodes use this generic path, matching MATLAB behavior.
+             * The buffer state may be smaller than nvarsSum when called from
+             * fromMarginalBounds during state space generation. */
             double nvarsSum = sn.nvars.sumRows(ind);
             int nCols = (int) (state_i.length() - nvarsSum);
 
-            // Guard against negative column count
-            if (nCols < 0) {
-                line_error(mfilename(new Object[]{}), "Warning: nCols calculated as negative: " + nCols + 
-                                 " (state_i.length=" + state_i.length() + ", nvarsSum=" + nvarsSum + ")");
-                nCols = 0;
+            // When state_i is shorter than nvarsSum (e.g., Cache node with more list
+            // slots than classes, called from fromMarginalBounds before local vars are
+            // appended), MATLAB returns empty nir and ni=0. Match that behavior.
+            if (nCols <= 0) {
+                Matrix ni = new Matrix(1, 1);
+                ni.set(0, 0, 0.0);
+                Matrix nir = new Matrix(1, Math.max(1, sn.nclasses));
+                nir.zero();
+                Matrix sir = nir;
+                List<Matrix> kir = new ArrayList<Matrix>();
+                kir.add(sir);
+                return new State.StateMarginalStatistics(ni, nir, sir, kir);
             }
 
-            Matrix nir = new Matrix(1, Math.max(1, nCols));
+            Matrix nir = new Matrix(1, nCols);
             double niVal = 0.0;
             for (int i = 0; i < nCols && i < state_i.length(); i++) {
                 double v = state_i.get(i);
@@ -274,7 +258,8 @@ public class ToMarginal implements Serializable {
                         sub_space_buf.set(0, i, space_buf.get(i * 2));
 
                     for (int r = 0; r < R; r++) {
-                        Matrix sumval = sub_space_buf.countEachRow(r);
+                        // Classes are stored in buffer as 1-based indices (jobClass + 1), so count r+1
+                        Matrix sumval = sub_space_buf.countEachRow(r + 1);
                         for (int i = 0; i < sir.getNumRows(); i++) nir.set(i, r, sir.get(i, r) + sumval.get(i));
                     }
                 } else {

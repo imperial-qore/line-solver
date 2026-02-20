@@ -17,6 +17,7 @@ import jline.util.matrix.Matrix
  * @param L The number of lags to compute. The default value is 1
  * @return The lag autocorrelation function up to lag L
  */
+@JvmOverloads
 fun lagCorrelationsFromMAP(D0: Matrix, D1: Matrix, L: Int = 1): DoubleArray {
     return lagCorrelationsFromRAP(D0, D1, L)
 }
@@ -29,6 +30,7 @@ fun lagCorrelationsFromMAP(D0: Matrix, D1: Matrix, L: Int = 1): DoubleArray {
  * @param L The number of lags to compute. The default value is 1
  * @return The lag autocorrelation function up to lag L
  */
+@JvmOverloads
 fun lagCorrelationsFromRAP(H0: Matrix, H1: Matrix, L: Int = 1): DoubleArray {
     val H0i = H0.neg().inv()
     val P = H0i.mult(H1)

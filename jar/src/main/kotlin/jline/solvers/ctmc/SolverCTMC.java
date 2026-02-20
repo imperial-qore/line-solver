@@ -556,7 +556,23 @@ public class SolverCTMC extends NetworkSolver {
         ((CTMCResult) this.result).prob.marginal = Pnir;
         long T1 = System.nanoTime();
         this.result.runtime = (T1 - T0) / 1000000000.0;
-        return new ProbabilityResult(Pnir.get(0, node));
+
+        if (Pnir == null || Pnir.isEmpty()) {
+            return new ProbabilityResult(Double.NaN);
+        }
+
+        // Convert node index to station index for Pnir access
+        // Validate bounds before accessing nodeToStation
+        if (sn.nodeToStation == null || node >= sn.nodeToStation.getNumCols()) {
+            // Return full Pnir if we can't determine station index
+            return new ProbabilityResult(Pnir);
+        }
+        int station = (int) sn.nodeToStation.get(0, node);
+        if (station < 0 || station >= Pnir.getNumCols()) {
+            // Fall back to returning the full Pnir row if station index is out of bounds
+            return new ProbabilityResult(Pnir);
+        }
+        return new ProbabilityResult(Pnir.get(0, station));
     }
 
     public ProbabilityResult getProb(StatefulNode node, Matrix state) {
@@ -706,6 +722,7 @@ public class SolverCTMC extends NetworkSolver {
             State.StateSpaceGeneratorResult stateSpaceGeneratorResult =
                     State.spaceGenerator(sn, cutoffMatrix, options);
             sn.space = stateSpaceGeneratorResult.ST.space;
+            sn.spaceHash = stateSpaceGeneratorResult.ST.spaceHash;
             ((CTMCResult) this.result).space = stateSpaceGeneratorResult.SS;
             ((CTMCResult) this.result).nodeSpace = stateSpaceGeneratorResult.ST.space;
         }
@@ -939,6 +956,10 @@ public class SolverCTMC extends NetworkSolver {
         //this.runAnalyzerChecks(options);
         this.resetRandomGeneratorSeed(options.seed);
 
+        // Force struct rebuild to get a fresh copy, matching MATLAB's value-copy semantics.
+        // Without this, a prior CTMC run (e.g., cutoff=2) modifies the cached sn via
+        // ctmc_ssg, and a subsequent run (cutoff=4) gets the stale modified struct.
+        this.model.resetStruct();
         sn = getStruct(this);
         int M = sn.nstations;
         int K = sn.nclasses;
@@ -1025,6 +1046,10 @@ public class SolverCTMC extends NetworkSolver {
             sn = analyzerResult.sncopy;
 
             // call solver
+            // Save original rt before refreshChains modifies it in-place.
+            // In MATLAB, sn is a value-copy struct unaffected by refreshChains;
+            // in Java, sn is a reference, so we must save/restore manually.
+            Matrix rtOrig = sn.rt.copy();
             for (int isf = 0; isf < sn.nstateful; isf++) {
                 int ind = (int) sn.statefulToNode.get(isf);
                 // use stateful nodes directly to avoid IndexOutOfBoundsException
@@ -1049,6 +1074,7 @@ public class SolverCTMC extends NetworkSolver {
             M = sn.nstations;
             int R = sn.nclasses;
             AvgHandle T = getAvgTputHandles();
+            sn.rt = rtOrig;
             Matrix AN = snGetArvRFromTput(sn, TN, T);
             Matrix WN = new Matrix(0, 0);
             this.setAvgResults(QN, UN, RN, TN, AN, WN, CN, XN, runtime, options.method, 0);
@@ -1066,11 +1092,13 @@ public class SolverCTMC extends NetworkSolver {
             Map<StatefulNode, Matrix> s0 = sn.space;  // Use sn.space like MATLAB, not sn.state
             Map<StatefulNode, Matrix> s0prior = sn.stateprior;
 
-            List<Integer> rowCounts =
-                    s0.values().stream().map(Matrix::getNumRows).collect(Collectors.toList());
-            double[][] rowCountsData = new double[rowCounts.size()][1];
-            for (int i = 0; i < rowCounts.size(); i++) {
-                rowCountsData[i][0] = rowCounts.get(i);
+            // Build s0_sz in isf order (matching MATLAB's cell array indexing).
+            // HashMap.values() has non-deterministic order; we must iterate
+            // stateful nodes by index so pprod dimensions match s0_id.get(isf).
+            double[][] rowCountsData = new double[sn.nstateful][1];
+            for (int isf = 0; isf < sn.nstateful; isf++) {
+                StatefulNode node = this.model.getStatefulNodes().get(isf);
+                rowCountsData[isf][0] = s0.get(node).getNumRows();
             }
             Matrix s0_sz = new Matrix(rowCountsData);
             Matrix s0_sz_1 = s0_sz.copy();
@@ -1081,23 +1109,23 @@ public class SolverCTMC extends NetworkSolver {
                 for (int ind = 0; ind < sn.nnodes; ind++) {
                     if (sn.isstateful.get(ind) == 1) {
                         int isf = (int) sn.nodeToStateful.get(ind);
+                        // s0_id is 0-based; MATLAB uses 1+s0_id for 1-based indexing, Java uses s0_id directly
                         s0prior_val =
-                                s0prior_val * s0prior.get(this.model.getStatefulNodes().get(isf)).get((int) (1 + s0_id.get(isf)));
+                                s0prior_val * s0prior.get(this.model.getStatefulNodes().get(isf)).get((int) s0_id.get(isf));
 
                         // Extract row from the state matrix corresponding to the current state
-                        // MATLAB: s0{isf}(1+s0_id(isf),:) - add 1 to index like MATLAB
                         Matrix newState =
                                 Matrix.extractRows(
                                         s0.get(this.model.getStatefulNodes().get(isf)),
-                                        (int) (1 + s0_id.get(isf)),
-                                        (int) (1 + s0_id.get(isf)) + 1,
+                                        (int) s0_id.get(isf),
+                                        (int) s0_id.get(isf) + 1,
                                         null);
 
                         // Update the state of the node
                         this.model.getStations().get((int) sn.nodeToStation.get(ind)).setState(newState);
                     }
                 }
-                NetworkStruct sn_cur = this.model.getStruct(false);
+                NetworkStruct sn_cur = this.model.getStruct(true);
                 if (s0prior_val > 0) {
                     line_debug(options.verbose, "Computing transient probabilities, calling solver_ctmc_transient_analyzer");
                     TransientResult transientResult = solver_ctmc_transient_analyzer(sn_cur, options);
@@ -1159,7 +1187,19 @@ public class SolverCTMC extends NetworkSolver {
                                 // Get time points from existing and new data
                                 Matrix existingTimes = Matrix.extractColumns(existingQ, 1, 2, null);
                                 Matrix newTimes = t.copy();
-                                Matrix tunion = Matrix.union(existingTimes, newTimes);
+                                // Compute sorted unique union of time values (MATLAB union semantics)
+                                java.util.TreeSet<Double> timeSet = new java.util.TreeSet<>();
+                                for (int ti = 0; ti < existingTimes.getNumRows(); ti++) {
+                                    timeSet.add(existingTimes.get(ti, 0));
+                                }
+                                for (int ti = 0; ti < newTimes.getNumRows(); ti++) {
+                                    timeSet.add(newTimes.get(ti, 0));
+                                }
+                                Matrix tunion = new Matrix(timeSet.size(), 1);
+                                int tuIdx = 0;
+                                for (Double tv : timeSet) {
+                                    tunion.set(tuIdx++, 0, tv);
+                                }
 
                                 // Create new aggregated matrices
                                 Matrix newQMatrix = new Matrix(tunion.getNumRows(), 2);
@@ -1219,6 +1259,36 @@ public class SolverCTMC extends NetworkSolver {
             this.result.method = options.method;
             this.result.runtime = runtime;
             ((CTMCResult) this.result).solverSpecific = lastSol;
+
+            // Populate result.QNt, result.UNt, result.TNt, result.t from Tran.Avg
+            // so that SolverENV.finish() can read them (it uses these flat arrays)
+            if (((CTMCResult) this.result).Tran != null
+                    && ((CTMCResult) this.result).Tran.Avg != null
+                    && ((CTMCResult) this.result).Tran.Avg.Q != null
+                    && !((CTMCResult) this.result).Tran.Avg.Q.isEmpty()) {
+                // Extract time points from first available entry
+                Matrix firstEntry = ((CTMCResult) this.result).Tran.Avg.Q.values().iterator().next()
+                        .values().iterator().next();
+                int nTimePoints = firstEntry.getNumRows();
+                this.result.t = new Matrix(nTimePoints, 1);
+                for (int ti = 0; ti < nTimePoints; ti++) {
+                    this.result.t.set(ti, 0, firstEntry.get(ti, 1));
+                }
+
+                this.result.QNt = new Matrix[M][K];
+                this.result.UNt = new Matrix[M][K];
+                this.result.TNt = new Matrix[M][K];
+                for (int ist = 0; ist < M; ist++) {
+                    for (int r = 0; r < K; r++) {
+                        this.result.QNt[ist][r] = Matrix.extractColumns(
+                                ((CTMCResult) this.result).Tran.Avg.Q.get(ist).get(r), 0, 1, null);
+                        this.result.UNt[ist][r] = Matrix.extractColumns(
+                                ((CTMCResult) this.result).Tran.Avg.U.get(ist).get(r), 0, 1, null);
+                        this.result.TNt[ist][r] = Matrix.extractColumns(
+                                ((CTMCResult) this.result).Tran.Avg.T.get(ist).get(r), 0, 1, null);
+                    }
+                }
+            }
         }
     }
 
@@ -1501,71 +1571,48 @@ public class SolverCTMC extends NetworkSolver {
             MMAP = jline.api.mam.Mmap_normalizeKt.mmap_normalize(MMAP);
 
             // Sample MMAP (like MATLAB dev/ line 27)
-            // Note: Java version doesn't accept pi0, uses steady-state initialization
-            java.util.Random random = new java.util.Random();
+            // [sjt, event, ~, ~, sts] = mmap_sample(MMAP, numSamples, pi0);
+            java.util.Random random = new java.util.Random(options.seed);
             jline.io.Ret.mamMMAPSample mmapSample = jline.api.mam.Mmap_sampleKt.mmap_sample(MMAP, (long)numSamples, random);
 
-            // For now, use simple CTMC sampling since MMAP sampling doesn't return states
-            // This is a temporary approach until we can access MMAP state trajectory
-            Ret.ctmcSimulation ctmcSim = ctmc_simulate(infGen,
-                    new double[]{pi0.get(0, matchIdx >= 0 ? matchIdx : 0)}, numSamples);
+            double[] interArrivalTimes = mmapSample.getSamples();
+            int[] eventTypes = mmapSample.getTypes();
+            int[] mmapStates = mmapSample.getStates();
 
             // Build time series (like MATLAB dev/ line 32)
+            // MATLAB: tranSysState.t = cumsum([0,sjt(1:end-1)']');
             Matrix t = new Matrix(numSamples, 1);
             double cumulativeTime = 0.0;
             for (int i = 0; i < numSamples; i++) {
-                if (i > 0) {
-                    cumulativeTime += ctmcSim.sojournTimes[i-1];
-                }
                 t.set(i, 0, cumulativeTime);
+                if (i < numSamples - 1) {
+                    cumulativeTime += interArrivalTimes[i];
+                }
             }
 
-            // Build enhanced state series with MMAP state tracking
+            // Build state series from MMAP states (like MATLAB dev/ lines 33-36)
+            // MATLAB: tranSysState.state{isf} = stateSpace(sts,(nst(isf):nst(isf+1)-1));
             Matrix state = new Matrix(numSamples, stateSpace.getNumCols());
-
-            // Track MMAP phase states alongside CTMC states
-            int[] mmapPhaseStates = new int[numSamples];
-            int currentMMAPPhase = 0; // Start from first phase
-
             for (int i = 0; i < numSamples; i++) {
-                // Update CTMC state information
-                int stateIdx = (i < ctmcSim.states.length) ? ctmcSim.states[i] : 0;
-                if (stateIdx < stateSpace.getNumRows()) {
+                int stateIdx = (mmapStates != null && i < mmapStates.length) ? mmapStates[i] : 0;
+                if (stateIdx >= 0 && stateIdx < stateSpace.getNumRows()) {
                     for (int j = 0; j < stateSpace.getNumCols(); j++) {
                         state.set(i, j, stateSpace.get(stateIdx, j));
                     }
                 }
-
-                // Update MMAP phase state based on event type transitions
-                // Simple phase progression for now
-                currentMMAPPhase = (currentMMAPPhase + 1) % Math.max(1, MMAP.size() - 2);
-                mmapPhaseStates[i] = currentMMAPPhase;
             }
 
-            // Build event list from synchronizations (like MATLAB dev/ lines 39-48)
+            // Build event list from MMAP event types (like MATLAB dev/ lines 39-48)
+            // MATLAB: for e = 1:length(event)
+            //           for a=1:length(sn.sync{event(e)}.active) ...
+            // The eventTypes[i] directly indexes the synchronization event
             List<Event> eventList = new ArrayList<Event>();
-            for (int i = 1; i < numSamples; i++) { // Start from 1 to compare with previous state
+            for (int i = 0; i < numSamples; i++) {
                 double eventTime = t.get(i, 0);
+                int syncIdx = eventTypes[i];  // Direct index into synchInfo (0-indexed in Java)
 
-                // Find which synchronization event caused this state transition
-                int prevStateIdx = ctmcSim.states[i-1];
-                int currStateIdx = ctmcSim.states[i];
-
-                // Find the sync that has a non-zero transition rate from prevStateIdx to currStateIdx
-                int foundSyncIdx = -1;
-                for (int syncIdx = 0; syncIdx < eventFilt.size(); syncIdx++) {
-                    Matrix eventMatrix = eventFilt.get(syncIdx);
-                    if (eventMatrix != null &&
-                            prevStateIdx < eventMatrix.getNumRows() &&
-                            currStateIdx < eventMatrix.getNumCols() &&
-                            eventMatrix.get(prevStateIdx, currStateIdx) > 0) {
-                        foundSyncIdx = syncIdx;
-                        break;
-                    }
-                }
-
-                // Get synchronization for this event
-                Sync sync = synchInfo.get(foundSyncIdx);
+                // Get synchronization for this event type
+                Sync sync = synchInfo.get(syncIdx);
                 if (sync != null) {
                     // Add active events
                     if (sync.active != null) {
@@ -1613,20 +1660,8 @@ public class SolverCTMC extends NetworkSolver {
                 event.set(i, 2, eventTypeInt);
             }
 
-            // Create enhanced sample result with MMAP information
+            // Create sample result
             jline.io.Ret.SampleResult result = new jline.io.Ret.SampleResult("ctmc", t, state, event, false, null, numSamples);
-
-            // Add MMAP-specific metadata including state trajectory
-            Map<String, Object> mmapMetadata = new HashMap<String, Object>();
-            // mmapMetadata.put("interArrivalTimes", interArrivalTimes);
-            // mmapMetadata.put("mmapEventTypes", eventTypes);
-            // mmapMetadata.put("mmapPhaseStates", mmapPhaseStates);
-            // mmapMetadata.put("numEventTypes", numEventTypes);
-            mmapMetadata.put("usedMMAPSampling", true);
-            mmapMetadata.put("mmapSize", MMAP.size());
-            mmapMetadata.put("ctmcStates", ctmcSim.states);
-            mmapMetadata.put("synchronizationEvents", synchInfo.size());
-            // result.setMetadata(mmapMetadata); // Method doesn't exist
 
             return result;
 
@@ -1686,7 +1721,15 @@ public class SolverCTMC extends NetworkSolver {
         Matrix pi0 = new Matrix(1, infGen.getNumRows());
         int state0 = Matrix.matchrow(stateSpace, initialState);
         if (state0 == -1) {
-            throw new RuntimeException("Initial state not contained in the state space.");
+            // Try rounding fractional states (e.g., from ENV solver weighted averages)
+            Matrix roundedState = new Matrix(1, initialState.getNumCols());
+            for (int j = 0; j < initialState.getNumCols(); j++) {
+                roundedState.set(0, j, Math.round(initialState.get(0, j)));
+            }
+            state0 = Matrix.matchrow(stateSpace, roundedState);
+            if (state0 == -1) {
+                throw new RuntimeException("Initial state not contained in the state space.");
+            }
         }
         pi0.set(0, state0, 1.0);
 
@@ -1775,7 +1818,7 @@ public class SolverCTMC extends NetworkSolver {
                 }
 
                 // Utilization computation
-                SchedStrategy schedStrategy = sn.sched.get(ist);
+                SchedStrategy schedStrategy = sn.sched.get(sn.stations.get(ist));
                 int nservers = (int) sn.nservers.get(ist, 0);
 
                 if (schedStrategy == SchedStrategy.INF) {
@@ -2063,6 +2106,7 @@ public class SolverCTMC extends NetworkSolver {
         public Matrix Q21;
         public Matrix Q22;
         Matrix T;
+        public Object denseLUSolver;
 
         public StochCompResult(Matrix S, Matrix Q11, Matrix Q12, Matrix Q21, Matrix Q22, Matrix T) {
             this.S = S;

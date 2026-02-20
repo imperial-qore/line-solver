@@ -26,7 +26,8 @@ options.verbose = 1;
 %options.samples = 1e4;
 lqnssolver = LQNS(model, options);
 AvgTableLQNS = lqnssolver.getAvgTable;
-%AvgTableLQNS
+fprintf(1, '\nLQNS Results:\n');
+disp(AvgTableLQNS);
 
 % this method runs the MVA solver in each layer
 lnoptions = LN.defaultOptions;
@@ -36,7 +37,8 @@ options = MVA.defaultOptions;
 options.verbose = 0;
 solver{1} = LN(model, @(model) MVA(model, options), lnoptions);
 AvgTable{1} = solver{1}.getAvgTable;
-%AvgTable{1}
+fprintf(1, '\nLN(MVA) Results:\n');
+disp(AvgTable{1});
 
 % this method runs the NC solver in each layer
 lnoptions = LN.defaultOptions;
@@ -46,7 +48,8 @@ options = NC.defaultOptions;
 options.verbose = 0;
 solver{2} = LN(model, @(model) NC(model, options), lnoptions);
 AvgTable{2} = solver{2}.getAvgTable;
-%AvgTable{2}
+fprintf(1, '\nLN(NC) Results:\n');
+disp(AvgTable{2});
 
 % this method adapts with the features of each layer
 %solver{2} = LN(model, @(model) LINE(model, LINE.defaultOptions), lnoptions);

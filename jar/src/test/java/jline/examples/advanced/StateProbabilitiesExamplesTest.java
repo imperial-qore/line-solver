@@ -249,32 +249,37 @@ public class StateProbabilitiesExamplesTest {
     }
     
     @Test
-    @Disabled("Expected value mismatch - ls sampling method uses different API than MATLAB")
     public void testStatePrSysAggrLargeNC() {
-        // Test the statepr_sys_aggr_large example with NC solver
+        // Test the statepr_sys_aggr_large example with NC solver using ls (log-sampling) method.
+        // The ls method is a Monte Carlo approximation; JAR and MATLAB use different RNG
+        // implementations so their per-seed results differ, but both converge to the exact
+        // value with increasing samples (verified: ~2% error at 10k, <1% at 500k samples).
         Network model = StateProbabilitiesModel.statepr_sys_aggr_large();
-        
+
         // Set system state as in MATLAB example:
         // node{1}: [0,0,0,0], node{2}: [0,0,0,0], node{3}: [1,1,1,1]
         List<Node> nodes = model.getNodes();
         nodes.get(0).setState(new Matrix("[0,0,0,0]")); // Queue1
         nodes.get(1).setState(new Matrix("[0,0,0,0]")); // Queue2
         nodes.get(2).setState(new Matrix("[1,1,1,1]")); // Queue3
-        
+
         final double[] probHolder = new double[1];
         withSuppressedOutput(() -> {
             SolverNC solver = new SolverNC(model, "seed",23000, "method","ls", "samples",10000);
             probHolder[0] = solver.getProbSysAggr().getScalarProbability();
         });
         double prob = probHolder[0];
-        
-        // Expected value from ground truth
-        // Pr_nc = 3.414029203772685e-04
-        double expectedProb = 3.414029203772685e-04;
-        
-        assertEquals(expectedProb, prob, relativeTolerance(expectedProb, MID_TOL),
-                String.format("NC getProbSysAggr: expected %.6g, got %.6g", expectedProb, prob));
-        
+
+        // Expected value from CTMC exact solver (ground truth)
+        // Both MATLAB and JAR NC exact match this value to machine precision
+        double expectedProb = 3.484356916108210e-04;
+
+        // Use 5% tolerance since ls is a Monte Carlo method (~0.75% error at 10k samples
+        // with MersenneTwister; MATLAB shows ~2% error with same algorithm/seed)
+        assertEquals(expectedProb, prob, relativeTolerance(expectedProb, 0.05),
+                String.format("NC ls getProbSysAggr: expected %.6g, got %.6g (%.2f%% error)",
+                        expectedProb, prob, Math.abs(prob - expectedProb) / expectedProb * 100));
+
         // Verify model structure
         assertEquals(3, model.getNumberOfStations(), "Should have 3 stations");
         assertEquals(4, model.getNumberOfClasses(), "Should have 4 classes");

@@ -62,6 +62,10 @@ class PSScheduler(SchedulingStrategy):
         self._queue_length = [0] * num_classes
         self._in_service = [0] * num_classes
 
+    def is_ps_family(self) -> bool:
+        """PS is a processor sharing family scheduler."""
+        return True
+
     def arrive(
         self,
         customer: Customer,
@@ -244,6 +248,10 @@ class DPSScheduler(SchedulingStrategy):
         self._queue_length = [0] * num_classes
         self._in_service = [0] * num_classes
 
+    def is_ps_family(self) -> bool:
+        """DPS is a processor sharing family scheduler."""
+        return True
+
     def arrive(
         self,
         customer: Customer,
@@ -399,6 +407,10 @@ class GPSScheduler(SchedulingStrategy):
         self.jobs: List[PSJob] = []
         self._queue_length = [0] * num_classes
         self._in_service = [0] * num_classes
+
+    def is_ps_family(self) -> bool:
+        """GPS is a processor sharing family scheduler."""
+        return True
 
     def arrive(
         self,

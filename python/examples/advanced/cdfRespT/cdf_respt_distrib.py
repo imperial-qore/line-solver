@@ -28,10 +28,10 @@ queue.setService(job_class2, HyperExp.fit_mean_and_scv(5.0, 30.0))
 
 # Routing matrix
 P = [[None, None], [None, None]]
-P[0][0] = Network.serial_routing([delay, queue])
+P[0][0] = [[0, 1], [1, 0]]  # circul(2)
 P[0][1] = [[0, 0], [0, 0]]
 P[1][0] = [[0, 0], [0, 0]]
-P[1][1] = Network.serial_routing([delay, queue])
+P[1][1] = [[0, 1], [1, 0]]  # circul(2)
 
 model.link(P)
 
@@ -46,36 +46,36 @@ print('Computing transient CDF with JMT simulation...')
 rd_sim = JMT(model, samples=int(1e5), seed=23000).get_tran_cdf_resp_t()
 
 # Compute statistics from CDFs
-avg_resp_t_from_cdf_fluid = []
-avg_resp_t_from_cdf_sim = []
+avg_respt_from_cdf_fluid = []
+avg_respt_from_cdf_sim = []
 
 for i in range(model.getNumberOfStations()):
-    avg_resp_t_from_cdf_fluid.append([])
-    avg_resp_t_from_cdf_sim.append([])
+    avg_respt_from_cdf_fluid.append([])
+    avg_respt_from_cdf_sim.append([])
     for c in range(model.getNumberOfClasses()):
         # Fluid
         cdf_data = rd_fluid[i][c]
         if cdf_data is not None and len(cdf_data) > 1:
             mean_val = sum((cdf_data[j+1][0] - cdf_data[j][0]) * cdf_data[j+1][1]
                           for j in range(len(cdf_data)-1))
-            avg_resp_t_from_cdf_fluid[i].append(mean_val)
+            avg_respt_from_cdf_fluid[i].append(mean_val)
         else:
-            avg_resp_t_from_cdf_fluid[i].append(0)
+            avg_respt_from_cdf_fluid[i].append(0)
 
         # Simulation
         cdf_data = rd_sim[i][c]
         if cdf_data is not None and len(cdf_data) > 1:
             mean_val = sum((cdf_data[j+1][0] - cdf_data[j][0]) * cdf_data[j+1][1]
                           for j in range(len(cdf_data)-1))
-            avg_resp_t_from_cdf_sim[i].append(mean_val)
+            avg_respt_from_cdf_sim[i].append(mean_val)
         else:
-            avg_resp_t_from_cdf_sim[i].append(0)
+            avg_respt_from_cdf_sim[i].append(0)
 
 print('\nAverage Response Time from CDF (Fluid):')
-print(avg_resp_t_from_cdf_fluid)
+print(avg_respt_from_cdf_fluid)
 
 print('\nAverage Response Time from CDF (Simulation):')
-print(avg_resp_t_from_cdf_sim)
+print(avg_respt_from_cdf_sim)
 
 # Get service process names
 service_procs = []

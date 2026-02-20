@@ -90,8 +90,8 @@ def weaklyconncomp(G: np.ndarray) -> ConnectedComponents:
     adj = np.zeros((n, n))
     for i in range(n):
         for j in range(n):
-            if (not np.isnan(G[i, j]) and G[i, j] != 0.0) or \
-               (not np.isnan(G[j, i]) and G[j, i] != 0.0):
+            if (np.isnan(G[i, j]) or G[i, j] != 0.0) or \
+               (np.isnan(G[j, i]) or G[j, i] != 0.0):
                 adj[i, j] = 1.0
                 adj[j, i] = 1.0
 
@@ -204,13 +204,16 @@ def ctmc_solve_full(Q: np.ndarray) -> CTMCSolveResult:
     b = np.zeros(n)
     b[n - 1] = 1.0
 
-    # Solve using LU decomposition
-    try:
-        lu, piv = lu_factor(Q_mod)
-        p = lu_solve((lu, piv), b)
-    except Exception:
-        # If singular, return uniform
-        p = np.ones(n) / n
+    # Check if system is singular before solving (matches MATLAB backslash behavior)
+    # MATLAB's \ returns NaN for singular systems; numpy solve may return wrong answers
+    if np.linalg.matrix_rank(Q_mod) < n:
+        p = np.full(n, np.nan)
+    else:
+        try:
+            lu, piv = lu_factor(Q_mod)
+            p = lu_solve((lu, piv), b)
+        except Exception:
+            p = np.full(n, np.nan)
 
     # Ensure non-negative
     p = np.maximum(p, 0.0)
@@ -378,16 +381,18 @@ def ctmc_relsolve(Q: np.ndarray, refstate: int = 0) -> np.ndarray:
 
     normalized_Q = ctmc_makeinfgen(Q)
 
-    # Modify system: set ROW refstate to have 1 at refstate (normalization constraint)
+    # Modify system: replace last row of Q^T (= last column of Q) with normalization constraint
+    # MATLAB: Qnnz(:,end) = 0; Qnnz(refstate,end) = 1; bnnz(end) = 1; then solves Qnnz' \ bnnz
     Q_mod = normalized_Q.T.copy()
 
-    # Replace reference row (not column!)
-    Q_mod[refstate, :] = 0.0
-    Q_mod[refstate, refstate] = 1.0
+    # Replace last row of Q^T
+    last_row = n - 1
+    Q_mod[last_row, :] = 0.0
+    Q_mod[last_row, refstate] = 1.0
 
     # Build RHS vector
     b = np.zeros(n)
-    b[refstate] = 1.0
+    b[last_row] = 1.0
 
     # Solve
     try:
@@ -645,6 +650,107 @@ def dtmc_uniformization(pi0: np.ndarray, P: np.ndarray, t: float = 1e4,
     return ctmc_uniformization(pi0, ctmc_makeinfgen(Q), t, tol, maxiter)
 
 
+def ctmc_transient(Q, pi0=None, t0=None, t1=None, useStiff=False, reltol=1e-3, timestep=None):
+    """
+    Transient analysis of a continuous-time Markov chain using ODE solvers.
+
+    Computes the transient state probabilities by solving the ODE system
+    dpi/dt = pi * Q using scipy ODE solvers.
+
+    Matches MATLAB: matlab/lib/kpctoolbox/mc/ctmc_transient.m
+
+    Calling conventions (matching MATLAB):
+        ctmc_transient(Q, t1)             - uniform pi0, t0=0
+        ctmc_transient(Q, pi0, t1)        - given pi0, t0=0
+        ctmc_transient(Q, pi0, t0, t1)    - given pi0 and time range
+
+    Parameters
+    ----------
+    Q : array_like
+        Infinitesimal generator matrix.
+    pi0 : array_like or float, optional
+        Initial probability distribution vector. If a scalar is given and
+        t0/t1 are not provided, it is interpreted as t1 (MATLAB nargin==2).
+    t0 : float, optional
+        Start time. Default is 0.
+    t1 : float, optional
+        End time.
+    useStiff : bool, optional
+        If True, use stiff ODE solver (BDF, analogous to MATLAB ode15s).
+        Default is False (uses RK23, analogous to MATLAB ode23).
+    reltol : float, optional
+        Relative tolerance for the ODE solver. Default is 1e-3.
+    timestep : float or None, optional
+        Fixed time step for the output. If None, uses adaptive stepping.
+
+    Returns
+    -------
+    pi : numpy.ndarray
+        State probability vectors at each time point, shape (len(t), n).
+    t : numpy.ndarray
+        Time points corresponding to the probabilities, shape (len(t),).
+    """
+    from scipy.integrate import solve_ivp
+
+    Q = np.asarray(Q, dtype=np.float64)
+    n = Q.shape[0]
+
+    # Handle MATLAB-style calling conventions
+    if t1 is None and t0 is None:
+        # nargin==2: ctmc_transient(Q, t1) => pi0 is actually t1
+        t1_val = float(pi0)
+        t0_val = 0.0
+        pi0_vec = np.ones(n) / n
+    elif t1 is None:
+        # nargin==3: ctmc_transient(Q, pi0, t1) => t0 is actually t1
+        pi0_vec = np.asarray(pi0, dtype=np.float64).ravel()
+        t1_val = float(t0)
+        t0_val = 0.0
+    else:
+        # nargin>=4: ctmc_transient(Q, pi0, t0, t1)
+        pi0_vec = np.asarray(pi0, dtype=np.float64).ravel()
+        t0_val = float(t0)
+        t1_val = float(t1)
+
+    # ODE: dpi/dt = pi * Q
+    def ode_func(t, pi):
+        return (pi.reshape(1, -1) @ Q).ravel()
+
+    method = 'BDF' if useStiff else 'RK23'
+
+    if timestep is not None and timestep > 0:
+        # Fixed time steps
+        t_eval = np.arange(t0_val, t1_val, timestep)
+        if len(t_eval) == 0 or t_eval[-1] != t1_val:
+            t_eval = np.append(t_eval, t1_val)
+
+        sol = solve_ivp(
+            ode_func, [t0_val, t1_val], pi0_vec,
+            method=method, t_eval=t_eval, rtol=reltol
+        )
+        t_out = sol.t
+        pi_out = sol.y.T
+    else:
+        # Adaptive stepping
+        if np.isinf(t1_val):
+            nonZeroRates = np.abs(Q[Q != 0])
+            nonZeroRates = nonZeroRates[nonZeroRates > 0]
+            T_end = abs(100 / np.min(nonZeroRates))
+            sol = solve_ivp(
+                ode_func, [t0_val, T_end], pi0_vec,
+                method=method, rtol=reltol
+            )
+        else:
+            sol = solve_ivp(
+                ode_func, [t0_val, t1_val], pi0_vec,
+                method=method, rtol=reltol
+            )
+        t_out = sol.t
+        pi_out = sol.y.T
+
+    return pi_out, t_out
+
+
 __all__ = [
     # CTMC functions
     'ctmc_makeinfgen',
@@ -654,6 +760,7 @@ __all__ = [
     'ctmc_timereverse',
     'ctmc_randomization',
     'ctmc_uniformization',
+    'ctmc_transient',
     'ctmc_relsolve',
     'weaklyconncomp',
     # DTMC functions

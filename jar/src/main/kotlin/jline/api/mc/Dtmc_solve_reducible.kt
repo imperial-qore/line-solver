@@ -30,7 +30,7 @@ fun dtmc_solve_reducible(
 ): Pair<Matrix, List<List<Int>>> {
     val (scc, isrec) = stronglyconncomp(P)
     val numSCC = (scc.maxOrNull() ?: -1) + 1
-    
+
     if (numSCC == 1) {
         val pi = dtmc_solve(P)
         return Pair(pi, listOf((0 until P.numRows).toList()))
@@ -102,20 +102,20 @@ fun dtmc_solve_reducible(
             }
         }
     }
-    
+
     // Compute limiting distribution
     val pi = Matrix.zeros(1, P.numRows)
     val pis = mutableListOf<Matrix>()
-    
+
     // Compute spectral decomposition of lumped matrix
     val PI = computeLimitingMatrix(Pl)
-    
+
     for (i in 0 until numSCC) {
         if (pinl[0, i] > 0) {
             val pi0i = Matrix.zeros(1, numSCC)
             pi0i[0, i] = 1.0
             val pili = pi0i.mult(PI)
-            
+
             val pisi = Matrix.zeros(1, P.numRows)
             for (j in 0 until numSCC) {
                 if (pili[0, j] > 0 && sccIdx[j].isNotEmpty()) {
@@ -131,19 +131,19 @@ fun dtmc_solve_reducible(
                 }
             }
             pis.add(pisi)
-            
+
             for (k in 0 until P.numRows) {
                 pi[0, k] += pisi[0, k] * pinl[0, i]
             }
         }
     }
-    
+
     // Handle single transient SCC case
     val transientStates = isrec.indices.filter { !isrec[it] }
     if (transientStates.size == 1 && pin == null) {
         return Pair(pis[transientStates[0]], sccIdx.map { it.toList() })
     }
-    
+
     return Pair(pi, sccIdx.map { it.toList() })
 }
 

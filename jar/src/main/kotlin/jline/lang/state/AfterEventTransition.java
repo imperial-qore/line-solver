@@ -45,14 +45,14 @@ public class AfterEventTransition implements Serializable {
 
                 // Check bounds first - mode must be valid
                 if (mode < 0 || mode >= K.getNumCols()) {
-                    // Invalid mode index - return null to indicate no phase transition possible
-                    return new Ret.EventResult(null, null, null);
+                    // Invalid mode index - return empty to indicate no phase transition possible
+                    return new Ret.EventResult(new Matrix(0, 0), new Matrix(0, 0), new Matrix(0, 0));
                 }
-                
+
                 // For single-phase modes (exponential), no phase transitions are possible
                 if (K.get(mode) <= 1) {
-                    // Return null to indicate no phase transition is possible
-                    return new Ret.EventResult(null, null, null);
+                    // Return empty to indicate no phase transition is possible
+                    return new Ret.EventResult(new Matrix(0, 0), new Matrix(0, 0), new Matrix(0, 0));
                 }
 
                 State.StateMarginalStatistics transitionStats = ToMarginal.toMarginal(sn, ind, inspace, K, Ks, spaceBuf, spaceSrv, spaceVar);
@@ -175,7 +175,7 @@ public class AfterEventTransition implements Serializable {
                     }
 
                     if (isSimulation && eventCache.isEnabled()) {
-                        eventCache.put(key, new Ret.EventResult(outprob, outspace, outrate));
+                        eventCache.put(key, new Ret.EventResult(outspace, outrate, outprob));
                     }
 
                     if (isSimulation) {

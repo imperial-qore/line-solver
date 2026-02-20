@@ -31,6 +31,7 @@ from .mc import (
     ctmc_timereverse,
     ctmc_randomization,
     ctmc_uniformization,
+    ctmc_transient,
     ctmc_relsolve,
     weaklyconncomp,
     # DTMC functions
@@ -85,6 +86,55 @@ from .kpcfit import (
     kpcfit_ph_auto,
 )
 
+from .mvph import (
+    mvph_joint,
+    mvph_mean_x,
+    mvph_mean_y,
+    mvph_cov,
+    mvph_corr,
+)
+
+from .erchmm import (
+    erchmm_emfit,
+)
+
+from .trace import (
+    trace_mean,
+    trace_var,
+    trace_scv,
+    trace_acf,
+    trace_skew,
+    trace_joint,
+    trace_bicov,
+    trace_idi,
+    trace_idc,
+    trace_gamma,
+    trace_shuffle,
+    trace_iat2counts,
+    trace_iat2bins,
+    trace_pmf,
+    trace_summary,
+    mtrace_mean,
+    autocov,
+)
+
+from .det import (
+    det_embedded,
+    det_moment,
+    det_scv,
+    det_acf,
+    det_sample,
+    det_sum,
+)
+
+from .map import (
+    map2ph,
+    map_mmpp2,
+    map_bernstein,
+    me_sample,
+    rap_sample,
+)
+
 __all__ = [
     # Basic utilities
     'minpos',
@@ -103,6 +153,7 @@ __all__ = [
     'ctmc_timereverse',
     'ctmc_randomization',
     'ctmc_uniformization',
+    'ctmc_transient',
     'ctmc_relsolve',
     'weaklyconncomp',
     # DTMC functions
@@ -148,4 +199,43 @@ __all__ = [
     'kpcfit_ph_options',
     'kpcfit_ph_exact',
     'kpcfit_ph_auto',
+    # Trace analysis functions
+    'trace_mean',
+    'trace_var',
+    'trace_scv',
+    'trace_acf',
+    'trace_skew',
+    'trace_joint',
+    'trace_bicov',
+    'trace_idi',
+    'trace_idc',
+    'trace_gamma',
+    'trace_shuffle',
+    'trace_iat2counts',
+    'trace_iat2bins',
+    'trace_pmf',
+    'trace_summary',
+    'mtrace_mean',
+    'autocov',
+    # MVPH (Multivariate Phase-Type) functions
+    'mvph_joint',
+    'mvph_mean_x',
+    'mvph_mean_y',
+    'mvph_cov',
+    'mvph_corr',
+    # ER-CHMM functions
+    'erchmm_emfit',
+    # DET (deterministic process) functions
+    'det_embedded',
+    'det_moment',
+    'det_scv',
+    'det_acf',
+    'det_sample',
+    'det_sum',
+    # MAP functions
+    'map2ph',
+    'map_mmpp2',
+    'map_bernstein',
+    'me_sample',
+    'rap_sample',
 ]

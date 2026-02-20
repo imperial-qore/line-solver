@@ -113,7 +113,8 @@ fun ctmc_solve(Q: Matrix): Matrix {
         for (i in 0..<nnzel.numCols) {
             for (j in 0..<nnzel.numCols) {
                 val matrixValue = Qnnz[nnzel[0, i].toInt(), nnzel[0, j].toInt()]
-                if (matrixValue > 0) new_Qnnz[i, j] = matrixValue
+                // Copy all non-zero values including negative diagonal elements
+                if (matrixValue != 0.0) new_Qnnz[i, j] = matrixValue
             }
         }
         Qnnz = new_Qnnz

@@ -42,12 +42,12 @@ print('=== Cyclic Polling - K-Limited Service Policy ===\n')
 
 # Solve with MVA (approximate solution)
 print('MVA Solution (approximate):')
-avg_table_mva = MVA(model).get_avg_table()
+avg_table_mva = MVA(model).getAvgTable()
 print(avg_table_mva)
 
 # Solve with JMT simulation
 print('\nJMT Simulation:')
-avg_table_jmt = JMT(model, samples=int(1e5), seed=23000).get_avg_table()
+avg_table_jmt = JMT(model, samples=int(1e5), seed=23000).getAvgTable()
 print(avg_table_jmt)
 
 print('\nNote: In k-limited polling with k=1, the server serves at most 1 job')

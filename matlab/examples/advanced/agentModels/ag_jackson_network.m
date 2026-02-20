@@ -55,10 +55,6 @@ model.link(P);
 solverINAP = MAM(model, 'method', 'inap');
 avgTableINAP = solverINAP.getAvgTable()
 
-%% Solve with MAM using exact method (AutoCAT)
-solverExact = MAM(model, 'method', 'exact');
-avgTableExact = solverExact.getAvgTable()
-
 %% Solve with MVA for comparison
 solverMVA = MVA(model);
 avgTableMVA = solverMVA.getAvgTable()

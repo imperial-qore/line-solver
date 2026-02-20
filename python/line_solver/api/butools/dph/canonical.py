@@ -1,9 +1,15 @@
 import numpy as np
 import numpy.matlib as ml
-import butools
-from butools.dph import MGFromMoments, CheckMGRepresentation
-from butools.ph import CanonicalFromPH3
 import scipy.linalg as la
+from .appie import MGFromMoments
+from .check import CheckMGRepresentation
+from ..ph.canonical import CanonicalFromPH3
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 def CanonicalFromDPH2 (alpha,A,prec=1e-14):
     """

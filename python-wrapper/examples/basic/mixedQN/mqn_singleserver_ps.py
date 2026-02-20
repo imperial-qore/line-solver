@@ -39,17 +39,10 @@ if __name__ == "__main__":
     P = model.init_routing_matrix()
 
     # Closed class: serial routing through all 4 queues
-    routing_closed = Network.serial_routing([node[0], node[1], node[2], node[3]])
-    for i in range(M):
-        for j in range(M):
-            P.set(jobclass[0], jobclass[0], node[i], node[j], routing_closed[i][j])
+    P.set(jobclass[0], jobclass[0], Network.serial_routing(node[0], node[1], node[2], node[3]))
 
     # Open class: source -> queue1 -> queue2 -> queue3 -> sink
-    routing_open = Network.serial_routing([source, node[0], node[1], node[2], sink])
-    P.set(jobclass[1], jobclass[1], source, node[0], routing_open[0][1])
-    P.set(jobclass[1], jobclass[1], node[0], node[1], routing_open[1][2])
-    P.set(jobclass[1], jobclass[1], node[1], node[2], routing_open[2][3])
-    P.set(jobclass[1], jobclass[1], node[2], sink, routing_open[3][4])
+    P.set(jobclass[1], jobclass[1], Network.serial_routing(source, node[0], node[1], node[2], sink))
 
     model.link(P)
 
@@ -64,5 +57,6 @@ if __name__ == "__main__":
 
     avg_table = np.empty(len(solver), dtype=object)
     for s in range(len(solver)):
-        print(f'\nSOLVER: {solver[s].get_name()}')
+        print(f'\nSOLVER: {solver[s].get_name().replace("Solver", "")}')
         avg_table[s] = solver[s].avg_table()
+        print(avg_table[s])

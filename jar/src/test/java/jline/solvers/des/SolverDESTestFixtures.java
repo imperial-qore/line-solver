@@ -2,6 +2,7 @@ package jline.solvers.des;
 
 import java.util.List;
 
+import jline.GlobalConstants;
 import jline.VerboseLevel;
 import jline.lang.Network;
 import jline.lang.constant.SolverType;
@@ -9,6 +10,7 @@ import jline.solvers.NetworkAvgTable;
 import jline.solvers.SolverOptions;
 import jline.solvers.jmt.SolverJMT;
 import jline.solvers.mva.SolverMVA;
+import org.junit.jupiter.api.BeforeEach;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -31,6 +33,15 @@ public abstract class SolverDESTestFixtures {
 
 	/** Relative error tolerance for simulation results (5% for stochastic comparisons) */
 	protected static final double REL_ERROR_TOL = 5e-2;
+
+	/**
+	 * Sets up verbose level to SILENT before each test.
+	 * This ensures priority messages and other verbose output don't clutter test output.
+	 */
+	@BeforeEach
+	public void setUpVerboseLevel() {
+		GlobalConstants.setVerbose(VerboseLevel.SILENT);
+	}
 
 	/**
 	 * Creates a DESOptions instance with standard test configuration.

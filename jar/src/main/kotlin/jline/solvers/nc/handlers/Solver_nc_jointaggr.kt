@@ -71,7 +71,7 @@ fun solver_nc_jointaggr(sn: NetworkStruct, options: SolverOptions): SolverNC.Sol
             val Zchain = Nchain_ret.copy()
             Zchain.fill(0.0)
             lG = pfqn_ncld(Lchain, Nchain_ret, Zchain, mu, options).lG as Double
-            
+
             // Build service time matrix
             ST = sn.rates.copy()
             for (i in 0..<ST.numRows) {
@@ -88,7 +88,7 @@ fun solver_nc_jointaggr(sn: NetworkStruct, options: SolverOptions): SolverNC.Sol
             ST = ncResult.STeff
         }
     }
-    
+
     val G = FastMath.exp(lG)
     var lPr = 0.0
 
@@ -96,16 +96,17 @@ fun solver_nc_jointaggr(sn: NetworkStruct, options: SolverOptions): SolverNC.Sol
     for (ist in 0..<M) {
         val isf = sn.stationToStateful.get(ist).toInt()
         val ind = sn.stationToNode.get(ist).toInt()
-        val marginalResult = toMarginal(sn, ind, state.get(sn.stateful.get(isf)), null, null, null, null, null)
+        val stateMatrix = state.get(sn.stateful.get(isf))
+        val marginalResult = toMarginal(sn, ind, stateMatrix, null, null, null, null, null)
         val nivec = marginalResult.nir
-        
+
         // Get unique rows (equivalent to MATLAB unique(nivec,'rows'))
         val uniqueNivec = getUniqueRows(nivec)
-        
+
         for (row in 0..<uniqueNivec.numRows) {
             val currentNivec = Matrix.extractRows(uniqueNivec, row, row + 1, null)
             val nivec_chain = currentNivec.mult(sn.chains.transpose())
-            
+
             // Check if any population is positive
             var hasPositivePop = false
             for (j in 0..<nivec_chain.length()) {
@@ -114,7 +115,7 @@ fun solver_nc_jointaggr(sn: NetworkStruct, options: SolverOptions): SolverNC.Sol
                     break
                 }
             }
-            
+
             if (hasPositivePop) {
                 // Build service time matrix for this station
                 val ST_ist = Matrix(1, sn.nclasses)
@@ -127,13 +128,13 @@ fun solver_nc_jointaggr(sn: NetworkStruct, options: SolverOptions): SolverNC.Sol
                 val mu_ist = Matrix.extractRows(mu, ist, ist + 1, null)
                 val Znivec = currentNivec.copy()
                 Znivec.fill(0.0)
-                
+
                 val lF_i = pfqn_ncld(ST_V_ist, currentNivec, Znivec, mu_ist, options).lG as Double
                 lPr += lF_i
             }
         }
     }
-    
+
     lPr -= lG
     val Pr = FastMath.exp(lPr)
 
@@ -151,25 +152,25 @@ fun solver_nc_jointaggr(sn: NetworkStruct, options: SolverOptions): SolverNC.Sol
 private fun getUniqueRows(matrix: Matrix): Matrix {
     val uniqueRowsList = mutableListOf<Matrix>()
     val seenRows = mutableSetOf<String>()
-    
+
     for (i in 0..<matrix.numRows) {
         val row = Matrix.extractRows(matrix, i, i + 1, null)
         val rowString = (0..<row.numCols).map { row.get(0, it).toString() }.joinToString(",")
-        
+
         if (!seenRows.contains(rowString)) {
             seenRows.add(rowString)
             uniqueRowsList.add(row)
         }
     }
-    
+
     if (uniqueRowsList.isEmpty()) {
         return Matrix(0, matrix.numCols)
     }
-    
+
     var result = uniqueRowsList[0]
     for (i in 1..<uniqueRowsList.size) {
         result = Matrix.concatRows(result, uniqueRowsList[i], null)
     }
-    
+
     return result
 }

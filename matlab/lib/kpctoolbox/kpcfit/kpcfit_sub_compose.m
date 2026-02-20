@@ -74,7 +74,7 @@ for j=2:J
             if verbose > 0
                 fprintf(1,'MAP %d has low variability\n',j);
             end
-            MAPj = map2_exponential(E1j(j));
+            MAPj = map_exponential(E1j(j));
         else
             if verbose > 0
                 fprintf(1,'MAP %d has presumably infeasible E3\n',j);

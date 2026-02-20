@@ -174,16 +174,19 @@ class SchedStrategy(IntEnum):
 
 
 class RoutingStrategy(IntEnum):
-    """Routing strategies."""
-    DISABLED = 0
-    RAND = 1    # Random
-    PROB = 2    # Probabilistic
-    RROBIN = 3  # Round Robin
-    WRROBIN = 4 # Weighted Round Robin
-    JSQ = 5     # Join Shortest Queue
-    RL = 6      # Reinforcement Learning
-    KCHOICES = 7 # K-Choices
-    CLASS_SWITCH = 8
+    """Routing strategies.
+
+    Values must match MATLAB's RoutingStrategy constants for JMT compatibility.
+    """
+    RAND = 0      # Random (uniform among destinations)
+    PROB = 1      # Probabilistic (explicit probabilities)
+    RROBIN = 2    # Round Robin
+    WRROBIN = 3   # Weighted Round Robin
+    JSQ = 4       # Join Shortest Queue
+    FIRING = 5    # Firing (for Petri nets)
+    KCHOICES = 6  # K-Choices
+    RL = 7        # Reinforcement Learning
+    DISABLED = -1 # Disabled routing
 
 
 class DropStrategy(IntEnum):
@@ -303,6 +306,8 @@ class NetworkStruct:
     # Load-dependent scaling
     lldscaling: Optional[np.ndarray] = None  # (M, Nmax) - limited load dependence
     cdscaling: Optional[Dict] = None  # class-dependent scaling functions
+    ljdscaling: Optional[list] = None  # list of scaling tables per station (LJD)
+    ljdcutoffs: Optional[np.ndarray] = None  # (M, K) per-class cutoffs for LJD
 
     # Class properties
     classprio: Optional[np.ndarray] = None  # (1, K) - class priorities
@@ -346,6 +351,10 @@ class NetworkStruct:
 
     # Node parameters
     nodeparam: Optional[Dict] = None
+
+    # Routing weights for WRROBIN strategy
+    # Dict mapping (node_idx, class_idx) -> {dest_node_idx: weight}
+    routing_weights: Optional[Dict] = None
 
     # Reward functions
     reward: Optional[Dict] = None

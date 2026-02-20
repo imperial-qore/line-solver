@@ -51,7 +51,10 @@ public class OpenClass extends JobClass implements Serializable {
                 model.setJoinNodeRequired(i, this, -1);
             }
             // Skip setting routing for Cache nodes - they must use setProbRouting
-            if (currentNode != null && !(currentNode instanceof jline.lang.nodes.Cache)) {
+            // Skip setting routing for Router nodes - they should only route classes with explicit setRouting calls
+            if (currentNode != null &&
+                !(currentNode instanceof jline.lang.nodes.Cache) &&
+                !(currentNode instanceof jline.lang.nodes.Router)) {
                 model.setNodeRouting(i, this, RoutingStrategy.RAND);
             }
         }

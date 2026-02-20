@@ -40,18 +40,21 @@ class Solver_ctmc_joint(private val solverCTMC: SolverCTMC?) {
             }
             val statevecList: MutableList<Matrix> = ArrayList<Matrix>()
             val state = sn.state
-            for (i in 0..<sn.nstations) {
-                if (sn.isstateful.get(0, i) != 0.0) {
-                    val isf = sn.nodeToStateful.get(0, i).toInt()
+            // Iterate over nodes (not stations) to match MATLAB solver_ctmc_joint.m
+            for (ind in 0..<sn.nnodes) {
+                if (sn.isstateful.get(ind) != 0.0) {
+                    val isf = sn.nodeToStateful.get(ind).toInt()
                     val requiredlength = sn.space.get(sn.stateful.get(isf))!!.getNumCols()
-                    val currentlength = sn.state.size
+                    // Get the state matrix for this specific stateful node
+                    val stateMatrix = sn.state.get(sn.stateful.get(isf))
+                    val currentlength = stateMatrix?.length() ?: 0
                     val state_i = Matrix(1, requiredlength)
                     val numZeros = requiredlength - currentlength
                     for (col in 0..<numZeros) {
                         state_i.set(0, col, 0)
                     }
                     for (col in 0..<currentlength) {
-                        state_i.set(0, numZeros + col, sn.state.get(sn.stateful.get(isf))!!.get(col))
+                        state_i.set(0, numZeros + col, stateMatrix!!.get(0, col))
                     }
                     statevecList.add(state_i)
                 }
@@ -65,15 +68,12 @@ class Solver_ctmc_joint(private val solverCTMC: SolverCTMC?) {
                 }
             }
             val PnirIndex = Matrix.findRows(SS, statevec)
-            val cols: MutableList<Int?> = ArrayList<Int?>()
-            cols.add(0)
-            val Pnir = Matrix(PnirIndex.size, cols.size)
-            for (row in PnirIndex.indices) {
-                val rowIndex: Int = PnirIndex.get(row)!!
-                for (col in cols.indices) {
-                    val colIndex: Int = cols.get(col)!!
-                    Matrix.extract(pi, rowIndex, rowIndex + 1, colIndex, colIndex + 1, Pnir, row, col)
-                }
+            // pi is a row vector (1 x n), so we index by column using the state space row indices
+            val Pnir = Matrix(PnirIndex.size, 1)
+            for (i in PnirIndex.indices) {
+                val stateIdx: Int = PnirIndex.get(i)!!
+                // Get probability from pi at the state index (pi is 1 x n, so use column index)
+                Pnir.set(i, 0, pi.get(0, stateIdx))
             }
 
             val runtime = (System.nanoTime() - T0) / 1000000000.0

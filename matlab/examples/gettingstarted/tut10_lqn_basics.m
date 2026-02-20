@@ -30,7 +30,7 @@ A2 = Activity(model, 'DBActivity', Exp.fitMean(0.8)).on(T2);
 A2.boundTo(E2).repliesTo(E2);
 
 % Solve the layered network using the LN solver with MVA
-solverLN = LN(model, @(m) MVA(m));
+solverLN = LN(model, @(m) MVA(m, 'verbose', false), 'verbose', false);
 AvgTableLN = solverLN.getAvgTable();
 AvgTableLN
 

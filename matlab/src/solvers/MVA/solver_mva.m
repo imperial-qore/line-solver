@@ -19,11 +19,33 @@ if ~sn_has_product_form(sn)
     line_error(mfilename, 'Unsupported exact MVA analysis, the model does not have a product form');
 end
 
-% Check for LCFS scheduling - not supported in this version
+% Check for special LCFS + LCFS-PR 2-station network
 lcfsStat = find(sched == SchedStrategy.LCFS);
 lcfsprStat = find(sched == SchedStrategy.LCFSPR);
-if ~isempty(lcfsStat) || ~isempty(lcfsprStat)
-    line_error(mfilename, 'LCFS queueing networks are not supported in this version.');
+if ~isempty(lcfsStat) && ~isempty(lcfsprStat)
+    % Validate LCFS network topology
+    if length(lcfsStat) ~= 1 || length(lcfsprStat) ~= 1
+        line_error(mfilename, 'LCFS MVA requires exactly one LCFS and one LCFS-PR station.');
+    end
+    if any(isinf(Nchain))
+        line_error(mfilename, 'LCFS MVA requires a closed queueing network.');
+    end
+    % Check for self-loops in routing matrix
+    rt = sn.rt;
+    nclasses = sn.nclasses;
+    for ist = [lcfsStat, lcfsprStat]
+        for r = 1:nclasses
+            if rt((ist-1)*nclasses+r, (ist-1)*nclasses+r) > 0
+                line_error(mfilename, 'LCFS MVA does not support self-loops at stations.');
+            end
+        end
+    end
+    % Call specialized LCFS MVA solver
+    [Q,U,R,T,C,X,lG] = solver_mva_lcfsqn(sn, options, lcfsStat, lcfsprStat);
+    return;
+elseif ~isempty(lcfsStat)
+    % LCFS without LCFS-PR is not supported
+    line_error(mfilename, 'LCFS scheduling requires a paired LCFS-PR station.');
 end
 
 infSET =[]; % set of infinite server stations

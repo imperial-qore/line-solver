@@ -35,6 +35,7 @@ fun marginalMomentsFromMAP(D0: Matrix, D1: Matrix, K: Int = 0): DoubleArray {
  *        are computed. The default value is 0.
  * @return The vector of moments
  */
+@JvmOverloads
 fun marginalMomentsFromRAP(H0: Matrix, H1: Matrix, K: Int = 0): DoubleArray {
     val numMoments = if (K == 0) 2 * H0.numRows - 1 else K
     val (alpha, A) = marginalDistributionFromRAP(H0, H1)

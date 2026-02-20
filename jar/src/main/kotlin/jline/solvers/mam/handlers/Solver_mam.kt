@@ -183,7 +183,7 @@ fun solver_mam(sn: NetworkStruct, options: SolverOptions): MAMResult {
                             D.set(i, ARV.get(ind)!!.get(i - 1))
                         }
                     }
-                    val Qret: MutableMap<Int, Matrix> = MMAPPH1FCFS(D,
+                    val mmapResult: Map<String, MutableMap<Int, Matrix>> = MMAPPH1FCFS(D,
                         pie.get(ist)!!.toMap(),
                         D0.get(ist)!!.toMap(),
                         1,
@@ -193,7 +193,8 @@ fun solver_mam(sn: NetworkStruct, options: SolverOptions): MAMResult {
                         false,
                         false,
                         null,
-                        null).get("ncMoms")!!
+                        null)
+                    val Qret: MutableMap<Int, Matrix> = mmapResult.get("ncMoms")!!
                     for (k in 0..<K) {
                         QN.set(ist, k, Qret[k]!!.elementSum())
                     }

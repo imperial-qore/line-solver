@@ -85,16 +85,16 @@ fun snDeaggregateChainResults(sn: NetworkStruct,
                     else U[i, k] = Uchain[i, c] * alpha[i, k]
                 }
 
-                if (Lchain[i, c] > 0) {
+                if (Lchain[i, c] > 0 && alpha[i, k] >= 1e-14) {
                     if (Qchain != null && !Qchain.isEmpty) Q[i, k] = Qchain[i, c] * alpha[i, k]
                     else Q[i, k] =
                         Rchain[i, c] * ST[i, k] / STchain[i, c] * Xchain[0, c] * Vchain[i, c] / Vchain[sn.refstat[k, 0].toInt(), c] * alpha[i, k]
                     T[i, k] = Tchain[i, c] * alpha[i, k]
                     R[i, k] = Q[i, k] / T[i, k]
                 } else {
-                    T.remove(i, k)
-                    R.remove(i, k)
-                    Q.remove(i, k)
+                    T[i, k] = 0.0
+                    R[i, k] = 0.0
+                    Q[i, k] = 0.0
                 }
             }
             C[0, k] = sn.njobs[0, k] / X[0, k]

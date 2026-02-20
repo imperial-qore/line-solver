@@ -64,9 +64,9 @@ def solver_mam_bmap_map_1(D: List[np.ndarray], S0: np.ndarray,
 
     The M/G/1-type structure for BMAP/MAP/1 is:
     ```
-        A0 = I_ma \otimes S1           (service completion, level -1)
-        A1 = D0 \otimes I_ms + I_ma \otimes S0  (phase changes, level 0)
-        A_{k+1} = D_k \otimes I_ms     (batch arrival size k, level +k)
+        A0 = I_ma otimes S1           (service completion, level -1)
+        A1 = D0 otimes I_ms + I_ma otimes S0  (phase changes, level 0)
+        A_{k+1} = D_k otimes I_ms     (batch arrival size k, level +k)
     ```
 
     Args:

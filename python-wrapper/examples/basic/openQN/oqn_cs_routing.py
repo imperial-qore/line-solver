@@ -44,7 +44,7 @@ if __name__ == "__main__":
     node[4].set_service(jobclass[2], Exp.fit_mean(0.15))
 
     # Class switching matrix (identity)
-    C = node[2].init_class_switching_matrix()
+    C = node[2].init_class_switch_matrix()
     for i in range(len(C)):
         for j in range(len(C[i])):
             C[i][j] = 1.0 if i == j else 0.0
@@ -86,5 +86,6 @@ if __name__ == "__main__":
 
     avg_table = np.empty(len(solver), dtype=object)
     for s in range(len(solver)):
-        print(f'\nSOLVER: {solver[s].get_name()}')
+        print(f'\nSOLVER: {solver[s].get_name().replace("Solver", "")}')
         avg_table[s] = solver[s].avg_table()
+        print(avg_table[s])

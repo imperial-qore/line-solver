@@ -652,6 +652,16 @@ class DistributionFactory:
             # Handle HYPEREXP
             if procid == ProcessType.HYPEREXP:
                 if proc is not None and isinstance(proc, dict):
+                    # Handle LINE Python format: {'probs': [p1, p2], 'rates': [r1, r2]}
+                    if 'probs' in proc and 'rates' in proc:
+                        probs = np.asarray(proc['probs'])
+                        rates = np.asarray(proc['rates'])
+                        if len(probs) >= 2 and len(rates) >= 2:
+                            p = probs[0]  # Probability of first component
+                            mu1 = rates[0]  # Rate of first component
+                            mu2 = rates[1]  # Rate of second component
+                            return HyperExp2Sampler(p=p, mu1=mu1, mu2=mu2, rng=self.rng)
+                    # Fall back to explicit parameter format
                     p = proc.get('p', 0.5)
                     mu1 = proc.get('mu1', 1.0)
                     mu2 = proc.get('mu2', 1.0)

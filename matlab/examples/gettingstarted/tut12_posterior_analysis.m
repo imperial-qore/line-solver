@@ -114,6 +114,13 @@ fprintf('Utilization (U) at Queue:\n');
 fprintf('  Expected Value E[U]: %.4f\n', expectedU);
 fprintf('  Mode (most likely): %.4f\n\n', utilValues(modeIdxU));
 
+% Optional: Find median from CDF
+medianIdx = find(respCdf >= 0.5, 1, 'first');
+if ~isempty(medianIdx)
+    medianR = respValues(medianIdx);
+    fprintf('Response Time Median: %.4f\n', medianR);
+end
+
 %% Block 10: Create PDF plots
 figure('Name', 'Posterior Distribution PDFs', 'Position', [100, 100, 1200, 400]);
 

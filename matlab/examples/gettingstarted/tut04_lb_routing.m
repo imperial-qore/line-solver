@@ -20,8 +20,8 @@ model.addLink(queue1, sink);
 model.addLink(queue2, sink);
 
 lb.setRouting(oclass, RoutingStrategy.RAND);
-jmtAvgTable = JMT(model,'seed',23000).avgTable()
+jmtAvgTable = JMT(model,'seed',23000,'samples',10000).avgTable()
 
 lb.setRouting(oclass, RoutingStrategy.RROBIN);
 model.reset();
-jmtAvgTableRR = JMT(model,'seed',23000).avgTable()
+jmtAvgTableRR = JMT(model,'seed',23000,'samples',10000).avgTable()

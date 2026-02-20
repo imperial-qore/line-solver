@@ -1030,8 +1030,7 @@ public class ClosingAndStateDepMethodsODE implements FirstOrderDifferentialEquat
             calculateRateBaseAndEventIdxs(enabled, qIndices, Kic, rateBase, eventIdx);
 
             // Eliminate immediate transitions if requested
-            if (options.config != null && options.config.containsKey("hide_immediate") &&
-                (Boolean) options.config.get("hide_immediate")) {
+            if (options.config != null && options.config.hide_immediate) {
                 ImmediateElimination.EliminationResult result =
                         ImmediateElimination.eliminateImmediate(allJumps, rateBase, eventIdx, sn, options);
                 allJumps = result.allJumpsReduced;

@@ -13,7 +13,6 @@ These methods are essential for moment fitting and distribution analysis.
 """
 
 import numpy as np
-from line_solver import native_to_array
 
 
 def lib_lti_talbot(laplace_func, t, M=32):
@@ -30,12 +29,14 @@ def lib_lti_talbot(laplace_func, t, M=32):
     Returns:
         float or ndarray: Values of f(t)
     """
+    from line_solver.api.lti import laplace_invert_talbot
+
     t = np.atleast_1d(t)
 
     try:
         results = []
         for t_val in t:
-            result = TalbotLTI.invert(laplace_func, float(t_val), M)
+            result = laplace_invert_talbot(laplace_func, float(t_val), M)
             results.append(float(result))
         return results[0] if len(results) == 1 else np.array(results)
     except Exception as e:
@@ -55,12 +56,14 @@ def lib_lti_gaverstehfest(laplace_func, t):
     Returns:
         float or ndarray: Values of f(t)
     """
+    from line_solver.api.lti import laplace_invert_gaver_stehfest
+
     t = np.atleast_1d(t)
 
     try:
         results = []
         for t_val in t:
-            result = GS.invert(laplace_func, float(t_val))
+            result = laplace_invert_gaver_stehfest(laplace_func, float(t_val))
             results.append(float(result))
         return results[0] if len(results) == 1 else np.array(results)
     except Exception as e:
@@ -81,12 +84,14 @@ def lib_lti_euler(laplace_func, t, M=16):
     Returns:
         float or ndarray: Values of f(t)
     """
+    from line_solver.api.lti import laplace_invert_euler
+
     t = np.atleast_1d(t)
 
     try:
         results = []
         for t_val in t:
-            result = Euler.invert(laplace_func, float(t_val), M)
+            result = laplace_invert_euler(laplace_func, float(t_val), M)
             results.append(float(result))
         return results[0] if len(results) == 1 else np.array(results)
     except Exception as e:
@@ -95,7 +100,7 @@ def lib_lti_euler(laplace_func, t, M=16):
 
 def lib_lti_abatewhitt(laplace_func, t, M=16):
     """
-    Invert Laplace transform using Abate-Whitt formula.
+    Invert Laplace transform using Abate-Whitt formula (Euler variant).
 
     Efficient method with controlled accuracy.
 
@@ -107,12 +112,15 @@ def lib_lti_abatewhitt(laplace_func, t, M=16):
     Returns:
         float or ndarray: Values of f(t)
     """
+    from line_solver.api.lti import laplace_invert_euler
+
     t = np.atleast_1d(t)
 
     try:
+        n = 2 * M + 1  # Euler method uses odd n
         results = []
         for t_val in t:
-            result = AW.invert(laplace_func, float(t_val), M)
+            result = laplace_invert_euler(laplace_func, float(t_val), n)
             results.append(float(result))
         return results[0] if len(results) == 1 else np.array(results)
     except Exception as e:
@@ -124,6 +132,7 @@ def lib_lti_laguerre(laplace_func, t, M=32):
     Invert Laplace transform using Laguerre expansion.
 
     Good for probability distributions and densities.
+    Note: Native Python implementation uses Talbot method as approximation.
 
     Args:
         laplace_func (callable): Function s -> F(s)
@@ -133,12 +142,14 @@ def lib_lti_laguerre(laplace_func, t, M=32):
     Returns:
         float or ndarray: Values of f(t)
     """
+    from line_solver.api.lti import laplace_invert_talbot
+
     t = np.atleast_1d(t)
 
     try:
         results = []
         for t_val in t:
-            result = Laguerre.invert(laplace_func, float(t_val), M)
+            result = laplace_invert_talbot(laplace_func, float(t_val), M)
             results.append(float(result))
         return results[0] if len(results) == 1 else np.array(results)
     except Exception as e:
@@ -150,6 +161,7 @@ def lib_lti_custom_romberg(laplace_func, t, tol=1e-6):
     Invert Laplace transform using custom Romberg integration.
 
     Adaptive method with user-specified tolerance.
+    Note: Native Python implementation uses Euler method as approximation.
 
     Args:
         laplace_func (callable): Function s -> F(s)
@@ -159,12 +171,14 @@ def lib_lti_custom_romberg(laplace_func, t, tol=1e-6):
     Returns:
         float or ndarray: Values of f(t)
     """
+    from line_solver.api.lti import laplace_invert_euler
+
     t = np.atleast_1d(t)
 
     try:
         results = []
         for t_val in t:
-            result = CR.invert(laplace_func, float(t_val), float(tol))
+            result = laplace_invert_euler(laplace_func, float(t_val), 99)
             results.append(float(result))
         return results[0] if len(results) == 1 else np.array(results)
     except Exception as e:
@@ -173,26 +187,25 @@ def lib_lti_custom_romberg(laplace_func, t, tol=1e-6):
 
 def lib_lti_cme(laplace_func, t, M=16):
     """
-    Invert Laplace transform using Crump-type method with exponential.
+    Invert Laplace transform using CME (Concentrated Matrix Exponential) method.
 
-    Good for wide range of function types.
+    Uses pre-computed CME parameters from iltcme.json for the Abate-Whitt framework.
 
     Args:
         laplace_func (callable): Function s -> F(s)
         t (float or array-like): Time points
-        M (int): Number of terms (default 16)
+        M (int): Maximum number of function evaluations (default 16)
 
     Returns:
         float or ndarray: Values of f(t)
     """
+    from line_solver.api.lti import ilt as iltcme_ilt
+
     t = np.atleast_1d(t)
 
     try:
-        results = []
-        for t_val in t:
-            result = CME.invert(laplace_func, float(t_val), M)
-            results.append(float(result))
-        return results[0] if len(results) == 1 else np.array(results)
+        result = iltcme_ilt(laplace_func, t, maxFnEvals=M, method='cme')
+        return result[0] if len(result) == 1 else result
     except Exception as e:
         raise RuntimeError(f"CME LTI failed: {str(e)}")
 

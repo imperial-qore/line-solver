@@ -67,8 +67,8 @@ fun returnRT1(arrival: FJArrival, service: FJService, pers: DoubleArray): Matrix
         }
 
         // Get the distribution for class 0 (single class case)
-        val res_alpha = stDistrPH_alpha[0]
-        val Smat = stDistrPH_A[0]
+        val res_alpha: Matrix? = stDistrPH_alpha[0]
+        val Smat: Matrix? = stDistrPH_A[0]
 
         if (res_alpha == null || Smat == null) {
             throw RuntimeException("MMAPPH1FCFS returned null sojourn time distribution for class 0")

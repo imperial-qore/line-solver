@@ -49,8 +49,9 @@ fprintf('Computed PH mean: %.4f\n', ph.getMean());
 fprintf('Number of phases: %d\n', size(ph.getSubgenerator(), 1));
 
 %% Sample from the distribution
-fprintf('\nSampling 10000 workflow execution times...\n');
-samples = ph.sample(10000);
+rng(23002);
+fprintf('\nSampling 1000000 workflow execution times...\n');
+samples = ph.sample(1000000);
 fprintf('Sample mean: %.4f\n', mean(samples));
 fprintf('Sample std: %.4f\n', std(samples));
 fprintf('Sample min: %.4f\n', min(samples));

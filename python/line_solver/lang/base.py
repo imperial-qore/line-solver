@@ -34,6 +34,7 @@ class NodeType(IntEnum):
     CLASSSWITCH = 8
     PLACE = 9
     TRANSITION = 10
+    LOGGER = 11
 
 
 class SchedStrategy(IntEnum):
@@ -68,18 +69,69 @@ class SchedStrategy(IntEnum):
     FORK = 24     # Fork node
     JOIN = 25     # Join node
 
+    @staticmethod
+    def to_feature(strategy: 'SchedStrategy') -> str:
+        """Convert a scheduling strategy to its feature name for solver support checking."""
+        feature_map = {
+            SchedStrategy.INF: 'SchedStrategy_INF',
+            SchedStrategy.FCFS: 'SchedStrategy_FCFS',
+            SchedStrategy.LCFS: 'SchedStrategy_LCFS',
+            SchedStrategy.LCFSPR: 'SchedStrategy_LCFSPR',
+            SchedStrategy.LCFSPI: 'SchedStrategy_LCFSPI',
+            SchedStrategy.PS: 'SchedStrategy_PS',
+            SchedStrategy.DPS: 'SchedStrategy_DPS',
+            SchedStrategy.GPS: 'SchedStrategy_GPS',
+            SchedStrategy.RAND: 'SchedStrategy_SIRO',
+            SchedStrategy.HOL: 'SchedStrategy_HOL',
+            SchedStrategy.SEPT: 'SchedStrategy_SEPT',
+            SchedStrategy.LEPT: 'SchedStrategy_LEPT',
+            SchedStrategy.SIRO: 'SchedStrategy_SIRO',
+            SchedStrategy.SJF: 'SchedStrategy_SJF',
+            SchedStrategy.LJF: 'SchedStrategy_LJF',
+            SchedStrategy.POLLING: 'SchedStrategy_POLLING',
+            SchedStrategy.EXT: 'SchedStrategy_EXT',
+            SchedStrategy.LPS: 'SchedStrategy_LPS',
+            SchedStrategy.DPSPRIO: 'SchedStrategy_DPSPRIO',
+            SchedStrategy.GPSPRIO: 'SchedStrategy_GPSPRIO',
+            SchedStrategy.PSPRIO: 'SchedStrategy_PSPRIO',
+            SchedStrategy.FCFSPR: 'SchedStrategy_FCFSPR',
+            SchedStrategy.EDF: 'SchedStrategy_EDF',
+            SchedStrategy.FORK: 'SchedStrategy_FORK',
+            SchedStrategy.JOIN: 'SchedStrategy_JOIN',
+        }
+        return feature_map.get(strategy, f'SchedStrategy_{strategy.name}')
+
 
 class RoutingStrategy(IntEnum):
     """Enumeration of routing strategies.
 
-    Values aligned with api/sn/network_struct.py for JMT compatibility.
+    Values must match MATLAB's RoutingStrategy constants for JMT compatibility.
     """
-    DISABLED = 0
-    RAND = 1      # Random routing
-    PROB = 2      # Probabilistic routing
-    RROBIN = 3    # Round-robin
-    WRROBIN = 4   # Weighted round-robin
-    KCHOICES = 7  # K-choices policy
+    RAND = 0      # Random routing (uniform among destinations)
+    PROB = 1      # Probabilistic routing (explicit probabilities)
+    RROBIN = 2    # Round-robin
+    WRROBIN = 3   # Weighted round-robin
+    JSQ = 4       # Join-Shortest-Queue
+    FIRING = 5    # Firing (for Petri nets)
+    KCHOICES = 6  # K-choices policy
+    RL = 7        # Reinforcement learning
+    DISABLED = -1 # Disabled routing
+
+    @staticmethod
+    def to_feature(strategy: 'RoutingStrategy') -> str:
+        """Convert a routing strategy to its feature name for solver support checking."""
+        feature_map = {
+            RoutingStrategy.RAND: 'RoutingStrategy_RAND',
+            RoutingStrategy.PROB: 'RoutingStrategy_PROB',
+            RoutingStrategy.RROBIN: 'RoutingStrategy_RROBIN',
+            RoutingStrategy.WRROBIN: 'RoutingStrategy_WRROBIN',
+            RoutingStrategy.JSQ: 'RoutingStrategy_JSQ',
+            RoutingStrategy.FIRING: 'RoutingStrategy_FIRING',
+            RoutingStrategy.KCHOICES: 'RoutingStrategy_KCHOICES',
+            RoutingStrategy.RL: 'RoutingStrategy_RL',
+            RoutingStrategy.DISABLED: 'RoutingStrategy_DISABLED',
+        }
+        return feature_map.get(strategy, f'RoutingStrategy_{strategy.name}')
 
 
 class JobClassType(IntEnum):
@@ -127,6 +179,34 @@ class ReplacementStrategy(IntEnum):
     FIFO = 1    # First-In-First-Out
     SFIFO = 2   # Segmented FIFO
     LRU = 3     # Least Recently Used
+
+    @staticmethod
+    def to_string(strategy: 'ReplacementStrategy') -> str:
+        """Convert a replacement strategy to its string representation."""
+        if strategy == ReplacementStrategy.RR:
+            return 'rr'
+        elif strategy == ReplacementStrategy.FIFO:
+            return 'fifo'
+        elif strategy == ReplacementStrategy.SFIFO:
+            return 'sfifo'
+        elif strategy == ReplacementStrategy.LRU:
+            return 'lru'
+        else:
+            return str(strategy.name).lower()
+
+    @staticmethod
+    def to_feature(strategy: 'ReplacementStrategy') -> str:
+        """Convert a replacement strategy to its feature name for solver support checking."""
+        if strategy == ReplacementStrategy.RR:
+            return 'ReplacementStrategy_RR'
+        elif strategy == ReplacementStrategy.FIFO:
+            return 'ReplacementStrategy_FIFO'
+        elif strategy == ReplacementStrategy.SFIFO:
+            return 'ReplacementStrategy_SFIFO'
+        elif strategy == ReplacementStrategy.LRU:
+            return 'ReplacementStrategy_LRU'
+        else:
+            return f'ReplacementStrategy_{strategy.name}'
 
 
 class HeteroSchedPolicy(IntEnum):
@@ -298,6 +378,7 @@ class JobClass(NetworkElement):
         self._patience_type = None
         self._reply_signal_class = None
         self._completes = True  # Whether this class completes a visit (for cycle time calculation)
+        self._is_reference_class = False  # Whether this class is the reference class for its chain (for WN computation)
 
     @property
     def jobclass_type(self) -> JobClassType:
@@ -346,6 +427,31 @@ class JobClass(NetworkElement):
         """Set whether this class completes a visit."""
         self._completes = value
         self._invalidate_java()
+
+    @property
+    def is_reference_class(self) -> bool:
+        """
+        Get whether this class is the reference class for its chain.
+
+        When is_reference_class=True, this class's visits at the reference station
+        are used as the denominator for WN (residence time) computation.
+        Typically set to True for the TASK class in LN layer models.
+        """
+        return self._is_reference_class
+
+    @is_reference_class.setter
+    def is_reference_class(self, value: bool) -> None:
+        """Set whether this class is the reference class for its chain."""
+        self._is_reference_class = value
+        self._invalidate_java()
+
+    def setReferenceClass(self, value: bool) -> None:
+        """Set whether this class is the reference class for its chain (MATLAB-compatible name)."""
+        self.is_reference_class = value
+
+    def isReferenceClass(self) -> bool:
+        """Get whether this class is the reference class (MATLAB-compatible name)."""
+        return self._is_reference_class
 
     def set_reference_station(self, station) -> None:
         """
@@ -498,6 +604,16 @@ class Node(NetworkElement):
         """Get the node type."""
         return self._node_type
 
+    @property
+    def _node_index(self) -> int:
+        """Get the 0-based node index (alias for _index for routing compatibility)."""
+        return self._index
+
+    @_node_index.setter
+    def _node_index(self, value: int) -> None:
+        """Set the 0-based node index."""
+        self._index = value
+
     def set_model(self, model) -> None:
         """
         Link this node to a network model.
@@ -539,10 +655,25 @@ class Node(NetworkElement):
             jobclass: Job class
             strategy: Routing strategy (RAND, PROB, etc.)
             params: Additional parameters (depends on strategy)
+                    For WRROBIN: (destination_node, weight) - can be called multiple times
         """
         self._routing_strategies[jobclass] = strategy
         if params:
-            self._routing_params[jobclass] = params
+            # For WRROBIN, store weights per destination instead of overwriting
+            # Use value comparison to handle different RoutingStrategy enum definitions
+            strategy_value = strategy.value if hasattr(strategy, 'value') else int(strategy)
+            if strategy_value == RoutingStrategy.WRROBIN.value and len(params) >= 2:
+                destination, weight = params[0], params[1]
+                # Use set_routing_weight if available (Station subclasses)
+                if hasattr(self, 'set_routing_weight'):
+                    self.set_routing_weight(jobclass, destination, weight)
+                else:
+                    # Fallback: accumulate in _routing_params as dict
+                    if jobclass not in self._routing_params or not isinstance(self._routing_params.get(jobclass), dict):
+                        self._routing_params[jobclass] = {}
+                    self._routing_params[jobclass][destination] = weight
+            else:
+                self._routing_params[jobclass] = params
         self._invalidate_java()
 
     def get_routing(self, jobclass: JobClass) -> Tuple[RoutingStrategy, tuple]:
@@ -559,6 +690,17 @@ class Node(NetworkElement):
         params = self._routing_params.get(jobclass, ())
         return strategy, params
 
+    def set_prob_routing(self, jobclass: JobClass, destination, prob: float) -> None:
+        """
+        Set probabilistic routing to a destination node.
+
+        Args:
+            jobclass: Job class
+            destination: Destination node
+            prob: Routing probability (0 to 1)
+        """
+        self.set_routing(jobclass, RoutingStrategy.PROB, destination, prob)
+
     # CamelCase aliases
     setModel = set_model
     getModel = get_model
@@ -566,6 +708,7 @@ class Node(NetworkElement):
     isStation = is_station
     setRouting = set_routing
     getRouting = get_routing
+    setProbRouting = set_prob_routing
 
 
 class StatefulNode(Node):
@@ -582,6 +725,7 @@ class StatefulNode(Node):
         super().__init__(node_type, name)
         self._state = None  # Current state vector
         self._state_space = None  # Possible states
+        self._state_prior = None  # Prior probability over initial states
 
     @property
     def state(self) -> Optional[np.ndarray]:
@@ -607,6 +751,20 @@ class StatefulNode(Node):
         """
         self._state_space = space
         self._invalidate_java()
+
+    def getStatePrior(self):
+        """Get the prior probability over initial states."""
+        return self._state_prior
+
+    def setStatePrior(self, prior):
+        """Set the prior probability over initial states."""
+        if prior is not None:
+            self._state_prior = np.array(prior).flatten()
+        else:
+            self._state_prior = None
+
+    get_state_prior = getStatePrior
+    set_state_prior = setStatePrior
 
     def is_stateful(self) -> bool:
         """Check if node is stateful."""
@@ -637,7 +795,13 @@ class StatefulNode(Node):
     def setState(self, value: np.ndarray) -> None:
         """Set current state ."""
         self._state = np.array(value)
+        self._state_explicitly_set = True
         self._invalidate_java()
+        # Invalidate the model struct so _refresh_state() runs again
+        model = self.get_model() if hasattr(self, 'get_model') else None
+        if model is not None and hasattr(model, '_has_struct'):
+            model._has_struct = False
+            model._sn = None
 
     def getState(self) -> Optional[np.ndarray]:
         """Get current state ."""

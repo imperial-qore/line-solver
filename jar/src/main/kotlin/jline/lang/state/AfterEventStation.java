@@ -133,7 +133,9 @@ public class AfterEventStation implements Serializable {
                         case LCFS:
                             // find states with all servers busy
                             // if MAP service, when empty restart from the phase stored in spaceVar for this class
-                            // sn.nvars(ind,1:class)):
+                            // MATLAB: sn.nvars(ind,1:class) extracts columns 1 to class (1-based)
+                            // Java: columns 0 to jobClass (0-based), same logical data
+                            // Extract from col 0 to col jobClass+1 (exclusive end)
 
                             Matrix nVarsAtInd = Matrix.extract(sn.nvars, ind, ind + 1, 0, jobClass + 1);
                             int sum = (int) nVarsAtInd.elementSum();
@@ -147,8 +149,11 @@ public class AfterEventStation implements Serializable {
                                 mapPhaseMatch = true;
                             } else if (spaceVarCol >= 0 && spaceVarCol < spaceVar.getNumCols()) {
                                 // Check if any row matches the kentry phase
+                                // kentry is 0-based in Java, but MAP output var values
+                                // in the state space are 1-based (initDefault sets to 1),
+                                // so compare kentry+1 with spaceVar value
                                 for (int row = 0; row < spaceVar.getNumRows(); row++) {
-                                    if (kentry == spaceVar.get(row, spaceVarCol)) {
+                                    if ((kentry + 1) == spaceVar.get(row, spaceVarCol)) {
                                         mapPhaseMatch = true;
                                         break;
                                     }
@@ -940,7 +945,7 @@ public class AfterEventStation implements Serializable {
                         // classcap = 0 means no per-class constraint (MATLAB convention)
                         // If classCapLimit == 0, always pass the capacity check
                         boolean passesClassCapCheck = (classCapLimit == 0) || (classCapLimit >= oir.get(row, jobClass));
-                        if (passesClassCapCheck || !violates) {
+                        if (passesClassCapCheck && !violates) {
                             en_o.set(row, 0, 1);
                         }
                     }
@@ -968,40 +973,35 @@ public class AfterEventStation implements Serializable {
                         }
                     }
 
-                    if (outspace.getNumCols() > outspace_k_en_o.getNumCols()) {
-                        Matrix zeros = new Matrix(1, outspace.getNumCols() - outspace_k_en_o.getNumCols());
-                        zeros.zero();
-                        Matrix bottom = Matrix.concatColumns(zeros, outspace_k_en_o, null);
-                        outspace = Matrix.concatRows(outspace, bottom, null);
-                    } else if (outspace.getNumCols() < outspace_k_en_o.getNumCols()) {
-                        Matrix zeros = new Matrix(outspace.getNumRows(), outspace_k_en_o.getNumCols() - outspace.getNumCols());
-                        zeros.zero();
-                        Matrix top = Matrix.concatColumns(zeros, outspace, null);
-                        outspace = Matrix.concatRows(top, outspace_k_en_o, null);
-                    } else {
-                        outspace = Matrix.concatRows(outspace, outspace_k_en_o, null);
+                    // Skip append when en_o filtered out all rows (matches MATLAB behavior where
+                    // concatenating empty 0-row matrices is a no-op)
+                    if (!outspace_k_en_o.isEmpty()) {
+                        if (outspace.getNumCols() > outspace_k_en_o.getNumCols()) {
+                            Matrix zeros = new Matrix(outspace_k_en_o.getNumRows(), outspace.getNumCols() - outspace_k_en_o.getNumCols());
+                            zeros.zero();
+                            Matrix bottom = Matrix.concatColumns(zeros, outspace_k_en_o, null);
+                            outspace = Matrix.concatRows(outspace, bottom, null);
+                        } else if (outspace.getNumCols() < outspace_k_en_o.getNumCols()) {
+                            Matrix zeros = new Matrix(outspace.getNumRows(), outspace_k_en_o.getNumCols() - outspace.getNumCols());
+                            zeros.zero();
+                            Matrix top = Matrix.concatColumns(zeros, outspace, null);
+                            outspace = Matrix.concatRows(top, outspace_k_en_o, null);
+                        } else {
+                            outspace = Matrix.concatRows(outspace, outspace_k_en_o, null);
+                        }
+                        Matrix newRates = new Matrix(outspace_k_en_o.getNumRows(), 1);
+                        newRates.fill(-1);
+                        outrate = Matrix.concatRows(outrate, newRates, null);
+                        outprob = Matrix.concatRows(outprob, outprob_k_en_o, null);
                     }
-                    Matrix newRates = new Matrix(outspace_k_en_o.getNumRows(), 1);
-                    // For arrival events, use the service rate instead of -1 to enable proper synchronization
-                    // The rate should represent the arrival acceptance capacity (limited by service rate)
-                    double serviceRate = mu.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(0) * 
-                                        phi.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(0);
-                    newRates.fill(serviceRate);  // Use service rate instead of -1
-                    outrate = Matrix.concatRows(outrate, newRates, null);
-
-                    outprob = Matrix.concatRows(outprob, outprob_k_en_o, null);
                 }
 
-                // cache before choosing random event:
-                Ret.EventResult result = new Ret.EventResult(outspace, outrate, outprob);
-                eventCache.put(key, result);
-
+                // ARV results are NOT cached (matching MATLAB behavior which only caches DEP and PHASE)
                 if (isSimulation) {
                     if (outprob.getNumRows() > 1) {
                         Matrix cum_sum = outprob.cumsumViaCol();
                         Matrix sum_by_col = outprob.sumCols();
                         Matrix cum_prob = Matrix.scaleMult(cum_sum, 1.0 / sum_by_col.value());
-
 
                         int firing_ctr = -1;
                         double rand = Maths.rand();
@@ -1050,7 +1050,8 @@ public class AfterEventStation implements Serializable {
                     if (sn.routing.get(sn.nodes.get(ind)).get(sn.jobclasses.get(jobClass)) == RoutingStrategy.RROBIN) {
                         // Implement round-robin routing state update
                         // MATLAB: sn.nvars(ind,1:(R+class)) extracts columns 1 to R+class (1-based)
-                        // Java: need to extract columns 0 to R+jobClass (0-based), so end is R+jobClass+1
+                        // Java: columns 0 to R+jobClass (0-based), same logical data
+                        // Extract from col 0 to col R+jobClass+1 (exclusive end)
                         int nvarCols = R + jobClass + 1;
                         Matrix nvar_ind = new Matrix(1, nvarCols);
                         Matrix.extract(sn.nvars, ind, ind + 1, 0, nvarCols, nvar_ind, 0, 0);
@@ -1067,20 +1068,22 @@ public class AfterEventStation implements Serializable {
                         if (spaceVarCol >= 0 && spaceVarCol < spaceVar.getNumCols()) {
                             // Update RROBIN state for each row in spaceVar
                             // Each input state may have a different current RROBIN pointer
+                            // outlinks is a row vector (1×N), use length() not getNumRows()
+                            int numOutlinks = (int) outlinks.length();
                             for (int stateRow = 0; stateRow < spaceVar.getNumRows(); stateRow++) {
                                 // Find current outlink index position for this state
                                 int idx = -1;
                                 double currentOutlink = spaceVar.get(stateRow, spaceVarCol);
-                                for (int outlinkRow = 0; outlinkRow < outlinks.getNumRows(); outlinkRow++) {
-                                    if (currentOutlink == outlinks.get(outlinkRow)) {
-                                        idx = outlinkRow;
+                                for (int outlinkIdx = 0; outlinkIdx < numOutlinks; outlinkIdx++) {
+                                    if (currentOutlink == outlinks.get(outlinkIdx)) {
+                                        idx = outlinkIdx;
                                         break;
                                     }
                                 }
 
                                 // Update to next outlink (with wraparound)
                                 if (idx >= 0) {
-                                    if (idx < outlinks.getNumRows() - 1) {
+                                    if (idx < numOutlinks - 1) {
                                         spaceVar.set(stateRow, spaceVarCol, outlinks.get(idx + 1));
                                     } else {
                                         spaceVar.set(stateRow, spaceVarCol, outlinks.get(0));
@@ -1545,12 +1548,20 @@ public class AfterEventStation implements Serializable {
                                             Matrix space_var_kd = spaceVar.copy();
                                             if (ismkvmodclass.get(jobClass) == 1) {
                                                 // set space_var_kd(en, sum(sn.nvars(ind,1:class)) = kdest
-                                                Matrix nvar_ind = new Matrix(1, jobClass);
-                                                Matrix.extract(sn.nvars, ind, ind + 1, 0, jobClass, nvar_ind, 0, 0);
+                                                // MATLAB: sn.nvars(ind,1:class) extracts columns 1 to class (1-based)
+                                                // Java: columns 0 to jobClass (0-based), same logical data
+                                                int nvarCols = jobClass + 1;
+                                                Matrix nvar_ind = new Matrix(1, nvarCols);
+                                                Matrix.extract(sn.nvars, ind, ind + 1, 0, nvarCols, nvar_ind, 0, 0);
                                                 int nvar_sum = (int) nvar_ind.elementSum();
+                                                // MATLAB uses 1-based indexing, Java needs 0-based
+                                                int spaceVarCol = nvar_sum - 1;
                                                 for (int row = 0; row < space_var_kd.getNumRows(); row++) {
                                                     if (en.get(row, 0) == 1) {
-                                                        space_var_kd.set(row, nvar_sum, kdest);
+                                                        // kdest is 0-based in Java, but MAP output var values
+                                                        // in the state space are 1-based (initDefault sets to 1),
+                                                        // so store kdest+1 to match MATLAB convention
+                                                        space_var_kd.set(row, spaceVarCol, kdest + 1);
                                                     }
                                                 }
                                             }
@@ -1575,7 +1586,9 @@ public class AfterEventStation implements Serializable {
 
                                             for (int row = 0; row < rate_kd.getNumRows(); row++) {
                                                 if (en.get(row, 0) == 1) {
-                                                    double v = proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(1).get(k, kdest) * kirEnClassKFcfs.get(row);
+                                                    double D1val = proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(1).get(k, kdest);
+                                                    double kirVal = kirEnClassKFcfs.get(row);
+                                                    double v = D1val * kirVal;
                                                     rate_kd.set(row, 0, v);
                                                 }
                                             }
@@ -1738,35 +1751,43 @@ public class AfterEventStation implements Serializable {
                                                         if (start_svc_class.value() == jobClass + 1) {
                                                             // Successive service from the same class - new job enters in phase left by departing job
                                                             // Use kdest from the outer loop which tracks the phase of the departing job
-                                                            if (kdest < pentry_svc_class.getNumRows()) {
-                                                                pentry_svc_class.set(kdest, 0, 1.0);
+                                                            // Use getNumElements() and single-index set() to handle both row and column vector pie orientations
+                                                            if (kdest < pentry_svc_class.getNumElements()) {
+                                                                pentry_svc_class.set(kdest, 1.0);
                                                                 kentry_start = kdest;
                                                                 kentry_range = 1;
                                                             } else {
                                                                 kentry_start = 0;
-                                                                kentry_range = klassPentryOriginal.getNumRows();
+                                                                kentry_range = klassPentryOriginal.getNumElements();
                                                                 pentry_svc_class = klassPentryOriginal.copy();
                                                             }
                                                         } else {
                                                             // Resume phase from local variables
+                                                            // MATLAB: sum(sn.nvars(ind,1:start_svc_class)) extracts columns 1 to start_svc_class (1-based)
+                                                            // Java: columns 0 to start_svc_class-1 (0-based), same logical data
                                                             int nvarsSum = 0;
-                                                            for (int r = 0; r < start_svc_class.value() - 1; r++) {
+                                                            for (int r = 0; r < start_svc_class.value(); r++) {
                                                                 nvarsSum += (int) sn.nvars.get(ind, r);
                                                             }
-                                                            if (nvarsSum < space_var_kd.getNumCols()) {
-                                                                int kentry_resume = (int) space_var_kd.get(0, nvarsSum);
-                                                                if (kentry_resume < pentry_svc_class.getNumRows()) {
-                                                                    pentry_svc_class.set(kentry_resume, 0, 1.0);
+                                                            // MATLAB uses 1-based indexing, Java needs 0-based
+                                                            int spaceVarCol = nvarsSum - 1;
+                                                            if (spaceVarCol >= 0 && spaceVarCol < space_var_kd.getNumCols()) {
+                                                                // MAP output var values are 1-based in state space,
+                                                                // convert to 0-based for Java indexing
+                                                                int kentry_resume = (int) space_var_kd.get(0, spaceVarCol) - 1;
+                                                                // Use getNumElements() to handle both row and column vector pie orientations
+                                                                if (kentry_resume >= 0 && kentry_resume < pentry_svc_class.getNumElements()) {
+                                                                    pentry_svc_class.set(kentry_resume, 1.0);
                                                                     kentry_start = kentry_resume;
                                                                     kentry_range = 1;
                                                                 } else {
                                                                     kentry_start = 0;
-                                                                    kentry_range = klassPentryOriginal.getNumRows();
+                                                                    kentry_range = klassPentryOriginal.getNumElements();
                                                                     pentry_svc_class = klassPentryOriginal.copy();
                                                                 }
                                                             } else {
                                                                 kentry_start = 0;
-                                                                kentry_range = klassPentryOriginal.getNumRows();
+                                                                kentry_range = klassPentryOriginal.getNumElements();
                                                                 pentry_svc_class = klassPentryOriginal.copy();
                                                             }
                                                         }
@@ -3246,9 +3267,9 @@ public class AfterEventStation implements Serializable {
                                                 outprob = Matrix.concatRows(outprob, outprobBottomLcfspr, null);
 
                                                 if (isSimulation && eventCache.isEnabled()) {
-                                                    eventCache.put(key, new Ret.EventResult(outprob, outspace, outrate));
+                                                    eventCache.put(key, new Ret.EventResult(outspace, outrate, outprob));
                                                 }
-                                                return new Ret.EventResult(outprob, outspace, outrate);
+                                                return new Ret.EventResult(outspace, outrate, outprob);
                                             }
 
                                             // Add job to service with preserved phase
@@ -3257,9 +3278,11 @@ public class AfterEventStation implements Serializable {
                                                 if (enWbufLcfspr.get(row, 0) == 1) {
                                                     int startClass = (int) startSvcClassLcfspr.get(bufRowIdxLcfspr, 0) - 1; // Convert to 0-based index
                                                     int kentry = (int) kentryLcfspr.get(bufRowIdxLcfspr, 0);
-                                                    if (startClass >= 0 && startClass < Ks.getNumRows()) {
-                                                        int colIndex = (int) (Ks.get(startClass) + kentry);
-                                                        if (colIndex < spaceSrv.getNumCols()) {
+                                                    // Use Ks.length() instead of Ks.getNumRows() since Ks is a row vector
+                                                    if (startClass >= 0 && startClass < Ks.length()) {
+                                                        // kentry from buffer is 1-based phase, convert to 0-based for column index
+                                                        int colIndex = (int) (Ks.get(startClass) + kentry - 1);
+                                                        if (colIndex >= 0 && colIndex < spaceSrv.getNumCols()) {
                                                             spaceSrv.set(row, colIndex, spaceSrv.get(row, colIndex) + 1);
                                                         }
                                                     }
@@ -4093,12 +4116,22 @@ public class AfterEventStation implements Serializable {
                                     }
 
                                     // markov-modulated case
+                                    // MATLAB: space_var_k(sum(sn.nvars(ind,1:class))) = kdest
+                                    // extracts columns 1 to class (1-based)
+                                    // Java: columns 0 to jobClass (0-based), same logical data
                                     if (ismkvmodclass.get(jobClass) != 0) {
                                         int nvarsSum = 0;
                                         for (int i = 0; i <= jobClass; i++) {
-                                            nvarsSum += sn.nvars.get(ind, i);
+                                            nvarsSum += (int) sn.nvars.get(ind, i);
                                         }
-                                        spaceVarK.set(nvarsSum, kdest);
+                                        // MATLAB uses 1-based indexing, Java needs 0-based for column
+                                        int spaceVarCol = nvarsSum - 1;
+                                        for (int row = 0; row < spaceVarK.getNumRows(); row++) {
+                                            // kdest is 0-based in Java, but MAP output var values
+                                            // in the state space are 1-based (initDefault sets to 1),
+                                            // so store kdest+1 to match MATLAB convention
+                                            spaceVarK.set(row, spaceVarCol, kdest + 1);
+                                        }
                                     }
 
                                     for (int row = 0; row < spaceSrvK.getNumRows(); row++) {
@@ -4119,9 +4152,6 @@ public class AfterEventStation implements Serializable {
                                             break;
                                         case PS:
                                         case LPS:
-                                        case PSPRIO:
-                                        case DPSPRIO:
-                                        case GPSPRIO:
                                             double proc_value_ps = proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(0).get(k, kdest);
                                             double kir_value_ps = kir.get(k).get(jobClass);
                                             Matrix numerator = new Matrix(1, 1);
@@ -4131,6 +4161,35 @@ public class AfterEventStation implements Serializable {
                                             denom.set(0, 0, ni_value * Maths.min(ni_value, S.get(ist)));
                                             rate = numerator.elementDivide(denom);
                                             break;
+                                        case PSPRIO:
+                                        case DPSPRIO:
+                                        case GPSPRIO: {
+                                            // Find minimum priority among present classes
+                                            int minPrioPh = Integer.MAX_VALUE;
+                                            for (int r = 0; r < sn.nclasses; r++) {
+                                                if (nir.get(0, r) > 0) {
+                                                    int rPrio = (int) sn.classprio.get(r);
+                                                    if (rPrio < minPrioPh) {
+                                                        minPrioPh = rPrio;
+                                                    }
+                                                }
+                                            }
+                                            double ni_value_prio = ni.get(0);
+                                            // If ni <= S (all jobs get service) or this class has highest priority
+                                            if (ni_value_prio <= S.get(ist) || (int) sn.classprio.get(jobClass) == minPrioPh) {
+                                                double proc_value_psprio = proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(0).get(k, kdest);
+                                                double kir_value_psprio = kir.get(k).get(jobClass);
+                                                Matrix numerator_prio = new Matrix(1, 1);
+                                                numerator_prio.set(0, 0, proc_value_psprio * kir_value_psprio);
+                                                Matrix denom_prio = new Matrix(1, 1);
+                                                denom_prio.set(0, 0, ni_value_prio * Maths.min(ni_value_prio, S.get(ist)));
+                                                rate = numerator_prio.elementDivide(denom_prio);
+                                            } else {
+                                                // Not in highest priority group - no service
+                                                rate.set(0, 0, 0.0);
+                                            }
+                                            break;
+                                        }
                                         case DPS:
                                             if (S.get(ist) > 1) {
                                                 InputOutputKt.line_error(InputOutputKt.mfilename(new Object() {
@@ -4247,14 +4306,21 @@ public class AfterEventStation implements Serializable {
                                             Matrix spaceVarK = origSpaceVar.copy();
                                             
                                             // Update local variables for MAP state
+                                            // MATLAB: sn.nvars(ind,1:class) extracts columns 1 to class (1-based)
+                                            // Java: columns 0 to jobClass (0-based), same logical data
                                             int nvarsSum = 0;
-                                            for (int r = 0; r < jobClass; r++) {
+                                            for (int r = 0; r <= jobClass; r++) {
                                                 nvarsSum += (int) sn.nvars.get(ind, r);
                                             }
-                                            if (nvarsSum < spaceVarK.getNumCols()) {
+                                            // MATLAB uses 1-based indexing, Java needs 0-based for column
+                                            int spaceVarCol = nvarsSum - 1;
+                                            if (spaceVarCol >= 0 && spaceVarCol < spaceVarK.getNumCols()) {
                                                 for (int row = 0; row < spaceVarK.getNumRows(); row++) {
                                                     if (mapEn.get(row, 0) == 1) {
-                                                        spaceVarK.set(row, nvarsSum, mapKdest);
+                                                        // mapKdest is 0-based in Java, but MAP output var values
+                                                        // in the state space are 1-based (initDefault sets to 1),
+                                                        // so store mapKdest+1 to match MATLAB convention
+                                                        spaceVarK.set(row, spaceVarCol, mapKdest + 1);
                                                     }
                                                 }
                                             }
@@ -4293,9 +4359,6 @@ public class AfterEventStation implements Serializable {
                                                     break;
                                                 case PS:
                                                 case LPS:
-                                                case PSPRIO:
-                                                case DPSPRIO:
-                                                case GPSPRIO:
                                                     double procRatePs = proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(0).get(mapK, mapKdest);
                                                     for (int row = 0; row < mapRate.getNumRows(); row++) {
                                                         if (mapEn.get(row, 0) == 1 && mapK < kir.size()) {
@@ -4305,6 +4368,37 @@ public class AfterEventStation implements Serializable {
                                                             double servers = Math.min(niValue, S.get(ist, 0));
                                                             if (niValue > 0) {
                                                                 mapRate.set(row, 0, procRatePs * kirValue / niValue * servers);
+                                                            }
+                                                        }
+                                                    }
+                                                    break;
+                                                case PSPRIO:
+                                                case DPSPRIO:
+                                                case GPSPRIO:
+                                                    double procRatePsprio = proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(0).get(mapK, mapKdest);
+                                                    for (int row = 0; row < mapRate.getNumRows(); row++) {
+                                                        if (mapEn.get(row, 0) == 1 && mapK < kir.size()) {
+                                                            // Find minimum priority among present classes for this state
+                                                            int minPrioMap = Integer.MAX_VALUE;
+                                                            for (int r = 0; r < sn.nclasses; r++) {
+                                                                if (nir.get(row, r) > 0) {
+                                                                    int rPrio = (int) sn.classprio.get(r);
+                                                                    if (rPrio < minPrioMap) {
+                                                                        minPrioMap = rPrio;
+                                                                    }
+                                                                }
+                                                            }
+                                                            double kirValue = kir.get(mapK).get(row, jobClass);
+                                                            double niValue = (row < ni.getNumRows()) ? ni.get(row, 0) : ni.get(0, 0);
+                                                            double servers = Math.min(niValue, S.get(ist, 0));
+                                                            // If ni <= S (all jobs get service) or this class has highest priority
+                                                            if (niValue <= S.get(ist, 0) || (int) sn.classprio.get(jobClass) == minPrioMap) {
+                                                                if (niValue > 0) {
+                                                                    mapRate.set(row, 0, procRatePsprio * kirValue / niValue * servers);
+                                                                }
+                                                            } else {
+                                                                // Not in highest priority group - no service
+                                                                mapRate.set(row, 0, 0.0);
                                                             }
                                                         }
                                                     }
@@ -4386,6 +4480,7 @@ public class AfterEventStation implements Serializable {
                             firing_ctr++;
                             outspace = Matrix.extractRows(outspace, firing_ctr, firing_ctr + 1, null);
                             double outrate_val = outrate.elementSum();
+                            outrate = new Matrix(1, 1);
                             outrate.set(0, 0, outrate_val);
                             outprob = Matrix.extractRows(outprob, firing_ctr, firing_ctr + 1, null);
                         }

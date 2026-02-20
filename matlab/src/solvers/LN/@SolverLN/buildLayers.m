@@ -11,7 +11,7 @@ self.route_prob_updmap = cell(lqn.nhosts+lqn.ntasks,1);
 
 %% build one subnetwork for every processor
 for hidx = 1:lqn.nhosts
-    if ~self.ignore(hidx) 
+    if ~self.ignore(hidx)
         callers = lqn.tasksof{hidx};
         self.buildLayersRecursive(hidx, callers, true);
     else

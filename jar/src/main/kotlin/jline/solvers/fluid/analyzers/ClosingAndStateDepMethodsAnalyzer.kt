@@ -94,7 +94,6 @@ class ClosingAndStateDepMethodsAnalyzer : FluidAnalyzer {
                 initialState[i] = xvec_it!!.get(0, i)
                 nextState[i] = 0.0
             }
-
             // Solve ode until T = time for slowest exit rate (MATLAB lines 44-48)
             // First iteration: T = min(timespan(2), abs(10/min(nonZeroRates)))
             // Subsequent iterations: T = min(timespan(2), abs(10*iter/min(nonZeroRates)))
@@ -144,20 +143,55 @@ class ClosingAndStateDepMethodsAnalyzer : FluidAnalyzer {
                 val stepHandler = TransientDataHandler(initialState.size)
                 odeSolver.addStepHandler(stepHandler)
 
+                var usedStiffFallback = false
                 try {
-                    odeSolver.integrate(ode, tRange[0], initialState, tRange[1], nextState)
-                } catch (e: RuntimeException) {
-                    if (options.verbose != VerboseLevel.SILENT) {
-                        println("The initial point is invalid, Fluid solver switching to default initialization.")
+                    try {
+                        odeSolver.integrate(ode, tRange[0], initialState, tRange[1], nextState)
+                    } catch (e: RuntimeException) {
+                        if (e.message != null && e.message!!.contains("step size")) {
+                            // Non-stiff solver min step too large; fall back to LSODA stiff solver
+                            usedStiffFallback = true
+                        } else {
+                            if (options.verbose != VerboseLevel.SILENT) {
+                                println("The initial point is invalid, Fluid solver switching to default initialization.")
+                            }
+                            odeSolver.clearStepHandlers()
+                            odeSolver.addStepHandler(stepHandler)
+                            odeSolver.integrate(ode, tRange[0], yDefault, tRange[1], nextState)
+                        }
                     }
-                    odeSolver.integrate(ode, tRange[0], yDefault, tRange[1], nextState)
+                } catch (e: RuntimeException) {
+                    // Retry with default also failed; fall back to LSODA
+                    usedStiffFallback = true
                 }
 
-                // Retrieve Transient Data
-                tIterations.add(stepHandler.tVec)
-                xVecIterations.add(stepHandler.xVec)
-                Tmax = stepHandler.tVec.numRows
-                this.xvec_it = Matrix.extractRows(stepHandler.xVec, Tmax - 1, Tmax, null)
+                if (usedStiffFallback) {
+                    // Fall back to LSODA stiff solver
+                    val stiffSolver: LSODA = if (options.tol > GlobalConstants.CoarseTol) {
+                        options.odesolvers.fastStiffODESolver
+                    } else {
+                        options.odesolvers.accurateStiffODESolver
+                    }
+                    stiffSolver.integrate(ode, tRange[0], initialState, tRange[1], nextState)
+                    Tmax = stiffSolver.stepsTaken + 1
+                    val tVec = Matrix(Tmax, 1)
+                    val xVec = Matrix(Tmax, ode.dimension)
+                    val tHistory = stiffSolver.tvec
+                    val yHistory = stiffSolver.yvec
+                    for (i in 0..<Tmax) {
+                        tVec.set(i, 0, tHistory.get(i)!!)
+                        for (j in 0..<ode.dimension) xVec.set(i, j, max(0.0, yHistory.get(i)!![j]!!))
+                    }
+                    tIterations.add(tVec)
+                    xVecIterations.add(xVec)
+                    this.xvec_it = Matrix.extractRows(xVec, Tmax - 1, Tmax, null)
+                } else {
+                    // Retrieve Transient Data from non-stiff solver
+                    tIterations.add(stepHandler.tVec)
+                    xVecIterations.add(stepHandler.xVec)
+                    Tmax = stepHandler.tVec.numRows
+                    this.xvec_it = Matrix.extractRows(stepHandler.xVec, Tmax - 1, Tmax, null)
+                }
             }
             totalSteps += Tmax
 
@@ -251,7 +285,7 @@ class ClosingAndStateDepMethodsAnalyzer : FluidAnalyzer {
         var toAssign: kotlin.Double
         for (i in 0..<M) {
             for (k in 0..<K) {
-                if (match.get(i, k) > 0) { // indicates whether a class is served at a station
+                if (match.get(i, k) > 0 && phases.get(i, k) > 0) { // indicates whether a class is served at a station
                     if (Double.isInfinite(sn.njobs.get(0, k))) {
                         if (sn.sched.get(sn.stations.get(i)) == SchedStrategy.EXT) {
                             toAssign = 1.0 // open job pool
@@ -294,10 +328,13 @@ class ClosingAndStateDepMethodsAnalyzer : FluidAnalyzer {
         val yDefault = DoubleArray(y0cols)
         if (options.init_sol.isEmpty) {
             xvec_it = y0 // average state embedded at stage change transitions out of e
+            for (i in 0..<y0cols) {
+                yDefault[i] = y0.get(0, i)
+            }
         } else {
             xvec_it = options.init_sol
             for (i in 0..<y0cols) {
-                yDefault[i] = y0.get(0, i) // default solution if init_sol fails
+                yDefault[i] = options.init_sol.get(0, i) // use state-prior-specific init
             }
         }
 
@@ -720,12 +757,14 @@ class ClosingAndStateDepMethodsAnalyzer : FluidAnalyzer {
             for (k in 0..<K) {
                 var sumForUN = 0.0
                 var sumForTN = 0.0
-                val rows = Xservice[i]!![k]!!.numRows
-                for (row in 0..<rows) {
-                    if (Xservice[i]!![k]!!.get(row, 0) > 0) {
-                        sumForUN += (Xservice[i]!![k]!!.get(row, 0) / lambda.get(sn.stations.get(i))!!
-                            .get(sn.jobclasses.get(k))!!.get(row, 0))
-                        sumForTN += Xservice[i]!![k]!!.get(row, 0)
+                if (Xservice[i] != null && Xservice[i]!![k] != null) {
+                    val rows = Xservice[i]!![k]!!.numRows
+                    for (row in 0..<rows) {
+                        if (Xservice[i]!![k]!!.get(row, 0) > 0) {
+                            sumForUN += (Xservice[i]!![k]!!.get(row, 0) / lambda.get(sn.stations.get(i))!!
+                                .get(sn.jobclasses.get(k))!!.get(row, 0))
+                            sumForTN += Xservice[i]!![k]!!.get(row, 0)
+                        }
                     }
                 }
                 result.UN.set(i, k, sumForUN)
@@ -751,7 +790,7 @@ class ClosingAndStateDepMethodsAnalyzer : FluidAnalyzer {
     }
 
     fun detectStiffnessUsingOstrowski(sn: NetworkStruct, rate: Matrix): Boolean {
-        var transitionMatrix = sn.rt
+        var transitionMatrix = sn.rt.copy()
         for (i in 0..<transitionMatrix.numRows) {
             var p = 0.0
             for (j in 0..<transitionMatrix.numCols) {

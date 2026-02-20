@@ -33,7 +33,9 @@ options.verbose = 0;
 %options.method = 'lqsim';
 %options.samples = 1e4;
 solver{1} = LQNS(model, options);
-AvgTable{1} = solver{1}.getAvgTable; %AvgTable{1}
+AvgTable{1} = solver{1}.getAvgTable;
+fprintf(1, '\nLQNS Results:\n');
+disp(AvgTable{1});
 
 lnoptions = LN.defaultOptions;
 lnoptions.verbose = 0;
@@ -41,4 +43,6 @@ solveroptions = Solver.defaultOptions;
 %options.method = 'comom';
 solveroptions.verbose = 0;
 solver{2} = LN(model, @(l)NC(l,solveroptions), lnoptions);
-AvgTable{2} = solver{2}.getAvgTable; %AvgTable{2}
+AvgTable{2} = solver{2}.getAvgTable;
+fprintf(1, '\nNC Results:\n');
+disp(AvgTable{2});

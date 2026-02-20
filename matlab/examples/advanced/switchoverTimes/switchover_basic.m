@@ -14,6 +14,8 @@ queue.setService(oclass2, Exp(1.5));
 
 queue.setSwitchover(oclass1, oclass2, Exp(1))
 queue.setSwitchover(oclass2, oclass1, Erlang(1,2))
+% Note: JMT does not support switchover times for non-polling (FCFS) queues.
+% For JMT simulation with switchover, use SchedStrategy.POLLING.
 %% Block 3: topology
 P = model.initRoutingMatrix;
 P{1} = Network.serialRouting(source,queue,sink);

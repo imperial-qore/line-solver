@@ -12,11 +12,6 @@ import kotlin.math.abs
 import kotlin.math.min
 
 /**
- * Result class for RandomPH.
- */
-data class PHRepresentation(val alpha: Matrix, val A: Matrix)
-
-/**
  * Returns a random phase-type distribution with a given order.
  *
  * @param order The size of the phase-type distribution.

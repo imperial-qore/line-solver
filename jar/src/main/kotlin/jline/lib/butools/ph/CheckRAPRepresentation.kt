@@ -59,7 +59,7 @@ fun checkRAPRepresentation(H0: Matrix, H1: Matrix, prec: Double = 1e-14): Boolea
     // Check if all eigenvalues of H0 have negative real parts
     val eigenvalues = H0.eig()
     for (ev in eigenvalues) {
-        if (ev.real >= prec) {
+        if (ev.real > -prec) {
             return false
         }
     }

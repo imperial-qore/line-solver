@@ -105,9 +105,11 @@ def pfqn_mvamx(
                 UN[i, c] = XN[0, c] * L[i, c]
 
         # Compute open class response times and queue lengths
+        # Use tolerance for saturation check to handle floating-point precision issues
+        SAT_TOL = 1e-10
         for i in range(M):
             for r in open_classes:
-                if UNt[i] < 1:
+                if UNt[i] < 1 - SAT_TOL:
                     if QNc.size > 0:
                         CN[i, r] = L[i, r] * (1 + np.sum(QNc[i, :])) / (1 - UNt[i])
                     else:
@@ -122,9 +124,11 @@ def pfqn_mvamx(
     else:
         lGN = 0.0
         # Only open classes - compute response times
+        # Use tolerance for saturation check to handle floating-point precision issues
+        SAT_TOL = 1e-10
         for i in range(M):
             for r in open_classes:
-                if UNt[i] < 1:
+                if UNt[i] < 1 - SAT_TOL:
                     CN[i, r] = L[i, r] / (1 - UNt[i])
                 else:
                     CN[i, r] = np.inf

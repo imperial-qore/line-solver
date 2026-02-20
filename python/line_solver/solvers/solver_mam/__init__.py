@@ -20,6 +20,7 @@ Usage:
 
 import numpy as np
 import pandas as pd
+import sys
 import time
 from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass
@@ -38,6 +39,9 @@ from .utils import extract_mam_params, check_closed_network, is_fork_join_networ
 from .fj.validator import fj_isfj
 from .fj.solver import FJSolver
 from ...api.mam import ldqbd, LdqbdOptions
+from ...api.sn.transforms import sn_get_residt_from_respt
+from ...api.sn.getters import sn_get_arvr_from_tput
+from ..base import NetworkSolver
 
 @dataclass
 class SolverMAMOptions:
@@ -57,7 +61,7 @@ class SolverMAMOptions:
     verbose: bool = False
 
 
-class SolverMAM:
+class SolverMAM(NetworkSolver):
     """Native Python solver for matrix-analytic methods.
 
     Solves queueing networks using decomposition, MNA, RCAT, and related methods.
@@ -83,7 +87,7 @@ class SolverMAM:
             network: Network model (must be compiled to NetworkStruct)
             method: Solution method ('default', 'dec.source', 'mna', etc.)
             options: SolverMAMOptions instance
-            **kwargs: Additional parameters (seed, etc.) for compatibility - ignored
+            **kwargs: Additional parameters (verbose, seed, etc.) for compatibility
         """
         self.network = network
         self.sn = self._get_network_struct(network)
@@ -95,6 +99,10 @@ class SolverMAM:
         else:
             if method != 'default':
                 options.method = method
+
+        # Handle verbose kwarg
+        if 'verbose' in kwargs:
+            options.verbose = kwargs['verbose']
 
         self.options = options
         self.result = None
@@ -108,29 +116,66 @@ class SolverMAM:
 
     def _get_network_struct(self, model):
         """Get NetworkStruct from model using priority-based extraction."""
+        sn = None
+
         # Priority 1: Native model with _sn attribute
         if hasattr(model, '_sn') and model._sn is not None:
-            return model._sn
-
+            sn = model._sn
         # Priority 2: Native model with refresh_struct()
-        if hasattr(model, 'refresh_struct'):
+        elif hasattr(model, 'refresh_struct'):
             model.refresh_struct()
             if hasattr(model, '_sn') and model._sn is not None:
-                return model._sn
-
+                sn = model._sn
         # Priority 3: Has compileStruct method (native or wrapper)
-        if hasattr(model, 'compileStruct'):
-            return model.compileStruct()
-
+        elif hasattr(model, 'compileStruct'):
+            sn = model.compileStruct()
         # Priority 4: JPype wrapper with getStruct
-        if hasattr(model, 'getStruct'):
-            return model.getStruct()
-
+        elif hasattr(model, 'getStruct'):
+            sn = model.getStruct()
         # Priority 5: Model that is already a struct
-        if hasattr(model, 'nclasses') and hasattr(model, 'nstations'):
-            return model
+        elif hasattr(model, 'nclasses') and hasattr(model, 'nstations'):
+            sn = model
 
-        raise ValueError("Cannot extract network structure from model")
+        if sn is None:
+            raise ValueError("Cannot extract network structure from model")
+
+        # Check for FunctionTask params in model.attribute (set by SolverLN)
+        # and propagate to sn.isfunction and sn.nodeparam
+        if hasattr(model, 'attribute') and model.attribute is not None:
+            attr = model.attribute
+            if hasattr(attr, 'get'):
+                func_params = attr.get('functionParams', None)
+            elif isinstance(attr, dict):
+                func_params = attr.get('functionParams', None)
+            else:
+                func_params = getattr(attr, 'functionParams', None)
+
+            if func_params is not None:
+                # Set isfunction for the server station
+                server_idx_1based = func_params.get('serverIdx', 1)
+                # Convert to 0-indexed station index
+                # serverIdx is the node index in the layer model (1-indexed)
+                # In a layer model with Clients (idx=1) and Server (idx=2), the station indices are:
+                # - Station 0: Clients (Delay)
+                # - Station 1: Server (Queue)
+                server_station_idx = server_idx_1based - 1
+
+                # Initialize isfunction if not present
+                if not hasattr(sn, 'isfunction') or sn.isfunction is None:
+                    sn.isfunction = np.zeros(sn.nstations)
+                elif len(sn.isfunction) < sn.nstations:
+                    sn.isfunction = np.zeros(sn.nstations)
+
+                if server_station_idx < len(sn.isfunction):
+                    sn.isfunction[server_station_idx] = 1
+
+                # Set nodeparam for the server station
+                if not hasattr(sn, 'nodeparam') or sn.nodeparam is None:
+                    sn.nodeparam = {}
+
+                sn.nodeparam[server_station_idx] = func_params
+
+        return sn
 
     def runAnalyzer(self) -> 'SolverMAM':
         """Run the analyzer with selected method.
@@ -140,8 +185,6 @@ class SolverMAM:
         """
         method = self._select_method()
 
-        if self.options.verbose:
-            print(f"SolverMAM: Using method '{method}'")
 
         start_time = time.time()
 
@@ -160,10 +203,37 @@ class SolverMAM:
             algo = algo_class()
             self.result = algo.solve(self.sn, self.options)
 
+        # Set Source station TN to arrival rates (matching MATLAB solver_mam_analyzer.m lines 135-140)
+        if self.result is not None and hasattr(self.result, 'TN') and self.result.TN is not None:
+            from ...lang.base import SchedStrategy as SchedStrategyBase
+            for i in range(self.sn.nstations):
+                sched_i = self.sn.sched.get(i, None) if isinstance(self.sn.sched, dict) else (self.sn.sched[i] if i < len(self.sn.sched) else None)
+                if sched_i is not None:
+                    sched_name = sched_i.name if hasattr(sched_i, 'name') else str(sched_i)
+                    sched_val = sched_i.value if hasattr(sched_i, 'value') else int(sched_i)
+                    if sched_name == 'EXT' or sched_val == 16:
+                        if i < self.result.TN.shape[0] and hasattr(self.sn, 'rates') and self.sn.rates is not None:
+                            rates = np.asarray(self.sn.rates)
+                            if i < rates.shape[0]:
+                                self.result.TN[i, :] = rates[i, :]
+
+        # Compute proper residence times from response times (WN = RN * visits / ref_visits)
+        if self.result is not None and hasattr(self.result, 'RN') and self.result.RN is not None:
+            self.result.WN = sn_get_residt_from_respt(self.sn, self.result.RN, None)
+
+        # Compute proper arrival rates from throughputs using routing
+        if self.result is not None and hasattr(self.result, 'TN') and self.result.TN is not None:
+            self.result.AN = sn_get_arvr_from_tput(self.sn, self.result.TN)
+
         self.runtime = time.time() - start_time
 
-        if self.options.verbose:
-            print(f"  Completed in {self.runtime:.3f}s ({self.result.totiter} iterations)")
+        # Print completion message (matches MATLAB verbose=STD default)
+        py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        iter_count = self.result.totiter if hasattr(self.result, 'totiter') else 1
+        if iter_count <= 1:
+            print(f"MAM analysis [method: {method}, lang: python, env: {py_version}] completed in {self.runtime:.6f}s.")
+        else:
+            print(f"MAM analysis [method: {method}, lang: python, env: {py_version}] completed in {self.runtime:.6f}s. Iterations: {iter_count}.")
 
         return self
 
@@ -322,7 +392,7 @@ class SolverMAM:
                 qlen = self.result.QN[i, r]
                 util = self.result.UN[i, r]
                 respt = self.result.RN[i, r]
-                residt = respt  # Same as RespT for MAM (single visit assumption)
+                residt = self.result.WN[i, r] if hasattr(self.result, 'WN') and self.result.WN is not None else respt
 
                 # Get throughput and arrival rate
                 if self.result.TN.ndim > 1:
@@ -330,8 +400,21 @@ class SolverMAM:
                 else:
                     tput = self.result.TN[r]
 
-                # For Source stations, ArvR = 0 (no arrivals TO Source)
-                arvr = 0.0 if is_source else tput
+                # Use computed arrival rates (AN) if available, otherwise fallback to tput
+                if hasattr(self.result, 'AN') and self.result.AN is not None and i < self.result.AN.shape[0] and r < self.result.AN.shape[1]:
+                    arvr = self.result.AN[i, r]
+                elif is_source:
+                    arvr = 0.0
+                else:
+                    arvr = tput
+
+                # Filter out rows where all metrics are zero (matching MATLAB behavior)
+                metrics = [qlen, util, respt, residt, arvr, tput]
+                has_significant_value = any(
+                    (not np.isnan(v) and v > 0) for v in metrics
+                )
+                if not has_significant_value:
+                    continue
 
                 rows.append({
                     'Station': station_names[i],
@@ -346,7 +429,7 @@ class SolverMAM:
 
         df = pd.DataFrame(rows)
 
-        if not getattr(self, '_table_silent', False) and len(df) > 0:
+        if not self._table_silent:
             print(df.to_string(index=False))
 
         return df
@@ -394,12 +477,34 @@ class SolverMAM:
     def getAvgSysRespT(self) -> np.ndarray:
         """Get average system response time per class.
 
+        Note:
+            For closed networks: uses Little's Law C = N/X
+            For open networks: sum of response times across all stations
+
         Returns:
             (K,) array of system response times
         """
         if self.result is None:
             self.runAnalyzer()
-        return np.sum(self.result.RN, axis=0)
+
+        RN = self.result.RN
+        XN = self.result.XN.flatten() if self.result.XN is not None else np.zeros(RN.shape[1])
+        njobs = self.sn.njobs.flatten() if self.sn is not None and hasattr(self.sn, 'njobs') else None
+        nclasses = RN.shape[1]
+        C = np.zeros(nclasses)
+
+        for k in range(nclasses):
+            if njobs is not None and k < len(njobs) and np.isfinite(njobs[k]):
+                # Closed class: use Little's Law (matching MATLAB getAvgSys.m line 135)
+                if XN[k] > 0:
+                    C[k] = njobs[k] / XN[k]
+                else:
+                    C[k] = np.inf
+            else:
+                # Open class: sum of response times across all stations
+                C[k] = np.sum(RN[:, k])
+
+        return C
 
     def getAvgSysTput(self) -> float:
         """Get average system throughput.
@@ -678,12 +783,20 @@ class SolverMAM:
     # =====================================================================
 
     def getAvgResidT(self) -> np.ndarray:
-        """Get average residence times per station (alias for response times).
+        """Get average residence times per station.
+
+        Residence time = Response time * visits / ref_visits
+        This accounts for multiple visits to the same station.
 
         Returns:
-            (M,) array of residence times
+            (M, K) array of residence times
         """
-        return self.getAvgRespT()
+        if self.result is None:
+            raise RuntimeError("runAnalyzer() must be called first")
+        if hasattr(self.result, 'WN') and self.result.WN is not None:
+            return self.result.WN
+        # Fallback: compute on demand if not already computed
+        return sn_get_residt_from_respt(self.sn, self.result.RN, None)
 
     def getAvgWaitT(self) -> np.ndarray:
         """Get average waiting times per station.
@@ -992,12 +1105,102 @@ class SolverMAM:
     # =====================================================================
 
     def getAvgNode(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Get average metrics per node (same as per station for MAM)."""
-        return self.getAvg()
+        """
+        Get average metrics per node.
+
+        Unlike getAvg() which returns station-level metrics, this method
+        returns node-level metrics including non-station nodes (e.g., Router/VSink).
+
+        Returns:
+            Tuple of (QNn, UNn, RNn, WNn, ANn, TNn) - node-level metrics
+        """
+        from ...api.sn.getters import sn_get_node_arvr_from_tput, sn_get_node_tput_from_tput
+
+        if self.result is None:
+            self.runAnalyzer()
+
+        TN = self.result.TN
+        QN = self.result.QN
+        UN = self.result.UN
+        RN = self.result.RN
+
+        sn = self.sn
+        I = sn.nnodes
+        M = sn.nstations
+        R = sn.nclasses
+
+        # Create TH (throughput handle) - indicates which station-classes have valid throughput
+        TH = np.zeros_like(TN)
+        TH[TN > 0] = 1.0
+
+        # Compute node arrival rates and throughputs using helper functions
+        # Pass AN=None to let sn_get_node_arvr_from_tput compute it properly
+        # (including setting Source arrival rates to 0)
+        ANn = sn_get_node_arvr_from_tput(sn, TN, TH, None)
+        TNn = sn_get_node_tput_from_tput(sn, TN, TH, ANn)
+
+        # Initialize other node-level metrics
+        QNn = np.zeros((I, R))
+        UNn = np.zeros((I, R))
+        RNn = np.zeros((I, R))
+        WNn = np.zeros((I, R))
+
+        # Copy station metrics to station nodes
+        for ist in range(M):
+            ind = sn.stationToNode[ist]
+            if ind >= 0 and ind < I:
+                QNn[ind, :] = QN[ist, :]
+                UNn[ind, :] = UN[ist, :]
+                RNn[ind, :] = RN[ist, :]
+                WNn[ind, :] = RN[ist, :]
+
+        return QNn, UNn, RNn, WNn, ANn, TNn
 
     def getAvgNodeTable(self) -> pd.DataFrame:
-        """Get average metrics by node as DataFrame."""
-        return self.getAvgTable()
+        """
+        Get average metrics by node as DataFrame.
+
+        Returns node-based results (one row per node per class) including
+        non-station nodes like Router/VSink.
+
+        Returns:
+            pandas.DataFrame with columns: Node, JobClass, QLen, Util, RespT, ResidT, ArvR, Tput
+        """
+        QNn, UNn, RNn, WNn, ANn, TNn = self.getAvgNode()
+
+        sn = self.sn
+        nodenames = list(sn.nodenames) if hasattr(sn, 'nodenames') and sn.nodenames else []
+        class_names = list(sn.classnames) if hasattr(sn, 'classnames') and sn.classnames else []
+
+        rows = []
+        for node_idx in range(sn.nnodes):
+            node_name = nodenames[node_idx] if node_idx < len(nodenames) else f'Node{node_idx}'
+
+            for r in range(sn.nclasses):
+                class_name = class_names[r] if r < len(class_names) else f'Class{r}'
+
+                # Filter out all-zero rows
+                if abs(QNn[node_idx, r]) < 1e-10 and abs(UNn[node_idx, r]) < 1e-10 and \
+                   abs(RNn[node_idx, r]) < 1e-10 and abs(ANn[node_idx, r]) < 1e-10 and abs(TNn[node_idx, r]) < 1e-10:
+                    continue
+
+                rows.append({
+                    'Node': node_name,
+                    'JobClass': class_name,
+                    'QLen': QNn[node_idx, r],
+                    'Util': UNn[node_idx, r],
+                    'RespT': RNn[node_idx, r],
+                    'ResidT': WNn[node_idx, r],
+                    'ArvR': ANn[node_idx, r],
+                    'Tput': TNn[node_idx, r],
+                })
+
+        df = pd.DataFrame(rows)
+
+        if not self._table_silent:
+            print(df.to_string(index=False))
+
+        return df
 
     def getAvgNodeChain(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Get average metrics by node and chain."""
@@ -1113,14 +1316,13 @@ class SolverMAM:
     sysAvgT = getAvgSysTable
 
     # Snake case aliases
-    avg_table = getAvgTable
     avg_node_table = getAvgNodeTable
     avg_chain_table = getAvgChainTable
     avg_node_chain_table = getAvgNodeChainTable
     avg_sys_table = getAvgSysTable
     avg_qlen = getAvgQLen
     avg_util = getAvgUtil
-    avg_resp_t = getAvgRespT
+    avg_respt = getAvgRespT
     avg_sys_resp_t = getAvgSysRespT
     avg_sys_tput = getAvgSysTput
     run_analyzer = runAnalyzer

@@ -31,4 +31,4 @@ options.verbose = VerboseLevel.SILENT;
 solver{1} = LN(model, @(model) MVA(model, options), lnoptions);
 AvgTable = {};
 AvgTable{1} = solver{1}.getAvgTable;
-%AvgTable{1}
+AvgTable{1}

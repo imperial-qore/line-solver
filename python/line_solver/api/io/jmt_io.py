@@ -273,6 +273,9 @@ def qn2jsimg(model: Any, output_filename: Optional[str] = None,
     # Add connections
     _add_jsimg_connections(sim, sn)
 
+    # Add finite capacity regions (blocking regions)
+    _add_jsimg_regions(sim, model, sn)
+
     # Write XML file
     xml_str = ET.tostring(root, encoding='unicode')
     # Pretty print
@@ -539,9 +542,9 @@ def _add_jsimg_parameters(sim: ET.Element, sn: Any, options: Dict) -> None:
     sim_seconds = ET.SubElement(params, 'maxTime')
     sim_seconds.text = str(options.get('max_time', -1))
 
-    # Max samples
+    # Max samples - support both 'samples' and 'max_samples' keys
     max_samples = ET.SubElement(params, 'maxSamples')
-    max_samples.text = str(options.get('max_samples', 1000000))
+    max_samples.text = str(options.get('samples', options.get('max_samples', 1000000)))
 
 
 def _add_jsimg_classes(sim: ET.Element, sn: Any) -> None:
@@ -683,19 +686,86 @@ def _add_queue_sections(node: ET.Element, sn: Any, node_idx: int) -> None:
     queue_section = ET.SubElement(node, 'section')
     queue_section.set('className', 'Queue')
 
-    # Server count
+    # Queue capacity (size parameter)
+    # LINE uses Kendall notation where cap = K = total system capacity
+    # JMT's "size" parameter represents total capacity K (-1 means infinite)
+    capacity = -1  # Default: infinite capacity
+    if hasattr(sn, 'cap') and sn.cap is not None and ist < len(sn.cap):
+        cap_val = sn.cap[ist]
+        if not np.isinf(cap_val):
+            capacity = int(cap_val)
+
+    size_param = ET.SubElement(queue_section, 'parameter')
+    size_param.set('classPath', 'java.lang.Integer')
+    size_param.set('name', 'size')
+    value = ET.SubElement(size_param, 'value')
+    value.text = str(capacity)
+
+    # Drop strategies - what to do when queue is full
+    # For finite capacity queues (M/M/1/K), need to specify "drop" behavior
+    drop_strat_param = ET.SubElement(queue_section, 'parameter')
+    drop_strat_param.set('array', 'true')
+    drop_strat_param.set('classPath', 'java.lang.String')
+    drop_strat_param.set('name', 'dropStrategies')
+
+    for k in range(sn.nclasses):
+        class_name = sn.classnames[k] if hasattr(sn, 'classnames') else f'Class{k}'
+
+        ref_class = ET.SubElement(drop_strat_param, 'refClass')
+        ref_class.text = class_name
+
+        subparam = ET.SubElement(drop_strat_param, 'subParameter')
+        subparam.set('classPath', 'java.lang.String')
+        subparam.set('name', 'dropStrategy')
+
+        value_elem = ET.SubElement(subparam, 'value')
+        # Check if there's a drop rule defined in sn.droprule
+        drop_text = 'drop'  # Default to drop for finite capacity
+        if hasattr(sn, 'droprule') and sn.droprule is not None:
+            if ist < sn.droprule.shape[0] and k < sn.droprule.shape[1]:
+                drop_val = sn.droprule[ist, k]
+                if drop_val == 0 or np.isnan(drop_val):
+                    drop_text = 'drop'
+                elif drop_val == 1:  # WAITQ
+                    drop_text = 'waiting queue'
+                else:
+                    drop_text = 'drop'
+        value_elem.text = drop_text
+
+    # Service section (with number of servers)
+    service_section = ET.SubElement(node, 'section')
+    service_section.set('className', 'Server')
+
+    # Number of servers (maxJobs parameter in Server section)
+    # Use the maximum of nservers and lldscaling (for load-dependent models).
+    # Load-dependent scaling with min(1:N,c) represents a c-server queue,
+    # where max(lldscaling) = c.
     servers = 1
     if hasattr(sn, 'nservers') and ist < len(sn.nservers):
-        servers = int(sn.nservers[ist])
+        srv_val = sn.nservers[ist]
+        if np.isinf(srv_val):
+            servers = -1  # Infinite servers
+        else:
+            servers = int(srv_val)
 
-    servers_param = ET.SubElement(queue_section, 'parameter')
-    servers_param.set('name', 'size')
-    value = ET.SubElement(servers_param, 'value')
+    # Check load-dependent scaling for effective number of servers
+    if hasattr(sn, 'lldscaling') and sn.lldscaling is not None:
+        if ist < sn.lldscaling.shape[0]:
+            effective_servers = int(np.max(sn.lldscaling[ist, :]))
+            if servers > 0:  # Don't override infinite servers
+                servers = max(servers, effective_servers)
+
+    maxjobs_param = ET.SubElement(service_section, 'parameter')
+    maxjobs_param.set('classPath', 'java.lang.Integer')
+    maxjobs_param.set('name', 'maxJobs')
+    value = ET.SubElement(maxjobs_param, 'value')
     value.text = str(servers)
 
-    # Service section
-    service_section = ET.SubElement(node, 'section')
-    service_section.set('className', 'ServiceSection')
+    # Service strategies (in Server section)
+    service_strat_param = ET.SubElement(service_section, 'parameter')
+    service_strat_param.set('array', 'true')
+    service_strat_param.set('classPath', 'jmt.engine.NetStrategies.ServiceStrategy')
+    service_strat_param.set('name', 'ServiceStrategy')
 
     for k in range(sn.nclasses):
         class_name = sn.classnames[k] if hasattr(sn, 'classnames') else f'Class{k}'
@@ -709,18 +779,27 @@ def _add_queue_sections(node: ET.Element, sn: Any, node_idx: int) -> None:
 
         mean = 1.0 / rate if rate > 0 else 0
 
-        param = ET.SubElement(service_section, 'parameter')
-        param.set('classPath', class_name)
-        param.set('name', 'ServiceStrategy')
+        # Add refClass element
+        ref_class = ET.SubElement(service_strat_param, 'refClass')
+        ref_class.text = class_name
 
-        subparam = ET.SubElement(param, 'subParameter')
-        subparam.set('classPath', 'jmt.engine.random.Exponential')
-        subparam.set('name', 'Exponential')
+        subparam = ET.SubElement(service_strat_param, 'subParameter')
+        subparam.set('classPath', 'jmt.engine.NetStrategies.ServiceStrategies.ServiceTimeStrategy')
+        subparam.set('name', 'ServiceTimeStrategy')
 
-        mean_param = ET.SubElement(subparam, 'parameter')
-        mean_param.set('name', 'mean')
-        value = ET.SubElement(mean_param, 'value')
-        value.text = str(mean)
+        dist_subparam = ET.SubElement(subparam, 'subParameter')
+        dist_subparam.set('classPath', 'jmt.engine.random.Exponential')
+        dist_subparam.set('name', 'Exponential')
+
+        par_subparam = ET.SubElement(subparam, 'subParameter')
+        par_subparam.set('classPath', 'jmt.engine.random.ExponentialPar')
+        par_subparam.set('name', 'distrPar')
+
+        lambda_param = ET.SubElement(par_subparam, 'subParameter')
+        lambda_param.set('classPath', 'java.lang.Double')
+        lambda_param.set('name', 'lambda')
+        value = ET.SubElement(lambda_param, 'value')
+        value.text = str(rate) if rate > 0 else '1.0'
 
 
 def _add_jsimg_measures(sim: ET.Element, sn: Any) -> None:
@@ -766,6 +845,111 @@ def _add_jsimg_connections(sim: ET.Element, sn: Any) -> None:
                             target_name = sn.nodenames[j] if hasattr(sn, 'nodenames') else f'Node{j}'
                             conn.set('source', source_name)
                             conn.set('target', target_name)
+
+
+def _add_jsimg_regions(sim: ET.Element, model: Any, sn: Any) -> None:
+    """
+    Add finite capacity regions (blocking regions) to JSIMG.
+
+    Creates blockingRegion elements for each FCR defined in the model.
+
+    Args:
+        sim: Parent sim XML element
+        model: Network model (to access regions)
+        sn: NetworkStruct
+
+    References:
+        MATLAB: matlab/src/solvers/JMT/@JMTIO/saveRegions.m
+    """
+    from ..sn.network_struct import DropStrategy as DSEnum
+
+    # Get regions from model
+    regions = []
+    if hasattr(model, 'get_regions'):
+        regions = model.get_regions()
+    elif hasattr(model, 'regions'):
+        regions = model.regions
+
+    if not regions:
+        return
+
+    for r_idx, region in enumerate(regions):
+        blocking_region = ET.SubElement(sim, 'blockingRegion')
+        region_name = region.get_name() if hasattr(region, 'get_name') else f'FCRegion{r_idx + 1}'
+        blocking_region.set('name', region_name)
+        blocking_region.set('type', 'default')
+
+        # 1. regionNode elements - nodes in this region
+        region_nodes = region.nodes if hasattr(region, 'nodes') else []
+        for node in region_nodes:
+            node_name = node.get_name() if hasattr(node, 'get_name') else str(node)
+            region_node = ET.SubElement(blocking_region, 'regionNode')
+            region_node.set('nodeName', node_name)
+
+        # 2. globalConstraint
+        global_constraint = ET.SubElement(blocking_region, 'globalConstraint')
+        global_max = region.global_max_jobs if hasattr(region, 'global_max_jobs') else -1
+        global_constraint.set('maxJobs', str(global_max))
+
+        # 3. globalMemoryConstraint
+        global_mem_constraint = ET.SubElement(blocking_region, 'globalMemoryConstraint')
+        global_max_mem = region.global_max_memory if hasattr(region, 'global_max_memory') else -1
+        global_mem_constraint.set('maxMemory', str(global_max_mem))
+
+        # Get classes from region or sn
+        region_classes = region.classes if hasattr(region, 'classes') else []
+
+        # 4. classConstraint elements
+        for job_class in region_classes:
+            class_name = job_class.get_name() if hasattr(job_class, 'get_name') else str(job_class)
+            class_max_jobs = region.get_class_max_jobs(job_class) if hasattr(region, 'get_class_max_jobs') else -1
+
+            # Only write if not unbounded (-1)
+            if class_max_jobs != -1:
+                class_constraint = ET.SubElement(blocking_region, 'classConstraint')
+                class_constraint.set('jobClass', class_name)
+                class_constraint.set('maxJobsPerClass', str(class_max_jobs))
+
+        # 5. classMemoryConstraint elements
+        for job_class in region_classes:
+            class_name = job_class.get_name() if hasattr(job_class, 'get_name') else str(job_class)
+            class_max_mem = region.get_class_max_memory(job_class) if hasattr(region, 'get_class_max_memory') else -1
+
+            # Only write if not unbounded (-1)
+            if class_max_mem != -1:
+                class_mem_constraint = ET.SubElement(blocking_region, 'classMemoryConstraint')
+                class_mem_constraint.set('jobClass', class_name)
+                class_mem_constraint.set('maxMemoryPerClass', str(class_max_mem))
+
+        # 6. dropRules elements - always write for each class
+        for job_class in region_classes:
+            class_name = job_class.get_name() if hasattr(job_class, 'get_name') else str(job_class)
+            drop_rule = region.get_drop_rule(job_class) if hasattr(region, 'get_drop_rule') else None
+
+            drop_rules = ET.SubElement(blocking_region, 'dropRules')
+            drop_rules.set('jobClass', class_name)
+
+            # Determine if DROP or WAITQ
+            if drop_rule is not None:
+                # Check if it's DROP strategy
+                is_drop = False
+                if hasattr(drop_rule, 'name'):
+                    is_drop = drop_rule.name == 'DROP'
+                elif hasattr(drop_rule, 'value'):
+                    is_drop = drop_rule.value == 1  # DROP = 1
+                drop_rules.set('dropThisClass', 'true' if is_drop else 'false')
+            else:
+                drop_rules.set('dropThisClass', 'false')
+
+        # 7. classSize elements (only if not default value of 1)
+        for job_class in region_classes:
+            class_name = job_class.get_name() if hasattr(job_class, 'get_name') else str(job_class)
+            class_size = region.get_class_size(job_class) if hasattr(region, 'get_class_size') else 1
+
+            if class_size != 1:
+                class_size_elem = ET.SubElement(blocking_region, 'classSize')
+                class_size_elem.set('jobClass', class_name)
+                class_size_elem.set('size', str(class_size))
 
 
 __all__ = [

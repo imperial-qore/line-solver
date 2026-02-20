@@ -369,31 +369,205 @@ def _update_loop_transition_probabilities(matrix: np.ndarray, loop_node: int) ->
 
 
 # Phase-type distribution convolution methods
+# Based on APH convolution algebra from kpctoolbox (aph_simplify.m)
+
 
 def _convolve_sequence(params: List[ServiceParameters]) -> ServiceParameters:
-    """Convolve service parameters for sequence (placeholder)."""
-    if params:
-        return params[0]  # Simplified - return first for now
-    return ServiceParameters(np.ones((1, 1)), np.zeros((1, 1)))
+    """
+    Convolve service parameters for sequence pattern.
+
+    For two PH distributions in sequence, the resulting distribution is:
+    alpha = [a1, (1 - a1*e1) * a2]
+    T = [[T1, -T1*e1 @ a2], [0, T2]]
+
+    Args:
+        params: List of ServiceParameters for nodes in sequence
+
+    Returns:
+        Combined ServiceParameters representing the sequence
+    """
+    if not params:
+        return ServiceParameters(np.ones((1,)), np.zeros((1, 1)))
+    if len(params) == 1:
+        return params[0]
+
+    # Start with first distribution
+    alpha = params[0].alpha.flatten()
+    T = params[0].T
+
+    # Sequentially convolve with remaining distributions
+    for i in range(1, len(params)):
+        a2 = params[i].alpha.flatten()
+        T2 = params[i].T
+
+        order1 = len(alpha)
+        order2 = len(a2)
+        e1 = np.ones(order1)
+
+        # Sequence convolution formula
+        exit_prob = 1.0 - np.dot(alpha, e1)
+        new_alpha = np.concatenate([alpha, exit_prob * a2])
+
+        # Build block matrix for T
+        exit_rate = -T @ e1
+        top_right = np.outer(exit_rate, a2)
+        new_T = np.block([
+            [T, top_right],
+            [np.zeros((order2, order1)), T2]
+        ])
+
+        alpha = new_alpha
+        T = new_T
+
+    return ServiceParameters(alpha, T)
 
 
 def _convolve_parallel(params: List[ServiceParameters]) -> ServiceParameters:
-    """Convolve service parameters for parallel execution (placeholder)."""
-    if params:
-        return params[0]  # Simplified - return first for now
-    return ServiceParameters(np.ones((1, 1)), np.zeros((1, 1)))
+    """
+    Convolve service parameters for parallel execution (fork-join).
+
+    For two PH distributions in parallel, the max completion time is:
+    alpha = [kron(a1, a2), (1-a2*e2)*a1, (1-a1*e1)*a2]
+    T = complex block structure with Kronecker products
+
+    Args:
+        params: List of ServiceParameters for parallel branches
+
+    Returns:
+        Combined ServiceParameters representing parallel execution
+    """
+    if not params:
+        return ServiceParameters(np.ones((1,)), np.zeros((1, 1)))
+    if len(params) == 1:
+        return params[0]
+
+    # Start with first distribution
+    alpha = params[0].alpha.flatten()
+    T = params[0].T
+
+    # Sequentially convolve parallel branches
+    for i in range(1, len(params)):
+        a2 = params[i].alpha.flatten()
+        T2 = params[i].T
+
+        order1 = len(alpha)
+        order2 = len(a2)
+        e1 = np.ones(order1)
+        e2 = np.ones(order2)
+
+        # Exit probabilities
+        exit1 = 1.0 - np.dot(alpha, e1)
+        exit2 = 1.0 - np.dot(a2, e2)
+
+        # Parallel convolution formula (max time)
+        new_alpha = np.concatenate([
+            np.kron(alpha, a2),
+            exit2 * alpha,
+            exit1 * a2
+        ])
+
+        # Build block matrix for T
+        # Block (1,1): kron(T1, I) + kron(I, T2)
+        block11 = np.kron(T, np.eye(order2)) + np.kron(np.eye(order1), T2)
+        # Block (1,2): kron(I, -T2*e2)
+        block12 = np.kron(np.eye(order1), -T2 @ e2).reshape(order1 * order2, order1)
+        # Block (1,3): kron(-T1*e1, I)
+        block13 = np.kron(-T @ e1, np.eye(order2)).reshape(order1 * order2, order2)
+
+        new_T = np.block([
+            [block11, block12, block13],
+            [np.zeros((order1, order1 * order2)), T, np.zeros((order1, order2))],
+            [np.zeros((order2, order1 * order2)), np.zeros((order2, order1)), T2]
+        ])
+
+        alpha = new_alpha
+        T = new_T
+
+    return ServiceParameters(alpha, T)
 
 
 def _convolve_loop(params: ServiceParameters, loop_prob: float) -> ServiceParameters:
-    """Convolve service parameters for loops (placeholder)."""
-    return params  # Simplified - return original for now
+    """
+    Convolve service parameters for loop patterns.
+
+    For a loop with probability p of repeating, we adjust the PH distribution
+    to account for geometric number of repetitions.
+
+    Args:
+        params: ServiceParameters for the loop body
+        loop_prob: Probability of repeating the loop (0 <= p < 1)
+
+    Returns:
+        Combined ServiceParameters representing the loop
+    """
+    if loop_prob <= 0 or loop_prob >= 1:
+        return params
+
+    alpha = params.alpha.flatten()
+    T = params.T.copy()
+    order = len(alpha)
+    e = np.ones(order)
+
+    # Exit rate vector
+    exit_rate = -T @ e
+
+    # Modify T to loop back with probability loop_prob
+    # The exit transitions are redirected back to initial states
+    # New T: T + loop_prob * exit_rate @ alpha
+    new_T = T + loop_prob * np.outer(exit_rate, alpha)
+
+    # Alpha remains unchanged (same initial state)
+    return ServiceParameters(alpha, new_T)
 
 
 def _convolve_branches(params: List[ServiceParameters], probs: List[float]) -> ServiceParameters:
-    """Convolve service parameters for branches (placeholder)."""
-    if params:
-        return params[0]  # Simplified - return first for now
-    return ServiceParameters(np.ones((1, 1)), np.zeros((1, 1)))
+    """
+    Convolve service parameters for branches (probabilistic choice).
+
+    For branches with probabilities p1, p2, ...:
+    alpha = [p1*a1, p2*a2, ...]
+    T = diag(T1, T2, ...)
+
+    Args:
+        params: List of ServiceParameters for branch alternatives
+        probs: List of branch probabilities (must sum to 1)
+
+    Returns:
+        Combined ServiceParameters representing the probabilistic choice
+    """
+    if not params:
+        return ServiceParameters(np.ones((1,)), np.zeros((1, 1)))
+    if len(params) == 1:
+        return params[0]
+
+    # Normalize probabilities if needed
+    total_prob = sum(probs)
+    if total_prob > 0:
+        probs = [p / total_prob for p in probs]
+    else:
+        probs = [1.0 / len(params)] * len(params)
+
+    # Concatenate weighted alphas
+    alpha_parts = []
+    T_blocks = []
+
+    for param, prob in zip(params, probs):
+        alpha_parts.append(prob * param.alpha.flatten())
+        T_blocks.append(param.T)
+
+    new_alpha = np.concatenate(alpha_parts)
+
+    # Build block diagonal T matrix
+    total_order = sum(len(a) for a in alpha_parts)
+    new_T = np.zeros((total_order, total_order))
+
+    offset = 0
+    for T_block in T_blocks:
+        size = T_block.shape[0]
+        new_T[offset:offset + size, offset:offset + size] = T_block
+        offset += size
+
+    return ServiceParameters(new_alpha, new_T)
 
 
 def validate_updated_workflow(workflow: UpdatedWorkflow) -> bool:

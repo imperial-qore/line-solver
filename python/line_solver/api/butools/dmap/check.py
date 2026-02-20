@@ -5,11 +5,17 @@ Created on Sun Aug 24 15:31:04 2014
 @author: gabor
 """
 
-import butools
-from butools.mc import CheckProbMatrix
-from butools.utils import SumMatrixList
 import numpy as np
 import scipy.linalg as la
+from ..mc.check import CheckProbMatrix
+from ..utils.misc import SumMatrixList
+
+from .. import verbose, checkPrecision
+class _butools_settings:
+    verbose = verbose
+    checkPrecision = checkPrecision
+butools = _butools_settings()
+
 
 def CheckDMAPRepresentation (D0, D1, prec=None):
     """

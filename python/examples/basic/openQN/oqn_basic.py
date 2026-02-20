@@ -42,9 +42,10 @@ if __name__ == "__main__":
     solver = np.append(solver, NC(model))
     solver = np.append(solver, JMT(model, seed=23000))
     solver = np.append(solver, SSA(model, seed=23000, samples=5000))
-    solver = np.append(solver, DES(model, seed=23000, samples=5000))
+    solver = np.append(solver, DES(model, seed=23000, samples=10000))
 
     avg_table = np.empty(len(solver), dtype=object)
     for s in range(len(solver)):
         print(f'\nSOLVER: {solver[s].get_name()}')
         avg_table[s] = solver[s].avg_table()
+        print(avg_table[s])

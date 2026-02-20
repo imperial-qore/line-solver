@@ -126,9 +126,12 @@ def laplaceapprox(h: Callable, x0: np.ndarray,
         h_x0 = h_x0[0] if len(h_x0) > 0 else 0.0
 
     # Compute approximation
+    # Note: MATLAB laplaceapprox.m uses -log(detnH) instead of -0.5*log(detnH)
+    # in the logI formula, which differs from the standard Laplace approximation.
+    # We match MATLAB's behavior for parity.
     if detNegH > 0 and h_x0 > 0:
         I = h_x0 * np.sqrt((2 * pi) ** d / detNegH)
-        logI = log(h_x0) + (d / 2) * log(2 * pi) - 0.5 * log(detNegH)
+        logI = log(h_x0) + (d / 2) * log(2 * pi) - log(detNegH)
     else:
         I = 0.0
         logI = -np.inf
@@ -268,19 +271,14 @@ def pfqn_nrp(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     # Initial point for Laplace approximation
     x0 = np.zeros(R)
 
-    # Get a normalization scale from initial evaluation
-    from .ljd import infradius_h
-    h0 = infradius_h(x0.reshape(1, -1), L_scaled, N, alpha)
-    logNormConstScale = np.log(max(h0[0], 1e-300)) if len(h0) > 0 else 0.0
-
-    # Laplace approximation with normalized function
+    # Laplace approximation with probit-transformed function
     def h_func(x):
-        return infradius_hnorm(x.reshape(1, -1), L_scaled, N, alpha, logNormConstScale)
+        return infradius_hnorm(x.reshape(1, -1), L_scaled, N, alpha)
 
-    _, _, lG_normalized = laplaceapprox(h_func, x0)
+    _, _, lG = laplaceapprox(h_func, x0)
 
-    # Adjust for normalization and scaling
-    lG = np.real(lG_normalized + logNormConstScale + np.dot(N, np.log(Lmax)))
+    # Adjust for scaling
+    lG = np.real(lG + np.dot(N, np.log(Lmax)))
 
     return lG
 

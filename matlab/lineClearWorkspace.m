@@ -1,4 +1,7 @@
-workspaceFolder = [lineRootFolder, filesep, 'workspace/'];
+workspaceFolder = fullfile(tempdir, 'line_workspace/');
+if ~exist(workspaceFolder, 'dir')
+    return;
+end
 files = dir(workspaceFolder);
 for k = 1:length(files)
     if ~files(k).isdir || ~ismember(files(k).name, {'.', '..'})

@@ -147,7 +147,12 @@ oldPhases = sn.phasessz(ist, r);
 
 % Update process representation
 sn.proc{ist}{r} = MAP;
-sn.procid(ist, r) = ProcessType.MAP;
+% Use PH for Sources (they don't need MAP local variable tracking), MAP for others
+if sn.sched(ist) == SchedStrategy.EXT
+    sn.procid(ist, r) = ProcessType.PH;
+else
+    sn.procid(ist, r) = ProcessType.MAP;
+end
 sn.phases(ist, r) = nPhases;
 
 % Update phasessz and phaseshift (derived from phases)
@@ -166,12 +171,13 @@ sn.phi{ist}{r} = D1_rowsum ./ D0_diag;
 % Update pie (initial phase distribution)
 sn.pie{ist}{r} = map_pie(MAP);
 
-% Update nvars for MAP local variable
+% Update nvars for MAP local variable (skip for Sources - they don't use local vars)
 ind = sn.stationToNode(ist);
-sn.nvars(ind, r) = sn.nvars(ind, r) + 1;
-
-% Expand state vector (pass old and new phases for proper expansion)
-sn = expandStateForMAP(sn, ind, r, oldPhases, nPhases);
+if sn.sched(ist) ~= SchedStrategy.EXT
+    sn.nvars(ind, r) = sn.nvars(ind, r) + 1;
+    % Expand state vector (pass old and new phases for proper expansion)
+    sn = expandStateForMAP(sn, ind, r, oldPhases, nPhases);
+end
 
 % Add PHASE sync event if phases > 1 and not already present
 if nPhases > 1

@@ -7,10 +7,15 @@ Created on Thu Mar 28 11:01:03 2013
 
 import numpy.matlib as ml
 import numpy.linalg as la
-import butools
-from butools.map.basemap import MarginalDistributionFromMRAP
-from butools.reptrans import MStaircase
-from butools.map import CheckRAPRepresentation, CheckMRAPRepresentation
+from .basemap import MarginalDistributionFromMRAP
+from ..reptrans.staircase import MStaircase
+from .check import CheckRAPRepresentation, CheckMRAPRepresentation
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 def MinimalRepFromMRAP (H, how="obscont", precision=1e-12):
     """

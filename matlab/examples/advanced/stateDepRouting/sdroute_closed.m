@@ -29,7 +29,7 @@ solver{end+1} = SSA(model,'verbose',true,'samples',1e4,'seed',23000);
 
 AvgTable = {};
 for s=1:length(solver)
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());
+    fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgTable();
     AvgTable{s}
 end

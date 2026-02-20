@@ -241,7 +241,7 @@ class TestResultAccessorMethods(unittest.TestCase):
         expected = np.mean(self.result.UN, axis=1)
         np.testing.assert_array_almost_equal(util, expected)
 
-    def test_get_avg_resp_t(self):
+    def test_get_avg_respt(self):
         """Test getAvgRespT returns correct values."""
         rt = self.solver.getAvgRespT()
 

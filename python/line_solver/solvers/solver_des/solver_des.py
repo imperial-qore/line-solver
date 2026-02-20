@@ -12,9 +12,13 @@ from typing import Optional, Any, Dict
 
 from .des_options import DESOptions, DESResult
 from .simulator import SimPySimulator
+from ..base import NetworkSolver
+from ...api.sn.transforms import sn_get_residt_from_respt
+from ...api.sn.network_struct import NodeType
+from ...constants import GlobalConstants
 
 
-class SolverDES:
+class SolverDES(NetworkSolver):
     """
     Native Python Discrete Event Simulation (DES) solver using SimPy.
 
@@ -50,7 +54,6 @@ class SolverDES:
                 setattr(self.options, key, value)
 
         self._result: Optional[DESResult] = None
-        self._table_silent = False
         self._simulator: Optional[SimPySimulator] = None
 
         # Extract network structure
@@ -178,6 +181,56 @@ class SolverDES:
         result = self._result
         M = len(self._station_names)
         K = len(self._class_names)
+        sn = self._sn
+
+        # Make copies of station-level metrics (to avoid modifying originals)
+        QN = result.QN.copy() if result.QN is not None else np.zeros((M, K))
+        UN = result.UN.copy() if result.UN is not None else np.zeros((M, K))
+        RN = result.RN.copy() if result.RN is not None else np.zeros((M, K))
+        TN = result.TN.copy() if result.TN is not None else np.zeros((M, K))
+        AN = result.AN.copy() if result.AN is not None else np.zeros((M, K))
+
+        # Zero out metrics for classes that don't visit stations based on visit ratios
+        # This matches MATLAB getAvg.m behavior (lines 163-180)
+        hasForkJoin = False
+        hasSPN = False
+        if hasattr(sn, 'nodetype') and sn.nodetype is not None:
+            hasForkJoin = np.any(sn.nodetype == NodeType.FORK) and np.any(sn.nodetype == NodeType.JOIN)
+            hasSPN = np.any(sn.nodetype == NodeType.PLACE) or np.any(sn.nodetype == NodeType.TRANSITION)
+
+        if sn is not None and hasattr(sn, 'nchains') and sn.nchains > 0 and not hasSPN:
+            if hasattr(sn, 'chains') and sn.chains is not None and hasattr(sn, 'visits') and sn.visits:
+                chains_arr = np.asarray(sn.chains)
+                for k in range(K):
+                    # Find chains containing this class
+                    chains_with_class = np.where(chains_arr[:, k] > 0)[0] if k < chains_arr.shape[1] else []
+                    if len(chains_with_class) > 0:
+                        c = chains_with_class[0]  # Use first chain (classes typically in one chain)
+                        if c in sn.visits and sn.visits[c] is not None:
+                            visits_c = np.asarray(sn.visits[c])
+                            for i in range(M):
+                                if i < visits_c.shape[0] and k < visits_c.shape[1]:
+                                    if visits_c[i, k] == 0:
+                                        # For fork-join, trust non-zero simulation results
+                                        if hasForkJoin and (QN[i, k] > GlobalConstants.FineTol or
+                                                           UN[i, k] > GlobalConstants.FineTol or
+                                                           TN[i, k] > GlobalConstants.FineTol):
+                                            continue
+                                        # Zero out station-level metrics
+                                        QN[i, k] = 0
+                                        UN[i, k] = 0
+                                        RN[i, k] = 0
+                                        TN[i, k] = 0
+                                        AN[i, k] = 0
+
+        # Compute residence times from response times using visit ratios (after zeroing)
+        WN = None
+        if RN is not None and sn is not None and hasattr(sn, 'visits') and sn.visits:
+            try:
+                WN = sn_get_residt_from_respt(sn, RN, None)
+            except Exception:
+                # Fallback: ResidT = RespT if computation fails
+                WN = RN.copy() if RN is not None else None
 
         # Identify source stations using stationToNode mapping and nodetype
         source_stations = set()
@@ -197,11 +250,11 @@ class SolverDES:
         rows = []
         for i in range(M):
             for r in range(K):
-                qlen = result.QN[i, r] if result.QN is not None and i < result.QN.shape[0] and r < result.QN.shape[1] else 0
-                util = result.UN[i, r] if result.UN is not None and i < result.UN.shape[0] and r < result.UN.shape[1] else 0
-                respt = result.RN[i, r] if result.RN is not None and i < result.RN.shape[0] and r < result.RN.shape[1] else 0
-                tput = result.TN[i, r] if result.TN is not None and i < result.TN.shape[0] and r < result.TN.shape[1] else 0
-                arvr = result.AN[i, r] if result.AN is not None and i < result.AN.shape[0] and r < result.AN.shape[1] else 0
+                qlen = QN[i, r] if i < QN.shape[0] and r < QN.shape[1] else 0
+                util = UN[i, r] if i < UN.shape[0] and r < UN.shape[1] else 0
+                respt = RN[i, r] if i < RN.shape[0] and r < RN.shape[1] else 0
+                tput = TN[i, r] if i < TN.shape[0] and r < TN.shape[1] else 0
+                arvr = AN[i, r] if i < AN.shape[0] and r < AN.shape[1] else 0
 
                 is_source = i in source_stations
 
@@ -216,9 +269,16 @@ class SolverDES:
                             tput = rates[node_idx, r]
                     arvr = 0.0  # Source has no arrivals to itself
 
-                # Skip zero rows (but not source stations)
-                if not is_source and abs(qlen) < 1e-12 and abs(util) < 1e-12 and abs(tput) < 1e-12:
+                # Skip rows where all metrics are zero (matches MATLAB getAvgTable behavior)
+                if abs(qlen) < 1e-12 and abs(util) < 1e-12 and abs(tput) < 1e-12:
                     continue
+
+                # Get residence time from WN if available, otherwise use RespT
+                residt = respt
+                if WN is not None and i < WN.shape[0] and r < WN.shape[1]:
+                    residt_val = WN[i, r]
+                    if not np.isnan(residt_val) and residt_val >= 0:
+                        residt = residt_val
 
                 rows.append({
                     'Station': self._station_names[i],
@@ -226,7 +286,7 @@ class SolverDES:
                     'QLen': qlen,
                     'Util': util,
                     'RespT': respt,
-                    'ResidT': respt,  # Same as RespT for now
+                    'ResidT': residt,
                     'ArvR': arvr,
                     'Tput': tput,
                 })
@@ -238,11 +298,87 @@ class SolverDES:
 
         return df
 
+    def getAvgChainTable(self) -> pd.DataFrame:
+        """
+        Get average performance metrics aggregated by chain.
+
+        Returns:
+            DataFrame with columns: Chain, QLen, Util, RespT, Tput
+        """
+        if self._result is None:
+            self.runAnalyzer()
+
+        result = self._result
+
+        # Get chain information from model structure
+        nchains = self._sn.nchains if hasattr(self._sn, 'nchains') else self._sn.nclasses
+        inchain = self._sn.inchain if hasattr(self._sn, 'inchain') else None
+
+        rows = []
+        for c in range(nchains):
+            chain_name = f'Chain{c+1}'
+
+            # Get classes in this chain
+            if inchain is not None and c in inchain:
+                chain_classes = np.asarray(inchain[c]).flatten().astype(int)
+            else:
+                chain_classes = [c]  # Single class per chain
+
+            # Aggregate metrics across stations and classes in chain
+            total_qlen = 0.0
+            total_util = 0.0
+            total_respt = 0.0
+            total_tput = 0.0
+
+            M = self._sn.nstations
+            for i in range(M):
+                for k in chain_classes:
+                    if k < result.QN.shape[1] if result.QN is not None else 0:
+                        total_qlen += result.QN[i, k] if result.QN is not None and not np.isnan(result.QN[i, k]) else 0.0
+                        total_util += result.UN[i, k] if result.UN is not None and not np.isnan(result.UN[i, k]) else 0.0
+                        total_respt += result.RN[i, k] if result.RN is not None and not np.isnan(result.RN[i, k]) else 0.0
+                        total_tput = max(total_tput, result.TN[i, k] if result.TN is not None and not np.isnan(result.TN[i, k]) else 0.0)
+
+            rows.append({
+                'Chain': chain_name,
+                'QLen': total_qlen,
+                'Util': total_util,
+                'RespT': total_respt,
+                'Tput': total_tput,
+            })
+
+        return pd.DataFrame(rows)
+
+    def getAvgSysTable(self) -> pd.DataFrame:
+        """
+        Get system-level average performance metrics.
+
+        Returns:
+            DataFrame with columns: Chain, SysRespT, SysTput
+        """
+        if self._result is None:
+            self.runAnalyzer()
+
+        chain_table = self.getAvgChainTable()
+        rows = []
+        for _, row in chain_table.iterrows():
+            rows.append({
+                'Chain': row['Chain'],
+                'SysRespT': row['RespT'],
+                'SysTput': row['Tput'],
+            })
+
+        return pd.DataFrame(rows)
+
     # Method aliases (consistent with other solvers)
-    get_avg_table = getAvgTable
-    avg_table = getAvgTable
     avgT = getAvgTable
     aT = getAvgTable
+    get_avg_chain_table = getAvgChainTable
+    avg_chain_table = getAvgChainTable
+    aCT = getAvgChainTable
+    chainAvgT = getAvgChainTable
+    get_avg_sys_table = getAvgSysTable
+    avg_sys_table = getAvgSysTable
 
     @property
     def result(self) -> Optional[DESResult]:

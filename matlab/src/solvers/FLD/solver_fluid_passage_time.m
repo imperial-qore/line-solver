@@ -111,48 +111,57 @@ for i = 1:sn.nstations
 
                     %% Adaptive CDF Refinement - detect and refine large CDF jumps
                     if fluid_c > 0
-                        maxCdfJump = 0.001; % Maximum allowed CDF jump (0.1%)
-                        cdfValues = RT{i,c,2};
-                        for row = 2:length(cdfValues)
-                            cdfJump = cdfValues(row) - cdfValues(row-1);
-                            if cdfJump > maxCdfJump
-                                % Refine this interval
-                                t1 = fullt(row-1);
-                                t2 = fullt(row);
-                                numRefinedPoints = 20;
-                                refinedT = linspace(t1, t2, numRefinedPoints)';
-                                refinedStates = zeros(numRefinedPoints, size(fully,2));
+                        maxCdfJump = 0.0005; % Maximum allowed CDF jump (0.05%)
+                        maxRefinementIterations = 5; % Limit to prevent infinite loops
+                        refinementIter = 0;
 
-                                % Integrate to refined time points
-                                startState = fully(row-1,:);
-                                for rp = 1:numRefinedPoints
-                                    try
-                                        if stiff
-                                            [~, tempState] = ode_solve_stiff(ode_h_c, [t1, refinedT(rp)], startState, odeopt, options);
-                                        else
-                                            [~, tempState] = ode_solve(ode_h_c, [t1, refinedT(rp)], startState, odeopt, options);
+                        keepRefining = true;
+                        while keepRefining && refinementIter < maxRefinementIterations
+                            keepRefining = false;
+                            cdfValues = RT{i,c,2};
+                            for row = 2:length(cdfValues)
+                                cdfJump = cdfValues(row) - cdfValues(row-1);
+                                if cdfJump > maxCdfJump
+                                    refinementIter = refinementIter + 1;
+
+                                    % Refine this interval
+                                    t1 = fullt(row-1);
+                                    t2 = fullt(row);
+                                    numRefinedPoints = 20;
+                                    refinedT = linspace(t1, t2, numRefinedPoints)';
+                                    refinedStates = zeros(numRefinedPoints, size(fully,2));
+
+                                    % Integrate to refined time points
+                                    startState = fully(row-1,:);
+                                    for rp = 1:numRefinedPoints
+                                        try
+                                            if stiff
+                                                [~, tempState] = ode_solve_stiff(ode_h_c, [t1, refinedT(rp)], startState, odeopt, options);
+                                            else
+                                                [~, tempState] = ode_solve(ode_h_c, [t1, refinedT(rp)], startState, odeopt, options);
+                                            end
+                                            refinedStates(rp,:) = max(0, tempState(end,:));
+                                        catch
+                                            % Linear interpolation fallback
+                                            alpha = (refinedT(rp) - t1) / (t2 - t1);
+                                            refinedStates(rp,:) = fully(row-1,:) + alpha * (fully(row,:) - fully(row-1,:));
                                         end
-                                        refinedStates(rp,:) = max(0, tempState(end,:));
-                                    catch
-                                        % Linear interpolation fallback
-                                        alpha = (refinedT(rp) - t1) / (t2 - t1);
-                                        refinedStates(rp,:) = fully(row-1,:) + alpha * (fully(row,:) - fully(row-1,:));
                                     end
+
+                                    % Merge refined points using ODE-computed states
+                                    newFullt = [fullt(1:row-1); refinedT(2:end); fullt(row+1:end)];
+                                    newFully = [fully(1:row-1,:); refinedStates(2:end,:); fully(row+1:end,:)];
+                                    fullt = newFullt;
+                                    fully = newFully;
+
+                                    % Recompute CDF
+                                    RT{i,c,1} = fullt;
+                                    RT{i,c,2} = 1 - sum(fully(:,idxN),2)/fluid_c;
+
+                                    line_printf('INFO: Added %d refined points between t=%.6f and t=%.6f\n', numRefinedPoints, t1, t2);
+                                    keepRefining = true; % Continue refining
+                                    break; % Restart the inner loop with updated arrays
                                 end
-
-                                % Merge refined points using interpolation
-                                newFullt = unique([fullt(1:row-1); refinedT(2:end); fullt(row+1:end)]);
-                                newFully = interp1(fullt, fully, newFullt, 'linear', 'extrap');
-                                fullt = newFullt;
-                                fully = newFully;
-
-                                % Recompute CDF
-                                RT{i,c,1} = fullt;
-                                RT{i,c,2} = 1 - sum(fully(:,idxN),2)/fluid_c;
-                                cdfValues = RT{i,c,2};
-
-                                line_printf('INFO: Added %d refined points between t=%.6f and t=%.6f\n', numRefinedPoints, t1, t2);
-                                break; % Only refine first large jump per iteration
                             end
                         end
 
@@ -195,9 +204,11 @@ RTret = {};
 for i=1:sn.nstations
     if sn.nodetype(sn.stationToNode(i)) ~= NodeType.Source
         for c=1:sn.nclasses
-            RTret{i,c} = [RT{i,c,2},RT{i,c,1}];            
-            if ~isempty(RTret{i,c}) && RTret{i,c}(end,1) < 0.995
-                line_warning(mfilename,'CDF at station %d in class %d computed only %.3f percent of the total mass.\n',i,c,RTret{i,c}(end,1)*100);
+            if size(RT,1) >= i && size(RT,2) >= c && size(RT,3) >= 2 && ~isempty(RT{i,c,1})
+                RTret{i,c} = [RT{i,c,2},RT{i,c,1}];
+                if ~isempty(RTret{i,c}) && RTret{i,c}(end,1) < 0.995
+                    line_warning(mfilename,'CDF at station %d in class %d computed only %.3f percent of the total mass.\n',i,c,RTret{i,c}(end,1)*100);
+                end
             end
         end
     end

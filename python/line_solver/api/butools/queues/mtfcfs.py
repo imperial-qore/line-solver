@@ -1,15 +1,20 @@
 import numpy as np
 import numpy.matlib as ml
 import scipy.linalg as la
-import butools
 import math
-from butools.moments import MomsFromFactorialMoms
-from butools.map import CheckMMAPRepresentation
-from butools.mc import CTMCSolve
-from butools.ph import CheckPHRepresentation
-from butools.mam import FluidFundamentalMatrices
-from butools.utils import Diag
-from butools.reptrans import SimilarityMatrixForVectors
+# Use local butools settings instead of external package
+from .. import checkInput
+from ..moments.conv import MomsFromFactorialMoms
+from ..map.check import CheckMMAPRepresentation
+from ..mc.stst import CTMCSolve
+from ..ph.check import CheckPHRepresentation
+from ..mam.fluid import FluidFundamentalMatrices
+from ..utils.misc import Diag
+from ..reptrans.similarity import SimilarityMatrixForVectors
+# Create butools-like namespace for backward compatibility
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
 
 def MMAPPH1FCFS(D, sigma, S, *argv):
     """
@@ -219,9 +224,9 @@ def MMAPPH1FCFS(D, sigma, S, *argv):
                 argIx += 1
                 values = np.empty(numOfQLProbs)
                 jm = ml.zeros((Ns,1))
-                jm[np.sum(Nsk[0:k]):np.sum(Nsk[0:k+1]),:] = 1
+                jm[int(np.sum(Nsk[0:k])):int(np.sum(Nsk[0:k+1])),:] = 1
                 jmc = ml.ones((Ns,1))
-                jmc[np.sum(Nsk[0:k]):np.sum(Nsk[0:k+1]),:] = 0
+                jmc[int(np.sum(Nsk[0:k])):int(np.sum(Nsk[0:k+1])),:] = 0
                 LmCurr = la.solve_sylvester(T, ml.kron(D0+Da-D[k+1],Is), -ml.eye(N*Ns))
                 values[0] = 1-ro+np.sum(pi0*LmCurr*ml.kron(oa,jmc))
                 for i in range(1,numOfQLProbs):
@@ -233,7 +238,7 @@ def MMAPPH1FCFS(D, sigma, S, *argv):
                 numOfQLMoms = argv[argIx+1]
                 argIx += 1
                 jm = ml.zeros((Ns,1))
-                jm[np.sum(Nsk[0:k]):np.sum(Nsk[0:k+1]),:] = 1
+                jm[int(np.sum(Nsk[0:k])):int(np.sum(Nsk[0:k+1])),:] = 1
                 ELn = [la.solve_sylvester(T, ml.kron(D0+Da,Is), -ml.eye(N*Ns))]
                 qlMoms = []
                 for n in range(1,numOfQLMoms+1):

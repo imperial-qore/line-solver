@@ -180,14 +180,15 @@ def lib_lti_custom_romberg(laplace_func, t, tol=1e-6):
 
 def lib_lti_cme(laplace_func, t, M=16):
     """
-    Invert Laplace transform using Crump-type method with exponential.
+    Invert Laplace transform using CME (Concentrated Matrix Exponential) method.
 
-    Good for wide range of function types.
+    Uses the JAR iltcme.ilt() via JPype for the Abate-Whitt framework with
+    pre-computed CME coefficients.
 
     Args:
         laplace_func (callable): Function s -> F(s)
         t (float or array-like): Time points
-        M (int): Number of terms (default 16)
+        M (int): Maximum number of function evaluations (default 16)
 
     Returns:
         float or ndarray: Values of f(t)
@@ -195,11 +196,28 @@ def lib_lti_cme(laplace_func, t, M=16):
     t = np.atleast_1d(t)
 
     try:
-        CME = jpype.JPackage('jline').lib.lti.CME
-        results = []
-        for t_val in t:
-            result = CME.invert(laplace_func, float(t_val), M)
-            results.append(float(result))
+        Complex = jpype.JPackage('org').apache.commons.math3.complex.Complex
+        iltcme_obj = jpype.JPackage('jline').lib.lti.iltcme
+
+        # Create a Java UnaryOperator<Complex> from the Python function
+        @jpype.JImplements('java.util.function.UnaryOperator')
+        class ComplexFunc:
+            @jpype.JOverride
+            def apply(self, s):
+                py_s = complex(float(s.getReal()), float(s.getImaginary()))
+                py_result = laplace_func(py_s)
+                if isinstance(py_result, complex):
+                    return Complex(py_result.real, py_result.imag)
+                else:
+                    return Complex(float(py_result))
+
+        java_func = ComplexFunc()
+        t_array = jpype.JArray(jpype.JDouble)(len(t))
+        for i, t_val in enumerate(t):
+            t_array[i] = float(t_val)
+
+        java_result = iltcme_obj.ilt(java_func, t_array, int(M), "cme")
+        results = [float(java_result[i]) for i in range(len(java_result))]
         return results[0] if len(results) == 1 else np.array(results)
     except Exception as e:
         raise RuntimeError(f"CME LTI failed: {str(e)}")

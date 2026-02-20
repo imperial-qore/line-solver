@@ -1,13 +1,22 @@
 package jline.solvers.qns;
 
 import static jline.GlobalConstants.Inf;
+import static jline.api.sn.SnHasProductFormKt.snHasProductForm;
+import static jline.api.sn.SnHasOpenClassesKt.snHasOpenClasses;
 
 import jline.lang.FeatureSet;
 import jline.lang.Network;
+import jline.lang.NetworkStruct;
+import jline.lang.constant.SchedStrategy;
 import jline.lang.constant.SolverType;
+import jline.lang.layered.LayeredNetwork;
+import jline.lang.layered.LayeredNetworkStruct;
+import jline.io.QN2LQN;
 import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.solvers.SolverResult;
+import jline.solvers.LayeredNetworkAvgTable;
+import jline.solvers.lqns.SolverLQNS;
 import jline.solvers.qns.analyzers.Solver_qns_analyzer;
 import jline.io.Ret.DistributionResult;
 import jline.io.Ret.ProbabilityResult;
@@ -19,6 +28,7 @@ import javax.xml.parsers.ParserConfigurationException;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.List;
 
 /**
  * SolverQNS class implements a queueing network solver that wraps the external qnsolver tool.
@@ -235,14 +245,130 @@ public class SolverQNS extends NetworkSolver {
             this.options = defaultOptions();
         }
 
-        // Run the analyzer
-        Solver_qns_analyzer analyzer = new Solver_qns_analyzer(this);
-        QNSResult result = analyzer.runAnalyzer();
+        // Map method to multiserver config (matches MATLAB lines 29-44)
+        String method = this.options.method;
+        switch (method) {
+            case "conway":
+                this.options.config.multiserver = "conway";
+                break;
+            case "rolia":
+                this.options.config.multiserver = "rolia";
+                break;
+            case "zhou":
+                this.options.config.multiserver = "zhou";
+                break;
+            case "suri":
+                this.options.config.multiserver = "suri";
+                break;
+            case "reiser":
+                this.options.config.multiserver = "reiser";
+                break;
+            case "schmidt":
+                this.options.config.multiserver = "schmidt";
+                break;
+            case "default":
+                this.options.config.multiserver = "rolia";
+                break;
+        }
 
-        // Set the average results
-        this.setAvgResults(result.QN, result.UN, result.RN, result.TN,
-                result.AN, result.WN, result.CN, result.XN,
-                result.runtime, result.method, result.iter);
+        if (this.model.hasProductFormSolution() || this.model.hasOpenClasses()) {
+            // Product-form or open: use qnsolver directly
+            Solver_qns_analyzer analyzer = new Solver_qns_analyzer(this);
+            QNSResult result = analyzer.runAnalyzer();
+
+            this.setAvgResults(result.QN, result.UN, result.RN, result.TN,
+                    result.AN, result.WN, result.CN, result.XN,
+                    result.runtime, result.method, result.iter);
+        } else {
+            // Non-product-form closed: convert to LQN and solve via SolverLQNS
+            LayeredNetwork lqnmodel = QN2LQN.convert(this.model);
+            SolverOptions lqnsoptions = SolverLQNS.defaultOptions();
+            lqnsoptions.verbose = this.options.verbose;
+
+            // Map multiserver method to LQNS options
+            String actualMethod = method;
+            switch (method) {
+                case "conway":
+                    lqnsoptions.config.multiserver = "conway";
+                    break;
+                case "rolia":
+                    lqnsoptions.config.multiserver = "rolia";
+                    break;
+                case "zhou":
+                    lqnsoptions.config.multiserver = "zhou";
+                    break;
+                case "suri":
+                    lqnsoptions.config.multiserver = "suri";
+                    break;
+                case "reiser":
+                    lqnsoptions.config.multiserver = "reiser";
+                    break;
+                case "schmidt":
+                    lqnsoptions.config.multiserver = "schmidt";
+                    break;
+                case "default":
+                    lqnsoptions.config.multiserver = "rolia";
+                    actualMethod = "rolia";
+                    break;
+            }
+
+            LayeredNetworkAvgTable avgTable = new SolverLQNS(lqnmodel, lqnsoptions).getAvgTable();
+            LayeredNetworkStruct lqn = lqnmodel.getStruct();
+
+            int M = this.sn.nstations;
+            int K = this.sn.nclasses;
+            Matrix QN = new Matrix(M, K);
+            Matrix UN = new Matrix(M, K);
+            Matrix RN = new Matrix(M, K);
+            Matrix TN = new Matrix(M, K);
+            Matrix WN = new Matrix(M, K);
+
+            List<Double> qlenList = avgTable.getQLen();
+            List<Double> utilList = avgTable.getUtil();
+            List<Double> respTList = avgTable.getRespT();
+            List<Double> residTList = avgTable.getResidT();
+            List<Double> tputList = avgTable.getTput();
+
+            for (int r = 0; r < K; r++) {
+                for (int i = 0; i < M; i++) {
+                    // MATLAB: t = lqn.ashift + r + (i-1)*nclasses (1-based)
+                    // Java: ashift is 0-based count of hosts+tasks+entries, list is 0-based
+                    int t = lqn.ashift + r + i * K;
+                    if (t < qlenList.size()) {
+                        QN.set(i, r, qlenList.get(t));
+                        if (!Double.isInfinite(this.sn.nservers.get(i))) {
+                            UN.set(i, r, utilList.get(t) / this.sn.nservers.get(i));
+                        } else {
+                            UN.set(i, r, utilList.get(t));
+                        }
+                        RN.set(i, r, respTList.get(t));
+                        WN.set(i, r, residTList.get(t));
+                        TN.set(i, r, tputList.get(t));
+                    }
+                }
+            }
+
+            // Compute arrival rates from throughputs
+            Matrix AN = new Matrix(M, K);
+            for (int i = 0; i < M; i++) {
+                for (int r = 0; r < K; r++) {
+                    AN.set(i, r, TN.get(i, r));
+                }
+            }
+
+            double runtime = (System.nanoTime() - startTime) / 1_000_000_000.0;
+
+            // Handle default method naming
+            if ("default".equals(method)) {
+                actualMethod = "default/" + actualMethod;
+            }
+
+            int C = this.sn.nchains;
+            Matrix CN = new Matrix(1, C);
+            Matrix XN = new Matrix(1, C);
+            this.setAvgResults(QN, UN, RN, TN, AN, WN, CN, XN,
+                    runtime, actualMethod, 0);
+        }
     }
 
     /**

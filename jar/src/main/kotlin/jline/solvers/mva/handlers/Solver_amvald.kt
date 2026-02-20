@@ -408,7 +408,7 @@ fun solver_amvald(sn: NetworkStruct, options: SolverOptions?): MVAResult {
             val hprio_list: MutableList<Int?> = ArrayList<Int?>()
             for (i in 0..<sn.classprio.numCols) {
                 if (Double.compare(prio, sn.classprio.get(0, i)) == 0) eprio_list.add(i)
-                else if (Double.compare(prio, sn.classprio.get(0, i)) < 0) hprio_list.add(i)
+                else if (Double.compare(prio, sn.classprio.get(0, i)) > 0) hprio_list.add(i) // higher prio (lower value = higher priority)
             }
             val eprio_common: MutableList<Int?> = ArrayList<Int?>(nnzclasses_inner)
             val hprio_common: MutableList<Int?> = ArrayList<Int?>(nnzclasses_inner)
@@ -717,10 +717,10 @@ fun solver_amvald_forward(gamma: MutableList<Matrix>?,
 
         if (ljcdScalingK != null && ljcdCutoffsK != null) {
             // LJCD: per-class scaling - each class has its own table
-            // Clamp to cutoffs
+            // Ceil and clamp to cutoffs (matching MATLAB behavior)
             val nClamped = Matrix(1, K)
             for (r in 0 until K) {
-                nClamped.set(0, r, FastMath.min(nvec.get(r), ljcdCutoffsK.get(r)))
+                nClamped.set(0, r, FastMath.max(0.0, FastMath.min(FastMath.ceil(nvec.get(r)), ljcdCutoffsK.get(r))))
             }
             val idx = ljd_linearize(nClamped, ljcdCutoffsK)
             for (r in 0 until K) {
@@ -734,10 +734,10 @@ fun solver_amvald_forward(gamma: MutableList<Matrix>?,
             val scaling = ljdscaling[station]
             val cutoffs = ljdcutoffs?.get(station)
             if (scaling != null && !scaling.isEmpty && cutoffs != null) {
-                // Clamp to cutoffs
+                // Ceil and clamp to cutoffs (matching MATLAB behavior)
                 val nClamped = Matrix(1, K)
                 for (r in 0 until K) {
-                    nClamped.set(0, r, FastMath.min(nvec.get(r), cutoffs.get(r)))
+                    nClamped.set(0, r, FastMath.max(0.0, FastMath.min(FastMath.ceil(nvec.get(r)), cutoffs.get(r))))
                 }
                 val idx = ljd_linearize(nClamped, cutoffs)
                 if (idx < scaling.length()) {
@@ -796,7 +796,7 @@ fun solver_amvald_forward(gamma: MutableList<Matrix>?,
             msterm.apply(0.0, 1.0, "equal")
         }
 
-        "default" -> {
+        "default", "rolia" -> {
             when (options.method) {
                 "default", "amva_lin", "lin", "amva_qdlin", "qdlin" -> {
                     val g = Matrix(ccl.size, M)
@@ -843,7 +843,7 @@ fun solver_amvald_forward(gamma: MutableList<Matrix>?,
             }
         }
 
-        else -> throw RuntimeException("nrecognize multiserver approximation method")
+        else -> throw RuntimeException("Unrecognized multiserver approximation method")
     }
 
     val Wchain = Matrix(M, K)

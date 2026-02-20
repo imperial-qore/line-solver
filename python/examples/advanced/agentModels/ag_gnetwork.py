@@ -1,12 +1,12 @@
 """
 G-Network (Gelenbe Network) with Negative Customers
 
-This example demonstrates MAM with INAP method on a G-network with negative customers.
+This example demonstrates MAM with RCAT methods on a G-network with negative customers.
 Negative customers (signals) remove jobs from queues when they arrive,
 modeling job cancellations or service interrupts.
 
 Network topology:
-  - Source generates positive customers (Positive) and negative signals (Negative)
+  - Source generates positive customers (Class1) and negative signals (Class2)
   - Positive customers flow: Source -> Queue1 -> Queue2 -> Sink
   - Negative signals target Queue2, removing jobs from it
 
@@ -34,31 +34,33 @@ queue2 = Queue(model, 'Queue2', SchedStrategy.FCFS)
 sink = Sink(model, 'Sink')
 
 # Positive customer class (normal jobs)
-pos_class = OpenClass(model, 'Positive')
-source.setArrival(pos_class, Exp(lambda_pos))
-queue1.setService(pos_class, Exp(mu1))
-queue2.setService(pos_class, Exp(mu2))
+posClass = OpenClass(model, 'Positive')
+source.setArrival(posClass, Exp(lambda_pos))
+queue1.setService(posClass, Exp(mu1))
+queue2.setService(posClass, Exp(mu2))
 
 # Negative signal class (removes jobs from target queue)
-# Using Signal class with SignalType.NEGATIVE for automatic G-network handling
-neg_class = Signal(model, 'Negative', SignalType.NEGATIVE)
-source.setArrival(neg_class, Exp(lambda_neg))
-queue1.setService(neg_class, Exp(mu1))  # Signals also get "served" (trigger)
-queue2.setService(neg_class, Exp(mu2))
+negClass = Signal(model, 'Negative', SignalType.NEGATIVE)
+source.setArrival(negClass, Exp(lambda_neg))
+queue1.setService(negClass, Exp(mu1))  # Signals also get "served" (trigger)
+queue2.setService(negClass, Exp(mu2))
 
-# Set routing using RoutingMatrix
-P = model.init_routing_matrix()
+# Set routing using P.set(class_src, class_dst, node_src, node_dst, prob) API
+P = model.initRoutingMatrix()
 # Positive customers: Source -> Queue1 -> Queue2 -> Sink
-P.set(pos_class, pos_class, source, queue1, 1.0)
-P.set(pos_class, pos_class, queue1, queue2, 1.0)
-P.set(pos_class, pos_class, queue2, sink, 1.0)
-# Negative signals: Source -> Queue1 -> Queue2 (removes job) -> Sink
-P.set(neg_class, neg_class, source, queue1, 1.0)
-P.set(neg_class, neg_class, queue1, queue2, 1.0)
-P.set(neg_class, neg_class, queue2, sink, 1.0)
+P.set(posClass, posClass, source, queue1, 1.0)
+P.set(posClass, posClass, queue1, queue2, 1.0)
+P.set(posClass, posClass, queue2, sink, 1.0)
+# Negative signals: Source -> Queue1 -> Queue2 -> Sink
+P.set(negClass, negClass, source, queue1, 1.0)
+P.set(negClass, negClass, queue1, queue2, 1.0)
+P.set(negClass, negClass, queue2, sink, 1.0)
 model.link(P)
 
 # Solve with MAM using INAP method
+print('=== G-Network with Negative Customers ===\n')
 solver_mam = MAM(model, 'inap')
-avg_table_mam = solver_mam.get_avg_table()
-print(avg_table_mam)
+avg_table = solver_mam.get_avg_table()
+
+print('MAM (method=inap):')
+print(avg_table)

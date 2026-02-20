@@ -8,6 +8,10 @@ if nargin<2
     options = self.getOptions;
 end
 sn = getStruct(self); % this gets modified later on so pass by copy
+
+% Convert non-Markovian distributions to PH
+sn = sn_nonmarkov_toph(sn, options);
+
 orig_method = options.method;
 self.runAnalyzerChecks(options);
 Solver.resetRandomGeneratorSeed(options.seed);
@@ -126,6 +130,7 @@ while s0_id>=0 % for all possible initial states
         end
     end
     sn = self.model.getStruct;
+    sn = sn_nonmarkov_toph(sn, options);  % Re-apply conversion after fresh struct
     if s0prior_val > 0
         %useJLine = false;
         %if useJLine

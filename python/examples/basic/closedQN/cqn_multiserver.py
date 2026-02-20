@@ -20,8 +20,8 @@ if __name__ == "__main__":
     node[0] = Delay(model, 'Delay')
     node[1] = Queue(model, 'Queue1', SchedStrategy.FCFS)
     node[2] = Queue(model, 'Queue2', SchedStrategy.FCFS)
-    node[1].set_num_servers(3)
-    node[2].set_num_servers(3)
+    node[1].set_number_of_servers(3)
+    node[2].set_number_of_servers(3)
 
     jobclass = np.empty(4, dtype=object)
     jobclass[0] = ClosedClass(model, 'Class1', 2, node[0], 0)
@@ -104,3 +104,4 @@ if __name__ == "__main__":
     print('\nSOLVER: MVA')
     solver = SolverMVA(model)
     avg_table = solver.getAvgTable()
+    print(avg_table)

@@ -157,10 +157,11 @@ def pfqn_egflinearizer(
     Delta = [np.zeros((R, R)) for _ in range(M)]
 
     # Initial estimates using balanced system
+    # pfqn_bs returns (XN, QN, UN, RN, it) - QN is at index 1
     for s in range(-1, R):
         N_1 = _oner(N, [s])
         init_result = pfqn_bs(L, N_1, Z)
-        Q_init = init_result[2]  # QN from pfqn_bs
+        Q_init = init_result[1]  # QN from pfqn_bs
         for i in range(M):
             for r in range(R):
                 Q[i][r, 1 + s] = Q_init[i, r]
@@ -325,9 +326,17 @@ def _egflinearizer_forward_mva(
     # Compute residence times
     for i in range(M):
         for r in range(R):
-            sched = sched_type[i].upper() if isinstance(sched_type[i], str) else sched_type[i]
+            # Normalize scheduling type to string for comparison
+            sched_val = sched_type[i]
+            if isinstance(sched_val, str):
+                sched_str = sched_val.upper()
+            elif hasattr(sched_val, 'name'):
+                # Handle enum values (SchedStrategy.FCFS, etc.) - use name for IntEnum
+                sched_str = sched_val.name.upper()
+            else:
+                sched_str = str(sched_val).upper()
 
-            if sched == 'FCFS':
+            if sched_str == 'FCFS':
                 W[i, r] = L[i, r]
                 if L[i, r] != 0:
                     for s in range(R):

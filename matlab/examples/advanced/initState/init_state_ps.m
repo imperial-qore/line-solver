@@ -40,7 +40,7 @@ solver{end+1} = FLD(model,options);
 solver{end+1} = MVA(model,options);
 solver{end+1} = NC(model,options);
 for s=1:length(solver)
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());
+    fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgTable();
     AvgTable{s}
 end

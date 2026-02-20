@@ -1,12 +1,18 @@
 import numpy as np
 from numpy import linalg as la
-from scipy.linalg import expm, expm2
+from scipy.linalg import expm
 import numpy.matlib as ml
 import math
-import butools
-from butools.ph import CheckMERepresentation, CheckPHRepresentation
-from butools.mc import CTMCSolve
-from butools.utils import Diag
+# Use local butools implementations instead of external package
+from .check import CheckMERepresentation, CheckPHRepresentation
+from ..mc.stst import CTMCSolve
+from ..utils.misc import Diag
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 def MomentsFromME (alpha, A, K=0):
     """
@@ -178,7 +184,7 @@ def IntervalPdfFromPH (alpha, A, intBounds):
 
     steps = len(intBounds)
     x = [(intBounds[i+1]+intBounds[i])/2.0 for i in range(steps-1)]
-    y = [(np.sum(alpha*expm2((A*intBounds[i]).A)) - np.sum(alpha*expm2((A*intBounds[i+1]).A)))/(intBounds[i+1]-intBounds[i]) for i in range(steps-1)]
+    y = [(np.sum(alpha*expm((A*intBounds[i]).A)) - np.sum(alpha*expm((A*intBounds[i+1]).A)))/(intBounds[i+1]-intBounds[i]) for i in range(steps-1)]
     return (np.array(x), np.array(y))
 
 def CdfFromME (alpha, A, x):

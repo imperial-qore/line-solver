@@ -3,9 +3,9 @@
 
 from line_solver import *
 
-def gallery_mmapk(map=None, k=2):
+def gallery_mmapk(map=None, k=2, seed=23000):
     if map is None:
-        map = MAP.rand()
+        map = MAP.rand(seed=seed)
 
     model = Network('M/MAP/k')
 

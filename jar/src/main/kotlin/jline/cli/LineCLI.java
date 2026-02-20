@@ -105,10 +105,12 @@ public class LineCLI {
         
         System.out.println("-s, --solver <solver>");
         System.out.println("    Solver algorithm to use. Available solvers:");
+        System.out.println("    • auto   - Automatic solver selection based on input format");
         System.out.println("    • mva    - Mean Value Analysis (default)");
         System.out.println("    • ctmc   - Continuous-Time Markov Chain");
         System.out.println("    • fluid  - Fluid/Mean-Field ODE Solver");
         System.out.println("    • jmt    - Java Modelling Tools simulation");
+        System.out.println("    • mam    - Matrix Analytic Methods");
         System.out.println("    • nc     - Normalizing Constant Analyzer");
         System.out.println("    • ssa    - Stochastic Simulation Algorithm");
         System.out.println("    • ln     - Layered Network solver");
@@ -297,15 +299,28 @@ public class LineCLI {
      * Validates solver parameter.
      */
     private static boolean validateSolver(String solver) {
-        String[] validSolvers = {"ctmc", "fluid", "jmt", "mam", "mva", "nc", "ssa", "ln", "lqns"};
+        String[] validSolvers = {"auto", "ctmc", "fluid", "jmt", "mam", "mva", "nc", "ssa", "ln", "lqns"};
         for (String validSolver : validSolvers) {
             if (validSolver.equals(solver)) {
                 return true;
             }
         }
         System.err.println("Error: Invalid solver '" + solver + "'.");
-        System.err.println("Valid solvers: ctmc, fluid, jmt, mam, mva, nc, ssa, ln, lqns");
+        System.err.println("Valid solvers: auto, ctmc, fluid, jmt, mam, mva, nc, ssa, ln, lqns");
         return false;
+    }
+
+    /**
+     * Selects an appropriate solver based on input format when 'auto' is specified.
+     * @param inputFormat The input file format
+     * @return The selected solver name
+     */
+    private static String autoSelectSolver(String inputFormat) {
+        if (inputFormat.equals("lqnx") || inputFormat.equals("xml")) {
+            return "ln";
+        }
+        // For JMT formats (jsim, jsimg, jsimw), use MVA as the default analytical solver
+        return "mva";
     }
 
     /**
@@ -387,6 +402,20 @@ public class LineCLI {
      * Validates that analysis types are compatible with the chosen solver.
      */
     private static boolean validateAnalysisSolverCompat(String analysis, String solver) {
+        // 'auto' solver will be resolved later - skip strict compatibility check
+        // but warn if using analysis types that require specific solvers
+        if (solver.equals("auto")) {
+            String[] types = analysis.split(",");
+            for (String type : types) {
+                String trimmed = type.trim();
+                Set<String> requiredSolvers = ANALYSIS_SOLVER_COMPAT.get(trimmed);
+                if (requiredSolvers != null) {
+                    System.err.println("Warning: Analysis type '" + trimmed + "' requires solver: " +
+                        String.join(" or ", requiredSolvers) + ". Auto-selection may not choose a compatible solver.");
+                }
+            }
+            return true;
+        }
         String[] types = analysis.split(",");
         for (String type : types) {
             String trimmed = type.trim();
@@ -579,6 +608,10 @@ public class LineCLI {
      * Validates solver compatibility with input format.
      */
     private static boolean validateSolverCompatibility(String inputFormat, String solver) {
+        // 'auto' is always compatible - it will be resolved to an appropriate solver later
+        if (solver.equals("auto")) {
+            return true;
+        }
         if (inputFormat.equals("lqnx") || inputFormat.equals("xml")) {
             String[] validLqnSolvers = {"ln", "lqns", "mva", "nc"};
             for (String validSolver : validLqnSolvers) {
@@ -838,6 +871,11 @@ public class LineCLI {
         SolverOptions solverOptions = new SolverOptions();
         solverOptions.seed(randomSeed);
         solverOptions.verbose(verbosity.equals("normal"));
+
+        // Resolve 'auto' solver based on input format
+        if (solver.equals("auto")) {
+            solver = autoSelectSolver(inputext);
+        }
 
         // choose solver
         Model model = null;

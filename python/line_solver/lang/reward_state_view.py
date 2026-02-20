@@ -15,6 +15,8 @@ Example:
     >>> total = view.total()           # Total class1 jobs in system
 """
 
+__all__ = ['RewardStateView']
+
 
 class RewardStateView:
     """View of reward state subset with aggregation operations."""

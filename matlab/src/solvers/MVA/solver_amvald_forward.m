@@ -163,7 +163,7 @@ for k = 1:M
     elseif hasLjd && ~isempty(ljdscaling{k})
         % LJD: single scaling applied to all classes
         % Lookup: idx = linearize(n1, ..., nK), then table[idx]
-        nClamped = min(nvec, ljdcutoffs(k, :));
+        nClamped = max(0, min(ceil(nvec), ljdcutoffs(k, :)));
         idx = ljd_linearize(nClamped, ljdcutoffs(k, :));
         if idx <= length(ljdscaling{k})
             ljdterm(k, :) = ljdscaling{k}(idx);  % Same value for all classes

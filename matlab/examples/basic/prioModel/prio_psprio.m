@@ -33,7 +33,7 @@ solver{end+1} = SSA(model,'seed',23000,'verbose',true,'samples',5e3);
 % solver{end+1} = MAM(model);
 % solver{end+1} = LINE(model);
 for s=1:length(solver)
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());
+    fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgTable();
     AvgTable{s}
 end

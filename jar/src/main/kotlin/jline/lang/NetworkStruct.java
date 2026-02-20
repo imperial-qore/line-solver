@@ -42,6 +42,7 @@ public class NetworkStruct implements Copyable, Cloneable {
     public Map<StatefulNode, Matrix> state;
     public Map<StatefulNode, Matrix> stateprior;
     public Map<StatefulNode, Matrix> space;
+    public Map<StatefulNode, Map<String, Integer>> spaceHash;
     public Map<Node, Map<JobClass, RoutingStrategy>> routing;
     public Map<Station, Map<JobClass, ProcessType>> procid;
     public Map<Station, Map<JobClass, Matrix>> mu;

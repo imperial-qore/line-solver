@@ -393,13 +393,51 @@ class WorkflowManager:
         return n * self._factorial(n - 1)
 
     def _create_solver(self, solver_name: str):
-        """Create solver based on name."""
+        """
+        Create solver based on name.
+
+        Args:
+            solver_name: Name of solver ('mva', 'ctmc', 'fld', 'ssa', 'jmt', 'nc', 'mam', 'des', 'auto')
+
+        Returns:
+            Solver instance or None if network not set or solver not found
+        """
         if self._network is None:
             return None
 
-        # This would integrate with LINE's solver factory
-        # Placeholder implementation
-        return None
+        # Normalize solver name
+        name = solver_name.lower().strip()
+
+        # Map solver names to classes
+        try:
+            from ...solvers import (
+                SolverMVA, SolverCTMC, SolverFLD, SolverSSA, SolverJMT,
+                SolverNC, SolverMAM, SolverDES, SolverAuto
+            )
+
+            solver_map = {
+                'mva': SolverMVA,
+                'ctmc': SolverCTMC,
+                'fld': SolverFLD,
+                'fluid': SolverFLD,
+                'ssa': SolverSSA,
+                'jmt': SolverJMT,
+                'nc': SolverNC,
+                'mam': SolverMAM,
+                'des': SolverDES,
+                'auto': SolverAuto,
+                'line': SolverAuto,
+            }
+
+            if name in solver_map:
+                return solver_map[name](self._network)
+            else:
+                # Unknown solver name
+                return None
+
+        except ImportError:
+            # Solvers not available
+            return None
 
     def _export_to_json(self, analysis: WorkflowAnalysisResult) -> str:
         """Export analysis to JSON format."""

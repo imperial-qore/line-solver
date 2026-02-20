@@ -44,8 +44,9 @@ model.initDefault;
 disp('Initial state is:')
 [sn.space{1}(1,:),sn.space{2}(1,:)]
 for s=1:length(solver)
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());
+    fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     [QNt,UNt,TNt] = solver{s}.getTranAvg(Qt,Ut,Tt);
+    fprintf('SteadyStateQLen[%s/Prior1]: %.6f\n', strrep(solver{s}.getName(),'Solver',''), QNt{2,1}.metric(end));
     subplot(3,1,1);
     plot(QNt{2,1}.t,QNt{2,1}.metric,dashing{s}); hold on
     solver{s}.reset();
@@ -64,8 +65,9 @@ disp('Initial state is:')
 [sn.space{1}(1,:),sn.space{2}(1,:)]
 for s=1:length(solver)
     solver{s}.reset();
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());
+    fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     [QNt_marg,UNt_marg,TNt_marg] = solver{s}.getTranAvg(Qt,Ut,Tt);
+    fprintf('SteadyStateQLen[%s/Prior2]: %.6f\n', strrep(solver{s}.getName(),'Solver',''), QNt_marg{2,1}.metric(end));
     subplot(3,1,2);
     plot(QNt_marg{2,1}.t,QNt_marg{2,1}.metric,dashing{s}); hold on
     solver{s}.reset();
@@ -87,8 +89,9 @@ prior = 0*prior; prior=ones(size(prior))/length(prior);
 node{2}.setStatePrior(prior);
 for s=1:length(solver)
     solver{s}.reset();
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());
+    %fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     [QNt_unif,UNt_unif,TNt_unif] = solver{s}.getTranAvg(Qt,Ut,Tt);
+    fprintf('SteadyStateQLen[%s/Prior3]: %.6f\n', strrep(solver{s}.getName(),'Solver',''), QNt_unif{2,1}.metric(end));
     subplot(3,1,3);
     plot(QNt_unif{2,1}.t,QNt_unif{2,1}.metric,dashing{s}); hold on
 end

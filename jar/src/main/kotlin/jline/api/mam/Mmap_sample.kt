@@ -48,11 +48,13 @@ fun mmap_sample(MMAP: MatrixCell, n: Long, random: Random = Random()): Ret.mamMM
     }
     val samples = DoubleArray(n.toInt())
     val types = IntArray(n.toInt())
+    val states = IntArray(n.toInt())
     if (D0.numElements == 1) { // exponential distribution
         val lambda = D1.value()
         for (i in 0..<n) {
             samples[i.toInt()] = -ln(random.nextDouble()) / lambda
             types[i.toInt()] = 1
+            states[i.toInt()] = 0 // Single state
         }
     } else {
         val nphases = D0.numCols
@@ -72,6 +74,8 @@ fun mmap_sample(MMAP: MatrixCell, n: Long, random: Random = Random()): Ret.mamMM
         for (i in 0..<n) {
             var continue_sample = true
             samples[i.toInt()] = 0.0
+            // Record state at the time of this event (like MATLAB STS(h) = s)
+            states[i.toInt()] = currentState
             while (continue_sample) {
                 val rate = -D0[currentState, currentState]
                 val time = -ln(random.nextDouble()) / rate
@@ -103,7 +107,7 @@ fun mmap_sample(MMAP: MatrixCell, n: Long, random: Random = Random()): Ret.mamMM
             }
         }
     }
-    return Ret.mamMMAPSample(samples, C, types)
+    return Ret.mamMMAPSample(samples, C, types, states)
 }
 
 
@@ -121,10 +125,7 @@ fun mmap_sample(MMAP: MatrixCell, n: Long, random: Random = Random()): Ret.mamMM
             MMAP.set(1, D1);
             MMAP.set(2, D11);
             MMAP.set(3, D12);
-            System.out.println(map_mean(MAP));
-            System.out.println(mmap_lambda(MMAP).reciprocal());
             mmapSampleReturn samples = mmap_sample(MMAP, 100000);
-            System.out.println(mtrace_mean(samples.samples, samples.ntypes, samples.types));
          */
 /**
  * MMAP sample algorithms

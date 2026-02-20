@@ -20,6 +20,7 @@ import kotlin.math.ln
  * @param random Random number generator (optional)
  * @return The vector of random samples (inter-arrival times)
  */
+@JvmOverloads
 fun samplesFromMAP(
     D0: Matrix,
     D1: Matrix,

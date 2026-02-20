@@ -73,7 +73,13 @@ public class Task extends LayeredNetworkElement {
         this.parent = null;
         this.setReplication(1);
         this.model = model;
-        this.multiplicity = multiplicity;
+        // MATLAB sets multiplicity to Inf when scheduling is INF with finite multiplicity
+        // This is necessary for correct njobs computation in SolverLN
+        if (scheduling == SchedStrategy.INF && multiplicity != Integer.MAX_VALUE) {
+            this.multiplicity = Integer.MAX_VALUE;
+        } else {
+            this.multiplicity = multiplicity;
+        }
         this.scheduling = scheduling;
         this.setThinkTime(thinkTime);
         this.setSetupTime(Immediate.getInstance());

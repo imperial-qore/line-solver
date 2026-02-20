@@ -70,10 +70,6 @@ if nargout>5
 end
 %%warning off;
 
-pi0exact=dtmc_solve(A0bar+R*A_1)
-pi0approx=dtmc_solve(G)
-pause
-
 pqueue = QBD_pi(A_1,A0bar,R,'MaxNumComp',1e2);
 pqueue = reshape(pqueue',length(R),length(pqueue)/length(R))';
 if sum(sum(pqueue(2:end,:)))<util*0.99

@@ -72,6 +72,7 @@ for r=1:size(P,1)
 end
 nonfjmodel.connections = zeros(length(nonfjmodel.nodes));
 oclass = {};
+all_aux_class_indices = []; % aux class indices for post-relink routing fix
 for f=forkIndexes
     % find join associated to fork f
     joinIdx = find(sn.fj(f,:));
@@ -93,7 +94,8 @@ for f=forkIndexes
                 line_warning(mfilename, 'There are no synchronisation delays implemented in MMT for multiple tasks per link. Results may be inaccurate.');
             end
             fanout(oclass{end}.index) = origfanout(f,r)*model.nodes{f}.output.tasksPerLink;
-            if sn.nodevisits{fc}(f,r) == 0
+            all_aux_class_indices(end+1) = oclass{end}.index; %#ok<AGROW>
+            if origfanout(f,r) == 0 || sn.nodevisits{fc}(f,r) == 0
                 source.setArrival(oclass{end},Disabled.getInstance);
             else
                 source.setArrival(oclass{end},Exp(forkLambda(r)));
@@ -122,14 +124,109 @@ for f=forkIndexes
         for r=inchain
             for s=inchain
                 P{oclass{find(r==inchain,1)},oclass{find(s==inchain,1)}}(source,:) = 0.0;
-                P{oclass{find(r==inchain,1)},oclass{find(s==inchain,1)}}(nonfjmodel.nodes{joinIdx},:) = 0.0;
+                if ~isempty(joinIdx)
+                    P{oclass{find(r==inchain,1)},oclass{find(s==inchain,1)}}(nonfjmodel.nodes{joinIdx},:) = 0.0;
+                end
             end
-            P{oclass{find(r==inchain,1)},oclass{find(r==inchain,1)}}(source, nonfjmodel.nodes{f}) = 1.0;
-            P{oclass{find(r==inchain,1)},oclass{find(r==inchain,1)}}(nonfjmodel.nodes{joinIdx},sink) = 1.0;
+            if origfanout(f,r) > 0
+                P{oclass{find(r==inchain,1)},oclass{find(r==inchain,1)}}(source, nonfjmodel.nodes{f}) = 1.0;
+                if ~isempty(joinIdx)
+                    P{oclass{find(r==inchain,1)},oclass{find(r==inchain,1)}}(nonfjmodel.nodes{joinIdx},sink) = 1.0;
+                end
+            end
+        end
+        % Check if all classes in this chain have non-zero fanout at this fork.
+        % BFS scope clearing only applies when all classes are actually forked;
+        % when some classes pass through the fork via class-switching (origfanout=0),
+        % clearing would disconnect their aux chain and break MVA convergence.
+        all_forked = true;
+        for ri = 1:length(inchain)
+            if origfanout(f, inchain(ri)) == 0
+                all_forked = false;
+                break;
+            end
+        end
+        if all_forked
+            % Determine fork-join scope via class-aware BFS from Fork, stopping
+            % at Join. Tracks (node, class) pairs so that shared stations (e.g.
+            % processors serving both fork-branch and return-path classes) are
+            % correctly handled: only fork-branch class routing is followed.
+            pnnodes = size(P{inchain(1),inchain(1)}, 1);
+            maxclass = max(inchain);
+            fj_node_mask = false(1, pnnodes);
+            fj_node_mask(f) = true;
+            if ~isempty(joinIdx), fj_node_mask(joinIdx) = true; end
+            % Source and Sink are mmt infrastructure, always in scope
+            for nd = 1:pnnodes
+                if isa(nonfjmodel.nodes{nd}, 'Source') || isa(nonfjmodel.nodes{nd}, 'Sink')
+                    fj_node_mask(nd) = true;
+                end
+            end
+            % Class-aware BFS: find all (node, class) pairs reachable from Fork
+            visited = false(pnnodes, maxclass);
+            bfs_q = zeros(0, 2); % [node, class] pairs
+            % Seed: classes entering the fork
+            for ri = 1:length(inchain)
+                r = inchain(ri);
+                for si = 1:length(inchain)
+                    s = inchain(si);
+                    if any(P{r,s}(f,:) > 0) && ~visited(f, r)
+                        visited(f, r) = true;
+                        bfs_q(end+1,:) = [f, r]; %#ok<AGROW>
+                    end
+                end
+            end
+            while ~isempty(bfs_q)
+                cn = bfs_q(1,1); cc = bfs_q(1,2);
+                bfs_q(1,:) = [];
+                for si = 1:length(inchain)
+                    s = inchain(si);
+                    for nd = 1:pnnodes
+                        if P{cc,s}(cn, nd) > 0 && ~visited(nd, s)
+                            visited(nd, s) = true;
+                            fj_node_mask(nd) = true;
+                            % Continue BFS unless this is Join
+                            if isempty(joinIdx) || nd ~= joinIdx
+                                bfs_q(end+1,:) = [nd, s]; %#ok<AGROW>
+                            end
+                        end
+                    end
+                end
+            end
+            % Clear outgoing aux routing at nodes not in fork-join scope.
+            % Only clear rows (outgoing routes), not columns (incoming),
+            % because dead incoming routes are harmless and clearing columns
+            % can break the routing matrix structure for class-switching models.
+            for nd = 1:pnnodes
+                if ~fj_node_mask(nd)
+                    for ri = 1:length(inchain)
+                        for si = 1:length(inchain)
+                            P{oclass{ri}, oclass{si}}(nd, :) = 0.0;
+                        end
+                    end
+                end
+            end
         end
     end
 end
 nonfjmodel.relink(P);
+% Fix spurious routing for aux classes at non-scope nodes and CS nodes.
+% relink() only calls setProbRouting for non-zero P entries, so nodes
+% where P was zeroed retain default RAND routing that inherits physical
+% connections from original classes. CS nodes created by link() for
+% cross-class routing also get default RAND for aux classes. Override
+% all non-PROB routing for aux classes to PROB with empty destinations.
+for nd = 1:length(nonfjmodel.nodes)
+    os = nonfjmodel.nodes{nd}.output.outputStrategy;
+    for ci = all_aux_class_indices
+        if ci <= length(os)
+            if isempty(os{ci}) || ~strcmp(os{ci}{2}, 'Probabilities')
+                os{ci} = {nonfjmodel.classes{ci}.name, 'Probabilities', {}};
+            end
+        end
+    end
+    nonfjmodel.nodes{nd}.output.outputStrategy = os;
+end
 for f=forkIndexes
     for r=1:length(nonfjmodel.nodes{f}.output.outputStrategy)
         if strcmp(nonfjmodel.nodes{f}.output.outputStrategy{r}{2},RoutingStrategy.RAND)

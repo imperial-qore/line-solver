@@ -8,11 +8,15 @@ Created on Sun Aug 24 15:47:28 2014
 import subprocess
 import os
 import os.path
-import butools
-from butools.ph import CheckPHRepresentation
 import numpy as np
 import numpy.matlib as ml
 from numpy.random import rand
+
+from .check import CheckPHRepresentation
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
 
 def SamplesFromPH (a,A,k):
     """
@@ -143,6 +147,8 @@ def ImageFromPH(alpha,A,outFileName=None,prec=1e-13):
    
     if displ:
         from IPython.display import Image
+
+
         i = Image(filename=outputFile)
         os.remove(outputFile)        
         return i

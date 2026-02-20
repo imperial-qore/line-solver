@@ -17,7 +17,7 @@ Solver = _solvers_base.Solver
 SolverOptions = _solvers_base.SolverOptions
 
 from .solver_mva import SolverMVA
-from .solver_ln import SolverLN
+from .solver_ln import SolverLN, SolverLNOptions
 from .solver_auto import SolverAuto, SolverAutoOptions, ModelAnalyzer
 from .solver_qns import SolverQNS, QNSOptions, QNSResult
 from .solver_lqns import SolverLQNS, LQNSOptions, LQNSResult
@@ -30,7 +30,7 @@ from .solver_ctmc import SolverCTMC, SolverCTMCOptions
 from .solver_ssa import SolverSSA, SolverSSAOptions
 from .solver_nc import SolverNC, SolverNCOptions
 from .solver_jmt import SolverJMT, SolverJMTOptions
-from .solver_posterior import SolverPosterior, PosteriorOptions, PosteriorResult
+from .solver_posterior import SolverPosterior, PosteriorOptions, PosteriorResult, EmpiricalCDF
 from .convert import wrapper_sn_to_native, native_model_to_struct, get_native_sched_strategy
 
 # Short aliases for solver classes (MATLAB-style)
@@ -47,12 +47,14 @@ LINE = SolverAuto
 LN = SolverLN
 QNS = SolverQNS
 LQNS = SolverLQNS
+Posterior = SolverPosterior
 
 __all__ = [
     'Solver',
     'SolverOptions',
     'SolverMVA',
     'SolverLN',
+    'SolverLNOptions',
     'SolverAuto',
     'SolverAutoOptions',
     'ModelAnalyzer',
@@ -81,6 +83,7 @@ __all__ = [
     'SolverPosterior',
     'PosteriorOptions',
     'PosteriorResult',
+    'EmpiricalCDF',
     'wrapper_sn_to_native',
     'native_model_to_struct',
     'get_native_sched_strategy',
@@ -98,4 +101,5 @@ __all__ = [
     'LN',
     'QNS',
     'LQNS',
+    'Posterior',
 ]

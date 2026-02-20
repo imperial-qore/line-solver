@@ -382,7 +382,7 @@ public class M2M {
                                             break;
                                         case "Server":
                                             queue = new Queue(model, node_name.get(i), strategy.get(i));
-                                            // Read JMT buffer size (queue buffer only)
+                                            // Read JMT size (total system capacity K)
                                             xcapacity =
                                                     Integer.parseInt(
                                                             ((Element) xsection_par.get(i).get(0).get(0))
@@ -395,13 +395,8 @@ public class M2M {
                                                                     .getElementsByTagName("value")
                                                                     .item(0)
                                                                     .getTextContent());
-                                            // Convert JMT buffer size to LINE capacity (Kendall K = buffer + servers)
-                                            // JMT size = buffer only, LINE cap = total system capacity
-                                            if (xcapacity >= 0 && xcapacity != Integer.MAX_VALUE) {
-                                                queue.setCapacity(xcapacity + xnumservers);
-                                            } else {
-                                                queue.setCapacity(xcapacity);
-                                            }
+                                            // JMT size = total system capacity K (same as LINE cap)
+                                            queue.setCapacity(xcapacity);
                                             queue.setNumberOfServers(xnumservers);
                                             node.add(queue);
                                             if (strategy.get(i) == SchedStrategy.SEPT) {
@@ -429,7 +424,7 @@ public class M2M {
                                                     break;
                                             }
                                             queue = new Queue(model, node_name.get(i), strategy.get(i));
-                                            // Read JMT buffer size (queue buffer only)
+                                            // JMT size = total system capacity K (same as LINE cap)
                                             xcapacity =
                                                     Integer.parseInt(
                                                             ((Element) xsection_par.get(i).get(0).get(0))
@@ -442,13 +437,7 @@ public class M2M {
                                                                     .getElementsByTagName("value")
                                                                     .item(0)
                                                                     .getTextContent());
-                                            // Convert JMT buffer size to LINE capacity (Kendall K = buffer + servers)
-                                            // JMT size = buffer only, LINE cap = total system capacity
-                                            if (xcapacity >= 0 && xcapacity != Integer.MAX_VALUE) {
-                                                queue.setCapacity(xcapacity + xnumservers);
-                                            } else {
-                                                queue.setCapacity(xcapacity);
-                                            }
+                                            queue.setCapacity(xcapacity);
                                             queue.setNumberOfServers(xnumservers);
                                             node.add(queue);
                                             break;
@@ -1601,8 +1590,18 @@ public class M2M {
                         case "Join the Shortest Queue (JSQ)":
                             node.get(from).setRouting(jobclass.get(r), RoutingStrategy.JSQ);
                             break;
+                        case "Shortest Response Time":
+                        case "Fastest Service":
+                            // State-dependent strategies not natively supported in LINE;
+                            // map to RAND to match MATLAB JSIM2LINE behavior
+                            node.get(from).setRouting(jobclass.get(r), RoutingStrategy.RAND);
+                            break;
                         case "Disabled":
                             node.get(from).setRouting(jobclass.get(r), RoutingStrategy.DISABLED);
+                            break;
+                        default:
+                            // Unrecognized routing strategy; fall back to RAND
+                            node.get(from).setRouting(jobclass.get(r), RoutingStrategy.RAND);
                             break;
                     }
                 }

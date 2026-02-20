@@ -138,6 +138,15 @@ public class Activity extends LayeredNetworkElement {
     }
 
     public Activity boundTo(Entry entry) {
+        if (this.parent == null) {
+            line_error(mfilename(new Object() {
+            }), "Activity must have a parent task before binding to an entry. Use activity.on(task) first.");
+        }
+        if (entry.getParent() != null && entry.getParent() != this.parent) {
+            line_error(mfilename(new Object() {
+            }), "Activity and entry must belong to the same task. Activity parent: " +
+                this.parent.getName() + ", Entry parent: " + entry.getParent().getName());
+        }
         this.boundToEntry = entry.getName();
         // Find this activity's index in the model
         Integer activityIndex = findActivityIndex();

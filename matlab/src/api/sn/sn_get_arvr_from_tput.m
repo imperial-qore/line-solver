@@ -89,6 +89,23 @@ if ~isempty(TH) && ~isempty(TN)
         end
     end
 
+    % Propagate throughputs to non-station, non-Cache stateful nodes
+    % (e.g., Router) using already-known station throughputs and the rt matrix
+    for sf = 1:nStateful
+        ind = statefulNodes(sf);
+        ist = sn.nodeToStation(ind);
+        if ~(ist > 0) && sn.nodetype(ind) ~= NodeType.Cache
+            % Compute throughput from upstream stateful nodes
+            for sf_src = 1:nStateful
+                for k = 1:R
+                    for r = 1:R
+                        TN_stateful(sf, k) = TN_stateful(sf, k) + TN_stateful(sf_src, r) * sn.rt((sf_src-1)*R+r, (sf-1)*R+k);
+                    end
+                end
+            end
+        end
+    end
+
     % Compute arrival rates using stateful node throughputs and rt matrix
     for ist=1:M
         ind_ist = sn.stationToNode(ist);

@@ -31,15 +31,15 @@ print('=== CDF Response Time - Closed Network ===\n')
 
 # Solve with JMT simulation
 print('Computing CDF with JMT simulation...')
-solver_jmt = JMT(model, seed=23000)
+solver_jmt = JMT(model, seed=23000, samples=10000)
 rd_sim = solver_jmt.get_cdf_resp_t()
 
 # Compute statistics from CDF (simulation)
-avg_resp_t_from_cdf_sim = []
+avg_respt_from_cdf_sim = []
 sq_coeff_of_variation_resp_t_from_cdf_sim = []
 
 for i in range(model.getNumberOfStations()):
-    avg_resp_t_from_cdf_sim.append([])
+    avg_respt_from_cdf_sim.append([])
     sq_coeff_of_variation_resp_t_from_cdf_sim.append([])
     for c in range(model.getNumberOfClasses()):
         cdf_data = rd_sim[i][c]
@@ -47,7 +47,7 @@ for i in range(model.getNumberOfStations()):
             # Compute mean from CDF
             mean_val = sum((cdf_data[j+1][0] - cdf_data[j][0]) * cdf_data[j+1][1]
                           for j in range(len(cdf_data)-1))
-            avg_resp_t_from_cdf_sim[i].append(mean_val)
+            avg_respt_from_cdf_sim[i].append(mean_val)
 
             # Compute second moment
             power_moment_2 = sum((cdf_data[j+1][0] - cdf_data[j][0]) * (cdf_data[j+1][1] ** 2)
@@ -56,7 +56,7 @@ for i in range(model.getNumberOfStations()):
             scv = variance / (mean_val ** 2) if mean_val > 0 else 0
             sq_coeff_of_variation_resp_t_from_cdf_sim[i].append(scv)
         else:
-            avg_resp_t_from_cdf_sim[i].append(0)
+            avg_respt_from_cdf_sim[i].append(0)
             sq_coeff_of_variation_resp_t_from_cdf_sim[i].append(0)
 
 # Solve with Fluid solver
@@ -65,11 +65,11 @@ solver_fluid = FLD(model)
 rd_fluid = solver_fluid.get_cdf_resp_t()
 
 # Compute statistics from CDF (fluid)
-avg_resp_t_from_cdf_fluid = []
+avg_respt_from_cdf_fluid = []
 sq_coeff_of_variation_resp_t_from_cdf_fluid = []
 
 for i in range(model.getNumberOfStations()):
-    avg_resp_t_from_cdf_fluid.append([])
+    avg_respt_from_cdf_fluid.append([])
     sq_coeff_of_variation_resp_t_from_cdf_fluid.append([])
     for c in range(model.getNumberOfClasses()):
         cdf_data = rd_fluid[i][c]
@@ -77,7 +77,7 @@ for i in range(model.getNumberOfStations()):
             # Compute mean from CDF
             mean_val = sum((cdf_data[j+1][0] - cdf_data[j][0]) * cdf_data[j+1][1]
                           for j in range(len(cdf_data)-1))
-            avg_resp_t_from_cdf_fluid[i].append(mean_val)
+            avg_respt_from_cdf_fluid[i].append(mean_val)
 
             # Compute second moment
             power_moment_2 = sum((cdf_data[j+1][0] - cdf_data[j][0]) * (cdf_data[j+1][1] ** 2)
@@ -86,22 +86,22 @@ for i in range(model.getNumberOfStations()):
             scv = variance / (mean_val ** 2) if mean_val > 0 else 0
             sq_coeff_of_variation_resp_t_from_cdf_fluid[i].append(scv)
         else:
-            avg_resp_t_from_cdf_fluid[i].append(0)
+            avg_respt_from_cdf_fluid[i].append(0)
             sq_coeff_of_variation_resp_t_from_cdf_fluid[i].append(0)
 
 print('\nSince there is a single job, mean and squared coefficient of variation')
 print('of response times are close, up to fluid approximation precision, to those')
 print('of the service time distribution.\n')
 
-avg_resp_t_from_theory = [serv_proc1.getMean(), serv_proc2.getMean()]
+avg_respt_from_theory = [serv_proc1.getMean(), serv_proc2.getMean()]
 sq_coeff_of_variation_resp_t_from_theory = [serv_proc1.getSCV(), serv_proc2.getSCV()]
 
 print('Average Response Time from Theory:')
-print(avg_resp_t_from_theory)
+print(avg_respt_from_theory)
 print('\nAverage Response Time from CDF (Simulation):')
-print(avg_resp_t_from_cdf_sim)
+print(avg_respt_from_cdf_sim)
 print('\nAverage Response Time from CDF (Fluid):')
-print(avg_resp_t_from_cdf_fluid)
+print(avg_respt_from_cdf_fluid)
 print('\nSquared Coefficient of Variation from Theory:')
 print(sq_coeff_of_variation_resp_t_from_theory)
 print('\nSquared Coefficient of Variation from CDF (Simulation):')

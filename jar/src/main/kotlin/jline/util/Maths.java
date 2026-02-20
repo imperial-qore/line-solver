@@ -867,22 +867,74 @@ public class Maths {
     }
 
     public static ComplexMatrix num_hess_h_complex(Matrix x0, double h, SerializableFunction<Matrix, ComplexMatrix> hfun) {
-        ComplexMatrix H = new ComplexMatrix(0, x0.getNumElements());
+        int d = x0.getNumElements();
+        ComplexMatrix H = new ComplexMatrix(d, d);
         H.zero();
-        for (int i = 0; i < x0.getNumElements(); i++) {
-            Matrix x1 = x0.copy();
-            x1.set(i, x1.get(i) - h);
-            ComplexMatrix df1 = num_grad_h_complex(x1, h, hfun);
 
-            Matrix x2 = x0.copy();
-            x2.set(i, x2.get(i) + h);
-            ComplexMatrix df2 = num_grad_h_complex(x2, h, hfun);
-            ComplexMatrix d2f = new ComplexMatrix(1, x0.getNumElements());
-            for (int j = 0; j < d2f.getNumElements(); j++) {
-                d2f.set(j, df2.get(j).subtract(df1.get(j)).divide(2 * h));
+        // Function to compute log(real(h(x))) - take real part before log to match MATLAB
+        java.util.function.Function<Matrix, Complex> logH = (Matrix x) -> {
+            Complex hval = hfun.apply(x).get(0);
+            // Take real part like MATLAB's y(i) = real(h(x(i,:)))
+            return new Complex(FastMath.log(hval.getReal()), 0.0);
+        };
+
+        // Evaluate at center point
+        Complex f0 = logH.apply(x0);
+
+        for (int i = 0; i < d; i++) {
+            for (int j = 0; j < d; j++) {
+                if (i == j) {
+                    // Diagonal: use direct second-order central difference
+                    // H[i,i] = (f(x+h*e_i) - 2*f(x) + f(x-h*e_i)) / h^2
+                    Matrix xPlus = x0.copy();
+                    Matrix xMinus = x0.copy();
+                    xPlus.set(i, x0.get(i) + h);
+                    xMinus.set(i, x0.get(i) - h);
+
+                    Complex fPlus = logH.apply(xPlus);
+                    Complex fMinus = logH.apply(xMinus);
+
+                    // H[i,i] = (fPlus - 2*f0 + fMinus) / h^2
+                    Complex hii = fPlus.subtract(f0.multiply(2)).add(fMinus).divide(h * h);
+                    H.set(i, i, hii);
+                } else {
+                    // Off-diagonal: use four-point stencil for mixed partials
+                    // H[i,j] = (f(x+h*e_i+h*e_j) - f(x+h*e_i-h*e_j) - f(x-h*e_i+h*e_j) + f(x-h*e_i-h*e_j)) / (4*h^2)
+                    Matrix xpp = x0.copy();
+                    Matrix xpm = x0.copy();
+                    Matrix xmp = x0.copy();
+                    Matrix xmm = x0.copy();
+
+                    xpp.set(i, x0.get(i) + h);
+                    xpp.set(j, x0.get(j) + h);
+                    xpm.set(i, x0.get(i) + h);
+                    xpm.set(j, x0.get(j) - h);
+                    xmp.set(i, x0.get(i) - h);
+                    xmp.set(j, x0.get(j) + h);
+                    xmm.set(i, x0.get(i) - h);
+                    xmm.set(j, x0.get(j) - h);
+
+                    Complex fpp = logH.apply(xpp);
+                    Complex fpm = logH.apply(xpm);
+                    Complex fmp = logH.apply(xmp);
+                    Complex fmm = logH.apply(xmm);
+
+                    // H[i,j] = (fpp - fpm - fmp + fmm) / (4*h^2)
+                    Complex hij = fpp.subtract(fpm).subtract(fmp).add(fmm).divide(4 * h * h);
+                    H.set(i, j, hij);
+                }
             }
-            H = ComplexMatrix.concatRows(H, d2f, null);
         }
+
+        // Ensure symmetry
+        for (int i = 0; i < d; i++) {
+            for (int j = i + 1; j < d; j++) {
+                Complex avg = H.get(i, j).add(H.get(j, i)).divide(2);
+                H.set(i, j, avg);
+                H.set(j, i, avg);
+            }
+        }
+
         return H;
     }
 

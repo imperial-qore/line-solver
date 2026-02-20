@@ -8,6 +8,7 @@ import jline.io.InputOutputKt;
 import jline.lang.Network;
 import jline.lang.NetworkStruct;
 import jline.lang.constant.*;
+import jline.lang.NodeParam;
 import jline.lang.nodeparam.TransitionNodeParam;
 import jline.lang.nodes.Station;
 import jline.lang.nodes.Transition;
@@ -235,8 +236,9 @@ public class FromMarginal implements Serializable {
                             mi = new Matrix(mi.getNumRows(), numCols);
 
                             for (int row = 0; row < miClone.getNumRows(); row++) {
-                                for (int col = miClone.getNumCols() - numCols; col < miClone.getNumCols(); col++) {
-                                    mi.set(row, col, miClone.get(row, col));
+                                int startCol = miClone.getNumCols() - numCols;
+                                for (int col = startCol; col < miClone.getNumCols(); col++) {
+                                    mi.set(row, col - startCol, miClone.get(row, col));
                                 }
                             }
                             mi = Maths.uniqueAndSort(mi);
@@ -414,8 +416,9 @@ public class FromMarginal implements Serializable {
                             mi_lpr = new Matrix(mi_lpr.getNumRows(), numCols);
 
                             for (int row = 0; row < miClone.getNumRows(); row++) {
-                                for (int col = miClone.getNumCols() - numCols; col < miClone.getNumCols(); col++) {
-                                    mi_lpr.set(row, col, miClone.get(row, col));
+                                int startCol = miClone.getNumCols() - numCols;
+                                for (int col = startCol; col < miClone.getNumCols(); col++) {
+                                    mi_lpr.set(row, col - startCol, miClone.get(row, col));
                                 }
                             }
                             // mi_buf: class of job in buffer position i (0 = empty)

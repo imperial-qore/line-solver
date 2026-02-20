@@ -206,18 +206,14 @@ public class EnvBreakdownExample {
         options.timespan[1] = Double.POSITIVE_INFINITY;
         options.verbose = VerboseLevel.STD;
 
-        // Create fluid solver options for each stage
-        SolverOptions fluidOptions = new SolverOptions(SolverType.FLUID);
-        fluidOptions.timespan[1] = 1000;
-        fluidOptions.stiff = false;
-        fluidOptions.setODEMaxStep(0.25);
-
         // Create solvers for each stage
+        // Note: SolverENV.init() automatically sets a reasonable ODEMaxStep for
+        // sub-solvers if the user hasn't explicitly configured it.
         int numStages = env.getEnsemble().size();
         NetworkSolver[] solvers = new NetworkSolver[numStages];
         for (int e = 0; e < numStages; e++) {
             solvers[e] = new FLD(env.getModel(e));
-            solvers[e].options = fluidOptions;
+            solvers[e].options.timespan[1] = 1000;
         }
 
         // Create and run ENV solver

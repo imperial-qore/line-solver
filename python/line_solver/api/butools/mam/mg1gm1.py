@@ -9,9 +9,15 @@ import numpy as np
 import numpy.matlib as ml
 import numpy.linalg as la
 from scipy.fftpack import fft, ifft
-import butools
-from butools.mc import DTMCSolve, DRPSolve
-from butools.utils import Diag
+# Use local butools settings instead of external package
+from .. import verbose, checkInput
+from ..mc.stst import DTMCSolve, DRPSolve
+from ..utils.misc import Diag
+# Create butools-like namespace for backward compatibility
+class _butools_settings:
+    verbose = verbose
+    checkInput = checkInput
+butools = _butools_settings()
 import math
 import cmath
 

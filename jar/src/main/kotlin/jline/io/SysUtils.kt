@@ -193,8 +193,17 @@ fun jmtGetPath(jmtPath: String): String {
 
 /**
  * Executes a system command and returns the output or error.
+ *
+ * This function reads stdout and stderr concurrently to avoid deadlock.
+ * If both streams are read sequentially, the process can block when its
+ * stderr buffer fills up while we're still reading stdout, causing a hang.
+ *
+ * @param cmd The command to execute
+ * @param timeoutSeconds Maximum time to wait for the command to complete (0 = no timeout)
+ * @return The output of the command, or an error message if the command failed or timed out
  */
-fun system(cmd: String): String {
+@JvmOverloads
+fun system(cmd: String, timeoutSeconds: Long = 0): String {
     val output = StringBuilder()
     val errorOutput = StringBuilder()
     val process = try {
@@ -204,14 +213,60 @@ fun system(cmd: String): String {
         return e.message ?: "Failed to execute command"
     }
 
-    BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
-        reader.forEachLine { output.appendLine(it) }
+    // Read stdout and stderr concurrently to avoid deadlock
+    val stdoutThread = Thread {
+        try {
+            BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
+                reader.forEachLine { output.appendLine(it) }
+            }
+        } catch (e: Exception) {
+            // Ignore - process was killed or stream closed
+        }
     }
-    BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
-        reader.forEachLine { errorOutput.appendLine(it) }
+    val stderrThread = Thread {
+        try {
+            BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
+                reader.forEachLine { errorOutput.appendLine(it) }
+            }
+        } catch (e: Exception) {
+            // Ignore - process was killed or stream closed
+        }
     }
 
-    val exitCode = process.waitFor()
+    stdoutThread.start()
+    stderrThread.start()
+
+    // Wait for process with optional timeout
+    val completed = if (timeoutSeconds > 0) {
+        process.waitFor(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS)
+    } else {
+        process.waitFor()
+        true
+    }
+
+    if (!completed) {
+        // Process timed out - kill it forcibly
+        process.destroyForcibly()
+
+        // Close the streams to unblock the reader threads
+        try { process.inputStream.close() } catch (e: Exception) { }
+        try { process.errorStream.close() } catch (e: Exception) { }
+
+        // Wait for the process to terminate after destroy
+        try { process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) } catch (e: Exception) { }
+
+        // Wait for reader threads with a short timeout
+        try { stdoutThread.join(1000) } catch (e: Exception) { }
+        try { stderrThread.join(1000) } catch (e: Exception) { }
+
+        return "TIMEOUT: Command exceeded ${timeoutSeconds}s limit"
+    }
+
+    // Wait for both readers to complete
+    stdoutThread.join()
+    stderrThread.join()
+
+    val exitCode = process.exitValue()
     return if (exitCode == 0) output.toString() else errorOutput.toString()
 }
 

@@ -8,6 +8,13 @@ This example demonstrates:
 - Uniform access pattern
 """
 
+# Ensure native line_solver is used (not python-wrapper)
+import sys
+import os
+_native_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+if _native_path not in sys.path:
+    sys.path.insert(0, _native_path)
+
 from line_solver import *
 
 if __name__ == "__main__":
@@ -54,3 +61,7 @@ if __name__ == "__main__":
     for s in range(len(solver)):
         print(f'\nSOLVER: {solver[s].get_name()}')
         avg_node_table[s] = solver[s].avg_node_table()
+        print(avg_node_table[s])
+
+    print(f'\nHit Ratio: {cache_node.get_hit_ratio()}')
+    print(f'Miss Ratio: {cache_node.get_miss_ratio()}')

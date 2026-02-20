@@ -22,8 +22,8 @@ def gallery_mm1_prio():
 
     # Block 3: topology
     P = model.init_routing_matrix()
-    P[1] = Network.serial_routing([source, queue, sink])
-    P[2] = Network.serial_routing([source, queue, sink])
+    P[oclass1] = Network.serial_routing([source, queue, sink])
+    P[oclass2] = Network.serial_routing([source, queue, sink])
     model.link(P)
 
     return model

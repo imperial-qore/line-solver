@@ -44,7 +44,7 @@ fun snGetDemandsChain(sn_in: NetworkStruct): Ret.snGetDemands {
                 //alpha(i,k) = alpha(i,k) + sn.visits{c}(i,k) / sum(sn.visits{c}(i,inchain));
                 for (col in 0..<inchain.numCols) {
                     val k = inchain[0, col].toInt()
-                    alpha[i, k] = alpha[i, k] + visits[i, k] / res
+                    alpha[i, k] = alpha[i, k] + visits[iIdx, k] / res
                 }
             }
         } else {

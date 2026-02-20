@@ -1,6 +1,6 @@
 /**
  * Stochastic Network Visit Ratio Calculator
- * 
+ *
  * Computes visit ratios for each node and station in a queueing network by solving
  * the traffic equations using DTMC steady-state analysis. Visit ratios are fundamental
  * to queueing network analysis, determining relative utilization and throughput.
@@ -78,9 +78,12 @@ fun snRefreshVisits(sn: NetworkStruct, chains: Matrix?, rt: Matrix, rtnodes: Mat
         // Normalize routing matrix for Fork-containing models
         // Fork nodes have row sums > 1 (sending to all branches with prob 1 each)
         // which causes dtmc_solve to fail. Normalize to make stochastic.
+        // Record original row sums to correct visit ratios after DTMC solve.
+        val rowSums = DoubleArray(Pchain.numRows) { 1.0 }
         if (hasFork) {
             for (row in 0..<Pchain.numRows) {
                 val rs = Pchain.sumRows(row)
+                rowSums[row] = rs
                 if (rs > 1e-8) {
                     for (col in 0..<Pchain.numCols) {
                         Pchain[row, col] = Pchain[row, col] / rs
@@ -134,10 +137,52 @@ fun snRefreshVisits(sn: NetworkStruct, chains: Matrix?, rt: Matrix, rtnodes: Mat
         for (row in 0..<visited.numRows) {
             if (visited[row, 0] > 0) alpha[0, row] = alpha_visited[0, idx++]
         }
-        
+
         if (alpha.elementMax() >= 1.0 - 1e-12) {
             // Disabled because a self-looping customer is an absorbing chain
             // throw RuntimeException("One chain has an absorbing state.")
+        }
+
+        // Apply Fork fanout correction: multiply fork-scope station visits by fanout
+        // Block propagation through Join nodes to prevent the correction from
+        // leaking back through cycles (which would cancel out during normalization).
+        if (hasFork) {
+            val n = Pchain.numRows
+            val nIC = inchain_c.size
+            // Build adjacency but block outgoing edges from Join nodes
+            val reachable = Array(n) { row -> BooleanArray(n) { col -> Pchain[row, col] > 1e-8 } }
+            for (isf in 0..<M) {
+                val nd = sn.statefulToNode[isf].toInt()
+                if (sn.nodetype[nd] == NodeType.Join) {
+                    for (k in 0..<nIC) {
+                        val joinRow = isf * nIC + k
+                        for (col in 0..<n) {
+                            reachable[joinRow][col] = false
+                        }
+                    }
+                }
+            }
+            // Compute transitive closure with join-blocked adjacency (Floyd-Warshall)
+            for (k in 0..<n) {
+                for (i in 0..<n) {
+                    for (j in 0..<n) {
+                        if (reachable[i][k] && reachable[k][j]) {
+                            reachable[i][j] = true
+                        }
+                    }
+                }
+            }
+            // For each fork row, multiply only fork-scope reachable states by fanout
+            for (row in 0..<n) {
+                val fanout = rowSums[row]
+                if (fanout > 1.0 + 1e-8) {
+                    for (col in 0..<n) {
+                        if (reachable[row][col]) {
+                            alpha[0, col] = alpha[0, col] * fanout
+                        }
+                    }
+                }
+            }
         }
 
         val visits_c = Matrix(M, K)
@@ -180,9 +225,12 @@ fun snRefreshVisits(sn: NetworkStruct, chains: Matrix?, rt: Matrix, rtnodes: Mat
         }
 
         // Normalize routing matrix for Fork-containing models
+        // Record original row sums to correct visit ratios after DTMC solve.
+        val nodesRowSums = DoubleArray(nodes_Pchain.numRows) { 1.0 }
         if (hasFork) {
             for (row in 0..<nodes_Pchain.numRows) {
                 val rs = nodes_Pchain.sumRows(row)
+                nodesRowSums[row] = rs
                 if (rs > 1e-8) {
                     for (col in 0..<nodes_Pchain.numCols) {
                         nodes_Pchain[row, col] = nodes_Pchain[row, col] / rs
@@ -233,6 +281,49 @@ fun snRefreshVisits(sn: NetworkStruct, chains: Matrix?, rt: Matrix, rtnodes: Mat
             if (nodes_visited[row, 0] > 0) nodes_alpha[0, row] = nodes_alpha_visited[0, idx++]
         }
 
+        // Apply Fork fanout correction for node visits
+        // Block propagation through Join nodes to prevent the correction from
+        // leaking back through cycles.
+        if (hasFork) {
+            val n_nodes = nodes_Pchain.numRows
+            val nIC = inchain_c.size
+            // Build adjacency but block outgoing edges from Join nodes
+            val nodesReachable = Array(n_nodes) { row -> BooleanArray(n_nodes) { col -> nodes_Pchain[row, col] > 1e-8 } }
+            for (nd in 0..<I) {
+                if (sn.nodetype[nd] == NodeType.Join) {
+                    for (k in 0..<nIC) {
+                        val joinRow = nd * nIC + k
+                        if (joinRow < n_nodes) {
+                            for (col in 0..<n_nodes) {
+                                nodesReachable[joinRow][col] = false
+                            }
+                        }
+                    }
+                }
+            }
+            // Compute transitive closure with join-blocked adjacency (Floyd-Warshall)
+            for (k in 0..<n_nodes) {
+                for (i in 0..<n_nodes) {
+                    for (j in 0..<n_nodes) {
+                        if (nodesReachable[i][k] && nodesReachable[k][j]) {
+                            nodesReachable[i][j] = true
+                        }
+                    }
+                }
+            }
+            // For each fork row, multiply only fork-scope reachable states by fanout
+            for (row in 0..<n_nodes) {
+                val fanout = nodesRowSums[row]
+                if (fanout > 1.0 + 1e-8) {
+                    for (col in 0..<n_nodes) {
+                        if (nodesReachable[row][col]) {
+                            nodes_alpha[0, col] = nodes_alpha[0, col] * fanout
+                        }
+                    }
+                }
+            }
+        }
+
         val node_visits_c = Matrix(I, K)
         for (ind in 0..<I) {
             for (k in inchain_c.indices) {
@@ -256,8 +347,8 @@ fun snRefreshVisits(sn: NetworkStruct, chains: Matrix?, rt: Matrix, rtnodes: Mat
                 }
             }
         }
-        
-        // Remove NaN values  
+
+        // Remove NaN values
         for (i in 0..<node_visits_c_divide.numRows) {
             for (j in 0..<node_visits_c_divide.numCols) {
                 if (node_visits_c_divide[i, j].isNaN()) {

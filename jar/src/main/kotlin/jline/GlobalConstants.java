@@ -36,7 +36,7 @@ public class GlobalConstants {
     /** Negative infinity constant */
     public static final double NegInf = Double.NEGATIVE_INFINITY;
     /** LINE solver version */
-    public static final String Version = "3.0.2";
+    public static final String Version = "3.0.3";
     /** Threshold below which values are considered zero (1e-14) */
     public static final double Zero = 1.0000e-14;
     /** Global verbosity level for solver output */
@@ -52,7 +52,9 @@ public class GlobalConstants {
     public static synchronized GlobalConstants getInstance() {
         if (single_instance == null) {
             single_instance = new GlobalConstants();
-            single_instance.setVerbose(VerboseLevel.STD);
+            // Note: Verbose is already initialized to STD at the field level.
+            // Removed redundant setVerbose(STD) call here to avoid overriding
+            // any verbose level set by test setup code.
         }
         return single_instance;
     }

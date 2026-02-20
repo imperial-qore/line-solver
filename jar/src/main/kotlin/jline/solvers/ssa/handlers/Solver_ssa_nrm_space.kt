@@ -151,13 +151,36 @@ fun solver_ssa_nrm_space(sn: NetworkStruct, options: SolverOptions): SolverSSARe
                     when (sn.sched.get(sn.stations.get(sn.nodeToStation.get(ind).toInt()))) {
                         SchedStrategy.EXT -> base
                         SchedStrategy.INF -> base * X.get(fromIdx[j], 0)
-                        SchedStrategy.PS, SchedStrategy.DPS, SchedStrategy.GPS,
-                        SchedStrategy.PSPRIO, SchedStrategy.DPSPRIO, SchedStrategy.GPSPRIO -> {
+                        SchedStrategy.PS, SchedStrategy.DPS, SchedStrategy.GPS -> {
                             if (R == 1) { // single class
                                 base * min(mi[ind], X.get(fromIdx[j], 0))
                             } else {
                                 val total = (0 until R).sumOf { X.get(ind * R + it, 0) } + epstol
                                 base * (X.get(fromIdx[j], 0) / total) * min(mi[ind], total)
+                            }
+                        }
+                        SchedStrategy.PSPRIO, SchedStrategy.DPSPRIO, SchedStrategy.GPSPRIO -> {
+                            if (R == 1) { // single class - no priority effect
+                                base * min(mi[ind], X.get(fromIdx[j], 0))
+                            } else {
+                                val total = (0 until R).sumOf { X.get(ind * R + it, 0) } + epstol
+                                // Find minimum priority among present classes
+                                var minPrio = Int.MAX_VALUE
+                                for (rr in 0 until R) {
+                                    if (X.get(ind * R + rr, 0) > 0) {
+                                        val classPrio = sn.classprio.get(rr).toInt()
+                                        if (classPrio < minPrio) {
+                                            minPrio = classPrio
+                                        }
+                                    }
+                                }
+                                val classPrio = sn.classprio.get(r).toInt()
+                                // If total <= servers OR this class has highest priority
+                                if (total <= mi[ind] || classPrio == minPrio) {
+                                    base * (X.get(fromIdx[j], 0) / total) * min(mi[ind], total)
+                                } else {
+                                    0.0 // Not in highest priority group - no service
+                                }
                             }
                         }
                         else -> base * X.get(fromIdx[j], 0)

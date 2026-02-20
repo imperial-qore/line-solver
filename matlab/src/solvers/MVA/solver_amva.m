@@ -20,6 +20,10 @@ if ~isfield(options.config,'highvar')
     options.config.highvar = 'default';
 end
 
+% Apply hard cap on iter_max for stability (Python parity)
+max_iter_cap = 10000;
+options.iter_max = min(options.iter_max, max_iter_cap);
+
 switch options.method
     case 'amva.qli'
         options.method = 'qli';
@@ -83,7 +87,10 @@ end
 Q = zeros(M,C);
 U = zeros(M,C);
 
-if sn_has_product_form_not_het_fcfs(sn) && ~sn_has_load_dependence(sn) && (~sn_has_open_classes(sn) || (sn_has_product_form(sn) && sn_has_open_classes(sn) && strcmpi(options.method,'lin')))
+cond1 = sn_has_product_form_not_het_fcfs(sn);
+cond2 = ~sn_has_load_dependence(sn);
+cond3 = ~sn_has_open_classes(sn);
+if cond1 && cond2 && (cond3 || (sn_has_product_form(sn) && sn_has_open_classes(sn) && strcmpi(options.method,'lin')))
     % we can use linearizer only if the open model is not heterfcfs as that approximation is not supported, so strict product-form is required
     [lambda,L0,N,Z0,~,nservers,V(sn.nodeToStation(queueIdx|delayIdx),:)] = sn_get_product_form_chain_params(sn);
     L = L0;
@@ -198,13 +205,13 @@ if sn_has_product_form_not_het_fcfs(sn) && ~sn_has_load_dependence(sn) && (~sn_h
                 return
             elseif max(nservers)==1
                 % remove sources from L
-                [Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,~,X,totiter] = pfqn_linearizermx(lambda,L,N,Z,nservers,sn.sched(sn.nodeToStation(queueIdx | delayIdx)),options.tol,options.iter_max, options.method);
+                [Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,~,X,totiter] = pfqn_linearizermx(lambda,L,N,Z,nservers,sn.sched(sn.nodeToStation(queueIdx)),options.tol,options.iter_max, options.method);
             else
                 switch options.config.multiserver
                     case 'conway'
                         [Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,~,X,totiter] = pfqn_conwayms(L,N,Z,nservers,sn.sched(queueIdx),options.tol,options.iter_max);
                     case 'krzesinski'
-                        [Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,~,X,totiter] = pfqn_linearizermx(lambda,L,N,Z,nservers,sn.sched(sn.nodeToStation(queueIdx | delayIdx)),options.tol,options.iter_max, options.method);
+                        [Q(sn.nodeToStation(queueIdx),:),U(sn.nodeToStation(queueIdx),:),~,~,X,totiter] = pfqn_linearizermx(lambda,L,N,Z,nservers,sn.sched(sn.nodeToStation(queueIdx)),options.tol,options.iter_max, options.method);
                     case {'default', 'softmin', 'seidmann'}
                         [Q,U,R,T,C,X,lG,totiter] = solver_amvald(sn,Lchain,STchain,Vchain,alpha,Nchain,SCVchain,refstatchain,options);
                         return

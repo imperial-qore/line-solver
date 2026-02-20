@@ -14,6 +14,7 @@ import jline.lang.constant.SolverType;
 import jline.lang.nodeparam.CacheNodeParam;
 import jline.lang.nodes.Cache;
 import jline.lang.nodes.StatefulNode;
+import jline.lang.state.State;
 import jline.lang.state.EventCache;
 import jline.solvers.AvgHandle;
 import jline.solvers.NetworkSolver;
@@ -178,6 +179,10 @@ public class SolverSSA extends NetworkSolver {
         Matrix tranSync = result.tranSync;
         NetworkStruct sn = result.sn;
 
+        // Save original rt before refreshChains modifies it in-place.
+        // In MATLAB, sn is a value-copy struct unaffected by refreshChains;
+        // in Java, sn is a reference, so we must save/restore manually.
+        Matrix rtOrig = sn.rt.copy();
         for (int isf = 0; isf < sn.nstateful; isf++) {
             StatefulNode statefulNode = this.model.getStatefulNodes().get(isf);
             if (statefulNode instanceof Cache) {
@@ -191,6 +196,7 @@ public class SolverSSA extends NetworkSolver {
         int M = sn.nstations;
         int R = sn.nclasses;
         AvgHandle T = getAvgTputHandles();
+        sn.rt = rtOrig;
         Matrix AN = snGetArvRFromTput(sn, TN, T);
         Matrix WN = new Matrix(0, 0);
 
@@ -904,10 +910,16 @@ public class SolverSSA extends NetworkSolver {
                 
                 // Apply marginal aggregation as in MATLAB
                 int nodeIndex = ((Double) sn.statefulToNode.get(isf)).intValue();
-                jline.lang.state.State.StateMarginalStatistics marginal = 
-                    jline.lang.state.ToMarginal.toMarginal(sn, nodeIndex, nodeState, null, null, null, null, null);
-                
-                stateList.add(marginal.nir);
+                Matrix aggregatedState;
+                try {
+                    jline.lang.state.State.StateMarginalStatistics marginal =
+                        jline.lang.state.ToMarginal.toMarginal(sn, nodeIndex, nodeState, null, null, null, null, null);
+                    aggregatedState = (marginal != null && marginal.nir != null) ? marginal.nir : nodeState;
+                } catch (Exception e) {
+                    // If toMarginal fails, use the original nodeState
+                    aggregatedState = nodeState;
+                }
+                stateList.add(aggregatedState);
             }
             sampleResult.state = stateList;
             
@@ -1153,6 +1165,29 @@ public class SolverSSA extends NetworkSolver {
     }
 
     /**
+     * Get marginal probability for a specific node state (by node index).
+     * This overrides the base NetworkSolver method to use SSA sampling.
+     *
+     * @param node The node index to get probability for
+     * @param state The state vector (optional - uses node's default state if null)
+     * @return Probability result for being in the specified state
+     */
+    @Override
+    public ProbabilityResult getProb(int node, Matrix state) {
+        try {
+            // Convert node index to Node object
+            if (node < 0 || node >= this.model.getNumberOfNodes()) {
+                return new ProbabilityResult(Double.NaN);
+            }
+            jline.lang.nodes.Node nodeObj = this.model.getNodes().get(node);
+            double prob = getProb(nodeObj, state);
+            return new ProbabilityResult(prob);
+        } catch (Exception e) {
+            return new ProbabilityResult(Double.NaN);
+        }
+    }
+
+    /**
      * Get aggregated probability for a specific node state
      *
      * @param node The node to get probability for
@@ -1162,24 +1197,50 @@ public class SolverSSA extends NetworkSolver {
      */
     public double getProbAggr(jline.lang.nodes.Node node, Matrix state) throws Exception {
         SolverOptions originalOptions = (SolverOptions) this.options.copy();
-        
+
         try {
-            // Force reanalysis 
+            // Force reanalysis
             this.options.force = true;
-            
+
             // Get aggregated system state sample
-            SampleSysState tranSysStateAggr = this.sampleSysAggr();
-            
+            SampleSysState tranSysStateAggr;
+            try {
+                tranSysStateAggr = this.sampleSysAggr();
+            } catch (Exception e) {
+                line_debug(options.verbose, "SSA getProbAggr: sampleSysAggr failed (" + e.getMessage() + "), returning 0.");
+                return 0.0;
+            }
+
+            // Validate sample result
+            if (tranSysStateAggr == null || tranSysStateAggr.t == null ||
+                tranSysStateAggr.state == null || tranSysStateAggr.state.isEmpty()) {
+                line_debug(options.verbose, "SSA getProbAggr: no sample data available, returning 0.");
+                return 0.0;
+            }
+
             NetworkStruct sn = this.getStruct();
             int nodeIndex = node.getNodeIndex();
-            
+
             // Get the stateful index for this node (using nodeToStateful like MATLAB)
             int statefulIndex = (int) sn.nodeToStateful.get(nodeIndex);
-            
+
+            // Validate stateful index
+            if (statefulIndex < 0 || statefulIndex >= tranSysStateAggr.state.size()) {
+                line_debug(options.verbose, "SSA getProbAggr: invalid stateful index, returning 0.");
+                return 0.0;
+            }
+
             // Get time points and aggregated state data for this node
             Matrix timePoints = tranSysStateAggr.t;
             Matrix nodeState = tranSysStateAggr.state.get(statefulIndex);
-            
+
+            // Validate time points and node state
+            if (timePoints == null || timePoints.getNumRows() == 0 ||
+                nodeState == null || nodeState.getNumRows() == 0) {
+                line_debug(options.verbose, "SSA getProbAggr: no state samples available for node, returning 0.");
+                return 0.0;
+            }
+
             // Create TSS matrix: [time_diffs, state_data]
             Matrix TSS = new Matrix(timePoints.getNumRows(), 1 + nodeState.getNumCols());
             
@@ -1196,16 +1257,6 @@ public class SolverSSA extends NetworkSolver {
                 }
             }
             
-            // Determine the target state
-            Matrix targetState;
-            if (state == null) {
-                // Use default state from sn.state
-                StatefulNode statefulNode = this.model.getStatefulNodes().get(statefulIndex);
-                targetState = sn.state.get(statefulNode);
-            } else {
-                targetState = state;
-            }
-            
             // Extract state portion of TSS (columns 2 to end)
             Matrix stateData = new Matrix(TSS.getNumRows(), TSS.getNumCols() - 1);
             for (int i = 0; i < stateData.getNumRows(); i++) {
@@ -1213,8 +1264,45 @@ public class SolverSSA extends NetworkSolver {
                     stateData.set(i, j, TSS.get(i, j + 1));
                 }
             }
-            
-            // Find matching rows
+
+            // Determine the target state (matching MATLAB: state = sn.state{isf})
+            Matrix targetState;
+            if (state == null) {
+                StatefulNode statefulNode = this.model.getStatefulNodes().get(statefulIndex);
+                targetState = sn.state.get(statefulNode);
+                if (targetState == null || targetState.isEmpty()) {
+                    line_debug(options.verbose, "SSA getProbAggr: state not set for node, returning 0.");
+                    return 0.0;
+                }
+            } else {
+                targetState = state;
+            }
+            // Convert to marginal per-class job counts if dimensions don't match
+            // This handles the case where state is in detailed format but stateData is aggregated
+            if (targetState.getNumCols() != stateData.getNumCols()) {
+                try {
+                    State.StateMarginalStatistics margStats = jline.lang.state.ToMarginal.toMarginal(sn, nodeIndex, targetState, null, null, null, null, null);
+                    if (margStats != null && margStats.nir != null && !margStats.nir.isEmpty()) {
+                        targetState = margStats.nir;
+                    }
+                } catch (Exception e) {
+                    line_debug(options.verbose, "SSA getProbAggr: toMarginal conversion failed, returning 0.");
+                    return 0.0;
+                }
+            }
+
+            // Verify dimensions match after conversion, and targetState is valid
+            if (targetState.getNumRows() == 0 || targetState.getNumCols() != stateData.getNumCols()) {
+                line_debug(options.verbose, "SSA getProbAggr: state dimensions don't match stateData after conversion, returning 0.");
+                return 0.0;
+            }
+
+            // Find matching rows - ensure both matrices have valid dimensions
+            if (stateData.getNumRows() == 0) {
+                line_debug(options.verbose, "SSA getProbAggr: no sample state data available, returning 0.");
+                return 0.0;
+            }
+
             List<Integer> matchingRows = Matrix.findRows(stateData, targetState);
             
             if (!matchingRows.isEmpty()) {

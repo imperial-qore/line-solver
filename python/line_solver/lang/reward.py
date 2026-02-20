@@ -15,6 +15,8 @@ Example:
     >>> block = Reward.blocking(queue1)
 """
 
+__all__ = ['Reward']
+
 
 class Reward:
     """Factory class for common reward function templates."""

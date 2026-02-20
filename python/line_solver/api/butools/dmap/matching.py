@@ -8,13 +8,18 @@ Created on Thu Mar 21 12:12:05 2013
 import numpy as np
 import numpy.matlib as ml
 import numpy.linalg as la
-import butools
 import math
-from butools.mc import DRPSolve
-from butools.map import CanonicalFromMAP2
-from butools.moments import JFactorialMomsFromJMoms, FactorialMomsFromMoms
-from butools.dph import MGFromMoments
-from butools.dmap import CheckDMAPRepresentation
+from ..mc.stst import DRPSolve
+from ..map.matching import CanonicalFromMAP2
+from ..moments.conv import JFactorialMomsFromJMoms, FactorialMomsFromMoms
+from ..dph.appie import MGFromMoments
+from .check import CheckDMAPRepresentation
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 def DMRAPFromMoments (moms, Nm):
     """

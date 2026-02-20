@@ -531,7 +531,27 @@ class Det(Distribution):
 
     def __init__(self, value):
         super().__init__()
-        self.obj = jpype.JPackage('jline').lang.processes.Det(value)
+        if isinstance(value, (int, float, np.integer, np.floating)):
+            self.obj = jpype.JPackage('jline').lang.processes.Det(float(value))
+        else:
+            self.obj = value
+
+    @staticmethod
+    def fitMean(mean):
+        """
+        Create a deterministic distribution with the specified mean.
+
+        Since Det has zero variance, the mean equals the constant value.
+
+        Args:
+            mean (float): The constant value for the distribution.
+
+        Returns:
+            Det: A deterministic distribution with value = mean.
+        """
+        return Det(jpype.JPackage('jline').lang.processes.Det.fitMean(mean))
+
+    fit_mean = fitMean
 
 
 class Disabled(Distribution):

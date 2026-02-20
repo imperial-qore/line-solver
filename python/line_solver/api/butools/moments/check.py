@@ -7,7 +7,13 @@ Created on Tue Aug 19 17:33:10 2014
 
 import math
 import scipy.linalg as la
-import butools
+# Use local butools settings instead of external package
+from .. import checkPrecision, checkInput
+# Create a butools-like namespace for backward compatibility
+class _butools_settings:
+    checkPrecision = checkPrecision
+    checkInput = checkInput
+butools = _butools_settings()
 
 def CheckMoments (m, prec=1e-14):
     """

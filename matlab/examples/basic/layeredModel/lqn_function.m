@@ -1,4 +1,5 @@
 % example of layered model with a function task
+fprintf(1, 'Example of layered model with a function task (FaaS)\n');
 
 clear solver AvgTable
 
@@ -36,4 +37,5 @@ lnoptions.seed = 23000;
 % options2.verbose = 0;
 solver{1} = LN(model, @(m) MVA(m), lnoptions);
 AvgTable{1} = solver{1}.getAvgTable;
-%AvgTable{1}
+fprintf(1, '\nLN(MVA) Results:\n');
+disp(AvgTable{1});

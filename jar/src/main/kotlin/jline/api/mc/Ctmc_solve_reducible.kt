@@ -17,12 +17,12 @@ fun ctmc_solve_reducible(
 ): Pair<Matrix, List<List<Int>>> {
     // Convert CTMC to DTMC via randomization
     val (P, _) = ctmc_randomization(Q)
-    
+
     // Solve the reducible DTMC
     val dtmcResult = dtmc_solve_reducible(P, pi0, options)
     val pi = dtmcResult.first
     val scc = dtmcResult.second
-    
+
     return Pair(pi, scc)
 }
 
@@ -44,10 +44,10 @@ fun ctmc_solve_reducible_full(
 ): CtmcSolveReducibleResult {
     // Convert CTMC to DTMC via randomization
     val (P, _) = ctmc_randomization(Q)
-    
+
     // Solve the reducible DTMC (would need full implementation)
     val result = dtmc_solve_reducible_full(P, pi0, options)
-    
+
     return CtmcSolveReducibleResult(
         pi = result.pi,
         pis = result.pis,

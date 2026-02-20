@@ -40,7 +40,7 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(1, dir_path)
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
-pd.set_option('display.precision', 4)
+pd.set_option('display.precision', 5)
 
 
 class GlobalImport:

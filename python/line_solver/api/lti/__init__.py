@@ -2,6 +2,7 @@
 LTI: Laplace Transform Inversion algorithms.
 
 Native Python implementations of numerical Laplace transform inversion methods:
+- CME method (Concentrated Matrix Exponential, based on Abate-Whitt with pre-computed coefficients)
 - Euler method (based on Abate-Whitt acceleration)
 - Talbot method (contour integration)
 - Gaver-Stehfest method
@@ -10,11 +11,13 @@ These methods are used for computing distributions and performance metrics
 from their Laplace transforms in queueing theory applications.
 """
 
+import json
+import os
 import numpy as np
 from numpy.typing import NDArray
 from typing import Callable, Optional, Tuple, List
 from scipy.special import comb
-from math import factorial, log, tan, pi, exp
+from math import factorial, log, tan, pi, exp, floor
 
 
 def euler_get_alpha(n: int) -> np.ndarray:
@@ -289,6 +292,9 @@ def laplace_invert(F: Callable, t: float, method: str = 'euler',
     elif method == 'gaver-stehfest' or method == 'gaver_stehfest':
         n = n or 12
         return laplace_invert_gaver_stehfest(F, t, n)
+    elif method == 'cme':
+        n = n or 25
+        return laplace_invert_cme(F, t, n)
     else:
         raise ValueError(f"Unknown method: {method}")
 
@@ -360,6 +366,146 @@ def laplace_invert_pdf(F: Callable[[complex], complex], t_values: np.ndarray,
     return result
 
 
+# CME parameter cache (lazy-loaded singleton)
+_cme_params_cache = None
+
+
+def iltcme_load_params():
+    """
+    Load CME parameters from iltcme.json.
+
+    Returns a list of dicts with keys: n, a, b, c, omega, mu1, mu2, cv2, etc.
+    Results are cached after first load.
+    """
+    global _cme_params_cache
+    if _cme_params_cache is None:
+        json_path = os.path.join(os.path.dirname(__file__), 'iltcme.json')
+        with open(json_path) as f:
+            _cme_params_cache = json.load(f)
+    return _cme_params_cache
+
+
+def laplace_invert_cme(F: Callable[[complex], complex], t: float,
+                        maxFnEvals: int = 25) -> float:
+    """
+    Invert Laplace transform using CME (Concentrated Matrix Exponential) method.
+
+    Uses pre-computed CME parameters from iltcme.json for the Abate-Whitt framework.
+
+    Args:
+        F: Laplace transform function F(s)
+        t: Time point to evaluate at (must be positive)
+        maxFnEvals: Maximum number of function evaluations allowed
+
+    Returns:
+        Approximate value of f(t)
+    """
+    params_list = iltcme_load_params()
+
+    # Find the most steep CME satisfying maxFnEvals
+    best = params_list[0]
+    for p in params_list:
+        if p['cv2'] < best['cv2'] and p['n'] + 1 <= maxFnEvals:
+            best = p
+
+    n = best['n']
+    mu1 = best['mu1']
+    a = best['a']
+    b = best['b']
+    c = best['c']
+    omega = best['omega']
+
+    # eta = [c*mu1, (a + i*b)*mu1]
+    eta = np.concatenate(([c], np.array(a) + 1j * np.array(b))) * mu1
+    # beta = [1, 1 + i*(1:n)*omega] * mu1
+    beta = np.concatenate(([1.0], 1.0 + 1j * np.arange(1, n + 1) * omega)) * mu1
+
+    # Abate-Whitt evaluation
+    result = 0.0
+    for j in range(len(eta)):
+        s = beta[j] / t
+        result += (eta[j] * F(s)).real
+    return result / t
+
+
+def ilt(F: Callable, T, maxFnEvals: int, method: str = 'cme'):
+    """
+    Unified inverse Laplace transform using Abate-Whitt framework.
+
+    Matches the MATLAB matlab_ilt.m function signature and behavior exactly.
+    Supports CME, Euler, and Gaver-Stehfest methods.
+
+    Args:
+        F: Laplace transform function F(s) (must accept complex arguments)
+        T: Time point(s) to evaluate at (scalar or array-like, must be positive)
+        maxFnEvals: Maximum number of function evaluations allowed
+        method: 'cme' (default), 'euler', or 'gaver'
+
+    Returns:
+        numpy array of f(t) values
+    """
+    T = np.atleast_1d(np.asarray(T, dtype=float))
+
+    if method == 'cme':
+        params_list = iltcme_load_params()
+        best = params_list[0]
+        for p in params_list:
+            if p['cv2'] < best['cv2'] and p['n'] + 1 <= maxFnEvals:
+                best = p
+        n = best['n']
+        mu1 = best['mu1']
+        eta = np.concatenate(([best['c']], np.array(best['a']) + 1j * np.array(best['b']))) * mu1
+        beta = np.concatenate(([1.0], 1.0 + 1j * np.arange(1, n + 1) * best['omega'])) * mu1
+
+    elif method == 'euler':
+        n_euler = int(floor((maxFnEvals - 1) / 2))
+        eta = np.concatenate(([0.5], np.ones(n_euler), np.zeros(n_euler - 1), [2 ** -n_euler]))
+        for k in range(1, n_euler):
+            log_binom = sum(log(i) for i in range(1, n_euler + 1)) \
+                        - n_euler * log(2) \
+                        - sum(log(i) for i in range(1, k + 1)) \
+                        - sum(log(i) for i in range(1, n_euler - k + 1))
+            eta[2 * n_euler - k] = eta[2 * n_euler - k + 1] + exp(log_binom)
+        k = np.arange(2 * n_euler + 1)
+        beta = n_euler * log(10) / 3 + 1j * pi * k
+        eta = (10 ** (n_euler / 3)) * (1 - (k % 2) * 2) * eta
+
+    elif method == 'gaver':
+        mfe = maxFnEvals
+        if mfe % 2 == 1:
+            mfe -= 1
+        ndiv2 = mfe // 2
+        eta = np.zeros(mfe)
+        beta = np.zeros(mfe)
+        logsum = np.concatenate(([0], np.cumsum(np.log(np.arange(1, mfe + 1)))))
+        for k in range(1, mfe + 1):
+            inside_sum = 0.0
+            for j in range(int(floor((k + 1) / 2)), min(k, ndiv2) + 1):
+                inside_sum += exp(
+                    (ndiv2 + 1) * log(j)
+                    - logsum[ndiv2 - j]
+                    + logsum[2 * j]
+                    - 2 * logsum[j]
+                    - logsum[k - j]
+                    - logsum[2 * j - k]
+                )
+            eta[k - 1] = log(2) * ((-1) ** (k + ndiv2)) * inside_sum
+            beta[k - 1] = k * log(2)
+    else:
+        raise ValueError(
+            f"Unknown inverse Laplace transform method: {method}. Supported: cme, euler, gaver"
+        )
+
+    # Common Abate-Whitt evaluation: f(t) = (1/t) * sum(real(eta * F(beta/t)))
+    # Use np.dot for numerical stability with large alternating-sign terms (Gaver)
+    result = np.zeros(len(T))
+    for i, t_val in enumerate(T):
+        f_vals = np.array([F(b / t_val) for b in beta])
+        result[i] = np.dot(eta, f_vals).real / t_val
+
+    return result
+
+
 __all__ = [
     'euler_get_alpha',
     'euler_get_eta',
@@ -374,4 +520,7 @@ __all__ = [
     'laplace_invert',
     'laplace_invert_cdf',
     'laplace_invert_pdf',
+    'iltcme_load_params',
+    'laplace_invert_cme',
+    'ilt',
 ]

@@ -30,7 +30,7 @@ solver{end+1} = DES(model,'seed',23000,'verbose',true);
 
 AvgTable = cell(1,length(solver));
 for s=1:length(solver)
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());
+    fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgTable();
     AvgTable{s}
 end

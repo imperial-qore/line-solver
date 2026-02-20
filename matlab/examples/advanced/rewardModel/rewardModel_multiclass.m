@@ -17,8 +17,9 @@ source = Source(model, 'Source');
 queue = Queue(model, 'Queue', SchedStrategy.PS);  % Processor Sharing
 sink = Sink(model, 'Sink');
 
-% Server capacity
+% Server capacity and buffer limit
 queue.setNumberOfServers(2);
+queue.setCapacity(6);  % Limit state space
 
 % Job classes with different characteristics
 class_interactive = OpenClass(model, 'Interactive');
@@ -32,8 +33,11 @@ source.setArrival(class_batch, Exp(1.5));        % Batch: λ = 1.5
 queue.setService(class_interactive, Exp(0.5));   % Interactive: μ = 2.0 (fast)
 queue.setService(class_batch, Exp(1.0));         % Batch: μ = 1.0 (slow)
 
-% Topology
-model.link(Network.serialRouting(source, queue, sink));
+% Topology (same for both classes)
+P = model.initRoutingMatrix;
+P{class_interactive} = Network.serialRouting(source, queue, sink);
+P{class_batch} = Network.serialRouting(source, queue, sink);
+model.link(P);
 
 %% Define Per-Class Rewards
 fprintf('Defining per-class reward metrics:\n\n');

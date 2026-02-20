@@ -13,6 +13,7 @@ import jline.lang.NodeParam;
 import jline.GlobalConstants;
 import jline.lang.constant.NodeType;
 import jline.lang.constant.SchedStrategy;
+import jline.lang.nodeparam.CacheNodeParam;
 import jline.lang.nodeparam.ForkNodeParam;
 import jline.lang.nodes.Cache;
 import jline.lang.nodes.Delay;
@@ -83,6 +84,10 @@ public class MVARunner {
 
         // Case 'java' or 'jline.amva' can be ignored, so we can remove the switch
         this.sn = this.model.getStruct(false);
+        // Save original rt before refreshChains/cache analyzers modify it in-place.
+        // In MATLAB, sn is a value-copy struct unaffected by refreshChains;
+        // in Java, sn is a reference, so we must save/restore manually.
+        Matrix rtOrig = this.sn.rt != null ? this.sn.rt.copy() : null;
         boolean forkLoop = true;
         int forkIter = 0;
         int forkNodes = 0;
@@ -134,10 +139,10 @@ public class MVARunner {
                     fj_auxiliary_delays = approxReturn.fj_auxiliary_delays;
                     fanout = approxReturn.fanout;
                 } else if (!options.config.fork_join.equals("heidelberger-trivedi") && !options.config.fork_join.equals("ht")) {
+                    Source nonfjSource = nonfjmodel.getSource();
                     for (int r = 0; r < fjclassmap.length(); r++) {
                         int s = (int) fjclassmap.get(r);
                         if (s > -1) {
-                            Source nonfjSource = nonfjmodel.getSource();
                             if (fanout.get(r) > 0) {
                                 if (!nonfjSource.getArrivalProcess(nonfjmodel.getClasses().get(r)).isDisabled()) {
                                     Exp e = (Exp) nonfjSource.getArrivalProcess(nonfjmodel.getClasses().get(r));
@@ -145,22 +150,21 @@ public class MVARunner {
                                 }
                             }
                         }
-						/* Changed from refreshStruct(true) to refreshRates(null, null) for performance optimization.
-						   This change has been validated and produces equivalent results while being more efficient.
-						   refreshRates only updates rate/service information rather than rebuilding the entire structure.
-						   */
-                        //nonfjmodel.refreshStruct(true);
-                        nonfjmodel.refreshRates(null, null);
                     }
+                    nonfjmodel.refreshRates(null, null);
                 }
                 this.sn = nonfjmodel.getStruct(false);
-                if (forkIter > 2) {
+                if (forkIter > 2 && QN_1.getNumRows() == QN.getNumRows() && QN_1.getNumCols() == QN.getNumCols()) {
                     Matrix convCheck = Matrix.ones(QN_1.getNumRows(), QN_1.getNumCols()).sub(1, QN_1.elementDiv(QN));
-                    double maxAbs = -1;
+                    double maxAbs = 0; // Default: converged if all entries are NaN (0/0)
                     for (int i = 0; i < convCheck.getNumRows(); i++) {
                         for (int j = 0; j < convCheck.getNumCols(); j++) {
-                            if (!Double.isNaN(convCheck.get(i, j)) && FastMath.abs(convCheck.get(i, j)) > maxAbs) {
-                                maxAbs = FastMath.abs(convCheck.get(i, j));
+                            double val = convCheck.get(i, j);
+                            if (Double.isInfinite(val)) {
+                                // x/0 = Inf → not converged (matches MATLAB: Inf ratio → 0, |1-0|=1)
+                                maxAbs = Double.MAX_VALUE;
+                            } else if (!Double.isNaN(val) && FastMath.abs(val) > maxAbs) {
+                                maxAbs = FastMath.abs(val);
                             }
                         }
                     }
@@ -336,6 +340,20 @@ public class MVARunner {
             if (this.model.hasFork()) {
                 NetworkStruct nonfjstruct = this.sn;
                 this.sn = this.model.getStruct(false);
+                // Pre-compute Pcs matrix once (loop-invariant)
+                Matrix Pcs = null;
+                if (options.config.fork_join.equals("mmt") || options.config.fork_join.equals("default") || options.config.fork_join.equals("fjt")) {
+                    JobClass anyClass = nonfjmodel.getClasses().get(0);
+                    int Psz = nonfjstruct.rtorig.get(anyClass).get(anyClass).getNumRows();
+                    int Pcs_sz = nonfjmodel.getNumberOfClasses() * Psz;
+                    Pcs = new Matrix(Pcs_sz, Pcs_sz);
+                    for (int rcs = 0; rcs < nonfjstruct.nclasses; rcs++) {
+                        for (int scs = 0; scs < nonfjstruct.nclasses; scs++) {
+                            Matrix block_rs = nonfjstruct.rtorig.get(nonfjmodel.getClasses().get(rcs)).get(nonfjmodel.getClasses().get(scs));
+                            Pcs.setSliceEq(rcs * Psz, (rcs + 1) * Psz, scs * Psz, (scs + 1) * Psz, block_rs);
+                        }
+                    }
+                }
                 for (int f = 0; f < this.sn.nodetype.size(); f++) {
                     if (this.sn.nodetype.get(f) != NodeType.Fork) {
                         continue;
@@ -381,38 +399,26 @@ public class MVARunner {
                                 if (joinIdx == -1) {
                                     forkLambda.set(s, (forkLambda.get(s) + TNfork.get(r)) / 2.0);
                                 } else {
+                                    int joinStat = (int) sn.nodeToStation.get(joinIdx);
+                                    double tnJoinR = ret.TN.get(joinStat, r);
+                                    double tnJoinS = ret.TN.get(joinStat, s);
                                     double tnSum = 0;
                                     for (int i = 0; i < fjclassmap.length(); i++) {
                                         if (fjclassmap.get(i) == r) {
-                                            tnSum += ret.TN.get((int) sn.nodeToStation.get(joinIdx), i);
+                                            tnSum += ret.TN.get(joinStat, i);
                                         }
                                     }
-                                    ret.TN.set((int) sn.nodeToStation.get(joinIdx), r, ret.TN.get((int) sn.nodeToStation.get(joinIdx), r) + tnSum - ret.TN.get((int) sn.nodeToStation.get(joinIdx), s));
-                                    forkLambda.set(s, (forkLambda.get(s) + ret.TN.get((int) sn.nodeToStation.get(joinIdx), r)) / 2.0);
+                                    ret.TN.set(joinStat, r, ret.TN.get(joinStat, r) + tnSum - ret.TN.get(joinStat, s));
+                                    forkLambda.set(s, (forkLambda.get(s) + ret.TN.get(joinStat, r)) / 2.0);
                                 }
-                                if (joinIdx == -1) {
-                                    // No join nodes for this fork
+                                if (joinIdx == -1 || outerForks.get(f, r) == 0) {
+                                    // No join nodes for this fork, or not the outer fork for this class
                                     continue;
                                 }
                                 // Find the parallel paths coming out of the fork
                                 ArrayList<Integer> toMerge = new ArrayList<>();
                                 toMerge.add(r);
                                 toMerge.add(s);
-                                JobClass classr = nonfjmodel.getJobClassFromIndex(r);
-//                                Matrix P = nonfjstruct.rtorig.get(classr).get(classr);
-//                                Matrix ri = ModelAdapter.findPaths(this.sn, P, f, joinIdx, r,
-//                                        toMerge, ret.QN, ret.TN, 0,
-//                                        fjclassmap, fjforkmap, nonfjmodel);
-                                int Psz = nonfjstruct.rtorig.get(classr).get(classr).getNumRows();
-                                int Pcs_sz = nonfjmodel.getNumberOfClasses() * Psz;
-                                Matrix Pcs = new Matrix(Pcs_sz, Pcs_sz);
-                                for (int rcs = 0; rcs < nonfjstruct.nclasses; rcs++) {
-                                    for (int scs = 0; scs < nonfjstruct.nclasses; scs++) {
-                                        Matrix block_rs = nonfjstruct.rtorig.get(nonfjmodel.getClasses().get(rcs)).get(nonfjmodel.getClasses().get(scs));
-                                        Pcs.setSliceEq(rcs * Psz, (rcs + 1) * Psz, scs * Psz, (scs + 1) * Psz, block_rs);
-                                    }
-                                }
-
                                 Matrix ri = findPathsCS(this.sn, Pcs, f, joinIdx, r,
                                         toMerge, ret.QN, ret.TN, 0,
                                         fjclassmap, fjforkmap, nonfjmodel);
@@ -433,11 +439,6 @@ public class MVARunner {
                                 if (outerForks.get(f, r) != 0) {
                                     ((Delay) nonfjmodel.getNodes().get(joinIdx)).setService(nonfjmodel.getClasses().get(r), Exp.fitMean(syncDelay));
                                 }
-                                nonfjmodel.refreshRates(null, null);
-//                                if (forkIter==11) {
-//                                    new SolverMVA(nonfjmodel).getAvgTable().print();
-//                                    nonfjmodel.jsimwView();
-//                                }
                             }
                             break;
                         case "heidelberger-trivedi":
@@ -523,6 +524,10 @@ public class MVARunner {
                                 }
                             }
                     }
+                }
+                // Batch refreshRates after all sync delay updates (moved out of inner loops for performance)
+                if (!options.config.fork_join.equals("heidelberger-trivedi") && !options.config.fork_join.equals("ht")) {
+                    nonfjmodel.refreshRates(null, null);
                 }
                 // Merge the results
                 // Declare variables outside switch to avoid scope issues
@@ -662,8 +667,31 @@ public class MVARunner {
         }
         this.sn = this.model.getStruct(true);
 
+        // Propagate actual hit/miss probabilities from Cache model nodes to sn.nodeparam.
+        // MVA solver stores these on Cache nodes (via setResultHitProb/setResultMissProb)
+        // but snGetArvRFromTput reads from sn.nodeparam.actualhitprob/actualmissprob.
+        for (int ind = 0; ind < this.sn.nnodes; ind++) {
+            if (this.sn.nodetype.get(ind) == NodeType.Cache) {
+                Cache cacheNode = (Cache) this.model.getNodes().get(ind);
+                CacheNodeParam cacheParam = (CacheNodeParam) this.sn.nodeparam.get(cacheNode);
+                if (cacheParam != null) {
+                    Matrix hitProb = cacheNode.getHitRatio();
+                    Matrix missProb = cacheNode.getMissRatio();
+                    if (hitProb != null && !hitProb.isEmpty()) {
+                        cacheParam.actualhitprob = hitProb;
+                    }
+                    if (missProb != null && !missProb.isEmpty()) {
+                        cacheParam.actualmissprob = missProb;
+                    }
+                }
+            }
+        }
+
         // Compute average arrival rate at steady-state
         AvgHandle T = avgHandles.getAvgTputHandles();
+        if (rtOrig != null) {
+            sn.rt = rtOrig;
+        }
         Matrix AN = snGetArvRFromTput(sn, ret.TN, T);
 
         AvgHandle W = avgHandles.getAvgResidTHandles();

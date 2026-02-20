@@ -76,6 +76,7 @@ fun solver_ssa_reachability(sn: NetworkStruct, options: SolverOptions): Triple<M
                 }
             }
             sn.space = space.associateBy { space.indexOf(it) }.mapKeys { sn.stateful[it.key] }.toMutableMap()
+            State.buildSpaceHash(sn)
             return Triple(SSq, SSh, sn)
         }
         

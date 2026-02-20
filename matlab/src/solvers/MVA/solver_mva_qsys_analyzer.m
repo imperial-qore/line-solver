@@ -5,9 +5,11 @@ function [Q,U,R,T,C,X,lG,runtime,totiter] = solver_mva_qsys_analyzer(sn, options
 % All rights reserved.
 
 T0=tic;
-Q = []; U = [];
-R = []; T = [];
-C = []; X = [];
+M = sn.nstations;
+K = sn.nclasses;
+Q = zeros(M,K); U = zeros(M,K);
+R = zeros(M,K); T = zeros(M,K);
+C = zeros(1,K); X = zeros(M,K);
 totiter = 1;
 
 method = options.method;
@@ -55,7 +57,7 @@ if isa(arvproc, 'BMAP')
 
         [W, Wq, U_mxm1, Q_mxm1] = qsys_mxm1(lambda_batch, mu, E_X, E_X2);
         R(queue_ist,1) = W * sn.visits{1}(sn.stationToStateful(queue_ist));
-        C(queue_ist,1) = R(1,1);
+        C(1,1) = R(queue_ist,1);
         X(queue_ist,1) = lambda_batch * E_X;  % Job arrival rate
         U(queue_ist,1) = U_mxm1;
         T(source_ist,1) = lambda_batch * E_X;
@@ -149,7 +151,7 @@ switch method
     case {'gm1', 'gim1'}
         line_debug('Using G/M/1 exact solution');
         % sigma = Load at arrival instants (Laplace transform of the inter-arrival times)
-        LA = @(s) sn.lst{source_ist,1}(s);
+        LA = @(s) sn.lst{source_ist}{1}(s);
         mu = sn.rates(queue_ist);
         sigma = fzero(@(x) LA(mu-mu*x)-x,0.5);
         R = qsys_gm1(sigma,mu);
@@ -157,8 +159,10 @@ switch method
         line_error(mfilename,'Unsupported method for a model with 1 station and 1 class.');
 end
 
-R(queue_ist,1) = R *sn.visits{1}(sn.stationToStateful(queue_ist));
-C(queue_ist,1) = R(1,1);
+Rscalar = R;  % save scalar from qsys function
+R = zeros(M,K);
+R(queue_ist,1) = Rscalar * sn.visits{1}(sn.stationToStateful(queue_ist));
+C(1,1) = R(queue_ist,1);
 X(queue_ist,1) = lambda;
 U(queue_ist,1) = lambda/mu/k;
 T(source_ist,1) = lambda;

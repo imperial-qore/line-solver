@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from line_solver.constants import VerboseLevel, SolverType
+from line_solver.indexed_table import IndexedTable
 
 
 class OptionsDict(dict):
@@ -167,7 +168,7 @@ class Solver:
     def __init__(self, options=None, *args, **kwargs):
         self.solveropt = options if options else SolverOptions()
         self._verbose_silent = False
-        self._table_silent = False
+        self._table_silent = True  # Suppress automatic table printing by default
         self._result = None
 
         # Process kwargs
@@ -241,18 +242,27 @@ class NetworkSolver(Solver):
     def getAvgTable(self):
         """Get average performance metrics table."""
         # Auto-run analyzer if needed
+        result = None
         if self._native_solver is not None:
             if hasattr(self._native_solver, 'result') and self._native_solver.result is None:
                 self._native_solver.runAnalyzer()
             elif hasattr(self._native_solver, '_result') and self._native_solver._result is None:
                 self._native_solver.runAnalyzer()
+            # Suppress native solver's automatic print to avoid duplicate output
+            self._native_solver._table_silent = True
             if hasattr(self._native_solver, 'getAvgTable'):
-                return self._native_solver.getAvgTable()
-        return self.avg_table()
+                result = self._native_solver.getAvgTable()
+        if result is None:
+            return self.avg_table()
+        # Wrap in IndexedTable for consistent formatting
+        if isinstance(result, pd.DataFrame):
+            return IndexedTable(result)
+        return result
 
     def avg_table(self):
         """Get average performance metrics table (snake_case)."""
         # Auto-run analyzer if needed
+        result = None
         if self._native_solver is not None:
             if hasattr(self._native_solver, 'result') and self._native_solver.result is None:
                 self._native_solver.runAnalyzer()
@@ -263,17 +273,22 @@ class NetworkSolver(Solver):
                 self._native_solver._table_silent = True
             # Check for getAvgTable method first
             if hasattr(self._native_solver, 'getAvgTable'):
-                return self._native_solver.getAvgTable()
+                result = self._native_solver.getAvgTable()
             # Check if avg_table is a property or method
-            if hasattr(self._native_solver, 'avg_table'):
+            elif hasattr(self._native_solver, 'avg_table'):
                 attr = getattr(self._native_solver, 'avg_table')
                 if callable(attr):
-                    return attr()
+                    result = attr()
                 else:
-                    return attr  # It's a property
-        if hasattr(self, '_result') and self._result is not None:
-            return self._get_result_table()
-        return pd.DataFrame()
+                    result = attr  # It's a property
+        if result is None and hasattr(self, '_result') and self._result is not None:
+            result = self._get_result_table()
+        if result is None:
+            result = pd.DataFrame()
+        # Wrap in IndexedTable for consistent formatting
+        if isinstance(result, pd.DataFrame):
+            return IndexedTable(result)
+        return result
 
     def _get_result_table(self):
         """Convert result to DataFrame."""
@@ -376,13 +391,14 @@ class NetworkSolver(Solver):
 
     get_avg_q_len = getAvgQLen
     get_avg_util = getAvgUtil
-    get_avg_resp_t = getAvgRespT
+    get_avg_respt = getAvgRespT
     get_avg_tput = getAvgTput
     # Additional aliases without underscores for notebook compatibility
     avg_qlen = getAvgQLen
     avg_util = getAvgUtil
     avg_respt = getAvgRespT
     avg_tput = getAvgTput
+    get_avg_table = getAvgTable
     # Node-level table aliases
     avg_node_table = avg_table
     getAvgNodeTable = getAvgTable
@@ -581,7 +597,7 @@ class NetworkSolver(Solver):
         table = self.getAvgChainTable()
         return table['RespT'].values if not table.empty and 'RespT' in table else None
 
-    avg_resp_t_chain = getAvgRespTChain
+    avg_respt_chain = getAvgRespTChain
 
     def getAvgResidTChain(self):
         """Get average residence time per chain."""
@@ -715,10 +731,15 @@ class NetworkSolver(Solver):
     perct_resp_t = getPerctRespT
     get_perct_resp_t = getPerctRespT
 
-    def getTranAvg(self):
+    def reset(self):
+        """Clear cached results so the solver re-runs on next query."""
+        if self._native_solver is not None and hasattr(self._native_solver, 'reset'):
+            self._native_solver.reset()
+
+    def getTranAvg(self, *args):
         """Get transient average metrics."""
         if self._native_solver is not None and hasattr(self._native_solver, 'getTranAvg'):
-            return self._native_solver.getTranAvg()
+            return self._native_solver.getTranAvg(*args)
         return (None, None, None)
 
     tran_avg = getTranAvg
@@ -761,7 +782,7 @@ class NetworkSolver(Solver):
         handles = self.getAvgHandles()
         return handles[2] if handles else None
 
-    avg_resp_t_handles = getAvgRespTHandles
+    avg_respt_handles = getAvgRespTHandles
 
     def getAvgTputHandles(self):
         """Get throughput handles."""
@@ -970,26 +991,24 @@ class SolverCTMC(NetworkSolver):
 
         Returns:
             Tuple of (stateSpace, nodeStateSpace) where:
-            - stateSpace: 2D array of system states (nstates x nstations)
-            - nodeStateSpace: Dict mapping node index to node-specific state arrays
+            - stateSpace: 2D array of system states (nstates x state_dim)
+            - nodeStateSpace: List of per-station state arrays (matching MATLAB's cell array format).
+                              For FCFS queues with multiple servers, each station's array
+                              includes buffer and phase columns.
         """
         if self._native_solver._result is None:
             self._native_solver.runAnalyzer()
             self._result = self._native_solver._result
 
-        space = self._native_solver.getStateSpace()
-        sn = self._native_solver._sn
+        # getStateSpace() now returns (space, localStateSpace) with proper column ranges
+        space, localStateSpace = self._native_solver.getStateSpace()
 
-        # Build nodeStateSpace dictionary
-        nstations = sn.nstations if sn else space.shape[1]
-        nodeStateSpace = {}
-
-        for i in range(nstations):
-            # Extract column for this station
-            if space.ndim == 2 and space.shape[1] > i:
-                nodeStateSpace[i] = space[:, i:i+1]
-            else:
-                nodeStateSpace[i] = space.reshape(-1, 1)
+        # Return as list (matching MATLAB's cell array format)
+        # Convert to list if it's not already
+        if isinstance(localStateSpace, list):
+            nodeStateSpace = localStateSpace
+        else:
+            nodeStateSpace = [localStateSpace]
 
         return space, nodeStateSpace
 
@@ -1015,20 +1034,32 @@ class SolverCTMC(NetworkSolver):
     def print_inf_gen(infGen, stateSpace):
         """
         Print the infinitesimal generator in human-readable form.
+        Output format matches MATLAB's CTMC.printInfGen().
 
         Args:
             infGen: Infinitesimal generator matrix
             stateSpace: State space array
         """
+        import numpy as np
         nstates = infGen.shape[0]
         for i in range(nstates):
             for j in range(nstates):
                 if i != j and infGen[i, j] > 0:
                     from_state = stateSpace[i, :] if stateSpace.ndim > 1 else [stateSpace[i]]
                     to_state = stateSpace[j, :] if stateSpace.ndim > 1 else [stateSpace[j]]
-                    from_str = "[ " + "   ".join(f"{s:.1f}" for s in from_state) + " ]"
-                    to_str = "[ " + "   ".join(f"{s:.1f}" for s in to_state) + " ]"
-                    print(f"{from_str} -> {to_str} : {infGen[i, j]}")
+                    # Format state values as integers if they're whole numbers
+                    def format_state(state):
+                        parts = []
+                        for s in state:
+                            val = float(s)
+                            if val == int(val):
+                                parts.append(str(int(val)))
+                            else:
+                                parts.append(f"{val:.4f}")
+                        return "[" + " ".join(parts) + "]"
+                    from_str = format_state(from_state)
+                    to_str = format_state(to_state)
+                    print(f"{from_str}->{to_str}: {infGen[i, j]:.6f}")
 
     def avg_util(self):
         """
@@ -1245,8 +1276,12 @@ class SolverCTMC(NetworkSolver):
         if not rewards:
             return np.array([]), []
 
-        # Get state space and steady-state probabilities
-        space = self._native_solver.getStateSpace()
+        # Get aggregated state space and steady-state probabilities
+        # Use space_aggr (per-station job counts) not raw space (phase-level detail)
+        if hasattr(self._native_solver._result, 'space_aggr') and self._native_solver._result.space_aggr is not None:
+            space = self._native_solver._result.space_aggr
+        else:
+            space = self._native_solver._result.space if self._native_solver._result else np.array([])
         pi = self._native_solver.getSteadyState()
 
         if len(space) == 0 or len(pi) == 0:
@@ -1442,7 +1477,12 @@ class SolverMAM(NetworkSolver):
         super().__init__(model, options, *args, **kwargs)
 
         from .solvers.solver_mam import SolverMAM
-        method = kwargs.pop('method', 'default')
+        # Handle method passed as positional or keyword argument
+        if args and isinstance(args[0], str):
+            method = args[0]
+            args = args[1:]
+        else:
+            method = kwargs.pop('method', 'default')
         self._native_solver = SolverMAM(model, method=method, **kwargs)
 
     @staticmethod
@@ -1598,7 +1638,25 @@ class SolverENV(EnsembleSolver):
             options = SolverOptions(SolverType.ENV)
         super().__init__(options, *args, **kwargs)
         self.model = model
-        self._solvers = solvers
+        # Support callable (factory pattern) like MATLAB/PW: ENV(model, lambda m: FLD(m))
+        if callable(solvers):
+            import numpy as np
+            if hasattr(model, 'num_stages'):
+                E = model.num_stages
+            elif hasattr(model, 'getNumberOfStages'):
+                E = model.getNumberOfStages()
+            else:
+                E = 0
+            solver_list = np.empty(E, dtype=object)
+            ensemble = model.ensemble if hasattr(model, 'ensemble') else []
+            for e in range(E):
+                if e < len(ensemble) and ensemble[e] is not None:
+                    solver_list[e] = solvers(ensemble[e])
+                else:
+                    solver_list[e] = None
+            self._solvers = solver_list
+        else:
+            self._solvers = solvers
         self._smp_method = False  # Use DTMC-based computation for Semi-Markov Processes
 
         # Enable SMP method if specified in options
@@ -1623,6 +1681,142 @@ class SolverENV(EnsembleSolver):
             flag: True to enable SMP method, False to disable
         """
         self.setSMPMethod(flag)
+
+    def avg(self):
+        """
+        Compute average performance metrics across environments.
+
+        Returns:
+            Tuple of (QN, UN, TN) - queue lengths, utilizations, throughputs
+        """
+        import numpy as np
+
+        # Get number of stages from model
+        if hasattr(self.model, 'num_stages'):
+            E = self.model.num_stages
+        elif hasattr(self.model, 'getNumberOfStages'):
+            E = self.model.getNumberOfStages()
+        else:
+            E = len(self._solvers)
+
+        if E == 0 or len(self._solvers) == 0:
+            return np.array([]), np.array([]), np.array([])
+
+        # Get steady-state probabilities
+        if hasattr(self.model, 'get_steady_state_probs'):
+            pi = self.model.get_steady_state_probs()
+        elif hasattr(self.model, 'getSteadyStateProbs'):
+            pi = self.model.getSteadyStateProbs()
+        else:
+            # Uniform distribution if not available
+            pi = np.ones(E) / E
+
+        # Get metrics from each solver
+        all_QN = []
+        all_UN = []
+        all_TN = []
+
+        for solver in self._solvers:
+            if solver is not None:
+                try:
+                    # Try to get results from solver
+                    if hasattr(solver, 'getAvgQLen'):
+                        QN = solver.getAvgQLen()
+                    elif hasattr(solver, 'avg_qlen'):
+                        QN = solver.avg_qlen()
+                    else:
+                        QN = np.array([0.0])
+
+                    if hasattr(solver, 'getAvgUtil'):
+                        UN = solver.getAvgUtil()
+                    elif hasattr(solver, 'avg_util'):
+                        UN = solver.avg_util()
+                    else:
+                        UN = np.array([0.0])
+
+                    if hasattr(solver, 'getAvgTput'):
+                        TN = solver.getAvgTput()
+                    elif hasattr(solver, 'avg_tput'):
+                        TN = solver.avg_tput()
+                    else:
+                        TN = np.array([0.0])
+
+                    all_QN.append(np.asarray(QN))
+                    all_UN.append(np.asarray(UN))
+                    all_TN.append(np.asarray(TN))
+                except Exception:
+                    all_QN.append(np.array([0.0]))
+                    all_UN.append(np.array([0.0]))
+                    all_TN.append(np.array([0.0]))
+            else:
+                all_QN.append(np.array([0.0]))
+                all_UN.append(np.array([0.0]))
+                all_TN.append(np.array([0.0]))
+
+        # Weighted average based on steady-state probabilities
+        QN_avg = sum(pi[e] * all_QN[e] for e in range(E) if e < len(all_QN))
+        UN_avg = sum(pi[e] * all_UN[e] for e in range(E) if e < len(all_UN))
+        TN_avg = sum(pi[e] * all_TN[e] for e in range(E) if e < len(all_TN))
+
+        self._result = (QN_avg, UN_avg, TN_avg)
+        return QN_avg, UN_avg, TN_avg
+
+    def avg_table(self):
+        """
+        Get average metrics as a table.
+
+        Returns:
+            DataFrame with performance metrics including QLen, Util, RespT, Tput
+        """
+        import pandas as pd
+        import numpy as np
+
+        if not hasattr(self, '_result') or self._result is None:
+            self.avg()
+
+        QN, UN, TN = self._result
+
+        # Build table from first solver's model/network
+        data = []
+        for solver in self._solvers:
+            if solver is None:
+                continue
+
+            # Try to get the network model
+            model = None
+            if hasattr(solver, 'network'):
+                model = solver.network
+            elif hasattr(solver, 'model'):
+                model = solver.model
+
+            if model is not None:
+                nodes = []
+                if hasattr(model, 'get_nodes'):
+                    nodes = model.get_nodes()
+                elif hasattr(model, 'nodes'):
+                    nodes = model.nodes
+                elif hasattr(model, 'getNodes'):
+                    nodes = model.getNodes()
+
+                for i, node in enumerate(nodes):
+                    node_name = node.name if hasattr(node, 'name') else f'Node{i}'
+                    qlen = float(QN[i]) if i < len(QN) else 0.0
+                    util = float(UN[i]) if i < len(UN) else 0.0
+                    tput = float(TN[i]) if i < len(TN) else 0.0
+                    # RespT computed via Little's Law: R = Q/X
+                    respt = qlen / tput if tput > 1e-10 else 0.0
+                    row = {
+                        'Node': node_name,
+                        'QLen': qlen,
+                        'Util': util,
+                        'RespT': respt,
+                        'Tput': tput,
+                    }
+                    data.append(row)
+                break  # Only use first model for structure
+
+        df = pd.DataFrame(data)
+        return df
 
     @staticmethod
     def defaultOptions():
@@ -1700,7 +1894,10 @@ class SolverLQNS(Solver):
     def avg_table(self):
         """Get average performance metrics table."""
         if self._native_solver is not None:
-            return self._native_solver.getAvgTable()
+            df = self._native_solver.getAvgTable()
+            if df is not None:
+                from .indexed_table import IndexedTable
+                return IndexedTable(df)
         return None
 
     def getAvgTable(self):
@@ -1762,7 +1959,10 @@ class SolverLN(EnsembleSolver):
     def avg_table(self):
         """Get average performance metrics table."""
         if self._native_solver is not None:
-            return self._native_solver.getAvgTable()
+            df = self._native_solver.getAvgTable()
+            if df is not None:
+                from .indexed_table import IndexedTable
+                return IndexedTable(df)
         return None
 
     def getAvgTable(self):

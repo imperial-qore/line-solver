@@ -35,14 +35,14 @@ node{3}.setRouting(jobclass{2},RoutingStrategy.RAND);
 node{4}.setRouting(jobclass{2},RoutingStrategy.WRROBIN,node{2},1);
 node{4}.setRouting(jobclass{2},RoutingStrategy.WRROBIN,node{3},2);
 
-simoptions = Solver.defaultOptions; 
+simoptions = Solver.defaultOptions;
 simoptions.verbose = true;
 simoptions.seed = 23000;
 solver = {};
 solver{end+1} = JMT(model, simoptions);
 solver{end+1} = DES(model, simoptions);
 for s=1:length(solver)
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());    
+    fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));    
     AvgTable{s} = solver{s}.getAvgTable();
     AvgTable{s}
 end

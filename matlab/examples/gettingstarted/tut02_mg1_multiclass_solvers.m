@@ -24,7 +24,7 @@ P.set(jobclass1, Network.serialRouting(source,queue,sink));
 P.set(jobclass2, Network.serialRouting(source,queue,sink));
 model.link(P);
 
-jmtAvgTable = JMT(model,'seed',23000).avgTable()
+jmtAvgTable = JMT(model,'seed',23000,'samples',10000).avgTable()
 
 queue.setService(jobclass2, Replayer(tracePath).fitAPH());
 

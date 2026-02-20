@@ -17,6 +17,7 @@ import jline.util.matrix.Matrix
  *
  * Note: This procedure calculates 5 moments of the input and calls 'ph3From5Moments'.
  */
+@JvmOverloads
 fun canonicalFromPH3(alpha: Matrix, A: Matrix, prec: Double = 1e-10): PH3Representation {
     if (A.numRows != 3) {
         throw IllegalArgumentException("CanonicalFromPH3: Dimension is not 3!")
@@ -33,6 +34,7 @@ fun canonicalFromPH3(alpha: Matrix, A: Matrix, prec: Double = 1e-10): PH3Represe
 /**
  * Overload for DoubleArray alpha.
  */
+@JvmOverloads
 fun canonicalFromPH3(alpha: DoubleArray, A: Matrix, prec: Double = 1e-10): PH3Representation {
     return canonicalFromPH3(Matrix(alpha), A, prec)
 }

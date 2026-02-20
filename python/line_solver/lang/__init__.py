@@ -156,6 +156,10 @@ __all__ = [
     'RoutingMatrix',
     # State
     'State',
+    # Reward classes
+    'Reward',
+    'RewardState',
+    'RewardStateView',
     # Workflow classes
     'Workflow',
     'WorkflowActivity',

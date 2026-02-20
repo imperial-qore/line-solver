@@ -56,6 +56,22 @@ class MatrixMethod:
         # Extract metrics
         QN, UN, RN, TN, CN, XN = extract_metrics_from_handler_result(handler_result, self.sn)
 
+        # Extract transient data from handler result
+        QNt = {}
+        UNt = {}
+        TNt = {}
+        if hasattr(handler_result, 'Qt') and handler_result.Qt is not None:
+            M = len(handler_result.Qt)
+            K = len(handler_result.Qt[0]) if M > 0 else 0
+            for i in range(M):
+                for r in range(K):
+                    if handler_result.Qt[i][r] is not None:
+                        QNt[(i, r)] = np.array(handler_result.Qt[i][r])
+                    if hasattr(handler_result, 'Ut') and handler_result.Ut is not None:
+                        UNt[(i, r)] = np.array(handler_result.Ut[i][r])
+                    if hasattr(handler_result, 'Tt') and handler_result.Tt is not None:
+                        TNt[(i, r)] = np.array(handler_result.Tt[i][r])
+
         # Build result
         result = FLDResult(
             QN=QN,
@@ -65,6 +81,9 @@ class MatrixMethod:
             CN=CN,
             XN=XN,
             t=handler_result.t,
+            QNt=QNt,
+            UNt=UNt,
+            TNt=TNt,
             xvec=handler_result.odeStateVec,
             iterations=handler_result.it,
             runtime=0.0,  # Runtime set by caller

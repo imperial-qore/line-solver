@@ -40,12 +40,12 @@ print('=== Cyclic Polling - Exhaustive Service (Exponential) ===\n')
 
 # Solve with MVA (approximate solution in general)
 print('MVA Solution (approximate in general):')
-avg_table_mva = MVA(model).get_avg_table()
+avg_table_mva = MVA(model).getAvgTable()
 print(avg_table_mva)
 
 # Solve with JMT simulation
 print('\nJMT Simulation:')
-avg_table_jmt = JMT(model, seed=23000).get_avg_table()
+avg_table_jmt = JMT(model, seed=23000).getAvgTable()
 print(avg_table_jmt)
 
 print('\nNote: In exhaustive polling, the server continues serving jobs from a queue')

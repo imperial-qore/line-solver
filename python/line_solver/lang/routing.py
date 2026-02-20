@@ -42,6 +42,10 @@ class RoutingMatrix:
         # Store routing as sparse structure: (class_src, class_dst) -> {(node_src, node_dst): prob}
         self._routes: Dict[Tuple[JobClass, JobClass], Dict[Tuple[Node, Node], float]] = {}
 
+        # Store original routes before ClassSwitch node insertion
+        # Used by toMatrix() to build the rt matrix with correct class-switching probabilities
+        self._original_routes: Optional[Dict[Tuple[JobClass, JobClass], Dict[Tuple[Node, Node], float]]] = None
+
         # Also maintain dense matrix for efficiency
         self._matrix: Optional[np.ndarray] = None
         self._java_obj = None
@@ -59,7 +63,7 @@ class RoutingMatrix:
         if self._nodes_cache is None:
             self._nodes_cache = self.network.get_nodes()
 
-        if isinstance(index, int):
+        if isinstance(index, (int, np.integer)):
             if 0 <= index < len(self._nodes_cache):
                 return self._nodes_cache[index]
             else:
@@ -108,6 +112,8 @@ class RoutingMatrix:
 
         elif len(args) == 2:
             jobclass, rt = args
+            if isinstance(rt, list):
+                rt = np.asarray(rt)
             if isinstance(rt, np.ndarray):
                 self.set(jobclass, jobclass, rt)
             elif isinstance(rt, RoutingMatrix):
@@ -131,22 +137,37 @@ class RoutingMatrix:
         """
         return RoutingMatrixRowView(self, index)
 
+    def _resolve_class(self, key):
+        """Resolve an integer index or JobClass to a JobClass object."""
+        if isinstance(key, (int, np.integer)):
+            classes = self.network.get_classes()
+            if 0 <= key < len(classes):
+                return classes[key]
+            raise IndexError(f"Class index {key} out of range (0-{len(classes)-1})")
+        return key
+
     def __setitem__(self, key, value):
         """
         Set routing using indexing notation.
 
         Args:
-            key: Single jobclass or tuple of (source_class, dest_class).
+            key: Single jobclass (or int index) or tuple of (source_class, dest_class).
             value: 2D numpy array of routing probabilities.
         """
         if isinstance(key, tuple) and len(key) == 1:
-            source_class = dest_class = key[0]
+            source_class = dest_class = self._resolve_class(key[0])
         elif isinstance(key, tuple) and len(key) == 2:
-            source_class, dest_class = key
+            source_class = self._resolve_class(key[0])
+            dest_class = self._resolve_class(key[1])
         elif not isinstance(key, tuple):
-            source_class = dest_class = key
+            source_class = dest_class = self._resolve_class(key)
         else:
             raise ValueError("Key must be a single jobclass or tuple of (source_class, dest_class)")
+
+        # Handle RoutingMatrix objects directly
+        if isinstance(value, RoutingMatrix):
+            self.set(source_class, dest_class, value)
+            return
 
         if not isinstance(value, np.ndarray):
             value = np.array(value)
@@ -176,7 +197,7 @@ class RoutingMatrix:
             raise ValueError("addRoute requires at least 2 nodes (source and destination)")
 
         # Check if last arg is probability
-        if len(args) >= 2 and isinstance(args[-1], (int, float)) and not hasattr(args[-1], '_node_index'):
+        if len(args) >= 2 and isinstance(args[-1], (int, float, np.integer, np.floating)) and not hasattr(args[-1], '_node_index'):
             nodes = args[:-1]
             probability = args[-1]
         else:
@@ -265,16 +286,34 @@ class RoutingMatrix:
         # Build station-class indexed matrix
         self._matrix = np.zeros((nstations * nclasses, nstations * nclasses))
 
+        # Use original routes if available (before ClassSwitch node insertion)
+        # This preserves the correct class-switching probabilities
+        routes_to_use = self._original_routes if self._original_routes is not None else self._routes
+
         # For each class pair, build node-level routing and absorb non-stations
-        for (class_src, class_dst), routes in self._routes.items():
-            src_class_idx = class_src._index if hasattr(class_src, '_index') else classes.index(class_src)
-            dst_class_idx = class_dst._index if hasattr(class_dst, '_index') else classes.index(class_dst)
+        for (class_src, class_dst), routes in routes_to_use.items():
+            # Handle integer indices (from P[0] = ... syntax) or JobClass objects
+            if isinstance(class_src, (int, np.integer)):
+                src_class_idx = class_src
+            else:
+                src_class_idx = class_src._index if hasattr(class_src, '_index') else classes.index(class_src)
+            if isinstance(class_dst, (int, np.integer)):
+                dst_class_idx = class_dst
+            else:
+                dst_class_idx = class_dst._index if hasattr(class_dst, '_index') else classes.index(class_dst)
 
             # Build node-level routing matrix for this class pair
             P_nodes = np.zeros((nnodes, nnodes))
             for (node_src, node_dst), prob in routes.items():
-                src_node_idx = node_src._node_index if hasattr(node_src, '_node_index') else nodes.index(node_src)
-                dst_node_idx = node_dst._node_index if hasattr(node_dst, '_node_index') else nodes.index(node_dst)
+                # Handle integer indices (from P[0] = ... syntax) or Node objects
+                if isinstance(node_src, (int, np.integer)):
+                    src_node_idx = node_src
+                else:
+                    src_node_idx = node_src._node_index if hasattr(node_src, '_node_index') else nodes.index(node_src)
+                if isinstance(node_dst, (int, np.integer)):
+                    dst_node_idx = node_dst
+                else:
+                    dst_node_idx = node_dst._node_index if hasattr(node_dst, '_node_index') else nodes.index(node_dst)
                 P_nodes[src_node_idx, dst_node_idx] = prob
 
             # Absorb non-station nodes

@@ -25,13 +25,34 @@ fun solver_nc(sn: NetworkStruct, options: SolverOptions): SolverNC.SolverNCRetur
     val K = sn.nclasses
     val startTime = System.nanoTime()
 
-    // Check for LCFS scheduling - not supported in this version
+    // Check for special LCFS + LCFS-PR 2-station network BEFORE standard NC processing
+    // because this configuration requires a specialized solver
+    val lcfsStats = ArrayList<Int>()
+    val lcfsprStats = ArrayList<Int>()
     for (i in 0..<M) {
         when (sched[sn.stations[i]]) {
-            SchedStrategy.LCFS, SchedStrategy.LCFSPR ->
-                throw RuntimeException("LCFS queueing networks are not supported in this version.")
+            SchedStrategy.LCFS -> lcfsStats.add(i)
+            SchedStrategy.LCFSPR -> lcfsprStats.add(i)
             else -> {}
         }
+    }
+
+    if (lcfsStats.isNotEmpty() && lcfsprStats.isNotEmpty()) {
+        // Validate LCFS network topology
+        if (lcfsStats.size != 1 || lcfsprStats.size != 1) {
+            throw RuntimeException("LCFS NC requires exactly one LCFS and one LCFS-PR station.")
+        }
+        // Validate closed network (no infinite population chains)
+        for (i in 0..<NK.numRows) {
+            if (Utils.isInf(NK.get(i))) {
+                throw RuntimeException("LCFS NC requires a closed queueing network.")
+            }
+        }
+        // Call specialized LCFS NC solver
+        return solver_nc_lcfsqn(sn, options, lcfsStats[0], lcfsprStats[0])
+    } else if (lcfsStats.isNotEmpty()) {
+        // LCFS without LCFS-PR is not supported
+        throw RuntimeException("LCFS scheduling requires a paired LCFS-PR station.")
     }
 
     var V = Matrix(sn.nstateful, K)
@@ -44,10 +65,14 @@ fun solver_nc(sn: NetworkStruct, options: SolverOptions): SolverNC.SolverNCRetur
     var ST = rates.copy()
     for (i in 0..<ST.numRows) {
         for (j in 0..<ST.numCols) {
-            ST.set(i, j, 1.0 / ST.get(i, j))
+            val rate = ST.get(i, j)
+            if (java.lang.Double.isNaN(rate)) {
+                ST.set(i, j, 0.0)  // Match MATLAB: ST(isnan(ST)) = 0
+            } else {
+                ST.set(i, j, 1.0 / rate)
+            }
         }
     }
-    ST.removeNaN()
     val ST0 = ST.copy()
     var Nchain = Matrix(1, C)
     Nchain.fill(0.0)

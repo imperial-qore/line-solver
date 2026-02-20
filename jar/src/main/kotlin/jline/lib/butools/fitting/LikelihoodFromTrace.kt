@@ -191,17 +191,17 @@ fun likelihoodFromTraceMAP(
         l = l.mult(fx[ixrev[i]])
 
         // Rescale periodically to avoid numerical issues
-        if ((i + 1) % 10 == 0) {
+        if (i % 10 == 0) {
             val sumL = l.elementSum()
             if (sumL > 0) {
                 val scale = ceil(log2(sumL)).toInt()
                 if (scale > 1) {
-                    l = l.scale(1.0 / (1 shl scale).toDouble())
+                    l = l.scale(1.0 / 2.0.pow(scale.toDouble()))
                     sc += scale
                 }
                 if (scale < -10) {
                     val adjScale = scale + 10
-                    l = l.scale(1.0 / 2.0.pow(adjScale))
+                    l = l.scale(1.0 / 2.0.pow(adjScale.toDouble()))
                     sc += adjScale
                 }
             }

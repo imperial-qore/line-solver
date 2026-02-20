@@ -517,17 +517,13 @@ public class Network extends Model implements Copyable {
         List<Node> nodes = new ArrayList<>(M);
         List<OpenClass> jobclasses = new ArrayList<>(R);
 
-        int nqueues = 0;
-        int ndelays = 0;
         nodes.add(new Source(model, "Source"));
 
         for (int i = 0; i < M; i++) {
             if (strategy[i] == SchedStrategy.INF) {
-                ndelays++;
-                nodes.add(new Delay(model, "Delay" + ndelays));
+                nodes.add(new Delay(model, "Station" + (i + 1)));
             } else {
-                nqueues++;
-                Queue queueNode = new Queue(model, "Queue" + nqueues, strategy[i]);
+                Queue queueNode = new Queue(model, "Station" + (i + 1), strategy[i]);
                 queueNode.setNumberOfServers((int) S.get(i, 0));
                 nodes.add(queueNode);
             }
@@ -1807,27 +1803,15 @@ public class Network extends Model implements Copyable {
         for (int ind = 0; ind < I; ind++) {
             Node node = this.nodes.get(ind);
             if (node.getOutput() instanceof Forker) {
+                // Fork nodes send to ALL branches with probability 1.0 each
+                // (not 1.0/fanout). A Fork with arrival rate lambda sends
+                // lambda to EACH outgoing branch, not lambda/fanout.
                 for (int jnd = 0; jnd < I; jnd++) {
                     for (int k = 0; k < K; k++) {
                         if (conn.get(ind, jnd) > 0) {
                             JobClass jobclass = this.jobClasses.get(k);
                             List<OutputStrategy> outputStrategy_k = node.getOutput().getOutputStrategyByClass(jobclass);
-                            // MATLAB: if outputStrategy{k} has destinations, fanout = length of that
-                            // Otherwise fanout = sum(conn(ind,:)) - number of outgoing connections
-                            // Count only entries with non-null destinations
-                            int fanout = (int) conn.sumRows(ind); // Default: number of outgoing connections
-                            if (outputStrategy_k != null) {
-                                int destCount = 0;
-                                for (OutputStrategy os : outputStrategy_k) {
-                                    if (os.getDestination() != null) {
-                                        destCount++;
-                                    }
-                                }
-                                if (destCount > 0) {
-                                    fanout = destCount;
-                                }
-                            }
-                            rtnodes.set(ind * K + k, jnd * K + k, 1.0 / fanout);
+                            rtnodes.set(ind * K + k, jnd * K + k, 1.0);
                             if (this.sn.routing.get(node).get(jobclass) == RoutingStrategy.PROB) {
                                 //Check the number of outgoing links
                                 int sum = (int) conn.sumRows(ind);
@@ -1873,9 +1857,48 @@ public class Network extends Model implements Copyable {
                                 if (conn.get(ind, j) > 0) rtnodes.set(ind * K + k, j * K + k, 1.0 / sum);
                             }
                             break;
+                        case WRROBIN:
+                            // Use actual WRROBIN weights from output strategy
+                            if (!outputStrategy_k.isEmpty()) {
+                                double totalWeight = 0;
+                                double[] destWeights = new double[I];
+                                for (OutputStrategy ops : outputStrategy_k) {
+                                    int j = this.getNodeIndex(ops.getDestination());
+                                    if (j >= 0 && j < I) {
+                                        double weight = ops.getProbability();  // Weight is stored in probability field
+                                        destWeights[j] = weight;
+                                        totalWeight += weight;
+                                    }
+                                }
+                                if (totalWeight > 0) {
+                                    for (int j = 0; j < I; j++) {
+                                        if (destWeights[j] > 0) {
+                                            rtnodes.set(ind * K + k, j * K + k, destWeights[j] / totalWeight);
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Fallback to uniform if no weights defined
+                                if (isInf((NK.get(0, k)))) {
+                                    sum = conn.sumRows(ind);
+                                    for (int j = 0; j < I; j++) {
+                                        if (conn.get(ind, j) > 0) rtnodes.set(ind * K + k, j * K + k, 1.0 / sum);
+                                    }
+                                } else if (!isSource_i && !isSink_i) {
+                                    Matrix connectionClosed = conn.copy();
+                                    if (idxSink >= 0) {
+                                        if (connectionClosed.get(ind, idxSink) > 0) connectionClosed.remove(ind, idxSink);
+                                    }
+                                    sum = connectionClosed.sumRows(ind);
+                                    for (int j = 0; j < I; j++) {
+                                        if (connectionClosed.get(ind, j) > 0)
+                                            rtnodes.set(ind * K + k, j * K + k, 1.0 / sum);
+                                    }
+                                }
+                            }
+                            break;
                         case RAND:
                         case RROBIN:
-                        case WRROBIN:
                         case JSQ:
                             if (isInf((NK.get(0, k)))) {
                                 sum = conn.sumRows(ind);
@@ -2040,8 +2063,14 @@ public class Network extends Model implements Copyable {
                                 }
                             }
                             if (flagHit || flagMiss) {
+                                // For output classes (hit/miss classes), use routing matrix directly
+                                // The class switch is already encoded in the routing matrix Pij[r,s]
+                                // which represents routing from class r to class s at destination jnd
                                 for (int s = 0; s < K; s++) {
-                                    rtnodes.set(i * K + r, jnd * K + s, Pcs.get(r, s) * Pij.get(s, s));
+                                    double routingProb = Pij.get(r, s);
+                                    if (routingProb > 0) {
+                                        rtnodes.set(i * K + r, jnd * K + s, routingProb);
+                                    }
                                 }
                             }
                         }
@@ -2254,7 +2283,13 @@ public class Network extends Model implements Copyable {
     public RoutingStrategy getRoutingStrategyFromNodeAndClassPair(Node node, JobClass c) {
         //Another approach is to use the last routing strategy
         if (node.getOutput().getOutputStrategyByClass(c).isEmpty()) {
-            if (node instanceof Sink || node instanceof Source) {
+            if (node instanceof Sink) {
+                return RoutingStrategy.DISABLED;
+            } else if (node instanceof Source) {
+                // Source nodes should route open classes even without explicit arrivals
+                return (c instanceof OpenClass) ? RoutingStrategy.RAND : RoutingStrategy.DISABLED;
+            } else if (node instanceof jline.lang.nodes.Router) {
+                // Router nodes should only route classes with explicit routing defined
                 return RoutingStrategy.DISABLED;
             } else {
                 return RoutingStrategy.RAND;
@@ -2734,6 +2769,10 @@ public class Network extends Model implements Copyable {
                 } else if (n instanceof Cache) {
                     setUsedLangFeature("CacheClassSwitcher");
                     setUsedLangFeature("Cache");
+                    String replStrat = ReplacementStrategy.toFeature(((Cache) n).getReplacementStrategy());
+                    if (replStrat != null && !replStrat.isEmpty()) {
+                        setUsedLangFeature(replStrat);
+                    }
                 } else if (n instanceof Transition) {
                     setUsedLangFeature("Transition");
                     setUsedLangFeature("Enabling");
@@ -2944,6 +2983,182 @@ public class Network extends Model implements Copyable {
 
     public boolean hasSingleClass() {
         return snHasSingleClass(getStruct());
+    }
+
+    /**
+     * Check if the queueing network routing matrix is ergodic (irreducible).
+     *
+     * This checks only the routing structure, not the full CTMC state space.
+     * A routing is ergodic if all stations communicate, meaning the routing
+     * matrix does not create absorbing states or disconnected components.
+     *
+     * @return RoutingErgodicityResult containing isErgodic flag and details
+     */
+    public RoutingErgodicityResult isRoutingErgodic() {
+        return isRoutingErgodic((RoutingMatrix) null);
+    }
+
+    /**
+     * Check if the queueing network routing matrix is ergodic (irreducible).
+     *
+     * @param P Optional RoutingMatrix. If null, will be computed from network structure.
+     * @return RoutingErgodicityResult containing isErgodic flag and details
+     */
+    public RoutingErgodicityResult isRoutingErgodic(RoutingMatrix P) {
+        RoutingErgodicityResult info = new RoutingErgodicityResult();
+
+        int K = this.getNumberOfClasses();
+        int I = this.getNumberOfNodes();
+
+        if (K == 0 || I == 0) {
+            info.isErgodic = true;
+            return info;
+        }
+
+        List<String> nodeNames = this.getNodeNames();
+
+        // Build aggregate adjacency matrix across all classes
+        Matrix adjMatrix = new Matrix(I, I);
+
+        if (P != null) {
+            // Use provided RoutingMatrix
+            // Note: RoutingMatrix.get(int, int) expects 1-based indices
+            for (int r = 1; r <= K; r++) {
+                for (int s = 1; s <= K; s++) {
+                    Matrix Prs = P.get(r, s);
+                    if (Prs != null && !Prs.isEmpty()) {
+                        int nRows = Math.min(I, Prs.getNumRows());
+                        int nCols = Math.min(I, Prs.getNumCols());
+                        for (int i = 0; i < nRows; i++) {
+                            for (int j = 0; j < nCols; j++) {
+                                if (Prs.get(i, j) > 0) {
+                                    adjMatrix.set(i, j, 1.0);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Use getLinkedRoutingMatrix (requires struct)
+            Map<JobClass, Map<JobClass, Matrix>> rtorig = getLinkedRoutingMatrix();
+            if (rtorig == null || rtorig.isEmpty()) {
+                info.isErgodic = true;
+                return info;
+            }
+            for (Map.Entry<JobClass, Map<JobClass, Matrix>> entry1 : rtorig.entrySet()) {
+                for (Map.Entry<JobClass, Matrix> entry2 : entry1.getValue().entrySet()) {
+                    Matrix Prs = entry2.getValue();
+                    if (Prs != null && !Prs.isEmpty()) {
+                        int nRows = Math.min(I, Prs.getNumRows());
+                        int nCols = Math.min(I, Prs.getNumCols());
+                        for (int i = 0; i < nRows; i++) {
+                            for (int j = 0; j < nCols; j++) {
+                                if (Prs.get(i, j) > 0) {
+                                    adjMatrix.set(i, j, 1.0);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Find strongly connected components using DirectedGraph
+        jline.util.graph.DirectedGraph graph = new jline.util.graph.DirectedGraph(adjMatrix);
+        jline.util.graph.DirectedGraph.SCCResult sccResult = graph.stronglyconncomp();
+        int[] sccLabels = sccResult.I;
+        boolean[] isRecurrent = sccResult.recurrent;
+
+        int numSCCs = isRecurrent.length;
+        info.numSCCs = numSCCs;
+
+        // Get station indexes (node index for each station)
+        List<Integer> stationIdxs = new ArrayList<>();
+        for (int i = 0; i < this.nodes.size(); i++) {
+            if (this.nodes.get(i) instanceof Station) {
+                stationIdxs.add(i);
+            }
+        }
+
+        // Check for absorbing stations (stations with only self-loops or no outgoing edges)
+        for (int idx : stationIdxs) {
+            // Check if this station has any outgoing transitions to other nodes
+            boolean hasOutgoing = false;
+            for (int j = 0; j < I; j++) {
+                if (j != idx && adjMatrix.get(idx, j) > 0) {
+                    hasOutgoing = true;
+                    break;
+                }
+            }
+
+            if (!hasOutgoing) {
+                // No outgoing transitions except possibly self-loop
+                // Check if there's routing defined for this node
+                boolean hasRouting = false;
+                for (int i = 0; i < I; i++) {
+                    if (adjMatrix.get(idx, i) > 0) {
+                        hasRouting = true;
+                        break;
+                    }
+                }
+
+                if (hasRouting) {
+                    info.absorbingStations.add(nodeNames.get(idx));
+                }
+            }
+        }
+
+        // Identify transient stations (stations in transient SCCs)
+        for (int i = 0; i < numSCCs; i++) {
+            if (!isRecurrent[i]) {
+                // This SCC is transient - find nodes in it
+                for (int nodeIdx = 0; nodeIdx < I; nodeIdx++) {
+                    if (sccLabels[nodeIdx] == i + 1 && stationIdxs.contains(nodeIdx)) {
+                        String nodeName = nodeNames.get(nodeIdx);
+                        if (!info.absorbingStations.contains(nodeName)) {
+                            info.transientStations.add(nodeName);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Remove Sink from absorbing list (it's expected to be absorbing in open networks)
+        int sinkIdx = this.getIndexSinkNode();
+        if (sinkIdx >= 0 && sinkIdx < nodeNames.size()) {
+            String sinkName = nodeNames.get(sinkIdx);
+            info.absorbingStations.remove(sinkName);
+        }
+
+        // Determine ergodicity
+        boolean hasAbsorbingStations = !info.absorbingStations.isEmpty();
+        int recurrentCount = 0;
+        for (boolean rec : isRecurrent) {
+            if (rec) recurrentCount++;
+        }
+        boolean hasMultipleRecurrentSCCs = recurrentCount > 1;
+
+        if (hasAbsorbingStations || hasMultipleRecurrentSCCs) {
+            info.isErgodic = false;
+            info.isReducible = true;
+        } else {
+            info.isErgodic = true;
+            info.isReducible = false;
+        }
+
+        return info;
+    }
+
+    /**
+     * Result class for isRoutingErgodic method
+     */
+    public static class RoutingErgodicityResult {
+        public boolean isErgodic = true;
+        public boolean isReducible = false;
+        public List<String> absorbingStations = new ArrayList<>();
+        public List<String> transientStations = new ArrayList<>();
+        public int numSCCs = 1;
     }
 
     // ========================================================================
@@ -3189,8 +3404,31 @@ public class Network extends Model implements Copyable {
                     // Must be single class token
                     state_i = n.sumRows(0, n.getNumCols());
                 } else {
-                    // Pass the marginal state for this node (row i of n)
-                    state_i = FromMarginal.fromMarginal(sn, i, n.getRow(i));
+                    // Match MATLAB: if marginal values are fractional (not near-integer),
+                    // store raw values directly. This is used by the Fluid solver to
+                    // preserve fractional initial states (e.g., from ENV solver iterations).
+                    Matrix nodeRow = n.getRow(i);
+                    double maxFracDiff = 0;
+                    for (int c = 0; c < nodeRow.getNumCols(); c++) {
+                        double val = nodeRow.get(0, c);
+                        if (!Double.isInfinite(val) && !Double.isNaN(val)) {
+                            maxFracDiff = Math.max(maxFracDiff, Math.abs(val - Math.round(val)));
+                        }
+                    }
+                    if (maxFracDiff < GlobalConstants.CoarseTol) {
+                        // Integer-like: use standard fromMarginal with rounded values
+                        Matrix roundedRow = new Matrix(nodeRow);
+                        for (int c = 0; c < roundedRow.getNumCols(); c++) {
+                            double val = roundedRow.get(0, c);
+                            if (!Double.isInfinite(val) && !Double.isNaN(val)) {
+                                roundedRow.set(0, c, Math.round(val));
+                            }
+                        }
+                        state_i = FromMarginal.fromMarginal(sn, i, roundedRow);
+                    } else {
+                        // Fractional: store raw values directly (for Fluid solver init)
+                        state_i = nodeRow;
+                    }
                 }
                 if (stations.get(ist).getState().isEmpty()) {
                     throw new RuntimeException("Invalid state assignment for a station.");
@@ -3485,7 +3723,17 @@ public class Network extends Model implements Copyable {
                 ((Place) node).init();
             }
         }
-        
+
+        // Check for reducible routing (absorbing states)
+        // This matches MATLAB's link.m lines 304-312
+        if (this.enableChecks) {
+            RoutingErgodicityResult ergResult = isRoutingErgodic(P);
+            if (!ergResult.isErgodic && !ergResult.absorbingStations.isEmpty()) {
+                line_warning(mfilename(new Object() {}),
+                    "Reducible network topology detected, results may be unreliable.");
+            }
+        }
+
         // Note: MATLAB also calls refreshChains at the end if isReset is true,
         // but this happens automatically in Java during struct regeneration
     }
@@ -3730,17 +3978,7 @@ public class Network extends Model implements Copyable {
 
     public void printRoutingMatrix() {
         this.getStruct(false);
-        for (int ind = 0; ind < sn.nnodes; ind++) {
-            for (int jnd = 0; jnd < sn.nnodes; jnd++) {
-                for (int r = 0; r < sn.nclasses; r++) {
-                    for (int s = 0; s < sn.nclasses; s++) {
-                        double pr = sn.rtnodes.get(ind * sn.nclasses + r, jnd * sn.nclasses + s);
-                        if (pr > 0)
-                            System.out.println(sn.nodenames.get(ind) + " [" + sn.classnames.get(r) + "] => " + sn.nodenames.get(jnd) + " [" + sn.classnames.get(s) + "] : Pr=" + pr);
-                    }
-                }
-            }
-        }
+        jline.api.sn.SnPrintRoutingMatrixKt.snPrintRoutingMatrix(this.sn, null);
     }
 
     // ========================================================================
@@ -4328,6 +4566,11 @@ public class Network extends Model implements Copyable {
                         transitionParam.firingproc.put(m, ((Markovian) transition.getFiringDistribution(m)).getProcess());
                         transitionParam.firingpie.put(m, ((Markovian) transition.getFiringDistribution(m)).getInitProb());
                         transitionParam.firingphases.set(0, m.getIndex() - 1, (int) ((Markovian) transition.getFiringDistribution(m)).getNumberOfPhases());
+                    } else if (transition.getFiringDistribution(m) instanceof Pareto) {
+                        // Pareto has its own getProcess() method returning {shape, scale}
+                        transitionParam.firingproc.put(m, ((Pareto) transition.getFiringDistribution(m)).getProcess());
+                        transitionParam.firingpie.put(m, Matrix.singleton(NaN));
+                        transitionParam.firingphases.set(m.getIndex() - 1, NaN);
                     } else {
                         // there is no simple way to pass the mean and scv since
                         // a transition is not a station so sn.scv and sn.rates do
@@ -5141,12 +5384,16 @@ public class Network extends Model implements Copyable {
                                 switch (this.sn.routing.get(this.nodes.get(ind)).get(this.jobClasses.get(r))) {
                                     case RROBIN:
                                         map.put(jnd * K + s, (pair) -> sub_rr_wrr(ind_final, jnd_final, r_final, s_final, linksmat, pair.getLeft(), pair.getRight()));
+                                        break;
                                     case WRROBIN:
                                         map.put(jnd * K + s, (pair) -> sub_rr_wrr(ind_final, jnd_final, r_final, s_final, linksmat, pair.getLeft(), pair.getRight()));
+                                        break;
                                     case JSQ:
                                         map.put(jnd * K + s, (pair) -> sub_jsq(ind_final, jnd_final, r_final, s_final, linksmat, pair.getLeft(), pair.getRight()));
+                                        break;
                                     default:
                                         map.put(jnd * K + s, (pair) -> rtnodes.get(ind_final * K + r_final, jnd_final * K + s_final));
+                                        break;
                                 }
                             } else {
                                 map.put(jnd * K + s, (pair) -> rtnodes.get(ind_final * K + r_final, jnd_final * K + s_final));
@@ -5869,8 +6116,8 @@ public class Network extends Model implements Copyable {
                 if (sn.isstateful.get(ind, 0) > 0) {
                     if (sn.nodetype.get(ind) == NodeType.Transition) {
                         TransitionNodeParam transParam = (TransitionNodeParam) sn.nodeparam.get(sn.nodes.get(ind));
+                        // First loop: all mode enabling events (matching MATLAB refreshGlobalSync ordering)
                         for (int m = 0; m < transParam.nmodes; m++) {
-                            // Mode enabling
                             Matrix enablingMatrix = transParam.enabling.get(m);
                             List<Integer> enablingPlaces = new ArrayList<>();
                             for (int ep = 0; ep < enablingMatrix.getNumRows(); ep++) {
@@ -5892,8 +6139,17 @@ public class Network extends Model implements Copyable {
                                 enableSync.setPassive(passiveEvents);
                                 gsync.put(gsync.size(), enableSync);
                             }
+                        }
+                        // Second loop: all mode firing events (matching MATLAB refreshGlobalSync ordering)
+                        for (int m = 0; m < transParam.nmodes; m++) {
+                            Matrix enablingMatrix = transParam.enabling.get(m);
+                            List<Integer> enablingPlaces = new ArrayList<>();
+                            for (int ep = 0; ep < enablingMatrix.getNumRows(); ep++) {
+                                if (enablingMatrix.get(ep, 0) > 0) {
+                                    enablingPlaces.add(ep);
+                                }
+                            }
 
-                            // Mode firing  
                             Matrix firingMatrix = transParam.firing.get(m);
                             List<Integer> firingPlaces = new ArrayList<>();
                             for (int fp = 0; fp < firingMatrix.getNumRows(); fp++) {
@@ -5937,6 +6193,42 @@ public class Network extends Model implements Copyable {
     public void relink(RoutingMatrix P) {
         resetNetwork();
         link(P);
+    }
+
+    /**
+     * Relink the network from a modified rtorig map.
+     * Converts the map to a RoutingMatrix and calls link().
+     * This matches MATLAB's relink(P) behavior when P comes from getLinkedRoutingMatrix.
+     */
+    public void relinkFromRtorig(Map<JobClass, Map<JobClass, Matrix>> rtorig) {
+        resetNetwork();
+        List<Node> nodes = this.getNodes();
+        List<JobClass> classes = this.getJobClasses();
+        RoutingMatrix P = new RoutingMatrix(this, classes, nodes);
+        for (Map.Entry<JobClass, Map<JobClass, Matrix>> e1 : rtorig.entrySet()) {
+            JobClass fromClass = e1.getKey();
+            for (Map.Entry<JobClass, Matrix> e2 : e1.getValue().entrySet()) {
+                JobClass toClass = e2.getKey();
+                Matrix mat = e2.getValue();
+                P.set(fromClass, toClass, mat);
+            }
+        }
+        link(P);
+    }
+
+    /**
+     * Updates sn.rtorig without replacing the entire NetworkStruct.
+     * Used by RoutingMatrix.setRouting() to preserve computed fields (rates, isstatedep, etc.)
+     * when re-linking during solver iteration.
+     */
+    public void updateRtorig(Map<JobClass, Map<JobClass, Matrix>> rtorig) {
+        if (this.sn != null) {
+            this.sn.rtorig = rtorig;
+        } else {
+            NetworkStruct newSn = new NetworkStruct();
+            newSn.rtorig = rtorig;
+            this.sn = newSn;
+        }
     }
 
     public void reset() {
@@ -6221,14 +6513,16 @@ public class Network extends Model implements Copyable {
                         JobClass jobclass = this.jobClasses.get(k);
                         if (!source.containsJobClass(jobclass)) {
                             source.setArrival(jobclass, new Disabled());
-                            source.setRouting(jobclass, RoutingStrategy.DISABLED);
+                            // Open classes without arrivals should still route (for class switching pass-through)
+                            source.setRouting(jobclass, (jobclass instanceof OpenClass) ? RoutingStrategy.RAND : RoutingStrategy.DISABLED);
                         }
                     }
                 } else if (node instanceof Place) {
                     Place place = (Place) node;
                     for (int k = 0; k < K; k++) {
                         JobClass jobclass = this.jobClasses.get(k);
-                        place.setDropRule(jobclass, DropStrategy.Drop);
+                        // MATLAB refreshCapacity.m defaults all droprule to WAITQ
+                        place.setDropRule(jobclass, DropStrategy.WaitingQueue);
                     }
                 } else if (node instanceof Transition) {
                     Transition transition = (Transition) node;
@@ -6454,12 +6748,22 @@ public class Network extends Model implements Copyable {
         int R = this.sn.nclasses;
         int isf = (int) this.sn.nodeToStateful.get(ind);
         Node statefulNode = this.getStatefulNodeFromIndex(isf);
-        if (!state_before.containsKey(statefulNode)) {
+        // Check if state is empty (matches MATLAB: isempty(state_before{isf}))
+        Matrix stateBefore = state_before.get(statefulNode);
+        if (stateBefore == null || stateBefore.isEmpty()) {
             return FastMath.min(linksmat.get(ind, jnd), 1.0);
         } else {
             if (r == s) {
-                Matrix jm = state_after.get(statefulNode);
-                return ((int) jm.get(jm.getNumCols() - 1 - R + r) == jnd) ? 1.0 : 0.0;
+                // Use state_after to check RROBIN destination (matches MATLAB's sub_rr)
+                // In MATLAB, afterEvent advances the pointer BEFORE routing, and the job
+                // follows the NEW pointer. So state_after{isf}(end-R+r)==jnd checks if
+                // the ADVANCED pointer matches the destination.
+                Matrix stateAfter = state_after.get(statefulNode);
+                if (stateAfter == null || stateAfter.isEmpty()) {
+                    return FastMath.min(linksmat.get(ind, jnd), 1.0);
+                }
+                int rrIdx = (int) stateAfter.length() - R + r;
+                return ((int) stateAfter.get(rrIdx) == jnd) ? 1.0 : 0.0;
             } else {
                 return 0.0;
             }

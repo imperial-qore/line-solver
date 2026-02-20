@@ -15,19 +15,24 @@ from enum import IntEnum
 from .des_options import DESOptions, DESResult
 from .scheduling.base import Customer
 from .statistics.warmup import MSER5TransientDetector
+from .distributions.factory import DistributionFactory
+from .distributions.base import DistributionSampler
 
 
 class NodeType(IntEnum):
-    """Node types in the queueing network."""
+    """Node types in the queueing network.
+
+    Values must match network_struct.py NodeType for consistent model interpretation.
+    """
     SOURCE = 0
     SINK = 1
     QUEUE = 2
     DELAY = 3
     FORK = 4
     JOIN = 5
-    ROUTER = 6
-    CLASSSWITCH = 7
-    CACHE = 8
+    CACHE = 6
+    ROUTER = 7
+    CLASSSWITCH = 8
     PLACE = 9
     TRANSITION = 10
     LOGGER = 11
@@ -37,24 +42,28 @@ class RoutingStrategy(IntEnum):
     """
     Routing strategies that determine how jobs are dispatched to downstream stations.
 
+    Values must match MATLAB's RoutingStrategy constants for JMT compatibility.
+
     Attributes:
-        DISABLED: Routing disabled (jobs are dropped)
         RAND: Random uniform selection among destinations
         PROB: Probabilistic routing using pre-defined probabilities
         RROBIN: Round-robin cycling through destinations
         WRROBIN: Weighted round-robin with probability-based weights
         JSQ: Join Shortest Queue - route to least loaded destination
-        KCHOICES: Power of K choices - sample K, pick shortest queue
         FIRING: Used for transitions in Petri net models
+        KCHOICES: Power of K choices - sample K, pick shortest queue
+        RL: Reinforcement Learning routing
+        DISABLED: Routing disabled (jobs are dropped)
     """
-    DISABLED = -1
     RAND = 0
     PROB = 1
     RROBIN = 2
     WRROBIN = 3
     JSQ = 4
-    KCHOICES = 5
-    FIRING = 6
+    FIRING = 5
+    KCHOICES = 6
+    RL = 7
+    DISABLED = -1
 
     @staticmethod
     def from_string(obj: Any) -> 'RoutingStrategy':
@@ -216,6 +225,12 @@ class SimulatorConfig:
     # Routing strategy per node per class: [node_idx][class_idx] -> RoutingStrategy
     node_routing_strategies: Dict[int, Dict[int, RoutingStrategy]] = field(default_factory=dict)
 
+    # Ordered destination node indices for RROBIN/WRROBIN: [node_idx][class_idx] -> list of dest node indices
+    rroutlinks: Dict[int, Dict[int, List[int]]] = field(default_factory=dict)
+
+    # Weights for WRROBIN routing: [node_idx][class_idx] -> {dest_node_idx: weight}
+    wrrobin_weights: Dict[int, Dict[int, Dict[int, float]]] = field(default_factory=dict)
+
     # K parameter for Power-of-K-Choices routing
     kchoices_k: int = 2
 
@@ -309,6 +324,13 @@ class StationStats:
     # Individual response time samples for CDF computation
     response_time_samples: Dict[int, List[float]] = field(init=False)
 
+    # PS-specific utilization tracking (rate-weighted, not count-based)
+    # Unlike FCFS where busy_time = servers_busy * elapsed, PS uses
+    # busy_time = sum(rate_per_job) * elapsed, where rates sum to <= c
+    ps_total_busy_time: np.ndarray = field(init=False)
+    ps_last_update_time: float = field(init=False)
+    is_ps_station: bool = field(init=False)
+
     def __post_init__(self):
         K = self.num_classes
         self.total_queue_time = np.zeros(K)
@@ -324,6 +346,10 @@ class StationStats:
         self.response_time_count = np.zeros(K, dtype=int)
         # Initialize response time sample lists for each class
         self.response_time_samples = {k: [] for k in range(K)}
+        # PS-specific utilization (rate-weighted)
+        self.ps_total_busy_time = np.zeros(K)
+        self.ps_last_update_time = 0.0
+        self.is_ps_station = False
 
     def update_queue(self, class_id: int, current_time: float, delta: int = 0):
         """Update time-weighted queue length."""
@@ -340,6 +366,26 @@ class StationStats:
             self.total_busy_time[class_id] += elapsed * self.current_busy_servers[class_id]
         self.current_busy_servers[class_id] += delta
         self.last_busy_update_time[class_id] = current_time
+
+    def update_ps_busy(self, current_time: float, rates_by_class: Dict[int, float]):
+        """
+        Update PS-specific busy time using rate-weighted accumulation.
+
+        For PS scheduling, each job's contribution to utilization is proportional
+        to its instantaneous service rate (which varies based on competing jobs).
+        This matches JAR's updatePSBusyStats() approach.
+
+        Args:
+            current_time: Current simulation time
+            rates_by_class: Dict mapping class_id -> sum of rates for jobs of that class
+        """
+        elapsed = current_time - self.ps_last_update_time
+        if elapsed > 0:
+            # Accumulate rate-weighted busy time for each class
+            for class_id, total_rate in rates_by_class.items():
+                if total_rate > 0:
+                    self.ps_total_busy_time[class_id] += total_rate * elapsed
+        self.ps_last_update_time = current_time
 
     def record_arrival(self, class_id: int):
         """Record an arrival."""
@@ -364,7 +410,10 @@ class StationStats:
         return self.total_queue_time[class_id] / total_time
 
     def get_utilization(self, class_id: int, total_time: float, num_servers: int) -> float:
-        """Get utilization for class."""
+        """Get utilization for class.
+
+        Uses count-based busy time for all station types (matching MATLAB/JAR).
+        """
         if total_time <= 0 or num_servers <= 0:
             return 0.0
         return self.total_busy_time[class_id] / (total_time * num_servers)
@@ -552,9 +601,14 @@ class SimPySimulator:
 
         # ==================== Routing Strategy State ====================
         # Round-robin counters for RROBIN/WRROBIN routing
-        self.round_robin_counters: Dict[int, int] = {}  # [node_idx] -> counter
+        # Indexed by [node_idx][class_id] to match JAR implementation
+        # This is critical for class-switching models where different classes
+        # must maintain separate round-robin sequences
+        self.round_robin_counters: Dict[int, Dict[int, int]] = {}  # [node_idx][class_id] -> counter
         for i in range(self.config.num_nodes):
-            self.round_robin_counters[i] = 0
+            self.round_robin_counters[i] = {}
+            for k in range(self.config.num_classes):
+                self.round_robin_counters[i][k] = 0
 
         # K parameter for Power-of-K-Choices routing
         self.kchoices_k = self.config.kchoices_k
@@ -595,6 +649,22 @@ class SimPySimulator:
         for svc_idx in range(len(self.config.service_nodes)):
             self.last_mser_queue_time[svc_idx] = np.zeros(self.config.num_classes)
 
+        # Track completion counts at observation times (for MSER-adjusted throughput)
+        # mser_completion_counts[svc_idx][class_id] = list of cumulative completion counts
+        self.mser_completion_counts: Dict[int, Dict[int, List[int]]] = {}
+        for svc_idx in range(len(self.config.service_nodes)):
+            self.mser_completion_counts[svc_idx] = {}
+            for k in range(self.config.num_classes):
+                self.mser_completion_counts[svc_idx][k] = []
+
+        # Track busy time at observation times (for MSER-adjusted utilization)
+        # mser_busy_time[svc_idx][class_id] = list of cumulative busy times
+        self.mser_busy_time: Dict[int, Dict[int, List[float]]] = {}
+        for svc_idx in range(len(self.config.service_nodes)):
+            self.mser_busy_time[svc_idx] = {}
+            for k in range(self.config.num_classes):
+                self.mser_busy_time[svc_idx][k] = []
+
         # SPN state (place tokens and transition in-service counts)
         self.place_tokens: Dict[int, np.ndarray] = {}
         self.transition_in_service: Dict[int, Dict[int, int]] = {}
@@ -632,6 +702,42 @@ class SimPySimulator:
                     self.transient_queue_lengths[svc_idx][k] = []
                     self.transient_utilizations[svc_idx][k] = []
                     self.transient_throughputs[svc_idx][k] = []
+
+        # ==================== PS Queue State ====================
+        # Event-driven PS scheduling: track departure processes for cancellation
+        # ps_departure_processes[svc_idx] = {job_id: SimPy_process}
+        self.ps_departure_processes: Dict[int, Dict[int, Any]] = {}
+        # ps_last_update_time[svc_idx] = time when remaining work was last updated
+        self.ps_last_update_time: Dict[int, float] = {}
+        # ps_busy_status[svc_idx] = {job_id: is_counted_busy} for utilization tracking
+        self.ps_busy_status: Dict[int, Dict[int, bool]] = {}
+
+        # ==================== Distribution Samplers ====================
+        # Service distribution samplers per (svc_idx, class_id)
+        # Handles non-exponential distributions (Erlang, HyperExp, PH, MAP, etc.)
+        self.service_samplers: Dict[Tuple[int, int], DistributionSampler] = {}
+        self._initialize_service_samplers()
+
+    def _initialize_service_samplers(self) -> None:
+        """
+        Initialize service distribution samplers from NetworkStruct.
+
+        Uses proc/procid fields to create proper distribution samplers
+        for non-exponential service distributions (Erlang, HyperExp, PH, etc.).
+        Falls back to exponential sampling if distribution info not available.
+        """
+        sn = self.sn
+
+        # Create factory with our RNG for reproducibility
+        factory = DistributionFactory(rng=self.rng)
+
+        # Try to create samplers using the factory's method
+        try:
+            self.service_samplers = factory.create_service_samplers(sn)
+        except Exception as e:
+            # If factory fails, service_samplers stays empty
+            # and we fall back to exponential sampling
+            pass
 
     def _parse_network_structure(self) -> SimulatorConfig:
         """Parse NetworkStruct into SimulatorConfig."""
@@ -676,7 +782,26 @@ class SimPySimulator:
                         config.source_stations.append(station_idx if station_idx is not None else i)
                 elif node_type == NodeType.QUEUE:
                     config.service_nodes.append(i)
-                    config.is_delay_node.append(False)
+                    # Check if this Queue has INF scheduling (making it a delay node)
+                    is_inf_sched = False
+                    if hasattr(sn, 'sched') and sn.sched is not None:
+                        station_idx_temp = self._get_int_value(sn.nodeToStation, i) if hasattr(sn, 'nodeToStation') else i
+                        if station_idx_temp is not None:
+                            # sn.sched can be a dict or array
+                            sched_val = None
+                            if isinstance(sn.sched, dict):
+                                sched_val = sn.sched.get(station_idx_temp)
+                            else:
+                                sched_val = self._get_value(sn.sched, station_idx_temp)
+                            # Check for INF scheduling (value 7 in native Python SchedStrategy)
+                            if sched_val is not None:
+                                if hasattr(sched_val, 'value'):
+                                    is_inf_sched = (sched_val.value == 7)  # SchedStrategy.INF
+                                elif hasattr(sched_val, 'name') and sched_val.name == 'INF':
+                                    is_inf_sched = True
+                                else:
+                                    is_inf_sched = (int(sched_val) == 7)
+                    config.is_delay_node.append(is_inf_sched)
                     if hasattr(sn, 'nodeToStation'):
                         station_idx = self._get_int_value(sn.nodeToStation, i)
                         config.service_stations.append(station_idx if station_idx is not None else i)
@@ -815,8 +940,13 @@ class SimPySimulator:
         Parse routing strategies from NetworkStruct.
 
         Extracts per-node, per-class routing strategies from sn.routing.
+        Also parses outlinks and weights from nodeparam for RROBIN/WRROBIN strategies.
         This supports RAND, RROBIN, WRROBIN, JSQ, KCHOICES strategies
         in addition to the default probabilistic (PROB) routing.
+
+        Handles both:
+        - JAR-style: sn.routing is a HashMap, sn.nodes/jobclasses are ArrayLists
+        - Native Python: sn.routing is a matrix (nnodes x nclasses) with strategy IDs
 
         Args:
             sn: NetworkStruct (from model.getStruct())
@@ -825,15 +955,67 @@ class SimPySimulator:
         num_nodes = config.num_nodes
         num_classes = config.num_classes
 
-        # Check if routing map exists
+        # Check if routing exists
         if not hasattr(sn, 'routing') or sn.routing is None:
             return
 
-        # sn.routing is a routing mapping
-        # We need to iterate over nodes and jobclasses
+        # Initialize dicts for all nodes
         for node_idx in range(num_nodes):
             config.node_routing_strategies[node_idx] = {}
+            config.rroutlinks[node_idx] = {}
+            config.wrrobin_weights[node_idx] = {}
 
+        # Determine if routing is matrix-style (native Python) or dict-style (JAR)
+        routing = sn.routing
+        is_matrix_style = (hasattr(routing, 'shape') or
+                          (hasattr(routing, '__getitem__') and not hasattr(routing, 'containsKey') and
+                           hasattr(sn, 'nstations')))
+
+        if is_matrix_style:
+            # Native Python style: routing is a matrix (nnodes x nclasses) with integer strategy IDs
+            self._parse_routing_strategies_matrix(sn, config)
+        else:
+            # JAR style: routing is a HashMap mapping nodes to class-strategy maps
+            self._parse_routing_strategies_jar(sn, config)
+
+    def _parse_routing_strategies_matrix(self, sn: Any, config: SimulatorConfig) -> None:
+        """Parse routing strategies from matrix-style NetworkStruct (native Python)."""
+        num_nodes = config.num_nodes
+        num_classes = config.num_classes
+        routing = np.asarray(sn.routing)
+
+        for node_idx in range(num_nodes):
+            for class_idx in range(num_classes):
+                try:
+                    strategy_id = int(routing[node_idx, class_idx])
+                    # Map integer ID to RoutingStrategy enum
+                    # 0=RAND, 1=PROB, 2=RROBIN, 3=WRROBIN, etc.
+                    strategy_map = {
+                        0: RoutingStrategy.RAND,
+                        1: RoutingStrategy.PROB,
+                        2: RoutingStrategy.RROBIN,
+                        3: RoutingStrategy.WRROBIN,
+                        4: RoutingStrategy.JSQ,
+                        5: RoutingStrategy.FIRING,
+                        6: RoutingStrategy.KCHOICES,
+                    }
+                    strategy_enum = strategy_map.get(strategy_id, RoutingStrategy.RAND)
+                    config.node_routing_strategies[node_idx][class_idx] = strategy_enum
+
+                    # Parse outlinks and weights for RROBIN/WRROBIN from sn.routing_weights
+                    if strategy_enum in (RoutingStrategy.RROBIN, RoutingStrategy.WRROBIN):
+                        self._parse_rrobin_outlinks(None, None, node_idx, class_idx, config)
+                    if strategy_enum == RoutingStrategy.WRROBIN:
+                        self._parse_wrrobin_weights(None, None, node_idx, class_idx, config)
+                except (IndexError, TypeError, ValueError):
+                    pass
+
+    def _parse_routing_strategies_jar(self, sn: Any, config: SimulatorConfig) -> None:
+        """Parse routing strategies from JAR-style NetworkStruct."""
+        num_nodes = config.num_nodes
+        num_classes = config.num_classes
+
+        for node_idx in range(num_nodes):
             # Try to get routing for this node
             node = None
             if hasattr(sn, 'nodes') and sn.nodes is not None:
@@ -844,6 +1026,17 @@ class SimPySimulator:
 
             if node is None:
                 continue
+
+            # Get node parameters for outlinks and weights
+            node_param = None
+            if hasattr(sn, 'nodeparam') and sn.nodeparam is not None:
+                try:
+                    if hasattr(sn.nodeparam, 'get'):
+                        node_param = sn.nodeparam.get(node)
+                    elif hasattr(sn.nodeparam, '__getitem__'):
+                        node_param = sn.nodeparam[node]
+                except (KeyError, IndexError, TypeError):
+                    pass
 
             try:
                 # Try to get the node's routing map
@@ -878,13 +1071,135 @@ class SimPySimulator:
                                 strategy = node_routing.get(jobclass)
 
                         if strategy is not None:
-                            config.node_routing_strategies[node_idx][class_idx] = \
-                                RoutingStrategy.from_string(str(strategy))
+                            strategy_enum = RoutingStrategy.from_string(str(strategy))
+                            config.node_routing_strategies[node_idx][class_idx] = strategy_enum
+
+                            # Parse outlinks and weights for RROBIN/WRROBIN
+                            if strategy_enum in (RoutingStrategy.RROBIN, RoutingStrategy.WRROBIN):
+                                self._parse_rrobin_outlinks(
+                                    node_param, jobclass, node_idx, class_idx, config
+                                )
+                            if strategy_enum == RoutingStrategy.WRROBIN:
+                                self._parse_wrrobin_weights(
+                                    node_param, jobclass, node_idx, class_idx, config
+                                )
                     except (AttributeError, TypeError):
                         pass
 
             except (AttributeError, TypeError):
                 continue
+
+    def _parse_rrobin_outlinks(
+        self, node_param: Any, jobclass: Any, node_idx: int, class_idx: int, config: SimulatorConfig
+    ) -> None:
+        """Parse outlinks (destination node order) for RROBIN/WRROBIN routing."""
+        outlinks_found = False
+
+        # Try JAR-style nodeparam.outlinks first
+        if node_param is not None:
+            try:
+                # Try to get outlinks from nodeparam
+                outlinks_map = None
+                if hasattr(node_param, 'outlinks'):
+                    outlinks_map = node_param.outlinks
+
+                if outlinks_map is not None:
+                    # Get outlinks for this job class
+                    outlinks = None
+                    if hasattr(outlinks_map, 'get'):
+                        outlinks = outlinks_map.get(jobclass)
+                    elif hasattr(outlinks_map, '__getitem__'):
+                        outlinks = outlinks_map[jobclass]
+
+                    if outlinks is not None:
+                        # Convert to list of integers
+                        outlinks_list = []
+                        if hasattr(outlinks, 'length'):
+                            # Matrix/array type from JAR
+                            for i in range(int(outlinks.length())):
+                                outlinks_list.append(int(outlinks.get(i)))
+                        elif hasattr(outlinks, '__iter__'):
+                            # Python iterable
+                            for val in outlinks:
+                                outlinks_list.append(int(val))
+                        elif hasattr(outlinks, '__len__'):
+                            for i in range(len(outlinks)):
+                                outlinks_list.append(int(outlinks[i]))
+
+                        if outlinks_list:
+                            config.rroutlinks[node_idx][class_idx] = outlinks_list
+                            outlinks_found = True
+            except (AttributeError, TypeError, KeyError, IndexError):
+                pass
+
+        # If not found in nodeparam, try native Python sn.routing_weights
+        # The dict keys (dest nodes) provide the outlinks order
+        if not outlinks_found and hasattr(self.sn, 'routing_weights') and self.sn.routing_weights:
+            key = (node_idx, class_idx)
+            if key in self.sn.routing_weights:
+                dest_weights = self.sn.routing_weights[key]
+                if dest_weights:
+                    # Dict keys are destination node indices, in insertion order
+                    outlinks_list = list(dest_weights.keys())
+                    if outlinks_list:
+                        config.rroutlinks[node_idx][class_idx] = outlinks_list
+
+    def _parse_wrrobin_weights(
+        self, node_param: Any, jobclass: Any, node_idx: int, class_idx: int, config: SimulatorConfig
+    ) -> None:
+        """Parse weights for WRROBIN routing."""
+        weights_found = False
+
+        # Try JAR-style nodeparam.weights first
+        if node_param is not None:
+            try:
+                # Try to get weights from nodeparam
+                weights_map = None
+                if hasattr(node_param, 'weights'):
+                    weights_map = node_param.weights
+
+                if weights_map is not None:
+                    # Get weights for this job class
+                    weights = None
+                    if hasattr(weights_map, 'get'):
+                        weights = weights_map.get(jobclass)
+                    elif hasattr(weights_map, '__getitem__'):
+                        weights = weights_map[jobclass]
+
+                    if weights is not None:
+                        # Convert to dict mapping dest_node_idx -> weight
+                        weights_dict = {}
+                        if hasattr(weights, 'getNumCols') and hasattr(weights, 'get'):
+                            # Matrix type from JAR - weights is 1xN matrix where weights[0, destNodeIdx] = weight
+                            num_cols = int(weights.getNumCols())
+                            for dest_idx in range(num_cols):
+                                w = weights.get(0, dest_idx)
+                                if w > 0:
+                                    weights_dict[dest_idx] = float(w)
+                        elif hasattr(weights, '__iter__'):
+                            # Python iterable (assume dict or list)
+                            if isinstance(weights, dict):
+                                for dest_idx, w in weights.items():
+                                    if w > 0:
+                                        weights_dict[int(dest_idx)] = float(w)
+                            else:
+                                for dest_idx, w in enumerate(weights):
+                                    if w > 0:
+                                        weights_dict[dest_idx] = float(w)
+
+                        if weights_dict:
+                            config.wrrobin_weights[node_idx][class_idx] = weights_dict
+                            weights_found = True
+            except (AttributeError, TypeError, KeyError, IndexError):
+                pass
+
+        # If not found in nodeparam, try native Python sn.routing_weights
+        if not weights_found and hasattr(self.sn, 'routing_weights') and self.sn.routing_weights:
+            key = (node_idx, class_idx)
+            if key in self.sn.routing_weights:
+                dest_weights = self.sn.routing_weights[key]
+                if dest_weights:
+                    config.wrrobin_weights[node_idx][class_idx] = dict(dest_weights)
 
     def _parse_load_dependent_service(self, sn: Any, config: SimulatorConfig) -> None:
         """
@@ -1297,10 +1612,16 @@ class SimPySimulator:
             station_idx = self.config.service_stations[svc_idx]
 
             # Get scheduling strategy for this station (default: FCFS)
+            # Note: Don't use _get_value here as it converts to float, losing enum name
             sched_strategy = None
             if hasattr(self.sn, 'sched') and self.sn.sched is not None:
-                sched_value = self._get_value(self.sn.sched, station_idx)
-                sched_strategy = sched_value
+                if hasattr(self.sn.sched, 'get'):
+                    sched_strategy = self.sn.sched.get(station_idx)
+                elif hasattr(self.sn.sched, '__getitem__'):
+                    try:
+                        sched_strategy = self.sn.sched[station_idx]
+                    except (KeyError, IndexError):
+                        pass
 
             if sched_strategy is None:
                 sched_strategy = 'FCFS'  # Default scheduling discipline
@@ -1428,20 +1749,38 @@ class SimPySimulator:
         Returns a function that takes a class_id and returns a service time sample.
         Used by schedulers (especially SJF/LJF) to pre-sample service times.
 
+        Uses distribution samplers for non-exponential distributions (Erlang, HyperExp,
+        PH, MAP, etc.) when available, falling back to exponential sampling.
+
         Args:
             svc_idx: Service node index
 
         Returns:
             Function (class_id: int) -> float that returns service time sample
         """
+        # Convert svc_idx to station_idx for sampler lookup
+        station_idx = self.config.service_stations[svc_idx] if svc_idx < len(self.config.service_stations) else svc_idx
+
+        # Capture references for the closure
+        service_samplers = self.service_samplers
+        config = self.config
+        rng = self.rng
+
         def service_gen(class_id: int) -> float:
             """Generate service time for given class at this station."""
-            if svc_idx >= len(self.config.mus):
+            # Try distribution sampler first (handles Erlang, HyperExp, PH, MAP, etc.)
+            sampler_key = (station_idx, class_id)
+            if sampler_key in service_samplers:
+                sampler = service_samplers[sampler_key]
+                return sampler.sample()
+
+            # Fall back to exponential sampling
+            if svc_idx >= len(config.mus):
                 return 0.0
 
-            service_rate = self.config.mus[svc_idx, class_id]
+            service_rate = config.mus[svc_idx, class_id]
             if service_rate > 0:
-                return self.rng.exponential(1.0 / service_rate)
+                return rng.exponential(1.0 / service_rate)
             return 0.0
 
         return service_gen
@@ -1867,10 +2206,9 @@ class SimPySimulator:
             # Handle numeric node types (from mock or native structs)
             if isinstance(nt, (int, np.integer)):
                 # Map numeric values to NodeType enum
-                # Java NodeType ordinals: SOURCE=0, DELAY=1, QUEUE=2, CLASSSWITCH=3, FORK=4,
-                # JOIN=5, SINK=6, ROUTER=7, CACHE=8, LOGGER=9, PLACE=10, TRANSITION=11
-                # Python NodeType values defined above:
-                # SOURCE=0, SINK=1, QUEUE=2, DELAY=3, FORK=4, JOIN=5, ROUTER=6, etc.
+                # Values must match network_struct.py NodeType:
+                # SOURCE=0, SINK=1, QUEUE=2, DELAY=3, FORK=4, JOIN=5, CACHE=6,
+                # ROUTER=7, CLASSSWITCH=8, PLACE=9, TRANSITION=10, LOGGER=11
                 node_type_map = {
                     0: NodeType.SOURCE,
                     1: NodeType.SINK,
@@ -1878,9 +2216,9 @@ class SimPySimulator:
                     3: NodeType.DELAY,
                     4: NodeType.FORK,
                     5: NodeType.JOIN,
-                    6: NodeType.ROUTER,
-                    7: NodeType.CLASSSWITCH,
-                    8: NodeType.CACHE,
+                    6: NodeType.CACHE,
+                    7: NodeType.ROUTER,
+                    8: NodeType.CLASSSWITCH,
                     9: NodeType.PLACE,
                     10: NodeType.TRANSITION,
                     11: NodeType.LOGGER,
@@ -3016,29 +3354,28 @@ class SimPySimulator:
         # Record arrival
         self.stats[svc_idx].record_arrival(class_id)
 
-        # Check capacity
-        current_length = (
-            sum(self.stats[svc_idx].current_queue_length) +
-            sum(self.stats[svc_idx].current_busy_servers)
-        )
+        # Check for Delay node (infinite servers, never drop)
+        is_delay = self.config.is_delay_node[svc_idx] if svc_idx < len(self.config.is_delay_node) else False
+
+        # Check capacity (skip for Delay nodes which have infinite capacity)
+        # current_queue_length includes both waiting and in-service jobs
+        current_length = sum(self.stats[svc_idx].current_queue_length)
         buffer_cap = self.config.buffer_capacities.get(svc_idx, 10000000)
 
-        if current_length >= buffer_cap:
+        if not is_delay and current_length >= buffer_cap:
             # Drop customer
             self.stats[svc_idx].record_drop(class_id)
             return
 
         # Phase 6: Check balking (customer refuses to join based on queue length)
-        if self._should_balk(svc_idx, class_id, current_length):
+        if not is_delay and self._should_balk(svc_idx, class_id, current_length):
             self.stats[svc_idx].record_drop(class_id)
             return
 
         # Update queue stats
         self.stats[svc_idx].update_queue(class_id, current_time, delta=1)
 
-        # Check for available server
-        is_delay = self.config.is_delay_node[svc_idx] if svc_idx < len(self.config.is_delay_node) else False
-
+        # Start service (is_delay already determined above)
         if is_delay:
             # Delay node: infinite servers, start service immediately
             self.env.process(self._service_process(svc_idx, -1, customer))
@@ -3069,6 +3406,11 @@ class SimPySimulator:
                 scheduler = self.schedulers[svc_idx]
                 service_gen = self._create_service_generator(svc_idx)
 
+                # For PS scheduling: update busy time with OLD rates BEFORE arrival
+                # This captures the busy time during the period before the state change
+                if scheduler.is_ps_family():
+                    self._update_ps_busy_time_before_change(svc_idx, scheduler, current_time)
+
                 # Delegate arrival to scheduler
                 accepted, service_info = scheduler.arrive(customer, current_time, service_gen)
 
@@ -3089,6 +3431,12 @@ class SimPySimulator:
 
                         # Start new customer on the server
                         self.env.process(self._service_process(svc_idx, server_id, new_customer))
+                    elif scheduler.is_ps_family():
+                        # PS family: use event-driven approach
+                        # On arrival, reschedule ALL departures (JAR approach)
+                        self._reschedule_ps_departures(svc_idx, scheduler)
+                        # Track busy servers (count-based, matching MATLAB/JAR definition)
+                        self.stats[svc_idx].update_busy(class_id, current_time, delta=1)
                     else:
                         # Non-preemptive or standard arrival
                         server_id, customer_to_serve = service_info if isinstance(service_info, tuple) else (service_info, customer)
@@ -3268,11 +3616,11 @@ class SimPySimulator:
 
     def _generate_hetero_service_time(self, svc_idx: int, class_id: int, server_type_id: int) -> float:
         """
-        Generate service time using heterogeneous service rate.
+        Generate service time using distribution sampler or heterogeneous service rate.
 
-        For heterogeneous queues, uses the per-(type, class) service rate.
-        Falls back to homogeneous rate if hetero rate not available.
-        Applies load-dependent scaling if configured.
+        First attempts to use a distribution sampler (for non-exponential distributions
+        like Erlang, HyperExp, PH, MAP, etc.). Falls back to exponential sampling
+        using service rates if no sampler is available.
 
         Args:
             svc_idx: Service node index
@@ -3280,24 +3628,35 @@ class SimPySimulator:
             server_type_id: Server type ID (-1 for homogeneous)
 
         Returns:
-            Service time (exponentially distributed, scaled for load dependence)
+            Service time sampled from the appropriate distribution
         """
         service_time = 0.0
 
-        # Try heterogeneous rate first
-        if server_type_id >= 0:
-            hetero_mus = self.config.hetero_mus.get(svc_idx, [])
-            if server_type_id < len(hetero_mus) and class_id < len(hetero_mus[server_type_id]):
-                rate = hetero_mus[server_type_id][class_id]
-                if rate > 0 and np.isfinite(rate):
-                    service_time = self.rng.exponential(1.0 / rate)
+        # Convert svc_idx to station_idx for sampler lookup
+        station_idx = self.config.service_stations[svc_idx] if svc_idx < len(self.config.service_stations) else svc_idx
 
-        # Fall back to homogeneous rate if no hetero rate
-        if service_time == 0.0:
-            if self.config.mus is not None and svc_idx < self.config.mus.shape[0]:
-                rate = self.config.mus[svc_idx, class_id]
-                if rate > 0 and np.isfinite(rate):
-                    service_time = self.rng.exponential(1.0 / rate)
+        # Try distribution sampler first (handles Erlang, HyperExp, PH, MAP, etc.)
+        sampler_key = (station_idx, class_id)
+        if sampler_key in self.service_samplers:
+            sampler = self.service_samplers[sampler_key]
+            service_time = sampler.sample()
+        else:
+            # Fall back to exponential sampling
+
+            # Try heterogeneous rate first
+            if server_type_id >= 0:
+                hetero_mus = self.config.hetero_mus.get(svc_idx, [])
+                if server_type_id < len(hetero_mus) and class_id < len(hetero_mus[server_type_id]):
+                    rate = hetero_mus[server_type_id][class_id]
+                    if rate > 0 and np.isfinite(rate):
+                        service_time = self.rng.exponential(1.0 / rate)
+
+            # Fall back to homogeneous rate if no hetero rate
+            if service_time == 0.0:
+                if self.config.mus is not None and svc_idx < self.config.mus.shape[0]:
+                    rate = self.config.mus[svc_idx, class_id]
+                    if rate > 0 and np.isfinite(rate):
+                        service_time = self.rng.exponential(1.0 / rate)
 
         # Apply load-dependent scaling if this station has load dependence
         if self.config.is_load_dependent.get(svc_idx, False) and service_time > 0:
@@ -3721,6 +4080,9 @@ class SimPySimulator:
                     del self.active_customers[svc_idx][server_id]
 
             # Route customer to next destination
+            # Reset service_time for next visit (important for closed networks where
+            # the same Customer object is reused)
+            customer.service_time = -1.0
             node_idx = self.config.service_nodes[svc_idx]
             dest_node, dest_class = self._route_from_node(node_idx, class_id)
 
@@ -3787,6 +4149,185 @@ class SimPySimulator:
             # The preempting job already started service in the arrival handler
             # The scheduler has saved preemption state for later resume
 
+    def _update_ps_busy_time_before_change(self, svc_idx: int, scheduler, current_time: float) -> None:
+        """
+        Update PS busy time with OLD rates BEFORE a state change (arrival/departure).
+
+        This must be called BEFORE scheduler.arrive() or on_departure() to capture
+        the busy time during the period with the previous rate allocation.
+
+        Args:
+            svc_idx: Service node index
+            scheduler: PS-family scheduler
+            current_time: Current simulation time
+        """
+        # Initialize PS state for this station if needed
+        if svc_idx not in self.ps_departure_processes:
+            self.ps_departure_processes[svc_idx] = {}
+            self.ps_last_update_time[svc_idx] = current_time
+            self.ps_busy_status[svc_idx] = {}
+
+        # Mark this station as a PS station (for rate-weighted utilization)
+        self.stats[svc_idx].is_ps_station = True
+
+        # On first call, initialize ps_last_update_time to current_time (not 0)
+        # to avoid crediting busy time for the empty period before first arrival
+        if self.stats[svc_idx].ps_last_update_time == 0.0:
+            self.stats[svc_idx].ps_last_update_time = current_time
+            return  # No busy time to accumulate on first call
+
+        # Accumulate busy time with OLD rates (before state change)
+        rates_by_class: Dict[int, float] = {}
+        for job in scheduler.jobs:
+            class_id = job.customer.class_id
+            if class_id not in rates_by_class:
+                rates_by_class[class_id] = 0.0
+            rates_by_class[class_id] += job.current_rate
+        self.stats[svc_idx].update_ps_busy(current_time, rates_by_class)
+
+    def _reschedule_ps_departures(self, svc_idx: int, scheduler) -> None:
+        """
+        Reschedule all PS departure events (JAR approach).
+
+        Called after arrivals/departures to update remaining work and
+        schedule new departure events based on current rate allocation.
+
+        Note: PS busy time is updated BEFORE this function is called,
+        in _update_ps_busy_time_before_change().
+
+        Args:
+            svc_idx: Service node index
+            scheduler: PS-family scheduler
+        """
+        from .scheduling.ps import PSJob
+
+        current_time = self.env.now
+
+        # Initialize PS state for this station if needed
+        if svc_idx not in self.ps_departure_processes:
+            self.ps_departure_processes[svc_idx] = {}
+            self.ps_last_update_time[svc_idx] = current_time
+            self.ps_busy_status[svc_idx] = {}
+
+        # Note: PS busy time is already updated in _update_ps_busy_time_before_change()
+        # which is called BEFORE the scheduler's arrive() or on_departure() method
+
+        # Step 1: Update remaining work for all jobs
+        scheduler._update_all_remaining_work(current_time)
+        self.ps_last_update_time[svc_idx] = current_time
+
+        # Step 3: Recalculate rates (handles priority)
+        scheduler._update_rates()
+
+        # Step 4: Cancel all existing departure events
+        for job_id, process in list(self.ps_departure_processes[svc_idx].items()):
+            if process is not None and process.is_alive:
+                process.interrupt('reschedule')
+        self.ps_departure_processes[svc_idx].clear()
+
+        # Step 5: Schedule new departures for jobs with service rate
+        for job in scheduler.jobs:
+            job_id = id(job)
+            has_rate = job.current_rate > 0
+
+            # Track busy status for queue length stats (still useful for debugging)
+            self.ps_busy_status[svc_idx][job_id] = has_rate
+
+            # Schedule departure if job has service rate
+            if has_rate and job.remaining_work > 0:
+                completion_time = current_time + job.remaining_work / job.current_rate
+                process = self.env.process(
+                    self._ps_departure_process(svc_idx, job, completion_time)
+                )
+                self.ps_departure_processes[svc_idx][job_id] = process
+
+    def _ps_departure_process(self, svc_idx: int, ps_job, completion_time: float):
+        """
+        SimPy process for a single PS job departure.
+
+        Waits for the scheduled completion time. If interrupted (due to
+        reschedule), exits silently. The rescheduling logic handles
+        restarting if needed.
+
+        Args:
+            svc_idx: Service node index
+            ps_job: PSJob being served
+            completion_time: Scheduled completion time
+        """
+        import simpy
+        from .scheduling.ps import PSJob
+
+        customer = ps_job.customer
+        class_id = customer.class_id
+        scheduler = self.schedulers.get(svc_idx)
+        job_id = id(ps_job)
+
+        try:
+            # Wait for completion
+            wait_time = completion_time - self.env.now
+            if wait_time > 0:
+                yield self.env.timeout(wait_time)
+
+            # Job completed - process departure
+            current_time = self.env.now
+
+            # Update PS busy time with OLD rates BEFORE departure
+            self._update_ps_busy_time_before_change(svc_idx, scheduler, current_time)
+
+            # Update remaining work one more time
+            scheduler._update_all_remaining_work(current_time)
+
+            # Verify this job should complete (remaining work ~ 0)
+            if ps_job.remaining_work > 1e-9:
+                # Not actually done yet, reschedule
+                self._reschedule_ps_departures(svc_idx, scheduler)
+                return
+
+            # Update statistics
+            self.stats[svc_idx].update_queue(class_id, current_time, delta=-1)
+            # Track busy servers (count-based, matching MATLAB/JAR definition)
+            self.stats[svc_idx].update_busy(class_id, current_time, delta=-1)
+            # Clean up the PS busy tracking dict
+            if job_id in self.ps_busy_status[svc_idx]:
+                del self.ps_busy_status[svc_idx][job_id]
+
+            # Record completion
+            response_time = current_time - customer.queue_arrival_time
+            self.stats[svc_idx].record_completion(class_id, response_time)
+            self.total_event_count += 1
+
+            # Check if MSER sample should be collected
+            if self.mser_enabled:
+                events_since_last = self.total_event_count - self.last_mser_event_count
+                if events_since_last >= self.mser_observation_interval:
+                    self._collect_mser_sample()
+
+            # Remove from departure tracking
+            if job_id in self.ps_departure_processes.get(svc_idx, {}):
+                del self.ps_departure_processes[svc_idx][job_id]
+
+            # Remove from scheduler
+            scheduler.on_departure(ps_job, current_time, -1)
+
+            # Route customer to next destination
+            # Reset service_time for next visit (important for closed networks where
+            # the same Customer object is reused)
+            customer.service_time = -1.0
+            node_idx = self.config.service_nodes[svc_idx]
+            dest_node, dest_class = self._route_from_node(node_idx, class_id)
+
+            if dest_node is not None:
+                customer.class_id = dest_class
+                self._arrive_at_node(dest_node, customer)
+
+            # Reschedule remaining jobs (their rates may have changed)
+            self._reschedule_ps_departures(svc_idx, scheduler)
+
+        except simpy.Interrupt:
+            # Interrupted by reschedule - exit silently
+            # The rescheduling logic will handle us
+            pass
+
     def _depart_system(self, customer: Customer) -> None:
         """Handle customer departure from system (arrival at Sink)."""
         class_id = customer.class_id
@@ -3815,7 +4356,7 @@ class SimPySimulator:
 
         self.mser_observation_times.append(current_time)
 
-        # Record time-weighted average queue length over this interval
+        # Record time-weighted average queue length and completion counts
         for svc_idx in range(len(self.config.service_nodes)):
             for k in range(self.config.num_classes):
                 # Compute interval queue time
@@ -3829,6 +4370,22 @@ class SimPySimulator:
 
                 # Update snapshot
                 self.last_mser_queue_time[svc_idx][k] = current_queue_time
+
+                # Record cumulative completion count for MSER-adjusted throughput
+                self.mser_completion_counts[svc_idx][k].append(
+                    int(self.stats[svc_idx].completed_customers[k])
+                )
+
+                # Record cumulative busy time for MSER-adjusted utilization
+                # Use PS-specific busy time if applicable
+                if self.stats[svc_idx].is_ps_station:
+                    self.mser_busy_time[svc_idx][k].append(
+                        float(self.stats[svc_idx].ps_total_busy_time[k])
+                    )
+                else:
+                    self.mser_busy_time[svc_idx][k].append(
+                        float(self.stats[svc_idx].total_busy_time[k])
+                    )
 
         self.last_mser_sample_time = current_time
         self.last_mser_event_count = self.total_event_count
@@ -3921,9 +4478,9 @@ class SimPySimulator:
         if strategy == RoutingStrategy.RAND:
             return self._select_random_destination(destinations)
         elif strategy == RoutingStrategy.RROBIN:
-            return self._select_round_robin_destination(node_idx, destinations)
+            return self._select_round_robin_destination(node_idx, class_id, destinations)
         elif strategy == RoutingStrategy.WRROBIN:
-            return self._select_weighted_round_robin_destination(node_idx, destinations, probs)
+            return self._select_weighted_round_robin_destination(node_idx, class_id, destinations)
         elif strategy == RoutingStrategy.JSQ:
             return self._select_jsq_destination(destinations)
         elif strategy == RoutingStrategy.KCHOICES:
@@ -3958,45 +4515,90 @@ class SimPySimulator:
         return destinations[idx]
 
     def _select_round_robin_destination(
-        self, node_idx: int, destinations: List[Tuple[int, int]]
+        self, node_idx: int, class_id: int, destinations: List[Tuple[int, int]]
     ) -> Tuple[int, int]:
         """
         Select destination using round-robin routing (RROBIN strategy).
 
-        Cycles through destinations in order.
+        Uses rroutlinks if available (from nodeparam.outlinks), otherwise
+        cycles through destinations in order from routing matrix.
         """
-        counter = self.round_robin_counters.get(node_idx, 0)
-        idx = counter % len(destinations)
-        self.round_robin_counters[node_idx] = counter + 1
-        return destinations[idx]
+        # Try to use parsed outlinks first
+        outlinks = None
+        if node_idx in self.config.rroutlinks:
+            outlinks = self.config.rroutlinks[node_idx].get(class_id)
+
+        if outlinks:
+            # Use outlinks to determine destination order
+            counter = self.round_robin_counters[node_idx][class_id]
+            idx = counter % len(outlinks)
+            self.round_robin_counters[node_idx][class_id] = counter + 1
+            dest_node = outlinks[idx]
+            # Return (dest_node, class_id) - class doesn't change with RROBIN
+            return (dest_node, class_id)
+        else:
+            # Fallback to routing matrix destinations
+            counter = self.round_robin_counters[node_idx][class_id]
+            idx = counter % len(destinations)
+            self.round_robin_counters[node_idx][class_id] = counter + 1
+            return destinations[idx]
 
     def _select_weighted_round_robin_destination(
-        self, node_idx: int, destinations: List[Tuple[int, int]], weights: List[float]
+        self, node_idx: int, class_id: int, destinations: List[Tuple[int, int]]
     ) -> Tuple[int, int]:
         """
         Select destination using weighted round-robin routing (WRROBIN strategy).
 
-        Uses routing probabilities as weights for the round-robin schedule.
-        The counter cycles through a virtual sequence where each destination
-        appears proportionally to its weight.
+        Uses wrrobin_weights and rroutlinks if available (from nodeparam),
+        otherwise falls back to simple round-robin.
         """
-        # Normalize weights to integers (multiply by scale factor)
-        scale = 100
-        int_weights = [max(1, int(w * scale)) for w in weights]
-        total_weight = sum(int_weights)
+        # Try to use parsed outlinks and weights
+        outlinks = None
+        weights_dict = None
+        if node_idx in self.config.rroutlinks:
+            outlinks = self.config.rroutlinks[node_idx].get(class_id)
+        if node_idx in self.config.wrrobin_weights:
+            weights_dict = self.config.wrrobin_weights[node_idx].get(class_id)
 
-        counter = self.round_robin_counters.get(node_idx, 0)
-        position = counter % total_weight
-        self.round_robin_counters[node_idx] = counter + 1
+        if outlinks and weights_dict:
+            # Build integer weights for each destination in outlinks order
+            # Use original weights (not scaled) for proper interleaved round-robin
+            int_weights = []
+            for dest_node in outlinks:
+                w = weights_dict.get(dest_node, 0.0)
+                # Convert to integer, ensure at least 1 if weight > 0
+                int_w = max(1, int(round(w))) if w > 0 else 0
+                int_weights.append(int_w)
 
-        # Find destination corresponding to this position
-        cumulative = 0
-        for i, dest in enumerate(destinations):
-            cumulative += int_weights[i]
-            if position < cumulative:
-                return dest
+            total_weight = sum(int_weights)
+            if total_weight <= 0:
+                # No valid weights, use simple round-robin
+                counter = self.round_robin_counters[node_idx][class_id]
+                idx = counter % len(outlinks)
+                self.round_robin_counters[node_idx][class_id] = counter + 1
+                return (outlinks[idx], class_id)
 
-        return destinations[-1]
+            # Use interleaved weighted round-robin
+            # Pattern repeats every total_weight jobs
+            # For weights [1, 2]: pattern is Q1, Q2, Q2 (positions 0, 1, 2)
+            counter = self.round_robin_counters[node_idx][class_id]
+            position = counter % total_weight
+            self.round_robin_counters[node_idx][class_id] = counter + 1
+
+            # Find destination corresponding to this position
+            cumulative = 0
+            for i, dest_node in enumerate(outlinks):
+                cumulative += int_weights[i]
+                if position < cumulative:
+                    return (dest_node, class_id)
+
+            return (outlinks[-1], class_id)
+        else:
+            # Fallback to simple round-robin over routing matrix destinations
+            counter = self.round_robin_counters[node_idx][class_id]
+            idx = counter % len(destinations)
+            self.round_robin_counters[node_idx][class_id] = counter + 1
+            return destinations[idx]
 
     def _select_jsq_destination(
         self, destinations: List[Tuple[int, int]]
@@ -4208,12 +4810,28 @@ class SimPySimulator:
                 stats.update_queue(k, sim_time)
                 stats.update_busy(k, sim_time)
 
+            # Finalize PS busy time (rate-weighted) if this is a PS station
+            if stats.is_ps_station:
+                scheduler = self.schedulers.get(svc_idx)
+                if scheduler is not None and hasattr(scheduler, 'jobs'):
+                    # Accumulate final busy time with current rates
+                    rates_by_class: Dict[int, float] = {}
+                    for job in scheduler.jobs:
+                        class_id = job.customer.class_id
+                        if class_id not in rates_by_class:
+                            rates_by_class[class_id] = 0.0
+                        rates_by_class[class_id] += job.current_rate
+                    stats.update_ps_busy(sim_time, rates_by_class)
+
             for k in range(num_classes):
                 # For queue length, use MSER observations if available (more accurate post-warmup)
-                if (self.mser_enabled and
+                use_mser_qlen = (
+                    self.mser_enabled and
                     svc_idx in self.mser_observations and
                     k in self.mser_observations[svc_idx] and
-                    len(self.mser_observations[svc_idx][k]) > truncation_obs_idx + 5):
+                    len(self.mser_observations[svc_idx][k]) > truncation_obs_idx + 5
+                )
+                if use_mser_qlen:
                     # Use average of post-warmup MSER observations
                     post_warmup_obs = self.mser_observations[svc_idx][k][truncation_obs_idx:]
                     qlen = np.mean(post_warmup_obs) if post_warmup_obs else 0.0
@@ -4222,14 +4840,57 @@ class SimPySimulator:
 
                 result.QN[station_idx, k] = qlen
 
+                # For throughput, use MSER-adjusted computation if available
+                # Throughput = (end_completions - start_completions) / (end_time - start_time)
+                use_mser_tput = (
+                    self.mser_enabled and
+                    svc_idx in self.mser_completion_counts and
+                    k in self.mser_completion_counts[svc_idx] and
+                    len(self.mser_completion_counts[svc_idx][k]) > truncation_obs_idx and
+                    truncation_obs_idx < len(self.mser_observation_times)
+                )
+                if use_mser_tput:
+                    start_completions = self.mser_completion_counts[svc_idx][k][truncation_obs_idx]
+                    end_completions = stats.completed_customers[k]
+                    start_time = self.mser_observation_times[truncation_obs_idx]
+                    end_time = sim_time
+                    elapsed = end_time - start_time
+                    tput = (end_completions - start_completions) / elapsed if elapsed > 0 else 0.0
+                else:
+                    tput = stats.get_throughput(k, sim_time)
+
+                result.TN[station_idx, k] = tput
+
                 # For Delay (infinite server) nodes, utilization = queue length
                 # since all customers are always in service
                 if is_delay:
                     result.UN[station_idx, k] = qlen
                 else:
-                    result.UN[station_idx, k] = stats.get_utilization(k, sim_time, min(num_servers, 1000000))
+                    # Use MSER-adjusted utilization if available
+                    use_mser_util = (
+                        self.mser_enabled and
+                        svc_idx in self.mser_busy_time and
+                        k in self.mser_busy_time[svc_idx] and
+                        len(self.mser_busy_time[svc_idx][k]) > truncation_obs_idx and
+                        truncation_obs_idx < len(self.mser_observation_times)
+                    )
+                    if use_mser_util:
+                        start_busy = self.mser_busy_time[svc_idx][k][truncation_obs_idx]
+                        # Get current busy time
+                        if stats.is_ps_station:
+                            end_busy = stats.ps_total_busy_time[k]
+                        else:
+                            end_busy = stats.total_busy_time[k]
+                        start_time = self.mser_observation_times[truncation_obs_idx]
+                        end_time = sim_time
+                        elapsed = end_time - start_time
+                        eff_num_servers = min(num_servers, 1000000)
+                        util = (end_busy - start_busy) / (elapsed * eff_num_servers) if (elapsed > 0 and eff_num_servers > 0) else 0.0
+                    else:
+                        util = stats.get_utilization(k, sim_time, min(num_servers, 1000000))
+                    result.UN[station_idx, k] = util
+
                 result.RN[station_idx, k] = stats.get_avg_response_time(k)
-                result.TN[station_idx, k] = stats.get_throughput(k, sim_time)
                 result.AN[station_idx, k] = stats.arrived_customers[k] / sim_time if sim_time > 0 else 0.0
 
         # Fill in metrics for SPN places (if any)

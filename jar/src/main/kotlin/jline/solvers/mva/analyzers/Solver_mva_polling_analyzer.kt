@@ -27,26 +27,10 @@ import jline.util.matrix.MatrixCell
 private fun distributionToMAP(dist: Distribution?): MatrixCell {
     return when (dist) {
         is Exp -> map_exponential(dist.mean)
-        is Immediate -> {
-            val MAP = MatrixCell()
-            val D0 = Matrix(1, 1)
-            D0.set(0, 0, 0.0)
-            val D1 = Matrix(1, 1)
-            D1.set(0, 0, 0.0)
-            MAP[0] = D0
-            MAP[1] = D1
-            MAP
-        }
-        null -> {
-            val MAP = MatrixCell()
-            val D0 = Matrix(1, 1)
-            D0.set(0, 0, 0.0)
-            val D1 = Matrix(1, 1)
-            D1.set(0, 0, 0.0)
-            MAP[0] = D0
-            MAP[1] = D1
-            MAP
-        }
+        // Use very small mean (1e-10) for immediate/null distributions to avoid division by zero
+        // in polling analysis equations. This matches Python native behavior.
+        is Immediate -> map_exponential(1e-10)
+        null -> map_exponential(1e-10)
         else -> map_exponential(dist.mean)
     }
 }
@@ -85,25 +69,13 @@ fun solver_mva_polling_analyzer(sn: NetworkStruct, options: SolverOptions): MVAR
         throw RuntimeException("Polling analyzer requires a Source and a Queue node")
     }
 
-    if (sn.visits == null || sn.visits.size <= source_ist || sn.visits.get(source_ist) == null) {
-        throw RuntimeException("Invalid visits matrix: source station $source_ist not found in visits matrix")
-    }
-    if (sn.stationToStateful == null || sn.stationToStateful.length() <= queue_ist) {
-        throw RuntimeException("Invalid stationToStateful mapping: queue station $queue_ist not found")
-    }
-
-    val statefulIndex = sn.stationToStateful.get(queue_ist).toInt()
-    val visitsMatrix = sn.visits.get(source_ist)
-    if (visitsMatrix == null || visitsMatrix.length() <= statefulIndex) {
-        throw RuntimeException("Invalid visits matrix: stateful index $statefulIndex not found in visits for station $source_ist")
-    }
-
     val lambda = Matrix(1, sn.nclasses)
     val mu = Matrix(1, sn.nclasses)
     val k = sn.nservers.get(queue_ist).toInt()
 
     for (r in 0 until sn.nclasses) {
-        lambda.set(0, r, sn.rates.get(source_ist) * visitsMatrix.get(statefulIndex, r))
+        // Get arrival rate directly from rates matrix (matches Python native behavior)
+        lambda.set(0, r, sn.rates.get(source_ist, r))
         mu.set(0, r, sn.rates.get(queue_ist, r))
     }
 
@@ -192,8 +164,9 @@ fun solver_mva_polling_analyzer(sn: NetworkStruct, options: SolverOptions): MVAR
     }
 
     for (r in 0 until sn.nclasses) {
-        val visitRatio = visitsMatrix.get(statefulIndex, r)
-        RN.set(queue_ist, r, R.get(0, r) * visitRatio)
+        // In polling systems, each class visits the queue exactly once
+        // No need to multiply by visit ratio (matches Python native behavior)
+        RN.set(queue_ist, r, R.get(0, r))
         CN.set(queue_ist, r, R.get(0, r))
         XN.set(queue_ist, r, lambda.get(0, r))
         UN.set(queue_ist, r, lambda.get(0, r) / mu.get(0, r) / k)

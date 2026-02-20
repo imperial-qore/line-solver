@@ -254,8 +254,8 @@ for ind=1:I
                     if P{r,s}(ind,jnd)>0
                         P{r,r}(ind,csid(ind,jnd)) = P{r,r}(ind,csid(ind,jnd)) + P{r,s}(ind,jnd);
                         P{r,s}(ind,jnd) = 0;
+                        P{s,s}(csid(ind,jnd),jnd) = 1;
                     end
-                    P{s,s}(csid(ind,jnd),jnd) = 1;
                 end
             end
         end
@@ -264,6 +264,23 @@ end
 
 connected = zeros(Ip);
 nodes = self.nodes;
+% Clear non-station nodes' outputStrategy before setting new routing.
+% This prevents accumulation from previous link() calls,
+% since setProbRouting appends entries and resetNetwork only
+% clears station nodes (e.g., Queue, Delay), not non-station
+% stateful nodes (e.g., Router).
+for ind=1:Ip
+    if ~isa(nodes{ind}, 'Station') && ismethod(nodes{ind}.output, 'initDispatcherJobClasses')
+        nodes{ind}.output.initDispatcherJobClasses(self.classes);
+        % Also update sn.routing so getRoutingMatrix won't try PROB routing
+        % for classes whose outputStrategy was just cleared
+        if ~isempty(self.sn) && isfield(self.sn, 'routing') && ind <= size(self.sn.routing, 1)
+            for k=1:K
+                self.sn.routing(ind,k) = RoutingStrategy.DISABLED;
+            end
+        end
+    end
+end
 for r=1:K
     [If,Jf,S] = find(P{r,r});
     for k=1:length(If)

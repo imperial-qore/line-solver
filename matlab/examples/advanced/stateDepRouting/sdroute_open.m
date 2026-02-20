@@ -30,7 +30,7 @@ solver{2} = CTMC(model,'cutoff',5);
 
 AvgTable = {};
 for s=1:length(solver)
-    fprintf(1,'SOLVER: %s\n',solver{s}.getName());
+    fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgNodeTable();
     AvgTable{s}
 end

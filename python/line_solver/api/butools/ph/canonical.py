@@ -2,9 +2,16 @@ import numpy as np
 import numpy.matlib as ml
 import math
 import cmath
-import butools
-from butools.ph import CheckMERepresentation, MomentsFromPH
-from butools.moments import ReducedMomsFromMoms, NormMomsFromMoms
+# Use local butools implementations instead of external package
+from ..moments.conv import NormMomsFromMoms, ReducedMomsFromMoms
+from .check import CheckMERepresentation
+from .baseph import MomentsFromPH
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 def APH2ndMomentLowerBound (m1, n):
     """

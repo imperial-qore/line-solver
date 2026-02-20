@@ -165,8 +165,21 @@ end
 
 for c=1:sn.nchains
     classRefElem = mvaDoc.createElement('Class');
-    classRefElem.setAttribute('name',sprintf('Chain%d',c));
-    classRefElem.setAttribute('refStation',sn.nodenames{sn.stationToNode(refstatchain(c))});
+    classRefElem.setAttribute('name',sprintf('Chain%02d',c));
+    % For open chains, the refstat is Source which is excluded from JMVA output.
+    % Use the first non-Source station as the reference station instead.
+    refIdx = refstatchain(c);
+    refNodeType = sn.nodetype(sn.stationToNode(refIdx));
+    if refNodeType == NodeType.Source
+        for ii=1:sn.nstations
+            nt = sn.nodetype(sn.stationToNode(ii));
+            if nt ~= NodeType.Source && nt ~= NodeType.Sink
+                refIdx = ii;
+                break;
+            end
+        end
+    end
+    classRefElem.setAttribute('refStation',sn.nodenames{sn.stationToNode(refIdx)});
     refStationsElem.appendChild(classRefElem);
 end
 

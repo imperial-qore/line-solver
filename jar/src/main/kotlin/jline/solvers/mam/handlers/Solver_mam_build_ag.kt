@@ -58,6 +58,10 @@ fun solver_mam_build_ag(sn: NetworkStruct, maxStates: Int): RCATModel {
 
     for (ist in queueStations) {
         for (r in 0 until K) {
+            // Skip Signal classes - they don't have their own queue state
+            if (sn.issignal != null && sn.issignal.get(r, 0) > 0) {
+                continue
+            }
             val rate = sn.rates.get(ist, r)
             if (!rate.isNaN() && rate > 0) {
                 processMap.set(ist, r, processIdx.toDouble())
@@ -264,7 +268,19 @@ private fun buildLocalRates(
 
     for (isrc in sourceStations) {
         for (sSrc in 0 until K) {
-            val probSrc = rt.get(isrc * K + sSrc, ist * K + r)
+            // For signals: check routing to ANY class at this station (signals route as Signal->Signal
+            // but their effect is on positive customer processes)
+            val isSignalSrc = sn.issignal != null && sn.issignal.get(sSrc, 0) > 0
+            val probSrc: Double
+            if (isSignalSrc) {
+                var pSum = 0.0
+                for (sDst in 0 until K) {
+                    pSum += rt.get(isrc * K + sSrc, ist * K + sDst)
+                }
+                probSrc = pSum
+            } else {
+                probSrc = rt.get(isrc * K + sSrc, ist * K + r)
+            }
             val srcRate = sn.rates.get(isrc, sSrc)
             if (probSrc > 0 && !srcRate.isNaN()) {
                 // Check if source class sSrc is a negative signal

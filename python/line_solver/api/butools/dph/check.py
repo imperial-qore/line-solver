@@ -5,10 +5,16 @@ Created on Sun Aug 24 15:31:04 2014
 @author: gabor
 """
 
-import butools
-from butools.mc import CheckProbMatrix, CheckProbVector
 import numpy as np
 import scipy.linalg as la
+from ..mc.check import CheckProbMatrix, CheckProbVector
+
+from .. import verbose, checkPrecision
+class _butools_settings:
+    verbose = verbose
+    checkPrecision = checkPrecision
+butools = _butools_settings()
+
 
 
 

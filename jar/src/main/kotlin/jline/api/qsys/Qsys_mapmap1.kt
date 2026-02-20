@@ -74,11 +74,11 @@ fun qsys_mapmap1(
 
     // Extract queue length moments
     val ncMoms = result["ncMoms"]?.get(0)
-    val meanQL = ncMoms?.get(0, 0) ?: 0.0
+    val meanQL: Double = ncMoms?.get(0, 0) ?: 0.0
 
     // Extract sojourn time moments
     val stMoms = result["stNoms"]?.get(0)
-    val meanST = stMoms?.get(0, 0) ?: 0.0
+    val meanST: Double = stMoms?.get(0, 0) ?: 0.0
 
     // Mean service time from PH
     val negSinv = S.scale(-1.0).inv()

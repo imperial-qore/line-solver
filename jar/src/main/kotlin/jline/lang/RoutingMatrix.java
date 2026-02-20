@@ -136,7 +136,10 @@ public class RoutingMatrix implements Serializable {
     }
 
     public void addConnection(Node sourceNode, Node destNode, JobClass jobClass, double probability) {
-        if (sourceNode.getRoutingStrategy(jobClass) == RoutingStrategy.DISABLED) {
+        // Only skip DISABLED routing when probability is not explicitly specified (NaN).
+        // When probability is explicit (e.g., from serialRouting with 1.0), the caller is
+        // intentionally overriding the default DISABLED state set by Dispatcher initialization.
+        if (Double.isNaN(probability) && sourceNode.getRoutingStrategy(jobClass) == RoutingStrategy.DISABLED) {
             return;
         }
 
@@ -333,9 +336,9 @@ public class RoutingMatrix implements Serializable {
                                 Matrix from = routings.get(r).get(r);
                                 from.set(i, csid[i][j], from.get(i, csid[i][j]) + nodeRouting.get(i, j));
                                 nodeRouting.remove(i, j);
+                                Matrix to = routings.get(s).get(s);
+                                to.set(csid[i][j], j, 1.0);
                             }
-                            Matrix to = routings.get(s).get(s);
-                            to.set(csid[i][j], j, 1.0);
                         }
                     }
                 }
@@ -463,8 +466,7 @@ public class RoutingMatrix implements Serializable {
         if (this.hasUnappliedConnections) {
             this.resolveUnappliedConnections();
         }
-        NetworkStruct sn = new NetworkStruct();
-        sn.rtorig = routingListToMap();
+        Map<JobClass, Map<JobClass, Matrix>> rtorig = routingListToMap();
 
         if (this.hasClassSwitches) {
             this.resolveClassSwitches();
@@ -493,10 +495,14 @@ public class RoutingMatrix implements Serializable {
             }
 
         }
-        model.setStruct(sn);
+        // Update rtorig without replacing the entire NetworkStruct.
+        // This preserves computed fields (rates, isstatedep, etc.) during relink.
+        model.updateRtorig(rtorig);
         model.setCsMatrix(this.csMatrix);
-        this.model.setStruct(sn);
-        this.model.setCsMatrix(this.csMatrix);
+        if (this.model != model) {
+            this.model.updateRtorig(rtorig);
+            this.model.setCsMatrix(this.csMatrix);
+        }
     }
 
     /*

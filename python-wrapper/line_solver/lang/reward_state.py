@@ -41,6 +41,38 @@ class RewardState:
         self._node_to_station = nodes_to_station
         self._class_to_index = classes_to_idx
 
+    def _get_node_index(self, node):
+        """Get node index (1-based), handling both wrapper and native implementations."""
+        if hasattr(node, 'get_index'):
+            return node.get_index()  # Native: already 1-based
+        if hasattr(node, 'index'):
+            idx = node.index
+            return idx() if callable(idx) else idx
+        # Wrapper nodes: Java getNodeIndex() returns 0-based, convert to 1-based
+        if hasattr(node, 'obj'):
+            try:
+                return int(node.obj.getNodeIndex()) + 1
+            except Exception:
+                pass
+        raise ValueError(f"Node {node} has no index attribute")
+
+    def _get_class_index(self, jobclass):
+        """Get class index (1-based), handling both wrapper and native implementations."""
+        if hasattr(jobclass, 'getIndex'):
+            return jobclass.getIndex()  # Already 1-based
+        if hasattr(jobclass, 'get_index'):
+            return jobclass.get_index()
+        if hasattr(jobclass, 'index'):
+            idx = jobclass.index
+            return idx() if callable(idx) else idx
+        # Wrapper classes: Java getIndex() returns 1-based
+        if hasattr(jobclass, 'obj'):
+            try:
+                return int(jobclass.obj.getIndex())
+            except Exception:
+                pass
+        raise ValueError(f"JobClass {jobclass} has no index attribute")
+
     def at(self, node, jobclass=None):
         """Access population at station or station+class.
 
@@ -57,11 +89,13 @@ class RewardState:
             >>> pop = state.at(queue1, class1)       # Class1 jobs at queue1
             >>> total = state.at(queue1).total()     # Total jobs at queue1
         """
+        node_idx = self._get_node_index(node)
+
         if jobclass is None:
             # Return view for all classes at this station
-            station_idx = self._node_to_station.get(node.index)
+            station_idx = self._node_to_station.get(node_idx)
             if station_idx is None:
-                raise ValueError(f"Node {node.name} not found in station mapping")
+                raise ValueError(f"Node not found in station mapping")
 
             start_idx = (station_idx - 1) * self._nclasses
             end_idx = station_idx * self._nclasses
@@ -71,13 +105,14 @@ class RewardState:
             return RewardStateView(subvector, self, station_idx, -1)
         else:
             # Return scalar for specific station/class
-            station_idx = self._node_to_station.get(node.index)
+            station_idx = self._node_to_station.get(node_idx)
             if station_idx is None:
-                raise ValueError(f"Node {node.name} not found in station mapping")
+                raise ValueError(f"Node not found in station mapping")
 
-            class_idx = self._class_to_index.get(jobclass.index)
+            class_idx_key = self._get_class_index(jobclass)
+            class_idx = self._class_to_index.get(class_idx_key)
             if class_idx is None:
-                raise ValueError(f"JobClass {jobclass.name} not found in class mapping")
+                raise ValueError(f"JobClass not found in class mapping")
 
             idx = (station_idx - 1) * self._nclasses + class_idx - 1  # 0-indexed
 
@@ -101,9 +136,10 @@ class RewardState:
             >>> view = state.for_class(class1)
             >>> total = view.total()  # Total class1 jobs in system
         """
-        class_idx = self._class_to_index.get(jobclass.index)
+        class_idx_key = self._get_class_index(jobclass)
+        class_idx = self._class_to_index.get(class_idx_key)
         if class_idx is None:
-            raise ValueError(f"JobClass {jobclass.name} not found in class mapping")
+            raise ValueError(f"JobClass not found in class mapping")
 
         values = []
         for ist in range(self._nstations):

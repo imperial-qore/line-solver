@@ -10,6 +10,7 @@ import jline.lang.Network;
 import jline.lang.NetworkStruct;
 import jline.GlobalConstants;
 import jline.lang.constant.NodeType;
+import jline.lang.nodeparam.CacheNodeParam;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.constant.SolverType;
 import jline.lang.nodes.Cache;
@@ -129,7 +130,7 @@ public class SolverNC extends NetworkSolver {
                 "RoutingStrategy_PROB", "RoutingStrategy_RAND",
                 "SchedStrategy_FCFS", "ClosedClass", "SelfLoopingClass",
                 "Cache", "CacheClassSwitcher", "OpenClass",
-                "ReplacementStrategy_RR", "ReplacementStrategy_FIFO",
+                "ReplacementStrategy_RR", "ReplacementStrategy_FIFO", "ReplacementStrategy_LRU", "ReplacementStrategy_SFIFO",
                 "LoadDependence"
         });
         return featSupported;
@@ -289,18 +290,18 @@ public class SolverNC extends NetworkSolver {
         }
 
         long startTimeMillis = System.nanoTime();
-        NetworkStruct sn = getStruct();
+        // Get a fresh sn from the model - runAnalyzer may have modified
+        // the cached sn (e.g., converting multiserver nservers to lldscaling),
+        // but solver_nc_jointaggr needs the original nservers to build
+        // its own mu matrix, matching MATLAB's value-copy semantics.
+        // Force a hard refresh to regenerate the struct with original nservers.
+        this.model.refreshStruct(true);
+        NetworkStruct sn = this.model.getStruct(true);
         resetRandomGeneratorSeed(options.seed);
-        
-        // Use proper aggregated joint solver implementation
-        SolverNCJointReturn result;
-        if (sn.lldscaling != null && !sn.lldscaling.isEmpty()) {
-            // Use load-dependent aggregated joint solver for load-dependent models
-            result = solver_nc_jointaggr_ld(sn, this.options);
-        } else {
-            // Use standard aggregated joint solver
-            result = solver_nc_jointaggr(sn, this.options);
-        }
+
+        // Always use solver_nc_jointaggr (not the LD variant) to match MATLAB behavior.
+        // solver_nc_jointaggr builds its own mu matrix from sn.nservers.
+        SolverNCJointReturn result = solver_nc_jointaggr(sn, this.options);
         
         NCResult ncResult = (NCResult) this.result;
         ncResult.solver = this.name;
@@ -338,6 +339,10 @@ public class SolverNC extends NetworkSolver {
 
         this.runAnalyzerChecks(options);
         this.resetRandomGeneratorSeed(options.seed);
+        // Save original rt before refreshChains/cache analyzers modify it in-place.
+        // In MATLAB, sn is a value-copy struct unaffected by refreshChains;
+        // in Java, sn is a reference, so we must save/restore manually.
+        Matrix rtOrig = sn.rt != null ? sn.rt.copy() : null;
         String origMethod = options.method;
 
         if (this.enableChecks && !this.supports(this.model)) {
@@ -354,8 +359,18 @@ public class SolverNC extends NetworkSolver {
         // Method Selection and Preprocessing
         switch (options.method) {
             case "default":
+                // Match MATLAB: any(sn.nservers(isfinite(sn.nservers))>1)
+                // Only check finite servers for multi-server detection (exclude INF/Delay servers)
+                boolean hasFiniteMultiServer = false;
+                for (int i = 0; i < sn.nstations; i++) {
+                    double ns = sn.nservers.get(i);
+                    if (Double.isFinite(ns) && ns > 1) {
+                        hasFiniteMultiServer = true;
+                        break;
+                    }
+                }
                 if (sn.nstations == 2 && !sn.nodetype.contains(NodeType.Cache) &&
-                        sn.nodetype.contains(NodeType.Delay) && snHasMultiServer(sn)) {
+                        sn.nodetype.contains(NodeType.Delay) && hasFiniteMultiServer) {
                     options.method = "comomld";
                 }
                 break;
@@ -549,8 +564,31 @@ public class SolverNC extends NetworkSolver {
             }
         }
 
+        // Propagate actual hit/miss probabilities from Cache model nodes to sn.nodeparam.
+        // NC solver stores these on Cache nodes (via setResultHitProb/setResultMissProb)
+        // but snGetArvRFromTput reads from sn.nodeparam.actualhitprob/actualmissprob.
+        for (int ind = 0; ind < sn.nnodes; ind++) {
+            if (sn.nodetype.get(ind) == NodeType.Cache) {
+                Cache cacheNode = (Cache) this.model.getNodes().get(ind);
+                CacheNodeParam cacheParam = (CacheNodeParam) sn.nodeparam.get(cacheNode);
+                if (cacheParam != null) {
+                    Matrix hitProb = cacheNode.getHitRatio();
+                    Matrix missProb = cacheNode.getMissRatio();
+                    if (hitProb != null && !hitProb.isEmpty()) {
+                        cacheParam.actualhitprob = hitProb;
+                    }
+                    if (missProb != null && !missProb.isEmpty()) {
+                        cacheParam.actualmissprob = missProb;
+                    }
+                }
+            }
+        }
+
         // Compute arrival rates
         AvgHandle T = getAvgTputHandles();
+        if (rtOrig != null) {
+            sn.rt = rtOrig;
+        }
         Matrix AN = snGetArvRFromTput(sn, ret.TN, T);
 
         double finish = System.nanoTime();
@@ -800,6 +838,17 @@ public class SolverNC extends NetworkSolver {
      */
     @Override
     public boolean supports(Network model) {
+        return supportsModel(model);
+    }
+
+    /**
+     * Static method to check whether the given model is supported by the NC solver.
+     * This allows checking support without creating a solver instance.
+     *
+     * @param model - the network model
+     * @return - true if the model is supported, false otherwise
+     */
+    public static boolean supportsModel(Network model) {
         FeatureSet featUsed = model.getUsedLangFeatures();
         FeatureSet featSupported = SolverNC.getFeatureSet();
         return FeatureSet.supports(featSupported, featUsed);

@@ -30,6 +30,10 @@ import jline.util.matrix.Matrix
 
 fun pfqn_mvams(lambda: Matrix, L: Matrix, N: Matrix, Z: Matrix = Matrix(1, L.numCols), mi: Matrix?, S: Matrix?): Ret.pfqnMVA {
     var Z = if (Z.isEmpty) Matrix(1, L.numCols) else Z.copy()  // Create local copy to avoid modifying the original
+    // Sum think times across multiple delay stations (matching MATLAB pfqn_mvams.m lines 41-43)
+    if (Z.numRows > 1) {
+        Z = Z.sumCols()  // Sum rows to get total think time per class
+    }
     var mi = mi?.copy()  // Create local copy to avoid modifying the original
     var S = S?.copy()  // Create local copy to avoid modifying the original
     val M = L.numRows

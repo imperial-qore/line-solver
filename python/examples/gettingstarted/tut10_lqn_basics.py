@@ -11,9 +11,9 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from line_solver.layered import LayeredNetwork, Processor, Task, Entry, Activity
-from line_solver.constants import SchedStrategy  
+from line_solver.constants import SchedStrategy
 from line_solver.distributions import Exp
-from line_solver.solvers import LN, MVA
+from line_solver.solvers import LN, MVA, LQNS
 
 def main():
     # Create the layered network model
@@ -42,9 +42,26 @@ def main():
     A2.bound_to(E2).replies_to(E2)
 
     # Solve the layered network using the LN solver with MVA applied to each layer
-    solver = LN(model, lambda m: MVA(m))
-    avg_table = solver.avg_table()
-    print(avg_table)
+    print("LN Solver Results:")
+    solver_ln = LN(model, lambda m: MVA(m), verbose=False)
+    avg_table_ln = solver_ln.avg_table()
+    print(avg_table_ln)
+
+    # Solve using LQNS solver (if available)
+    print("\nLQNS Solver Results:")
+    if LQNS.isAvailable():
+        solver_lqns = LQNS(model)
+        avg_table_lqns = solver_lqns.avg_table()
+        print(avg_table_lqns)
+    else:
+        print("LQNS solver not available - skipping")
+
+    # This example illustrates key layered queueing network concepts:
+    # - Hierarchical structure: Clients make requests to servers
+    # - Synchronous calls: Client requests block until database responds
+    # - Call multiplicity: Single client request triggers multiple database operations
+    # - Performance analysis: End-to-end response times including call dependencies
+    # - Multiple solution methods: Both LN (iterative) and LQNS (analytical) solvers
 
 if __name__ == '__main__':
     main()

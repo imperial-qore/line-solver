@@ -25,8 +25,8 @@ def gallery_mm1_tandem_multiclass():
 
     # Block 3: topology
     P = model.init_routing_matrix()
-    P[1] = Network.serial_routing([source, queue1, queue2, sink])
-    P[2] = Network.serial_routing([source, queue1, queue2, sink])
+    P[oclass1] = Network.serial_routing([source, queue1, queue2, sink])
+    P[oclass2] = Network.serial_routing([source, queue1, queue2, sink])
     model.link(P)
 
     return model

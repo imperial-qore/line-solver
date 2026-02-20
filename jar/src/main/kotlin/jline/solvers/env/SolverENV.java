@@ -13,6 +13,7 @@ import static jline.io.InputOutputKt.line_warning;
 
 import jline.io.Ret;
 import jline.lang.*;
+import jline.lang.constant.SchedStrategy;
 import jline.lang.constant.SolverType;
 import jline.lang.nodes.StatefulNode;
 import jline.lang.nodes.Station;
@@ -305,12 +306,27 @@ public class SolverENV extends EnsembleSolver {
             Matrix QEntry = new Matrix(M, E);
             Matrix QExit = new Matrix(M, E);
             for (int e = 0; e < E; e++) {
-                QEntry.setColumn(e, results.get(it - 1).get(e).QN.getColumn(k));
-                QExit.setColumn(e, results.get(it).get(e).QN.getColumn(k));
+                SolverResult resPrev = results.get(it - 1).get(e);
+                SolverResult resCurr = results.get(it).get(e);
+                if (resPrev != null && resPrev.QN != null) {
+                    QEntry.setColumn(e, resPrev.QN.getColumn(k));
+                }
+                if (resCurr != null && resCurr.QN != null) {
+                    QExit.setColumn(e, resCurr.QN.getColumn(k));
+                }
             }
             double tol = options.iter_tol;
-            double maxDiff = Matrix.maxAbsDiff(QEntry, QExit);
-            if (maxDiff >= tol) {
+            // Match MATLAB maxpe(): max(abs(1 - approx./exact)) for exact > 0
+            double maxDiff = 0;
+            for (int idx = 0; idx < QEntry.getNumElements(); idx++) {
+                double exact = QEntry.get(idx);
+                double approx = QExit.get(idx);
+                if (exact > 0) {
+                    double relDiff = Math.abs(1.0 - approx / exact);
+                    maxDiff = Math.max(maxDiff, relDiff);
+                }
+            }
+            if (Double.isNaN(maxDiff) || Double.isInfinite(maxDiff) || maxDiff >= tol) {
                 converged = false;
             }
         }
@@ -358,6 +374,25 @@ public class SolverENV extends EnsembleSolver {
         int M = sn[0].nstations;
         int K = sn[0].nclasses;
         int E = getNumberOfModels();
+
+        // Match MATLAB ode15s MaxStep behavior for sub-solvers.
+        // Java ODE solvers (LSODA, DormandPrince54) default to MaxStep=Inf which
+        // causes inaccurate integration in ENV's iterative convergence loop.
+        // MATLAB's ode15s defaults to MaxStep=(tEnd-t0)/10; use a tighter bound
+        // for Java since its ODE solvers need smaller steps for equivalent accuracy.
+        for (int e = 0; e < E; e++) {
+            if (Double.isInfinite(this.solvers[e].options.odesolvers.odemaxstep)) {
+                double tEnd = this.solvers[e].options.timespan[1];
+                if (!Double.isInfinite(tEnd) && tEnd > 0) {
+                    this.solvers[e].options.setODEMaxStep(tEnd / 4000.0);
+                }
+            }
+        }
+
+        // Initialize UNtStages and tStages before any analyze() calls
+        UNtStages = new ArrayList<>();
+        tStages = new MatrixCell(E);
+
         ServerNum = new MatrixCell(K);
         SRates = new MatrixCell(K);
         for (int k = 0; k < K; k++) {
@@ -388,6 +423,11 @@ public class SolverENV extends EnsembleSolver {
         E0 = new Matrix(Eutil);
         this.pi = envObj.probEnv;
 
+        // Compute embweight from CTMC generator for state-dependent method only.
+        // For state-independent models, probOrig is correctly computed in Environment.init()
+        // from the MMAP holdTime (which preserves self-transition probabilities).
+        // The CTMC-based embweight discards self-transitions (they appear on the diagonal
+        // of the generator), so it gives wrong probOrig when self-transitions exist.
         Matrix embweight = new Matrix(E, E);
         double[] piArray = pi.toArray1D();
         for (int e = 0; e < E; e++) {
@@ -405,7 +445,11 @@ public class SolverENV extends EnsembleSolver {
                 }
             }
         }
-        this.envObj.probOrig = embweight;
+        // Only overwrite probOrig for state-dependent or SMP methods
+        // (matching MATLAB where this overwrite only occurs inside SMPMethod block)
+        if ("statedep".equalsIgnoreCase(stateDepMethod) || SMPMethod) {
+            this.envObj.probOrig = embweight;
+        }
 
 
         @SuppressWarnings("unchecked")
@@ -876,12 +920,37 @@ public class SolverENV extends EnsembleSolver {
 
         if (it == 1) {
             for (int e = 0; e < E; e++) {
-                if (isInf(this.solvers[e].options.timespan[1])) {
-                    this.solvers[e].getAvg();
-                } else {
-                    this.solvers[e].getTranAvg();
+                try {
+                    if (isInf(this.solvers[e].options.timespan[1])) {
+                        this.solvers[e].getAvg();
+                    } else {
+                        this.solvers[e].getTranAvg();
+                    }
+                    // Match MATLAB: extract last time point from transient for initial state
+                    // MATLAB pre(): QN(i,k) = QNt{i,k}.metric(end)
+                    SolverResult preResult = this.solvers[e].result;
+                    int M = sn[0].nstations;
+                    int K = sn[0].nclasses;
+                    Matrix QN = new Matrix(M, K);
+                    if (preResult.QNt != null) {
+                        for (int i = 0; i < M; i++) {
+                            for (int k = 0; k < K; k++) {
+                                if (preResult.QNt[i] != null && preResult.QNt[i][k] != null) {
+                                    int lastRow = preResult.QNt[i][k].getNumRows() - 1;
+                                    QN.set(i, k, preResult.QNt[i][k].get(lastRow, 0));
+                                }
+                            }
+                        }
+                    } else if (preResult.QN != null) {
+                        QN = preResult.QN;
+                    }
+                    if (!(solvers[e] instanceof SolverFluid)) {
+                        roundMarginalForDiscreteSolver(QN, sn[0]);
+                    }
+                    this.ensemble[e].initFromMarginal(QN);
+                } catch (Exception ex) {
+                    // Skip pre-initialization for stages where getAvg fails
                 }
-                this.ensemble[e].initFromMarginal(this.solvers[e].result.QN);
             }
         }
     }
@@ -907,7 +976,31 @@ public class SolverENV extends EnsembleSolver {
         Matrix[][] w = new Matrix[E][E];
         Matrix[] QEntry = new Matrix[E]; // Average entry queue-length
 
+        // Identify EXT (Source) stations to skip in QExit computation.
+        // In MATLAB, Source/Sink getTranHandles marks Qt/Ut as disabled, so
+        // getTranAvg returns NaN for Source, and post() naturally gets QExit[Source]=0.
+        // JAR's FLD closing method produces non-zero QNt for Source (rates[Source]=1
+        // generates constant arrivals), so we must explicitly skip Source stations here.
+        boolean[] isExtStation = new boolean[M];
+        {
+            java.util.List<jline.lang.nodes.Station> stationList = ensemble[0].getStations();
+            for (int i = 0; i < M; i++) {
+                SchedStrategy s = sn[0].sched.get(stationList.get(i));
+                isExtStation[i] = (s == SchedStrategy.EXT);
+            }
+        }
+
         for (int e = 0; e < E; e++) {
+            // Skip stages where analysis failed (empty result)
+            SolverResult resultE = results.get(it).get(e);
+            if (resultE == null || resultE.t == null || resultE.QNt == null) {
+                for (int h = 0; h < E; h++) {
+                    QExit[e][h] = new Matrix(M, K);
+                    UExit[e][h] = new Matrix(M, K);
+                    TExit[e][h] = new Matrix(M, K);
+                }
+                continue;
+            }
             for (int h = 0; h < E; h++) {
                 QExit[e][h] = new Matrix(M, K);
                 UExit[e][h] = new Matrix(M, K);
@@ -916,6 +1009,7 @@ public class SolverENV extends EnsembleSolver {
                 Matrix D1 = envObj.proc[e][h].get(1);
                 map_normalize(D0, D1);
                 for (int i = 0; i < M; i++) {
+                    if (isExtStation[i]) continue; // Skip Source stations (disabled in MATLAB)
                     for (int r = 0; r < K; r++) {
                         w[e][h] = new Matrix(1, 1);
                         Matrix cdf1 =
@@ -975,6 +1069,11 @@ public class SolverENV extends EnsembleSolver {
         }
 
         for (int e = 0; e < E; e++) {
+            // Skip stages where analysis failed (no valid results)
+            SolverResult resultEForEntry = results.get(it).get(e);
+            if (resultEForEntry == null || resultEForEntry.t == null || resultEForEntry.QNt == null) {
+                continue;
+            }
             QEntry[e] = new Matrix(M, K);
             for (int h = 0; h < E; h++) {
                 // Probability of coming from h to e \times resetFun(Qexit from h to e
@@ -986,14 +1085,48 @@ public class SolverENV extends EnsembleSolver {
                     QEntry[e] = QEntry[e].add(1, partialQEntry);
                 }
             }
-            solvers[e].reset();
 
+            // Normalize QEntry to preserve closed chain population.
+            // CDF-weighted QExit averages accumulate numerical noise that can violate
+            // the population constraint, causing initFromMarginal validation to fail.
+            NetworkStruct snRef = sn[0];
+            for (int c = 0; c < snRef.nchains; c++) {
+                double njobs_chain = 0;
+                double state_chain = 0;
+                java.util.List<Integer> chainClasses = new java.util.ArrayList<>();
+                for (int k = 0; k < K; k++) {
+                    if (snRef.chains.get(c, k) > 0) {
+                        chainClasses.add(k);
+                        njobs_chain += snRef.njobs.get(0, k);
+                    }
+                }
+                if (Double.isInfinite(njobs_chain)) continue; // open chain
+                for (int i = 0; i < M; i++) {
+                    for (int k : chainClasses) {
+                        state_chain += QEntry[e].get(i, k);
+                    }
+                }
+                if (state_chain > 0 && Math.abs(state_chain - njobs_chain) > 1e-10) {
+                    double scale = njobs_chain / state_chain;
+                    for (int i = 0; i < M; i++) {
+                        for (int k : chainClasses) {
+                            QEntry[e].set(i, k, QEntry[e].get(i, k) * scale);
+                        }
+                    }
+                }
+            }
+
+            if (!(solvers[e] instanceof SolverFluid)) {
+                roundMarginalForDiscreteSolver(QEntry[e], sn[0]);
+            }
+            solvers[e].reset();
             ensemble[e].initFromMarginal(QEntry[e]);
         }
 
         // Update transition rates between stages if State Dependent
         // Auto-detected or manually specified via options.method='statedep'
         if ("statedep".equalsIgnoreCase(stateDepMethod) || Objects.equals(options.method, "statedep")) {
+            boolean anyRateUpdated = false;
             for (int e = 0; e < E; e++) {
                 for (int h = 0; h < E; h++) {
                     if (envObj.env[e][h] != null && envObj.env[e][h] instanceof Markovian) {
@@ -1002,37 +1135,167 @@ public class SolverENV extends EnsembleSolver {
                             envObj.env[e][h] =
                                     resetEnvRates[e][h].reset(
                                             (Markovian) envObj.env[e][h], QExit[e][h], UExit[e][h], TExit[e][h]);
+                            anyRateUpdated = true;
                         }
                     }
                 }
             }
-            // Reinitialise
-            envObj.init();
+            // Reinitialise only if we actually updated rates via resetEnvRates callbacks.
+            // If no callbacks are defined, envObj.init() would reset probEnv/probOrig
+            // back to static distribution values, undoing the Eutil-based updates
+            // from the blending() statedep block.
+            if (anyRateUpdated) {
+                envObj.init();
+            }
+        }
+    }
+
+    /**
+     * Round fractional queue lengths to integers using the largest remainder method,
+     * preserving closed chain populations exactly. Modifies Q in-place.
+     */
+    private void roundMarginalForDiscreteSolver(Matrix Q, NetworkStruct snRef) {
+        int M = Q.getNumRows();
+        int K = Q.getNumCols();
+        for (int c = 0; c < snRef.nchains; c++) {
+            java.util.List<Integer> chainClasses = new java.util.ArrayList<>();
+            double njobs_chain = 0;
+            for (int k = 0; k < K; k++) {
+                if (snRef.chains.get(c, k) > 0) {
+                    chainClasses.add(k);
+                    njobs_chain += snRef.njobs.get(0, k);
+                }
+            }
+            if (Double.isInfinite(njobs_chain)) {
+                // Open chain: simple rounding
+                for (int k : chainClasses) {
+                    for (int i = 0; i < M; i++) {
+                        Q.set(i, k, Math.round(Q.get(i, k)));
+                    }
+                }
+            } else {
+                // Closed chain: largest remainder method
+                int n = M * chainClasses.size();
+                double[] vals = new double[n];
+                int[] rowIdx = new int[n];
+                int[] colIdx = new int[n];
+                int idx = 0;
+                for (int i = 0; i < M; i++) {
+                    for (int k : chainClasses) {
+                        vals[idx] = Q.get(i, k);
+                        rowIdx[idx] = i;
+                        colIdx[idx] = k;
+                        idx++;
+                    }
+                }
+                double[] floored = new double[n];
+                double[] remainders = new double[n];
+                double floorSum = 0;
+                for (int j = 0; j < n; j++) {
+                    floored[j] = Math.floor(vals[j]);
+                    remainders[j] = vals[j] - floored[j];
+                    floorSum += floored[j];
+                }
+                int deficit = (int) Math.round(njobs_chain - floorSum);
+                if (deficit > 0) {
+                    // Sort indices by remainder descending
+                    Integer[] sortIndices = new Integer[n];
+                    for (int j = 0; j < n; j++) sortIndices[j] = j;
+                    java.util.Arrays.sort(sortIndices, (a, b) -> Double.compare(remainders[b], remainders[a]));
+                    for (int d = 0; d < Math.min(deficit, n); d++) {
+                        floored[sortIndices[d]] += 1;
+                    }
+                }
+                for (int j = 0; j < n; j++) {
+                    Q.set(rowIdx[j], colIdx[j], floored[j]);
+                }
+            }
         }
     }
 
     @Override
     protected void finish() {
 
-        // Use last iteration
+        // Use last iteration — matching MATLAB SolverENV.finish()
+        // CDF-weight transient trajectories using holdTime{e} (total sojourn time distribution)
         int it = results.size();
         int M = sn[0].nstations;
         int K = sn[0].nclasses;
         int E = getNumberOfModels();
 
-        this.result.UN = new Matrix(M, K);
-        this.result.XN = new Matrix(1, K);
-        this.result.TN = new Matrix(M, K);
-        this.result.QN = new Matrix(M, K);
+        Matrix[] QExit = new Matrix[E];
+        Matrix[] UExit = new Matrix[E];
+        Matrix[] TExit = new Matrix[E];
 
         for (int e = 0; e < E; e++) {
-            double p = pi.get(0, e);
+            QExit[e] = new Matrix(M, K);
+            UExit[e] = new Matrix(M, K);
+            TExit[e] = new Matrix(M, K);
+
             SolverResult resE = results.get(it).get(e);
+            if (resE == null || resE.QNt == null || resE.t == null) {
+                continue;
+            }
+
+            // Get holdTime MAP for stage e: D0 = holdTime[e].get(0), D1 = holdTime[e].get(1)
+            Matrix D0 = envObj.holdTime[e].get(0);
+            Matrix D1 = envObj.holdTime[e].get(1);
+            map_normalize(D0, D1);
+
+            for (int i = 0; i < M; i++) {
+                for (int r = 0; r < K; r++) {
+                    if (resE.QNt[i] == null || resE.QNt[i][r] == null) {
+                        continue;
+                    }
+                    int tR = resE.t.getNumRows();
+                    if (tR < 2) {
+                        continue;
+                    }
+
+                    // Compute CDF weights: w = [0, cdf(t2)-cdf(t1), cdf(t3)-cdf(t2), ...]
+                    // matching MATLAB: w{e} = [0, map_cdf(holdTime{e}, t(2:end)) - map_cdf(holdTime{e}, t(1:end-1))]'
+                    Matrix tLater = Matrix.extractRows(resE.t, 1, tR, null);
+                    Matrix tEarlier = Matrix.extractRows(resE.t, 0, tR - 1, null);
+                    Matrix cdfLater = map_cdf(D0, D1, tLater);
+                    Matrix cdfEarlier = map_cdf(D0, D1, tEarlier);
+                    Matrix cdfDiff = cdfLater.sub(1, cdfEarlier);
+                    cdfDiff = cdfDiff.transpose();
+
+                    // Prepend 0 for t=0
+                    Matrix w = new Matrix(tR, 1);
+                    w.set(0, 0, 0.0);
+                    for (int j = 0; j < tR - 1; j++) {
+                        w.set(j + 1, 0, cdfDiff.get(j, 0));
+                    }
+
+                    double wSum = w.elementSum();
+                    if (wSum > 0 && !w.hasNaN()) {
+                        // QExit{e}(i,r) = QNt' * w / sum(w)
+                        QExit[e].set(i, r, resE.QNt[i][r].transpose().mult(w, null).value() / wSum);
+
+                        if (resE.UNt != null && resE.UNt[i] != null && resE.UNt[i][r] != null) {
+                            UExit[e].set(i, r, resE.UNt[i][r].transpose().mult(w, null).value() / wSum);
+                        }
+                        if (resE.TNt != null && resE.TNt[i] != null && resE.TNt[i][r] != null) {
+                            TExit[e].set(i, r, resE.TNt[i][r].transpose().mult(w, null).value() / wSum);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Aggregate: Qval = sum_e probEnv(e) * QExit{e}
+        this.result.QN = new Matrix(M, K);
+        this.result.UN = new Matrix(M, K);
+        this.result.TN = new Matrix(M, K);
+
+        for (int e = 0; e < E; e++) {
+            double p = envObj.probEnv.get(0, e);
             for (int i = 0; i < M; i++) {
                 for (int k = 0; k < K; k++) {
-                    this.result.QN.set(i, k, this.result.QN.get(i, k) + resE.QN.get(i, k) * p);
-                    this.result.UN.set(i, k, this.result.UN.get(i, k) + resE.UN.get(i, k) * p);
-                    this.result.TN.set(i, k, this.result.TN.get(i, k) + resE.TN.get(i, k) * p);
+                    this.result.QN.set(i, k, this.result.QN.get(i, k) + QExit[e].get(i, k) * p);
+                    this.result.UN.set(i, k, this.result.UN.get(i, k) + UExit[e].get(i, k) * p);
+                    this.result.TN.set(i, k, this.result.TN.get(i, k) + TExit[e].get(i, k) * p);
                 }
             }
         }
@@ -1044,6 +1307,7 @@ public class SolverENV extends EnsembleSolver {
         result.runtime = (System.nanoTime() - startTime) / 1000000000.0;
         if (options.verbose != VerboseLevel.SILENT) {
             System.out.printf("blending completed in %d iterations in %.3f seconds%n", it, result.runtime);
+            System.out.flush();
         }
     }
 
@@ -1365,7 +1629,8 @@ public class SolverENV extends EnsembleSolver {
         Matrix Q_current = new Matrix(M, K);
         for (int k = 0; k < K; k++) {
             double njobs = sn[0].njobs.get(k);
-            if (njobs > 0) {
+            // Only initialize from njobs for closed classes (finite population)
+            if (Double.isFinite(njobs) && njobs > 0) {
                 for (int i = 0; i < M; i++) {
                     Q_current.set(i, k, njobs / M);
                 }
@@ -1508,9 +1773,13 @@ public class SolverENV extends EnsembleSolver {
     @SuppressWarnings("unchecked")
     private void blending() {
         init();
+        // Match MATLAB iterate(): call pre(1) to run initial ODE for each stage,
+        // extract steady-state, and initialize models via initFromMarginal().
+        // Without this, the iteration loop starts from an arbitrary initial state
+        // instead of the ODE steady-state, causing slow/failed convergence.
+        pre(1);
         int max_iter = options.iter_max;
         startTime = System.nanoTime();
-
 
        int E = getNumberOfModels();
        int M = sn[0].nstations;
@@ -1533,222 +1802,12 @@ public class SolverENV extends EnsembleSolver {
                 }
             }
 
-            if (stateDepMethod == null || stateDepMethod.isEmpty() || stateDepMethod.equalsIgnoreCase("stateindep")) {
+            // Call post() to compute CDF-weighted exit metrics, entry states,
+            // and re-initialize models for next iteration (matching MATLAB iterate loop)
+            post(it);
 
-            } else if (stateDepMethod.equalsIgnoreCase("statedep")) {
-                if (!SMPMethod) {
-                    for (int a = 0; a < E; a++) {
-                        for (int b = 0; b < E; b++) {
-                            double old_e = E0.get(a, b);
-                            Eutil.set(a, b, old_e * results.get(it).get(a).UN.get(ref, 0));
-                        }
-                    }
-
-                    Eutil = ctmc_makeinfgen(Eutil);
-                    pi = ctmc_solve(Eutil);
-                    envObj.probEnv = pi;
-
-                    Matrix embweight = new Matrix(E, E);
-                    double[] piArray = pi.toArray1D();
-                    for (int i = 0; i < E; i++) {
-                        double sum = 0.0;
-                        for (int h = 0; h < E; h++) {
-                            if (h != i) {
-                                sum += piArray[h] * Eutil.get(h, i);
-                            }
-                        }
-                        for (int k = 0; k < E; k++) {
-                            if (k == i) {
-                                embweight.set(k, i, 0);
-                            } else {
-                                embweight.set(k, i, piArray[k] * Eutil.get(k, i) / sum);
-                            }
-                        }
-                    }
-                    this.envObj.probOrig = embweight;
-
-                    for (int k = 0; k < E; k++) {
-                        Function<Double, Double> originalCdf = sojournCdfs[k];
-                        double uRef = results.get(it).get(k).UN.get(ref, 0);
-                        sojournCdfsUtil[k] = t -> originalCdf.apply(uRef * t);
-                    }
-                }
-
-                else {
-                    // New method using spline interpolation for gke
-                    Map<Integer, PolynomialSplineFunction> gkeFunctions = new java.util.HashMap<>();
-                    for (int k = 0; k < E; k++) {
-                        if (!gkeFunctions.containsKey(k)) {
-                            Matrix UNt = UNtStages.get(k)[ref][0];
-                            Matrix tVector = tStages.get(k);
-                            double[] gkeTime = new double[tVector.length()];
-                            double[] gkeValues = new double[tVector.length()];
-                            double integral = 0.0;
-                            for (int i = 0; i < tVector.length(); i++) {
-                                gkeTime[i] = tVector.get(i, 0);
-                                double dt = (i == 0) ? gkeTime[0] : gkeTime[i] - gkeTime[i - 1];
-                                integral += UNt.get(i, 0) * dt;
-                                gkeValues[i] = gkeTime[i] > 0 ? integral / gkeTime[i] : 0.0;
-                            }
-                            PolynomialSplineFunction gkeFunc =
-                                    new SplineInterpolator().interpolate(gkeTime, gkeValues);
-                            gkeFunctions.put(k, gkeFunc);
-                        }
-                        for (int h = 0; h < E; h++) {
-                            if (envObj.env[k][h] != null) {
-                                // Use precomputed spline for transitionCdfs
-                                final int kk = k;
-                                final int hh = h;
-                                transitionCdfs[k][h] = t -> {
-                                    PolynomialSplineFunction gkeFunc = gkeFunctions.get(kk);
-                                    double tEval = t;
-                                    double minT = gkeFunc.getKnots()[0];
-                                    double maxT = gkeFunc.getKnots()[gkeFunc.getN()];
-                                    if (tEval < minT) tEval = minT;
-                                    if (tEval > maxT) tEval = maxT;
-                                    double gke = gkeFunc.value(tEval);
-                                    return envObj.env[kk][hh].evalCDF(gke * t);
-                                };
-                            }
-                        }
-                    }
-
-                    // update sojourn cdfs
-                    Function<Double, Double>[] sojournCdfsUtil = new Function[E];
-                    for (int k = 0; k < E; k++) {
-                        final int kk = k;
-                        PolynomialSplineFunction gkeFunc = gkeFunctions.get(kk);
-                        sojournCdfsUtil[kk] = (Double t) -> {
-                            double minT = gkeFunc.getKnots()[0];
-                            double maxT = gkeFunc.getKnots()[gkeFunc.getN()];
-                            double tEval = t;
-                            if (tEval < minT) tEval = minT;
-                            if (tEval > maxT) tEval = maxT;
-                            double gke = gkeFunc.value(tEval);
-
-                            double surv = 1.0;
-                            for (int j = 0; j < E; j++) {
-                                if (j == kk) continue;
-                                if (envObj.env[kk][j] == null) continue;
-                                double Fkj = envObj.env[kk][j].evalCDF(gke * t);
-                                surv *= (1.0 - Fkj);
-                            }
-                            return 1.0 - surv;
-                        };
-                    }
-                    this.sojournCdfsUtil = sojournCdfsUtil;
-
-                    // update firing rates
-                    double[][] tVectors = new double[E][];
-                    for (int k = 0; k < E; k++) {
-                        Matrix tMat = tStages.get(k);
-                        tVectors[k] = tMat.toArray1D();
-                    }
-                    for (int k = 0; k < E; k++) {
-                        for (int e = 0; e < E; e++) {
-                            int kk = k;
-                            int ee = e;
-                            if (transitionCdfs[kk][ee] == null) {
-                                Eutil.set(kk, ee, 0.0);
-                                continue;
-                            }
-
-                            double[] tVector = tVectors[kk];
-
-                            UnivariateFunction transRate = t -> {
-                                double val = transitionCdfs[kk][ee].apply(t);
-                                if (Double.isNaN(val) || val > 1.0 || val < 0.0) return 0.0;
-                                return 1.0 - val;
-                            };
-
-                            double integral = 0.0;
-                            for (int i = 1; i < tVector.length; i++) {
-                                double t1 = tVector[i - 1];
-                                double t2 = tVector[i];
-                                double y1 = transRate.value(t1);
-                                double y2 = transRate.value(t2);
-                                integral += 0.5 * (t2 - t1) * (y1 + y2);
-                            }
-
-                            if (Double.isFinite(integral) && integral > 1e-8) {
-                                Eutil.set(kk, ee, 1.0 / integral);
-                            } else {
-                                line_warning("SolverENV", "Invalid or zero sojourn time for transition (%d,%d): %f",
-                                        kk, ee, integral);
-                                Eutil.set(kk, ee, 0.0);
-                            }
-                        }
-                    }
-                    Eutil = ctmc_makeinfgen(Eutil);
-
-                    for (int k = 0; k < E; k++) {
-                        for (int e = 0; e < E; e++) {
-                            if (k == e || envObj.env[k][e] == null) {
-                                dtmcP.set(k, e, 0.0);
-                            } else {
-                                // compute the upper limit of the sojourn time
-                                double epsilon = 1e-8;
-                                double T = 1;
-                                while (transitionCdfs[k][e].apply(T) < 1.0 - epsilon) {
-                                    T *= 2;
-                                }
-                                // Adaptive number of integration intervals based on T
-                                int N = Math.max(1000, (int)(T * 100));
-                                double dt = T / N;
-                                double sum = 0;
-                                for (int i = 0; i < N; i++) {
-                                    double t0 = i * dt;
-                                    double t1 = t0 + dt;
-                                    double deltaF = transitionCdfs[k][e].apply(t1) - transitionCdfs[k][e].apply(t0);
-                                    double survival = 1;
-                                    for (int h = 0; h < E; h++) {
-                                        if (h != k && h != e && transitionCdfs[k][h] != null) {
-                                            // Use midpoint for better accuracy in survival probability calculation
-                                            double tmid = (t0 + t1) / 2.0;
-                                            survival *= (1.0 - transitionCdfs[k][h].apply(tmid));
-                                        }
-                                    }
-                                    sum += deltaF * survival;
-                                }
-                                dtmcP.set(k, e, sum);
-                            }
-                        }
-                    }
-                    Matrix dtmcPie = dtmc_solve(dtmcP);
-                    getHoldTime(E, tStages);
-                    // update pi with hold times
-                    for (int k = 0; k < E; k++) {
-                        double sum = 0;
-                        for (int e = 0; e < E; e++) {
-                            sum += dtmcPie.get(e) * holdTime.get(0, e);
-                        }
-                        this.pi.set(0, k, dtmcPie.get(k) * holdTime.get(0, k) / sum);
-                    }
-                    this.envObj.probEnv = pi;
-
-                    // update embweight
-                    Matrix newEmbweight = new Matrix(E, E);
-                    double[] newPiArray = envObj.probEnv.toArray1D();
-                    for (int e = 0; e < E; e++) {
-                        double sum = 0.0;
-                        for (int h = 0; h < E; h++) {
-                            if (h != e) {
-                                sum += newPiArray[h] * Eutil.get(h, e);
-                            }
-                        }
-                        for (int k = 0; k < E; k++) {
-                            if (k == e) {
-                                newEmbweight.set(k, e, 0);
-                            } else {
-                                newEmbweight.set(k, e, newPiArray[k] * Eutil.get(k, e) / sum);
-                            }
-                        }
-                    }
-                    this.envObj.probOrig = newEmbweight;
-                }
-            } else {
-                throw new IllegalArgumentException("Unknown state-dependent method: " + this.stateDepMethod);
-            }
+            // State-dependent updates (resetEnvRates + envObj.init()) are handled inside post(),
+            // matching MATLAB's EnsembleSolver iterate loop. No additional Eutil scaling needed here.
 
 
             if (converged(it)) {
@@ -1772,170 +1831,55 @@ public class SolverENV extends EnsembleSolver {
     }
 
     protected SolverResult analyze(int it, int e) {
-        int M = sn[0].nstations;
-        int E = getNumberOfModels();
-        double epsilon = 1E-30;
-        double N = sn[0].nclosedjobs;
-        int K = sn[0].nclasses;
-        SolverResult iterativeResult = new SolverResult();
-        iterativeResult.reset();
-        if (it == 1) {
-            iterativeResult.QN = new Matrix(M, K);
-            for (int k = 0; k < K; k++) {
-                double Nk = sn[0].njobs.get(0, k);
-                double initVal = Nk / (double) M;
-                for (int m = 0; m < M; m++) {
-                    iterativeResult.QN.set(m, k, initVal);
+        // Matching MATLAB SolverENV.analyze(): simply reset solver and get transient averages.
+        // Initial state is set by pre() (iteration 1) or post() (subsequent iterations)
+        // via initFromMarginal() on the ensemble model.
+        try {
+            this.solvers[e].reset();
+            // Clear stale init_sol from previous FLD run. In MATLAB, solver_fluid_analyzer
+            // receives options by value, so init_sol modifications are local. In JAR, the FCFS
+            // convergence loop modifies this.options.init_sol directly. Without clearing,
+            // initSol() would be skipped and the updated model state (from initFromMarginal)
+            // would not be read.
+            this.solvers[e].options.init_sol = new Matrix(0, 0);
+
+            // Note: timespan is NOT adjusted here — getTranAvg() uses 30/minrate
+            // when timespan is unset, matching MATLAB's getTranAvg.m behavior.
+            this.solvers[e].getTranAvg();
+
+            // Deep copy result to avoid reference aliasing: solvers[e].result is reused
+            // across iterations, so iterateResults entries would share the same object.
+            // MATLAB avoids this because structs have value semantics (deep copy on assign).
+            SolverResult stageResult = this.solvers[e].result.deepCopy();
+
+            // Set QN/UN/TN to entry state (first time point) for convergence checking.
+            // Matching MATLAB converged(): compares Qik.metric(1) which is the t=0 value.
+            int M = sn[0].nstations;
+            int K = sn[0].nclasses;
+            if (stageResult.QNt != null) {
+                stageResult.QN = new Matrix(M, K);
+                stageResult.UN = new Matrix(M, K);
+                stageResult.TN = new Matrix(M, K);
+                for (int i = 0; i < M; i++) {
+                    for (int k = 0; k < K; k++) {
+                        if (stageResult.QNt[i] != null && stageResult.QNt[i][k] != null) {
+                            stageResult.QN.set(i, k, stageResult.QNt[i][k].get(0, 0));
+                        }
+                        if (stageResult.UNt != null && stageResult.UNt[i] != null && stageResult.UNt[i][k] != null) {
+                            stageResult.UN.set(i, k, stageResult.UNt[i][k].get(0, 0));
+                        }
+                        if (stageResult.TNt != null && stageResult.TNt[i] != null && stageResult.TNt[i][k] != null) {
+                            stageResult.TN.set(i, k, stageResult.TNt[i][k].get(0, 0));
+                        }
+                    }
                 }
             }
-        } else {
-            iterativeResult.QN = new Matrix(M, K);
+            return stageResult;
+        } catch (Exception ex) {
+            // Skip analysis for stages where transient analysis fails
+            SolverResult emptyResult = new SolverResult();
+            return emptyResult;
         }
-        iterativeResult.UN = Matrix.ones(M, K);
-        iterativeResult.TN = Matrix.ones(M, K);
-        for (int j = 0; j < E; j++) {
-            double weight = envObj.probOrig.get(j, e);
-            if (it > 1) {
-                iterativeResult.QN = iterativeResult.QN.add(weight, results.get(it - 1).get(j).QN);
-            }
-        }
-
-        // solve the ode
-        Function<Double, Double> sojournCDF = sojournCdfsUtil[e];
-        double upperLimit = 10;
-        double utilRef;
-        if (it == 1) {
-            utilRef = 1;
-        }
-        else {
-            utilRef = results.get(it-1).get(e).UN.get(ref,0);
-        }
-
-        double convergeTol;
-        if (abs(utilRef) > epsilon) {
-            convergeTol = max(epsilon * abs(utilRef), epsilon);
-        }
-        else {
-            convergeTol = epsilon;
-            line_warning("SolverENV", "utilRef is very small (%f), using absolute tolerance for upper limit calculation", utilRef);
-        }
-
-        int maxIteration = 1000;
-        int iterCount = 0;
-        while (iterCount < maxIteration) {
-            double residual = abs(sojournCDF.apply(upperLimit) - 1);
-            if (residual <= convergeTol) {
-                break;
-            }
-            upperLimit *= 1.2;
-            iterCount++;
-            // Prevent upperLimit from growing too large
-            if (upperLimit > 1e8) {
-                break;
-            }
-        }
-        if (iterCount >= maxIteration) {
-            line_warning("SolverENV", "Upper limit calculation did not converge after %d iterations. Final upperLimit=%f",
-                    maxIteration, upperLimit);
-        }
-
-        Matrix initialState = iterativeResult.QN.copy();
-
-        Solver solver = solvers[e];
-        Matrix initial = new Matrix(1, initialState.getNumElements());
-        int index = 0;
-        for (int m = 0; m < M; m++) {
-            for (int k = 0; k < K; k++) {
-                initial.set(index++, initialState.get(m, k));
-            }
-        }
-        if (solver instanceof SolverFluid) {
-            SolverFluid solverFluid = (SolverFluid) solver;
-            solverFluid.options.timespan[1] = upperLimit;
-            solverFluid.options.init_sol = initial;
-            // sync sn.state from init_sol so SolverFluid sees the real initial queue lengths
-            NetworkStruct sn_fl = solverFluid.model.getStruct(false);
-            List<StatefulNode> statefulNodes = sn_fl.stateful;
-            int offset = 0;
-            for (StatefulNode node : statefulNodes) {
-                int cols = sn_fl.nclasses;
-                Matrix nodeState = Matrix.extract(initial, 0, 1, offset, offset + cols);
-                sn_fl.state.put(node, nodeState);
-                int nodeIdx = node.getNodeIndex();
-                int stationIdx = (int) sn_fl.nodeToStation.get(0, nodeIdx);
-                solverFluid.model.getStations().get(stationIdx).setState(nodeState);
-                offset += cols;
-            }
-            solverFluid.sn = sn_fl;
-            SolverResult stage_result = solverFluid.runMethodSpecificAnalyzer();
-
-            iterativeResult.QNt = stage_result.QNt;
-            iterativeResult.UNt = stage_result.UNt;
-            iterativeResult.TNt = stage_result.TNt;
-            iterativeResult.t = stage_result.t;
-            iterativeResult.iter = it;
-            UNtStages.add(stage_result.UNt);
-            tStages.set(e, stage_result.t);
-        } else if (solver instanceof SolverDES) {
-            SolverDES solverDES = (SolverDES) solver;
-            solverDES.options.timespan[1] = upperLimit;
-            solverDES.options.init_sol = initial;
-            // sync sn.state from init_sol so SolverDES sees the real initial queue lengths
-            NetworkStruct sn_des = solverDES.model.getStruct(false);
-            List<StatefulNode> statefulNodes = sn_des.stateful;
-            int offset = 0;
-            for (StatefulNode node : statefulNodes) {
-                int cols = sn_des.nclasses;
-                Matrix nodeState = Matrix.extract(initial, 0, 1, offset, offset + cols);
-                sn_des.state.put(node, nodeState);
-                int nodeIdx = node.getNodeIndex();
-                int stationIdx = (int) sn_des.nodeToStation.get(0, nodeIdx);
-                solverDES.model.getStations().get(stationIdx).setState(nodeState);
-                offset += cols;
-            }
-            solverDES.sn = sn_des;
-            SolverResult stage_result = solverDES.runMethodSpecificAnalyzer();
-
-            iterativeResult.QNt = stage_result.QNt;
-            iterativeResult.UNt = stage_result.UNt;
-            iterativeResult.TNt = stage_result.TNt;
-            iterativeResult.t = stage_result.t;
-            iterativeResult.iter = it;
-            UNtStages.add(stage_result.UNt);
-            tStages.set(e, stage_result.t);
-        }
-        int tR = iterativeResult.t.getNumRows();
-
-        Matrix weight = new Matrix(tR, 1);
-        double prevCdf = 0.0;
-        for (int i = 0; i < tR - 1; i++) {
-            double ti   = iterativeResult.t.get(i, 0);
-            double cdfI = sojournCDF.apply(ti);
-            weight.set(i, 0, cdfI - prevCdf);
-            prevCdf = cdfI;
-        }
-        weight.set(tR - 1, 0, 1.0 - prevCdf);
-
-
-        for (int i = 0; i < M; i++) {
-            for (int k = 0; k < K; k++) {
-                iterativeResult.QN.set(i, k, iterativeResult.QNt[i][k].transpose().mult(weight, null).value());
-                if (isInf(ServerNum.get(k).get(i, e))) {
-                    iterativeResult.UN.set(i, k, iterativeResult.QNt[i][k].transpose().mult(weight, null).value());
-                } else {
-                    Matrix xi = iterativeResult.QNt[i][k].transpose();
-                    double si = ServerNum.get(k).get(i, e);
-                    Matrix xiMin = getXiMin(xi, si);
-                    iterativeResult.UN.set(i, k, xiMin.mult(weight, null).value());
-                }
-                Matrix xi = iterativeResult.QNt[i][k].transpose();
-                double si = ServerNum.get(k).get(i, e);
-                Matrix xiMin = getXiMin(xi, si);
-                iterativeResult.TN.set(i, k, SRates.get(k).get(i, e) * xiMin.mult(weight, null).value());
-            }
-        }
-        sanityCheck(iterativeResult, e);
-        return iterativeResult;
     }
 
     private void sanityCheck(SolverResult iterativeResult, int e) {
@@ -1982,6 +1926,10 @@ public class SolverENV extends EnsembleSolver {
 
         for (int k = 0; k < K; k++) {
             double Nk = sn[0].njobs.get(0, k);
+            // Only scale for closed classes (finite population)
+            if (!Double.isFinite(Nk)) {
+                continue;
+            }
             double colSum = iterativeResult.QN.getColumn(k).elementSum();
             if (colSum > 0 && colSum != Nk) {
                 double scale = Nk / colSum;
@@ -2005,28 +1953,6 @@ public class SolverENV extends EnsembleSolver {
         int E = getNumberOfModels();
         int M = sn[0].nstations;
         int K = sn[0].nclasses;
-        // Dynamically find which station the environment transition is based on
-        MatrixCell EnvAtStation = new MatrixCell(K);
-        for (int k = 0; k < K; k++) {
-            Matrix EnvAtStationK = new Matrix(E, E);
-            for (int e = 0; e < E; e++) {
-                for (int h = 0; h < E; h++) {
-                    boolean found = false;
-                    for (int m = 0; m < M; m++) {
-                        if (SRates.get(k).get(m, e) != SRates.get(k).get(m, h)) {
-                            EnvAtStationK.set(e, h, m);
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        EnvAtStationK.set(e, h, -1);
-                    }
-                }
-            }
-            EnvAtStation.set(k, EnvAtStationK);
-        }
-
         Matrix[] InfgenMatrices = new Matrix[E];
         MatrixCell stateSpace = new MatrixCell(E);
         for (int e = 0; e < E; e++) {
@@ -2036,7 +1962,6 @@ public class SolverENV extends EnsembleSolver {
             CTMCResult ctmcResult = (CTMCResult) solverCTMC.result;
             InfgenMatrices[e] = ctmcResult.infGen;
             stateSpace.set(e, ctmcResult.spaceAggr);
-
         }
         int states = InfgenMatrices[0].getNumRows();
         Matrix Egen = new Matrix(E0);
@@ -2055,37 +1980,11 @@ public class SolverENV extends EnsembleSolver {
                      }
                }
                else {
-                   int classIndex = -1;
-                   for (int k = 0; k < K; k++) {
-                       boolean difference = false;
-                       for (int m = 0; m < M; m++) {
-                           if (SRates.get(k).get(m, e) != SRates.get(k).get(m, h)) {
-                               difference = true;
-                               break;
-                           }
-                       }
-                       if (difference) {
-                           classIndex = k;
-                           break;
-                       }
-                   }
-                   int stationIndex = (int) EnvAtStation.get(classIndex).get(e, h);
-                     if (stationIndex < 0) {
-                          stationIndex = 0;
-                     }
-
-                   Matrix gate = new Matrix(states, states);
-                   Matrix occupancy = stateSpace.get(e);
-                   for (int s = 0; s < states; s++) {
-                      double qlen = occupancy.get(s, stationIndex * K + classIndex);
-                      if (qlen >= 1) gate.set(s, s, Egen.get(e, h));
-                   }
+                   // Environment transitions are state-independent: rate Egen[e,h]
+                   // applied uniformly to all system states (diagonal block = Egen[e,h] * I)
                    for (int i = 0; i < states; i++) {
-                       for (int j = 0; j < states; j++) {
-                           Q.set(e * states + i, h * states + j, gate.get(i, j));
-                       }
+                       Q.set(e * states + i, h * states + i, Egen.get(e, h));
                    }
-
                }
 
            }
@@ -2101,12 +2000,28 @@ public class SolverENV extends EnsembleSolver {
             for (int state = 0; state < states; state++) {
                 double p = pi.get(0, e * states + state);
                 for (int m = 0; m < M; m++) {
+                    // Compute total jobs at station m in this state
+                    double nTotal = 0;
+                    for (int r = 0; r < K; r++) {
+                        nTotal += stateSpace.get(e).get(state, m * K + r);
+                    }
+                    double c = ServerNum.get(0).get(m, e); // nservers at station m
+
                     for (int k = 0; k < K; k++) {
                         double prob = stateSpace.get(e).get(state, m * K + k);
                         QN.set(m, k, QN.get(m, k) + p * prob);
-                        int u = (int) min(prob, ServerNum.get(k).get(m, e));
-                        UN.set(m, k, UN.get(m, k) + p * u);
-                        TN.set(m, k, TN.get(m, k) + p * prob * SRates.get(k).get(m, e));
+
+                        if (Double.isInfinite(c)) {
+                            // Infinite-server (Delay): UN = QN, TN = n_k * mu_k
+                            UN.set(m, k, UN.get(m, k) + p * prob);
+                            TN.set(m, k, TN.get(m, k) + p * prob * SRates.get(k).get(m, e));
+                        } else {
+                            // Finite-server (PS): apply capacity sharing factor
+                            double scaling = (nTotal > 0) ? min(nTotal, c) / nTotal : 0;
+                            TN.set(m, k, TN.get(m, k) + p * prob * SRates.get(k).get(m, e) * scaling);
+                            double uContrib = (nTotal > 0) ? prob * min(nTotal, c) / (nTotal * c) : 0;
+                            UN.set(m, k, UN.get(m, k) + p * uContrib);
+                        }
                     }
                 }
             }

@@ -11,8 +11,10 @@ import numpy as np
 
 from .base import (
     Node, Station, StatefulNode, JobClass, NodeType, SchedStrategy,
-    SchedStrategyType, JoinStrategy, DropStrategy, ReplacementStrategy
+    SchedStrategyType, JoinStrategy, DropStrategy, ReplacementStrategy,
+    RoutingStrategy
 )
+from ..distributions.continuous import Immediate
 
 
 class Queue(Station):
@@ -98,6 +100,9 @@ class Queue(Station):
             # Also set scheduling parameter for DPS/GPS scheduling
             self._sched_param[jobclass] = weight
         self._invalidate_java()
+        # Invalidate model's cached struct since service distribution changed
+        if self._model is not None:
+            self._model._sn = None
 
     def get_service(self, jobclass: JobClass):
         """
@@ -280,6 +285,14 @@ class Queue(Station):
         self._polling_k = k if k is not None else 1
         self._invalidate_java()
 
+        # Set default Immediate switchover for all classes (matching MATLAB behavior)
+        # This is required for JMT to properly simulate polling systems
+        model = self.get_model()
+        if model is not None:
+            classes = model.get_classes()
+            for jobclass in classes:
+                self.set_switchover(jobclass, Immediate())
+
     def get_polling_type(self):
         """Get the polling type for this queue."""
         return getattr(self, '_polling_type', None)
@@ -348,7 +361,13 @@ class Queue(Station):
             state: Array of initial job counts per class
         """
         self._state = np.asarray(state)
+        self._state_explicitly_set = True
         self._invalidate_java()
+        # Invalidate the model struct so _refresh_state() runs again
+        model = self.get_model() if hasattr(self, 'get_model') else None
+        if model is not None and hasattr(model, '_has_struct'):
+            model._has_struct = False
+            model._sn = None
 
     def get_state(self):
         """Get the current state of this node."""
@@ -778,7 +797,7 @@ class ClassSwitch(Node):
     setSwitchProbability = set_switch_probability
 
 
-class Cache(StatefulNode):
+class Cache(Station):
     """
     Multi-level cache node with configurable replacement strategy.
 
@@ -862,8 +881,11 @@ class Cache(StatefulNode):
         self._num_levels = len(self._item_level_cap)
         self._replacement_strategy = replacement_strategy
 
-        # Scheduling (caches are non-preemptive)
-        self._sched_strategy = SchedStrategy.FCFS
+        # Cache nodes have infinite servers (instant service)
+        self._number_of_servers = np.inf
+
+        # Scheduling (caches are non-preemptive, use INF scheduling like Delay)
+        self._sched_strategy = SchedStrategy.INF
         self._sched_policy = SchedStrategyType.NP
 
         # Hit/miss class mappings: input_class -> output_class
@@ -882,6 +904,19 @@ class Cache(StatefulNode):
         # Result storage (populated by solver)
         self._actual_hit_prob = None   # Actual hit probabilities
         self._actual_miss_prob = None  # Actual miss probabilities
+
+    def is_station(self) -> bool:
+        """
+        Check if node is a station.
+
+        Cache nodes are NOT stations in LINE's semantics, matching MATLAB behavior.
+        They are stateful nodes that immediately process arriving jobs (class switching
+        based on cache hit/miss) but don't queue or serve jobs like stations.
+
+        Returns:
+            False: Cache is a stateful non-station node
+        """
+        return False
 
     # =========================================================================
     # Properties
@@ -1062,6 +1097,34 @@ class Cache(StatefulNode):
             total = np.sum(access_agg)
             if total > 0:
                 gamma[:, 0] = access_agg / total
+        elif self._read_process:
+            # Extract probabilities from read distributions (e.g., Zipf)
+            access_probs = np.zeros(n)
+            for jobclass, dist in self._read_process.items():
+                if dist is not None:
+                    # Check if it's a Zipf distribution
+                    if hasattr(dist, '_s') and hasattr(dist, '_H'):
+                        # Zipf distribution: P(k) = (1/k^s) / H
+                        k = np.arange(1, n + 1)
+                        probs = (1.0 / k ** dist._s) / dist._H
+                        access_probs += probs
+                    # Check if it's a DiscreteSampler with probabilities
+                    elif hasattr(dist, '_probs'):
+                        probs = np.asarray(dist._probs)
+                        if len(probs) >= n:
+                            access_probs += probs[:n]
+                        else:
+                            access_probs[:len(probs)] += probs
+                    # Check if it has evalPMF method (generic discrete distribution)
+                    elif hasattr(dist, 'evalPMF'):
+                        for i in range(n):
+                            access_probs[i] += dist.evalPMF(i + 1)  # 1-indexed items
+            # Normalize
+            total = np.sum(access_probs)
+            if total > 0:
+                gamma[:, 0] = access_probs / total
+            else:
+                gamma[:, 0] = 1.0 / n
         else:
             # Default: uniform access
             gamma[:, 0] = 1.0 / n
@@ -1227,6 +1290,7 @@ class Place(Station):
             state: Array of initial token counts per class
         """
         self._state = np.asarray(state)
+        self._state_explicitly_set = True
         self._invalidate_java()
 
     setState = set_state
@@ -1582,8 +1646,138 @@ class Transition(StatefulNode):
     getServiceRates = get_service_rates
 
 
+class Logger(Node):
+    """
+    Logger node for recording job passage.
+
+    A Logger node records arrival and departure timestamps for jobs
+    passing through it. Used internally by getCdfRespT to collect
+    response time samples via transient simulation.
+
+    Ported from MATLAB's Logger class in matlab/src/lang/nodes/Logger.m
+    """
+
+    def __init__(self, model, name: str, log_file_name: str):
+        """
+        Initialize a Logger node.
+
+        Args:
+            model: Network instance
+            name: Logger name
+            log_file_name: Full path to the log file
+        """
+        import os
+
+        super().__init__(NodeType.LOGGER, name)
+        self.set_model(model)
+        model.add_node(self)
+
+        # Parse file name and path
+        dirname, basename = os.path.split(log_file_name)
+        self._file_name = basename
+        self._file_path = dirname if dirname else model.get_log_path()
+
+        # Logging options (matching MATLAB defaults)
+        self._want_start_time = False
+        self._want_logger_name = False
+        self._want_timestamp = True
+        self._want_job_id = True
+        self._want_job_class = True
+        self._want_time_same_class = False
+        self._want_time_any_class = False
+
+        # Scheduling (Logger uses FCFS, non-preemptive)
+        self._sched_policy = SchedStrategyType.NP
+        self._sched_strategy = SchedStrategy.FCFS
+        self._capacity = float('inf')
+
+    @property
+    def file_name(self) -> str:
+        """Get the log file name."""
+        return self._file_name
+
+    @property
+    def file_path(self) -> str:
+        """Get the log file path."""
+        return self._file_path
+
+    # Getters for logging options
+    def get_start_time(self) -> bool:
+        return self._want_start_time
+
+    def get_logger_name(self) -> bool:
+        return self._want_logger_name
+
+    def get_timestamp(self) -> bool:
+        return self._want_timestamp
+
+    def get_job_id(self) -> bool:
+        return self._want_job_id
+
+    def get_job_class(self) -> bool:
+        return self._want_job_class
+
+    def get_time_same_class(self) -> bool:
+        return self._want_time_same_class
+
+    def get_time_any_class(self) -> bool:
+        return self._want_time_any_class
+
+    # Setters for logging options
+    def set_start_time(self, value: bool) -> None:
+        self._want_start_time = value
+
+    def set_logger_name(self, value: bool) -> None:
+        self._want_logger_name = value
+
+    def set_timestamp(self, value: bool) -> None:
+        self._want_timestamp = value
+
+    def set_job_id(self, value: bool) -> None:
+        self._want_job_id = value
+
+    def set_job_class(self, value: bool) -> None:
+        self._want_job_class = value
+
+    def set_time_same_class(self, value: bool) -> None:
+        self._want_time_same_class = value
+
+    def set_time_any_class(self, value: bool) -> None:
+        self._want_time_any_class = value
+
+    def set_prob_routing(self, jobclass: JobClass, destination, probability: float) -> None:
+        """
+        Set probabilistic routing to a destination.
+
+        Args:
+            jobclass: Job class
+            destination: Destination node
+            probability: Routing probability
+        """
+        self.set_routing(jobclass, RoutingStrategy.PROB, destination, probability)
+
+    # CamelCase aliases
+    getStartTime = get_start_time
+    getLoggerName = get_logger_name
+    getTimestamp = get_timestamp
+    getJobID = get_job_id
+    getJobClass = get_job_class
+    getTimeSameClass = get_time_same_class
+    getTimeAnyClass = get_time_any_class
+    setStartTime = set_start_time
+    setLoggerName = set_logger_name
+    setTimestamp = set_timestamp
+    setJobID = set_job_id
+    setJobClass = set_job_class
+    setTimeSameClass = set_time_same_class
+    setTimeAnyClass = set_time_any_class
+    setProbRouting = set_prob_routing
+    fileName = property(lambda self: self._file_name)
+    filePath = property(lambda self: self._file_path)
+
+
 __all__ = [
     'Queue', 'Delay', 'Source', 'Sink', 'Fork', 'Join',
     'Router', 'ClassSwitch', 'Cache', 'ReplacementStrategy',
-    'Place', 'Transition', 'Mode', 'TimingStrategy'
+    'Place', 'Transition', 'Mode', 'TimingStrategy', 'Logger'
 ]

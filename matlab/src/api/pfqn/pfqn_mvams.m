@@ -38,6 +38,9 @@ if nargin<5 %~exist('mi','var')
 end
 if isempty(Z)
     Z = zeros(1,R);
+elseif size(Z,1) > 1
+    % Sum think times across multiple delay stations
+    Z = sum(Z,1);
 end
 for ist=1:M
     mu(ist,:) = min(1:Ntot,S(ist)*ones(1,Ntot));

@@ -1,7 +1,7 @@
 """
-Multiclass Closed Network with MAM (INAP method)
+Multiclass Closed Network with MAM
 
-This example demonstrates MAM with INAP method on a multiclass closed queueing
+This example demonstrates MAM with RCAT methods on a multiclass closed queueing
 network. The RCAT algorithm handles multiple job classes by creating
 separate processes for each (station, class) pair.
 
@@ -12,8 +12,8 @@ All rights reserved.
 from line_solver import *
 
 # Parameters
-N1 = 5        # Number of class 1 jobs
-N2 = 3        # Number of class 2 jobs
+N1 = 5       # Number of class 1 jobs
+N2 = 3       # Number of class 2 jobs
 mu1_q1 = 2.0  # Service rate for class 1 at queue 1
 mu2_q1 = 1.5  # Service rate for class 2 at queue 1
 mu1_q2 = 1.0  # Service rate for class 1 at queue 2
@@ -34,29 +34,20 @@ queue2.setService(class1, Exp(mu1_q2))
 queue2.setService(class2, Exp(mu2_q2))
 
 # Simple routing: each class cycles through both queues
-P = model.init_routing_matrix()
+P = model.initRoutingMatrix()
 P.set(class1, class1, queue1, queue2, 1.0)
 P.set(class1, class1, queue2, queue1, 1.0)
 P.set(class2, class2, queue1, queue2, 1.0)
 P.set(class2, class2, queue2, queue1, 1.0)
 model.link(P)
 
-print(f'=== Multiclass Closed Network ===')
-print(f'Class 1: {N1} jobs, Class 2: {N2} jobs\n')
-
 # Solve with MAM using INAP method
+print('=== Multiclass Closed Network ===\n')
 solver_inap = MAM(model, 'inap')
 avg_table_inap = solver_inap.get_avg_table()
 
 print('MAM (method=inap):')
 print(avg_table_inap)
-
-# Solve with MAM using exact method
-solver_exact = MAM(model, 'exact')
-avg_table_exact = solver_exact.get_avg_table()
-
-print('\nMAM (method=exact):')
-print(avg_table_exact)
 
 # Solve with MVA for comparison
 solver_mva = MVA(model)

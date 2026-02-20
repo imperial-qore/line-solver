@@ -20,7 +20,7 @@ fun ctmc_relsolve(Q: Matrix, refstate: Int = 0, options: Map<String, Any>? = nul
     
     // Size warning for large matrices (>6000 elements)
     if (Qmat.length() > 6000) {
-        println("ctmc_relsolve: the order of Q is greater than 6000, i.e., ${Qmat.length()} elements.")
+        println("ctmc_relsolve: the order of Q is large (${Qmat.length()}).")
     }
     
     // Handle trivial case
@@ -171,14 +171,15 @@ fun ctmc_relsolve(Q: Matrix, refstate: Int = 0, options: Map<String, Any>? = nul
         return arrayOf(p, Qmat, nConnComp, connComp)
     }
     
-    // Set up reference state normalization: Qnnz(:,refstate) = 0; Qnnz(refstate,refstate) = 1; bnnz(refstate) = 1
-    val adjustedRefstate = if (refstate < nnzel.numCols) refstate else nnzel.numCols - 1
-    
+    // Set up reference state normalization: Qnnz(:,end) = 0; Qnnz(refstate,end) = 1; bnnz(end) = 1
+    val lastCol = Qnnz.numCols - 1
+    val adjustedRefstate = if (refstate < Qnnz.numRows) refstate else 0
+
     for (i in 0..<Qnnz.numRows) {
-        Qnnz[i, adjustedRefstate] = 0.0
+        Qnnz[i, lastCol] = 0.0
     }
-    Qnnz[adjustedRefstate, adjustedRefstate] = 1.0
-    bnnz[adjustedRefstate, 0] = 1.0
+    Qnnz[adjustedRefstate, lastCol] = 1.0
+    bnnz[lastCol, 0] = 1.0
     
     // Solve linear system: p(nnzel) = Qnnz' \ bnnz
     val solve_res = Matrix(0, 0)

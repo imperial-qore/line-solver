@@ -189,7 +189,7 @@ class Mapqn_qr_bounds_bas_parameters(
         require(f in 1..M) { "f must be between 1 and M" }
         require(K.size == M) { "K array size must equal M" }
         require(F.size == M) { "F array size must equal M" }
-        require(MM.numRows == MR && MM.numCols == M) { "MM must be MRxM matrix" }
+        require(MM.numRows == MR && MM.numCols == 2) { "MM must be MRx2 matrix (blocking order pairs)" }
         require(MM1.numRows == MR && MM1.numCols == M) { "MM1 must be MRxM matrix" }
         require(ZZ.size == MR) { "ZZ array size must equal MR" }
         require(BB.numRows == MR && BB.numCols == M) { "BB must be MRxM matrix" }

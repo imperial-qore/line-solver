@@ -84,8 +84,14 @@ options.keep = true; % uncomment to keep the intermediate XML files generates wh
 
 solver{1} = LQNS(model);
 AvgTable{1} = solver{1}.getAvgTable();
-%AvgTable{1}
-%%
-%solver{2} = LN(model,@MVA);
-%AvgTable{2} = solver{2}.getAvgTable();
-%AvgTable{2}
+fprintf(1, '\nLQNS Results:\n');
+disp(AvgTable{1});
+
+lnoptions = LN.defaultOptions;
+lnoptions.verbose = 0;
+options = MVA.defaultOptions;
+options.verbose = 0;
+solver{2} = LN(model, @(model) MVA(model, options), lnoptions);
+AvgTable{2} = solver{2}.getAvgTable;
+fprintf(1, '\nLN(MVA) Results:\n');
+disp(AvgTable{2});

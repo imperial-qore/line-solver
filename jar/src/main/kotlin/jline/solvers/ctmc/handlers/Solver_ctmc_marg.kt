@@ -70,14 +70,16 @@ class Solver_ctmc_marg(private val solverCTMC: SolverCTMC?) {
                     val isf = sn.nodeToStateful.get(ind).toInt()
                     val ist = sn.nodeToStation.get(ind).toInt()
                     val requiredlength = sn.space.get(sn.stateful.get(isf))!!.getNumCols()
-                    val currentlength = sn.state.size
+                    // Get the state matrix for this specific stateful node
+                    val stateMatrix = sn.state.get(sn.stateful.get(isf))
+                    val currentlength = stateMatrix?.length() ?: 0
                     val state_i = Matrix(1, requiredlength)
                     val numZeros = requiredlength - currentlength
                     for (col in 0..<numZeros) {
                         state_i.set(0, col, 0)
                     }
                     for (col in 0..<currentlength) {
-                        state_i.set(0, numZeros + col, sn.state.get(sn.stateful.get(isf))!!.get(0, col))
+                        state_i.set(0, numZeros + col, stateMatrix!!.get(0, col))
                     }
                     val colStart = cstatesz.get(isf)!! + 1
                     val colStop = cstatesz.get(isf)!! + state_i.getNumCols() - 1

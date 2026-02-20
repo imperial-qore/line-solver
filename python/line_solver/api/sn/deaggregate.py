@@ -117,15 +117,20 @@ def sn_deaggregate_chain_results(
         nservers = np.ones((M, 1))
     nservers = nservers.flatten()
 
-    # Identify Source and Sink stations (they should have U=0)
+    # Identify Source and Sink stations (they should have U=0, Q=0, R=0)
     # Source nodes only generate arrivals, Sink nodes only consume departures
+    # But throughput T should still be computed for Source (T = arrival rate)
     zero_util_stations = set()
+    source_stations = set()
     if sn.nodetype is not None and len(sn.nodetype) > 0:
         stationToNode = sn.stationToNode if hasattr(sn, 'stationToNode') else np.arange(M)
         for i in range(M):
             node_idx = int(stationToNode[i]) if i < len(stationToNode) else i
             if node_idx < len(sn.nodetype):
-                if sn.nodetype[node_idx] in (NodeType.SINK, NodeType.SOURCE):
+                if sn.nodetype[node_idx] == NodeType.SOURCE:
+                    zero_util_stations.add(i)
+                    source_stations.add(i)
+                elif sn.nodetype[node_idx] == NodeType.SINK:
                     zero_util_stations.add(i)
 
     # Get refstat
@@ -155,8 +160,28 @@ def sn_deaggregate_chain_results(
             if is_open_chain:
                 X[0, k] = Xchain[0, c] * Vsink[k] if k < len(Vsink) else 0.0
             else:
+                # For closed chains, all classes in the chain have the same system throughput
+                # The formula X = Xchain * alpha[refstat, k] fails for class switching
+                # where a class doesn't visit its reference station (alpha = 0)
+                # In such cases, use Xchain directly since all classes share throughput
                 ref_station = refstat[k] if k < len(refstat) else 0
-                X[0, k] = Xchain[0, c] * alpha[ref_station, k]
+                alpha_at_ref = alpha[ref_station, k] if ref_station < alpha.shape[0] and k < alpha.shape[1] else 0.0
+                if alpha_at_ref > 0:
+                    # Normalize by sum of alpha at reference station for all classes in chain
+                    # This prevents double-counting when multiple entries share the same ref task
+                    # (e.g., T1 calling both E2 and E3 in lqn_twotasks)
+                    alpha_sum = sum(
+                        alpha[ref_station, kk] if kk < alpha.shape[1] else 0.0
+                        for kk in inchain
+                    )
+                    if alpha_sum > 0:
+                        X[0, k] = Xchain[0, c] * alpha_at_ref / alpha_sum
+                    else:
+                        X[0, k] = Xchain[0, c] * alpha_at_ref
+                else:
+                    # Class doesn't visit its reference station (class switching case)
+                    # Use system throughput from chain directly
+                    X[0, k] = Xchain[0, c]
 
             for i in range(M):
                 # Reference station for this class
@@ -182,20 +207,41 @@ def sn_deaggregate_chain_results(
                             U[i, k] = Uchain[i, c] * alpha[i, k]
 
                 # Calculate Q, T, R
-                if Lchain[i, c] > 0:
-                    if Qchain is not None and (hasattr(Qchain, 'size') and Qchain.size > 0):
-                        Q[i, k] = Qchain[i, c] * alpha[i, k]
+                # Source and Sink stations always have Q=0, R=0 (no queueing)
+                # But Source should have T = arrival rate (computed from Tchain)
+                if i in zero_util_stations:
+                    Q[i, k] = 0.0
+                    R[i, k] = 0.0
+                    # For Source stations, compute throughput from Tchain
+                    if i in source_stations and Lchain[i, c] > 0:
+                        T[i, k] = Tchain[i, c] * alpha[i, k]
                     else:
-                        STchain_val = STchain[i, c] if STchain[i, c] != 0 else 1.0
-                        Q[i, k] = (Rchain[i, c] * ST[i, k] / STchain_val *
-                                   Xchain[0, c] * Vchain[i, c] / Vchain_ref * alpha[i, k])
-
-                    T[i, k] = Tchain[i, c] * alpha[i, k]
-
-                    if T[i, k] != 0:
-                        R[i, k] = Q[i, k] / T[i, k]
-                    else:
+                        T[i, k] = 0.0
+                elif Lchain[i, c] > 0:
+                    # MATLAB: R(i,k) = Q(i,k) / T(i,k) computed unconditionally.
+                    # When alpha(i,k) is zero, both Q and T are zero, giving NaN
+                    # which is cleaned up at the end. In Python, alpha values may
+                    # have numerical noise (e.g. 1e-18) instead of exact zero,
+                    # causing tiny/tiny to produce finite but incorrect R values.
+                    # Guard: skip computation when alpha is effectively zero.
+                    if alpha[i, k] < 1e-14:
+                        Q[i, k] = 0.0
+                        T[i, k] = 0.0
                         R[i, k] = 0.0
+                    else:
+                        if Qchain is not None and (hasattr(Qchain, 'size') and Qchain.size > 0):
+                            Q[i, k] = Qchain[i, c] * alpha[i, k]
+                        else:
+                            STchain_val = STchain[i, c] if STchain[i, c] != 0 else 1.0
+                            Q[i, k] = (Rchain[i, c] * ST[i, k] / STchain_val *
+                                       Xchain[0, c] * Vchain[i, c] / Vchain_ref * alpha[i, k])
+
+                        T[i, k] = Tchain[i, c] * alpha[i, k]
+
+                        if T[i, k] != 0:
+                            R[i, k] = Q[i, k] / T[i, k]
+                        else:
+                            R[i, k] = 0.0
                 else:
                     T[i, k] = 0.0
                     R[i, k] = 0.0

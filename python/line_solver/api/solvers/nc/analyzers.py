@@ -287,9 +287,125 @@ def solver_ncld_analyzer(
     return result
 
 
+def solver_nc_lossn_analyzer(
+    sn: NetworkStruct,
+    options: Optional[SolverOptions] = None
+) -> NCResult:
+    """
+    NC solver analyzer for open loss networks with FCR.
+
+    Analyzes open queueing networks with a single multiclass Delay node
+    inside a Finite Capacity Region (FCR) with DROP policy using the
+    Erlang fixed-point approximation.
+
+    Args:
+        sn: Network structure with FCR configuration
+        options: Solver options
+
+    Returns:
+        NCResult with all performance metrics
+
+    Reference:
+        MATLAB: solver_nc_lossn_analyzer.m
+    """
+    from ...lossn import lossn_erlangfp
+
+    start_time = time.time()
+
+    if options is None:
+        options = SolverOptions()
+
+    K = sn.nclasses
+    M = sn.nstations
+
+    # 1. Extract arrival rates from Source
+    nu = np.zeros(K)
+    rates = sn.rates
+    if rates is None:
+        raise RuntimeError("Network structure has no rates defined")
+
+    for r in range(K):
+        refstat = int(sn.refstat[r]) if hasattr(sn, 'refstat') and sn.refstat is not None else 0
+        nu[r] = rates[refstat, r]  # arrival rate at source
+
+    # 2. Find delay station in FCR and extract constraints
+    region_matrix = sn.region[0]  # First (and only) FCR
+
+    # Find stations with FCR constraints (non-negative values)
+    stations_in_fcr = []
+    for i in range(M):
+        # Check if any per-class constraint or global constraint is non-negative
+        has_class_constraint = np.any(region_matrix[i, :K] >= 0)
+        has_global_constraint = region_matrix[i, K] >= 0 if region_matrix.shape[1] > K else False
+        if has_class_constraint or has_global_constraint:
+            stations_in_fcr.append(i)
+
+    if not stations_in_fcr:
+        raise RuntimeError("No stations found in FCR")
+
+    delay_idx = stations_in_fcr[0]
+
+    # Extract global and per-class max jobs
+    global_max = region_matrix[delay_idx, K] if region_matrix.shape[1] > K else -1
+    class_max = region_matrix[delay_idx, :K].copy()
+
+    # Handle unbounded constraints (replace -1 with large value)
+    if global_max < 0:
+        global_max = 1e6
+    class_max[class_max < 0] = 1e6
+
+    # 3. Build A matrix (J x K) where J = K+1 links
+    # Link 0: global constraint (all classes contribute)
+    # Links 1..K: per-class constraints (only class r contributes to link r+1)
+    J = K + 1
+    A = np.zeros((J, K))
+    A[0, :] = 1.0  # global link: all classes contribute
+    for r in range(K):
+        A[r + 1, r] = 1.0  # per-class link: only class r contributes
+
+    # 4. Build C vector (J,)
+    C_vec = np.zeros(J)
+    C_vec[0] = global_max
+    C_vec[1:] = class_max
+
+    # 5. Call lossn_erlangfp
+    qlen, loss, E, niter = lossn_erlangfp(nu, A, C_vec)
+
+    # 6. Convert to standard outputs
+    Q = np.zeros((M, K))
+    U = np.zeros((M, K))
+    T = np.zeros((M, K))
+    R = np.zeros((M, K))
+
+    # At delay node: qlen is effective throughput (after loss)
+    for r in range(K):
+        T[delay_idx, r] = qlen[r]  # effective throughput = arrival rate * (1 - loss)
+        mu_r = rates[delay_idx, r]  # service rate at delay
+        if mu_r > 0:
+            Q[delay_idx, r] = qlen[r] / mu_r  # Little's law: Q = X * S
+            R[delay_idx, r] = 1.0 / mu_r  # response time = service time (infinite server)
+            U[delay_idx, r] = T[delay_idx, r] / mu_r  # "utilization" for delay
+
+    result = NCResult()
+    result.QN = Q
+    result.UN = U
+    result.RN = R
+    result.TN = T
+    result.XN = qlen.reshape(1, -1)  # system throughput per class
+    result.CN = np.zeros((1, K))  # cycle time not applicable for open networks
+    result.lG = np.nan  # no normalizing constant for loss networks
+    result.it = niter
+    result.method = 'erlangfp'
+    result.runtime = time.time() - start_time
+    result.solver = "NC"
+
+    return result
+
+
 __all__ = [
     'NCResult',
     'NCResultProb',
     'solver_nc_analyzer',
     'solver_ncld_analyzer',
+    'solver_nc_lossn_analyzer',
 ]

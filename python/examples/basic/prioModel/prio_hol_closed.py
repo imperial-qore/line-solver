@@ -109,3 +109,4 @@ if __name__ == "__main__":
     for s in range(len(solver)):
         print(f'\nSOLVER: {solver[s].get_name()}')
         avg_table[s] = solver[s].avg_table()
+        print(avg_table[s])

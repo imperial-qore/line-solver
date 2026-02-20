@@ -2,346 +2,400 @@
 Markov Modulated Poisson Process (MMPP) functions for KPC-Toolbox.
 
 Native Python implementations of MMPP fitting and analysis.
+Matches MATLAB: matlab/lib/kpctoolbox/mmpp/
 """
 
 import numpy as np
-from typing import Dict
+from typing import Tuple, Optional
+from scipy.optimize import fsolve
 
 
-def mmpp2_fit(E1: float, E2: float, E3: float, ACFLAG1: float
-              ) -> Dict[str, np.ndarray]:
+def mmpp2_fit3(E1: float, E2: float, E3: float, G2: float
+               ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Fit a 2-state MMPP (MMPP2) to match first three moments and lag-1 autocorrelation.
+    Core MMPP2 fitter matching MATLAB mmpp2_fit3(E1, E2, E3, G2).
+
+    Fits a 2-state MMPP to match first three moments and G2 parameter.
+    G2 specifies the ratio of consecutive autocorrelations: rho(i)/rho(i-1).
 
     Args:
         E1: First moment (mean)
         E2: Second moment
         E3: Third moment
-        ACFLAG1: Lag-1 autocorrelation (should be in [0, 0.5])
+        G2: Autocorrelation decay ratio
 
     Returns:
-        Fitted MAP as {'D0': D0, 'D1': D1}
+        Tuple of (D0, D1) matrices
     """
-    SCV = (E2 - E1 * E1) / (E1 * E1)
+    SCV = (E2 - E1**2) / E1**2
 
-    # Handle edge case
-    if abs(SCV - 1) < 1e-10:
+    if (G2 < 1e-6) or (G2 == 0):
+        # If G2 is very close to zero, fit with MAP(1)
+        mu00 = 2 * (6 * E1**3 * SCV - E3) / E1 / (6 * E1**3 * SCV + 3 * E1**3 * SCV**2 + 3 * E1**3 - 2 * E3)
+        mu11 = 0.0
+        q01 = 9 * E1**5 * (SCV - 1) * (SCV**2 - 2 * SCV + 1) / (6 * E1**3 * SCV - E3) / (6 * E1**3 * SCV + 3 * E1**3 * SCV**2 + 3 * E1**3 - 2 * E3)
+        q10 = -3 * (SCV - 1) * E1**2 / (6 * E1**3 * SCV - E3)
+    else:
+        # Full MMPP(2) fitting - use exact MATLAB symbolic expressions
+        # Compute the discriminant that appears throughout
+        disc_val = (E3**2 - 12 * E1**3 * SCV * E3 + 6 * E1**3 * G2 * E3 -
+                   6 * G2 * SCV * E1**3 * E3 + 18 * G2 * SCV**3 * E1**6 -
+                   18 * E1**6 * G2 * SCV**2 + 9 * E1**6 * G2**2 +
+                   36 * E1**6 * SCV**2 + 18 * E1**6 * G2 * SCV -
+                   18 * E1**6 * SCV * G2**2 + 9 * E1**6 * SCV**2 * G2**2 -
+                   18 * E1**6 * G2)
+
+        disc = np.sqrt(disc_val) if disc_val >= 0 else np.sqrt(complex(disc_val))
+
+        denom = -3 * E1**3 * SCV**2 - 6 * E1**3 * SCV - 3 * E1**3 + 2 * E3
+        inner = -3 * E1**3 * G2 + 3 * E1**3 * G2 * SCV - 6 * E1**3 * SCV + E3 + disc
+
+        # mu11
+        mu11 = inner / E1 / denom
+
+        # mu00 - full MATLAB symbolic expression
+        t = inner / denom  # = term used in mu00 formula
+        mu00 = G2 * (-4 * E3 * G2 + 4 * t * E3 * G2 - 18 * E1**3 * t * G2 - 18 * E1**3 * t * G2 * SCV**2 - 12 * E1**3 * G2**2 - 12 * E1**3 * t * G2**2 * SCV + 12 * E1**3 * t * G2 * SCV + 12 * E1**3 * G2 * SCV**2 - 9 * E1**3 * t * SCV + 3 * E1**3 * t + 12 * E1**3 * G2**2 * SCV + 9 * E1**3 * t * SCV**2 + 12 * E1**3 * G2 + 12 * E1**3 * t * G2**2 - 3 * E1**3 * t * SCV**3 - 4 * E3 * G2**2) / (12 * E1**3 * G2**3 * SCV + 3 * E1**3 * SCV**3 * G2 - 12 * E1**3 * G2**3 + 18 * E1**3 * G2**2 * SCV**2 - 3 * E1**3 * G2 + 27 * E1**3 * t * G2 * SCV**2 - 9 * E1**3 * G2 * SCV**2 + 18 * E1**3 * G2**2 - 12 * E1**3 * G2**2 * SCV + 9 * E1**3 * G2 * SCV - 12 * E1**3 * t * G2**3 * SCV - 9 * E1**3 * t * SCV**3 * G2 - 24 * E1**3 * t * G2**2 * SCV**2 - t * E3 * SCV**2 + 4 * t * E3 * G2**2 + 12 * E1**3 * t * G2**3 - t * E3 + 2 * t * E3 * SCV + 9 * E1**3 * t * G2 + 24 * E1**3 * t * G2**2 * SCV - 27 * E1**3 * t * G2 * SCV + 6 * E1**3 * t * SCV - 12 * E1**3 * t * SCV**2 - 24 * E1**3 * t * G2**2 + 6 * E1**3 * t * SCV**3 - 4 * E3 * G2**2) / E1
+
+        # q01 - full MATLAB symbolic expression
+        q01 = -3 * E1**2 * (-6 * t * E1**2 * SCV + 12 * t * E1**2 * G2 * SCV - 6 * G2 * SCV * E1**2 - 3 * t * E1**2 * G2 + t / E1 * E3 + 3 * E1**2 * G2 + 6 * t * E1**2 * SCV**2 - 9 * t * E1**2 * SCV**2 * G2 + 3 * E1**2 * G2 * SCV**2 - t / E1 * E3 * SCV - 6 * t * E1**2 * G2**2 * SCV + 6 * E1**2 * G2**2 * SCV + 3 * t * E1**2 * G2**2 - G2 * t / E1 * E3 - 3 * E1**2 * G2**2 + 3 * t * E1**2 * SCV**2 * G2**2 - 3 * E1**2 * SCV**2 * G2**2 + G2 * SCV * t / E1 * E3) / (-45 * t * E1**5 * G2 * SCV**2 + 18 * G2**2 * E1**5 * SCV + 18 * E1**5 * G2**3 - 27 * E1**5 * G2**2 * SCV**2 + 6 * E1**2 * G2**2 * E3 - 27 * E1**5 * G2**2 - 18 * E1**5 * G2**3 * SCV - 18 * E1**5 * G2 * SCV + 18 * E1**5 * G2 * SCV**2 + 3 * E1**2 * G2 * E3 - 3 * E1**2 * G2 * E3 * SCV + t / E1 * E3**2 + 3 * t * E1**2 * G2 * SCV * E3 - 36 * t * E1**5 * G2**2 * SCV + 36 * t * E1**5 * G2**2 + 36 * t * E1**5 * SCV**2 + 45 * t * E1**5 * G2 * SCV - 12 * t * E1**2 * SCV * E3 - 3 * t * E1**2 * G2 * E3 + 9 * t * E1**5 * G2 * SCV**3 + 36 * t * E1**5 * G2**2 * SCV**2 - 6 * t * E1**2 * G2**2 * E3 + 18 * t * E1**5 * G2**3 * SCV - 18 * t * E1**5 * G2**3 - 9 * t * E1**5 * G2)
+
+        # q10 - full MATLAB symbolic expression
+        q10 = 3 * (-3 * E1**3 * t * SCV**3 - 3 * E1**3 * t * G2 * SCV**2 + 6 * E1**3 * SCV**2 + 3 * E1**3 * G2 * SCV**2 + 3 * E1**3 * t * SCV**2 + 6 * E1**3 * t * G2 * SCV - E3 * SCV - 6 * E1**3 * SCV + t * E3 * SCV - 6 * E1**3 * G2 * SCV - 3 * E1**3 * t * SCV - t * E3 + 3 * E1**3 * G2 - 3 * E1**3 * t * G2 + 3 * E1**3 * t + E3) * E1**2 * (-1 + G2) / (E3**2 - 12 * E1**3 * SCV * E3 + 6 * E1**3 * G2 * E3 - 6 * G2 * SCV * E1**3 * E3 + 18 * G2 * SCV**3 * E1**6 - 18 * E1**6 * G2 * SCV**2 + 9 * E1**6 * G2**2 + 36 * E1**6 * SCV**2 + 18 * E1**6 * G2 * SCV - 18 * E1**6 * SCV * G2**2 + 9 * E1**6 * SCV**2 * G2**2 - 18 * E1**6 * G2)
+
+    D0 = np.array([[-mu00 - q01, q01],
+                   [q10, -mu11 - q10]])
+    D1 = np.array([[mu00, 0.0],
+                   [0.0, mu11]])
+
+    # Take real part if complex
+    D0 = np.real(D0)
+    D1 = np.real(D1)
+
+    return (D0, D1)
+
+
+def mmpp2_fit(E1: float, E2: float, E3: float, ACFLAG1: float
+              ) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Fit MMPP2 from moments and lag-1 autocorrelation.
+
+    Convenience wrapper: converts ACFLAG1 to G2, then calls mmpp2_fit3.
+
+    Args:
+        E1: First moment (mean)
+        E2: Second moment
+        E3: Third moment
+        ACFLAG1: Lag-1 autocorrelation
+
+    Returns:
+        Tuple of (D0, D1) matrices
+    """
+    SCV = (E2 - E1**2) / (E1**2)
+    if abs(SCV - 1) < 1e-10 or SCV == 0:
         G2 = 0.0
     else:
-        G2 = ACFLAG1 / ((1 - 1 / SCV) / 2) if SCV != 0 else 0.0
-
-    if abs(G2) < 1e-6 or G2 == 0.0:
-        # If G2 is very close to zero, fit with MAP(1) approximation
-        denom1 = 6 * E1**3 * SCV + 3 * E1**3 * SCV**2 + 3 * E1**3 - 2 * E3
-        denom2 = 6 * E1**3 * SCV - E3
-
-        if abs(denom1) > 1e-10 and abs(denom2) > 1e-10:
-            mu00 = 2 * (6 * E1**3 * SCV - E3) / E1 / denom1
-            q01 = 9 * E1**5 * (SCV - 1) * (SCV**2 - 2 * SCV + 1) / denom2 / denom1
-            q10 = -3 * (SCV - 1) * E1**2 / denom2
-        else:
-            mu00 = 1.0 / E1
-            q01 = 0.1
-            q10 = 0.1
-
-        mu11 = 0.0
-    else:
-        # Full MMPP2 fitting
-        try:
-            disc_val = (E3**2 - 12 * E1**3 * SCV * E3 + 6 * E1**3 * G2 * E3 -
-                       6 * G2 * SCV * E1**3 * E3 + 18 * G2 * SCV**3 * E1**6 -
-                       18 * E1**6 * G2 * SCV**2 + 9 * E1**6 * G2**2 +
-                       36 * E1**6 * SCV**2 + 18 * E1**6 * G2 * SCV -
-                       18 * E1**6 * SCV * G2**2 + 9 * E1**6 * SCV**2 * G2**2 -
-                       18 * E1**6 * G2)
-
-            if disc_val < 0:
-                disc = 0.0
-            else:
-                disc = np.sqrt(disc_val)
-
-            denom1 = -3 * E1**3 * SCV**2 - 6 * E1**3 * SCV - 3 * E1**3 + 2 * E3
-
-            if abs(denom1) > 1e-10:
-                term1 = (-3 * E1**3 * G2 + 3 * E1**3 * G2 * SCV -
-                        6 * E1**3 * SCV + E3 + disc) / denom1
-            else:
-                term1 = 1.0
-
-            mu11 = term1 / E1
-
-            # mu00 calculation (simplified)
-            a = G2 * (1 - SCV)
-            b = 2 * SCV - G2 * SCV - 2
-            c = term1 * E1**2
-
-            if abs(b) > 1e-10:
-                discriminant = a * a - 4 * b * c
-                if discriminant >= 0:
-                    mu00 = (-a + np.sqrt(discriminant)) / (2 * b) / E1
-                else:
-                    mu00 = 1.0 / E1
-            else:
-                mu00 = 1.0 / E1
-
-            # q01 and q10 calculations
-            if disc > 0:
-                q01 = 3 * E1**2 * (1 - G2) * (SCV - 1) * term1 / (disc * 2)
-                q10 = 3 * E1**2 * (G2 - 1) * (SCV - 1) / disc
-            else:
-                q01 = 0.1
-                q10 = 0.1
-
-        except (ValueError, ZeroDivisionError):
-            mu00 = 1.0 / E1
-            mu11 = 0.0
-            q01 = 0.1
-            q10 = 0.1
-
-    # Ensure rates are non-negative
-    mu00 = max(0.0, mu00)
-    mu11 = max(0.0, mu11)
-    q01 = max(0.0, q01)
-    q10 = max(0.0, q10)
-
-    # Build D0 and D1 matrices
-    D0 = np.array([
-        [-mu00 - q01, q01],
-        [q10, -mu11 - q10]
-    ])
-
-    D1 = np.array([
-        [mu00, 0.0],
-        [0.0, mu11]
-    ])
-
-    return {'D0': D0, 'D1': D1}
+        G2 = ACFLAG1 / ((1 - 1 / SCV) / 2)
+    return mmpp2_fit3(E1, E2, E3, G2)
 
 
-def mmpp2_fit1(E1: float, E2: float, E3: float) -> Dict[str, np.ndarray]:
+def mmpp2_fit1(mean: float, scv: float, skew: float, idc: float
+               ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Fit MMPP2 using only moments (no autocorrelation).
+    Fit MMPP2 from mean, SCV, skewness, and index of dispersion.
+
+    Matches MATLAB: mmpp2_fit1(mean, scv, skew, idc)
 
     Args:
-        E1: First moment
-        E2: Second moment
-        E3: Third moment
+        mean: Mean inter-arrival time
+        scv: Squared coefficient of variation
+        skew: Skewness (-1 for automatic)
+        idc: Index of dispersion for counts
 
     Returns:
-        Fitted MAP as {'D0': D0, 'D1': D1}
+        Tuple of (D0, D1) matrices
     """
-    return mmpp2_fit(E1, E2, E3, 0.0)
+    from ..mam import map2_fit
+    E1 = mean
+    E2 = (1 + scv) * E1**2
+    g2 = -(scv - idc) / (-1 + idc)
+    if skew == -1:
+        E3 = -1.0
+    else:
+        E3 = -(2 * E1**3 - 3 * E1 * E2 - skew * (E2 - E1**2)**1.5)
+    MAP, err = map2_fit(E1, E2, E3, g2)
+    return MAP
 
 
-def mmpp2_fit2(E1: float, E2: float, E3: float, acf1: float
-               ) -> Dict[str, np.ndarray]:
+def mmpp2_fit2(mean: float, scv: float, skew: float, g2: float
+               ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Fit MMPP2 using moments and lag-1 ACF.
+    Fit MMPP2 from mean, SCV, skewness, and G2 parameter.
+
+    Matches MATLAB: mmpp2_fit2(mean, scv, skew, g2)
 
     Args:
-        E1: First moment
-        E2: Second moment
-        E3: Third moment
+        mean: Mean inter-arrival time
+        scv: Squared coefficient of variation
+        skew: Skewness
+        g2: Autocorrelation decay ratio
+
+    Returns:
+        Tuple of (D0, D1) matrices
+    """
+    if scv == 1:
+        from ..mam import map_exponential
+        return map_exponential(mean)
+    E1 = mean
+    E2 = (1 + scv) * E1**2
+    E3 = -(2 * E1**3 - 3 * E1 * E2 - skew * (E2 - E1**2)**1.5)
+    return mmpp2_fit3(E1, E2, E3, g2)
+
+
+def mmpp2_fit4(mean: float, scv: float, skew: float, acf1: float
+               ) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Fit MMPP2 from mean, SCV, skewness, and lag-1 autocorrelation.
+
+    Matches MATLAB: mmpp2_fit4(mean, scv, skew, acf1)
+
+    Args:
+        mean: Mean inter-arrival time
+        scv: Squared coefficient of variation
+        skew: Skewness (-1 for automatic)
         acf1: Lag-1 autocorrelation
 
     Returns:
-        Fitted MAP as {'D0': D0, 'D1': D1}
+        Tuple of (D0, D1) matrices
     """
-    return mmpp2_fit(E1, E2, E3, acf1)
+    E1 = mean
+    E2 = (1 + scv) * E1**2
+    if skew == -1:
+        E3 = -1.0
+    else:
+        E3 = -(2 * E1**3 - 3 * E1 * E2 - skew * (E2 - E1**2)**1.5)
+    rho0 = (1 - 1 / scv) / 2
+    g2 = acf1 / rho0
+    return mmpp2_fit3(E1, E2, E3, g2)
 
 
-def mmpp2_fit3(E1: float, E2: float, E3: float, acf2: float
-               ) -> Dict[str, np.ndarray]:
+def mmpp2_fitc(mu: float, bt1: float, bt2: float, binf: float,
+               m3t2: float, t1: float, t2: float
+               ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Fit MMPP2 using moments and lag-2 ACF (approximation).
+    Fit MMPP2 from counting process statistics (Heffes-Lucantoni method).
+
+    Matches MATLAB: mmpp2_fitc(mu, bt1, bt2, binf, m3t2, t1, t2)
 
     Args:
-        E1: First moment
-        E2: Second moment
-        E3: Third moment
-        acf2: Lag-2 autocorrelation
+        mu: Arrival rate
+        bt1: IDC at scale t1
+        bt2: IDC at scale t2
+        binf: IDC for t->inf
+        m3t2: Third central moment at scale t2
+        t1: First time scale
+        t2: Second time scale
 
     Returns:
-        Fitted MAP as {'D0': D0, 'D1': D1}
+        Tuple of (D0, D1) matrices
     """
-    # Approximate lag-1 from lag-2 using geometric decay assumption
-    acf1 = np.sqrt(abs(acf2)) * np.sign(acf2)
-    return mmpp2_fit(E1, E2, E3, acf1)
+    # Degenerate case
+    if abs(binf - 1) < 1e-8 and abs(binf - bt1) < 1e-8:
+        return (np.array([[-mu]]), np.array([[mu]]))
+
+    if not (binf > bt1 and bt1 > 1):
+        return (np.array([[-mu]]), np.array([[mu]]))
+
+    # d = r1 + r2
+    c = (binf - 1) / (binf - bt1)
+    # Solve ProductLog: z = w * exp(w) where z = -c * exp(-c)
+    z = -c * np.exp(-c)
+    w = fsolve(lambda w: z - w * np.exp(w), 1.0, full_output=False)[0]
+    x = (w + c) / t1
+
+    k1 = mu**3 * t2**3
+    k2 = 3 * mu**2 * (binf - 1) * t2**2
+    k3 = 3 * mu * (binf - 1) / x * t2
+    k4 = 3 * mu / x**2 * (binf - 1) * t2 * np.exp(-x * t2)
+    k5 = 6 * mu / x**3 * (binf - 1) * (1 - np.exp(-x * t2))
+    g1t2 = m3t2 + 3 * mu * t2 * (mu * t2 - 1) * bt2 + mu * t2 * (mu * t2 - 1) * (mu * t2 - 2)
+    h = (g1t2 - k1 - k2 - k3 * (-mu) - k4 * mu * x) / ((k3 / x) + k4 - k5)
+
+    if abs(h) < 1e-4:
+        r1 = x / 2
+        r2 = x / 2
+        l2 = mu - 0.5 * np.sqrt(2 * (binf - 1) * mu * x)
+        l1 = mu + 0.5 * np.sqrt(2 * (binf - 1) * mu * x)
+    else:
+        y = (binf - 1) * mu * x**3 / (2 * h**2)
+        r1 = x / 2 * (1 + 1 / np.sqrt(4 * y + 1))
+        r2 = x - r1
+        if r1 < r2:
+            r1, r2 = r2, r1
+        w_val = h / (r1 - r2)
+        w_min = -mu / r1 * (r1 + r2)
+        w_max = mu / r2 * (r1 + r2)
+        if w_val < w_min or w_val > w_max:
+            z_val = (binf - 1) * x**3 * mu
+            u = x * z_val / (2 * mu**2 * x**2 + z_val)
+            r1 = u + (x - u) / 2
+            r2 = x - r1
+            delta = np.sqrt(z_val / (2 * r1 * r2))
+            l2 = mu - r2 / x * delta
+            l1 = l2 + delta
+        else:
+            l2 = mu - h / (r1 - r2) * (r2 / (r1 + r2))
+            l1 = h / (r1 - r2) + l2
+
+    D0 = np.array([[-(r1 + l1), r1],
+                   [r2, -(r2 + l2)]])
+    D1 = np.array([[l1, 0.0],
+                   [0.0, l2]])
+    return (D0, D1)
 
 
-def mmpp2_fit4(E1: float, E2: float, E3: float, acf_values: np.ndarray
-               ) -> Dict[str, np.ndarray]:
+def mmpp2_fitc_approx(a: float, bt1: float, bt2: float, binf: float,
+                      m3t2: float, t1: float, t2: float
+                      ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Fit MMPP2 using moments and multiple ACF lags.
+    Fit MMPP2 from counting process statistics using optimization.
+
+    Matches MATLAB: mmpp2_fitc_approx(a, bt1, bt2, binf, m3t2, t1, t2)
 
     Args:
-        E1: First moment
-        E2: Second moment
-        E3: Third moment
-        acf_values: Array of ACF values at lags 1, 2, ...
+        a: Arrival rate
+        bt1: IDC at scale t1
+        bt2: IDC at scale t2
+        binf: IDC for t->inf
+        m3t2: Third central moment at scale t2
+        t1: First time scale
+        t2: Second time scale
 
     Returns:
-        Fitted MAP as {'D0': D0, 'D1': D1}
+        Tuple of (D0, D1) matrices
     """
-    acf_values = np.asarray(acf_values)
-    acf1 = acf_values[0] if len(acf_values) > 0 else 0.0
-    return mmpp2_fit(E1, E2, E3, acf1)
+    from ..mam import map_scale
+    from scipy.optimize import minimize
+
+    def compute_obj(params):
+        l1, l2, r1, r2 = params
+        if l1 <= 0 or l2 <= 0 or r1 < 0 or r2 < 0:
+            return 1e10
+
+        xa = (l1 * r2 + l2 * r1) / (r1 + r2)
+        if xa <= 0:
+            return 1e10
+        factor = a / xa
+
+        exp_val_t1 = np.exp(-(r1 * t1 * factor + r2 * t1 * factor))
+        xbt1 = (r1 * (2 * l1**2 * r2**2 * t1 * factor - 2 * l2**2 * r2 - 2 * l1**2 * r2 +
+                      2 * l2**2 * r2**2 * t1 * factor + 4 * l1 * l2 * r2 +
+                      2 * l1**2 * r2 * exp_val_t1 + 2 * l2**2 * r2 * exp_val_t1 -
+                      4 * l1 * l2 * r2**2 * t1 * factor - 4 * l1 * l2 * r2 * exp_val_t1) +
+                r1**2 * (2 * r2 * t1 * factor * l1**2 - 4 * r2 * t1 * factor * l1 * l2 +
+                        2 * r2 * t1 * factor * l2**2)) / \
+               (t1 * factor * (r1 + r2)**3 * (l1 * r2 + l2 * r1)) + 1
+
+        if abs(t1 - t2) > 1e-10:
+            exp_val_t2 = np.exp(-(r1 * t2 * factor + r2 * t2 * factor))
+            xbt2 = (r1 * (2 * l1**2 * r2**2 * t2 * factor - 2 * l2**2 * r2 - 2 * l1**2 * r2 +
+                          2 * l2**2 * r2**2 * t2 * factor + 4 * l1 * l2 * r2 +
+                          2 * l1**2 * r2 * exp_val_t2 + 2 * l2**2 * r2 * exp_val_t2 -
+                          4 * l1 * l2 * r2**2 * t2 * factor - 4 * l1 * l2 * r2 * exp_val_t2) +
+                    r1**2 * (2 * r2 * t2 * factor * l1**2 - 4 * r2 * t2 * factor * l1 * l2 +
+                            2 * r2 * t2 * factor * l2**2)) / \
+                   (t2 * factor * (r1 + r2)**3 * (l1 * r2 + l2 * r1)) + 1
+        else:
+            xbt2 = xbt1
+
+        xbinf = ((2 * r2 * l1**2 - 4 * r2 * l1 * l2 + 2 * r2 * l2**2) * r1**2 +
+                 (2 * l1**2 * r2**2 - 4 * l1 * l2 * r2**2 + 2 * l2**2 * r2**2) * r1) / \
+                ((r1 + r2)**3 * (l1 * r2 + l2 * r1)) + 1
+
+        t = t2 * factor
+        d = r1 + r2
+        p = (l1 - l2) * (r1 - r2)
+        xg3t = (xa**3 * t**3 +
+                3 * xa**2 * (xbinf - 1) * t**2 +
+                3 * xa * (xbinf - 1) / d * (p / d - xa) * t +
+                3 * xa / d**2 * (xbinf - 1) * (p + xa * d) * t * np.exp(-t * d) -
+                6 * xa / d**3 * (xbinf - 1) * p * (1 - np.exp(-t * d)))
+        xm3t2 = xg3t - 3 * xa * t * (xa * t - 1) * xbt2 - xa * t * (xa * t - 1) * (xa * t - 2)
+
+        obj = 0.0
+        obj += (xa / a - 1)**2
+        obj += (xbt1 / bt1 - 1)**2
+        if abs(t1 - t2) > 1e-10:
+            obj += (xbt2 / bt2 - 1)**2
+        obj += (xbinf / binf - 1)**2
+        if abs(m3t2) > 1e-10:
+            obj += (xm3t2 / m3t2 - 1)**2
+
+        return obj
+
+    x0 = np.array([a * 0.75, a * 1.5, 1.0 / 3.0, 2.0 / 3.0])
+    bounds = [(1e-6, None), (1e-6, None), (0, None), (0, None)]
+    result = minimize(compute_obj, x0, method='L-BFGS-B', bounds=bounds,
+                     options={'maxiter': 10000, 'ftol': 1e-12})
+
+    l1, l2, r1, r2 = result.x
+    D0 = np.array([[-(l1 + r1), r1],
+                   [r2, -(l2 + r2)]])
+    D1 = np.array([[l1, 0.0],
+                   [0.0, l2]])
+
+    # Scale to match exact rate
+    D0, D1 = map_scale(D0, D1, 1.0 / a)
+    return (D0, D1)
 
 
-def mmpp2_fitc(mean_count: float, var_count: float, scale: float
-               ) -> Dict[str, np.ndarray]:
+def mmpp2_fitc_theoretical(MAP, t1: float = 1.0, t2: float = 10.0, tinf: float = 1e8
+                           ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Fit MMPP2 from counting process statistics.
+    Fit theoretical characteristics of a MAP(n) with a MMPP(2).
+
+    Matches MATLAB: mmpp2_fitc_theoretical(map, t1, t2, tinf)
 
     Args:
-        mean_count: Mean count
-        var_count: Variance of counts
-        scale: Time scale
+        MAP: Input MAP as (D0, D1) tuple
+        t1: First time scale (default 1)
+        t2: Second time scale (default 10)
+        tinf: Large time scale for asymptotic IDC (default 1e8)
 
     Returns:
-        Fitted MAP as {'D0': D0, 'D1': D1}
+        Tuple of (D0, D1) matrices for the fitted MMPP2
     """
-    # Convert counting statistics to inter-arrival statistics
-    E1 = scale / mean_count
-    idc = var_count / mean_count
-    SCV = idc
+    from ..mam import map_count_mean, map_count_var, map_count_moment
 
-    # Approximate E2 and E3 from SCV
-    E2 = E1**2 * (1 + SCV)
-    E3 = E2 * E1 * (2 * SCV + 1)
+    D0, D1 = MAP[0], MAP[1]
 
-    return mmpp2_fit(E1, E2, E3, 0.0)
+    a_val = map_count_mean(D0, D1, np.array([t1]))[0] / t1
+    bt1_val = map_count_var(D0, D1, np.array([t1]))[0] / (a_val * t1)
+    bt2_val = map_count_var(D0, D1, np.array([t2]))[0] / (a_val * t2)
+    binf_val = map_count_var(D0, D1, np.array([tinf]))[0] / (a_val * tinf)
+    mt2 = map_count_moment(D0, D1, t2, [1, 2, 3])
+    m3t2_val = mt2[2] - 3 * mt2[1] * mt2[0] + 2 * mt2[0]**3
+
+    return mmpp2_fitc(a_val, bt1_val, bt2_val, binf_val, m3t2_val, t1, t2)
 
 
-def mmpp2_fitc_approx(mean_count: float, var_count: float, scale: float,
-                      acf_count: float) -> Dict[str, np.ndarray]:
+def mmpp_rand(K: int) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Fit MMPP2 from counting process with approximation.
+    Generate a random MMPP with K states.
+
+    Matches MATLAB: mmpp_rand(K) - generates random D0, D1 (diagonal), normalizes.
 
     Args:
-        mean_count: Mean count
-        var_count: Variance of counts
-        scale: Time scale
-        acf_count: ACF of counting process
+        K: Number of states
 
     Returns:
-        Fitted MAP as {'D0': D0, 'D1': D1}
+        Tuple of (D0, D1) matrices
     """
-    E1 = scale / mean_count
-    idc = var_count / mean_count
-    SCV = idc
+    from ..mam import map_normalize
 
-    E2 = E1**2 * (1 + SCV)
-    E3 = E2 * E1 * (2 * SCV + 1)
-
-    # Approximate inter-arrival ACF from counting ACF
-    acf1 = acf_count * 0.5
-
-    return mmpp2_fit(E1, E2, E3, acf1)
-
-
-def mmpp2_fitc_theoretical(lambda1: float, lambda2: float,
-                           q12: float, q21: float) -> Dict[str, np.ndarray]:
-    """
-    Theoretical MMPP2 fitting from parameters.
-
-    Args:
-        lambda1: Arrival rate in state 1
-        lambda2: Arrival rate in state 2
-        q12: Transition rate from state 1 to 2
-        q21: Transition rate from state 2 to 1
-
-    Returns:
-        Fitted MAP as {'D0': D0, 'D1': D1}
-    """
-    D0 = np.array([
-        [-lambda1 - q12, q12],
-        [q21, -lambda2 - q21]
-    ])
-
-    D1 = np.array([
-        [lambda1, 0.0],
-        [0.0, lambda2]
-    ])
-
-    return {'D0': D0, 'D1': D1}
-
-
-def mmpp_rand(MAP: Dict[str, np.ndarray], n_samples: int,
-              seed: int = None) -> np.ndarray:
-    """
-    Generate random samples from an MMPP.
-
-    Args:
-        MAP: MMPP as {'D0': D0, 'D1': D1}
-        n_samples: Number of samples to generate
-        seed: Random seed (optional)
-
-    Returns:
-        Array of inter-arrival times
-    """
-    D0 = MAP['D0']
-    D1 = MAP['D1']
-    n = D0.shape[0]
-
-    if seed is not None:
-        np.random.seed(seed)
-
-    samples = np.zeros(n_samples)
-
-    # Start in state 0
-    current_state = 0
-
-    for s in range(n_samples):
-        time = 0.0
-
-        # Generate inter-arrival time
-        while True:
-            # Holding time in current state
-            rate = -D0[current_state, current_state]
-            if rate <= 0:
-                time += 1.0  # Fallback
-                break
-
-            hold_time = -np.log(np.random.rand()) / rate
-
-            # Decide next transition
-            arrival_rate = D1[current_state, current_state]
-            arrival_prob = arrival_rate / rate if rate > 0 else 0
-
-            if np.random.rand() < arrival_prob:
-                # Arrival occurred
-                time += hold_time
-
-                # Sample destination state for arrival
-                if arrival_rate > 0:
-                    rnd = np.random.rand()
-                    cum_prob = 0.0
-                    for j in range(n):
-                        cum_prob += D1[current_state, j] / arrival_rate
-                        if rnd < cum_prob:
-                            current_state = j
-                            break
-                break
-            else:
-                # Hidden transition (no arrival)
-                time += hold_time
-
-                # Sample destination state for hidden transition
-                hidden_rate = rate - arrival_rate
-                if hidden_rate > 0:
-                    rnd = np.random.rand()
-                    cum_prob = 0.0
-                    for j in range(n):
-                        if j != current_state:
-                            cum_prob += D0[current_state, j] / hidden_rate
-                            if rnd < cum_prob:
-                                current_state = j
-                                break
-
-        samples[s] = time
-
-    return samples
+    D0 = np.random.rand(K, K)
+    D1 = np.diag(np.diag(np.random.rand(K, K)))
+    return map_normalize(D0, D1)
 
 
 __all__ = [

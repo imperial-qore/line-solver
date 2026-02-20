@@ -356,7 +356,9 @@ classdef Queue < ServiceStation
                     %if distribution.getNumParams ~= oldDistribution.getNumParams
                     % %|| (isOldMarkovian && ~isNewMarkovian) || (~isOldMarkovian && isNewMarkovian) || (isOldMarkovian && isNewMarkovian && distribution.getNumberOfPhases ~= oldDistribution.getNumberOfPhases)
                     self.model.setInitialized(false); % this is a better way to invalidate to avoid that sequential calls to setService all trigger an initDefault
-                    self.model.hasStruct = false; % invalidate struct so procid gets recomputed
+                    % Note: We no longer invalidate hasStruct here as it causes severe performance
+                    % issues in iterative solvers like LN. The refreshRates/refreshProcesses methods
+                    % called during solver post-iteration phase handle updating procid appropriately.
                     self.state=[]; % reset the state vector
                     %end
                 else % if first configuration
@@ -374,6 +376,13 @@ classdef Queue < ServiceStation
                 end
                 server.serviceProcess{1, c}{3} = distribution;
                 self.serviceProcess{c} = distribution;
+                % Update cached procid if struct exists to avoid stale values
+                % This is needed because we don't invalidate hasStruct for performance
+                if self.model.hasStruct && ~isempty(self.model.sn)
+                    ist = self.model.getStationIndex(self);
+                    procTypeId = ProcessType.toId(ProcessType.fromText(builtin('class', distribution)));
+                    self.model.sn.procid(ist, c) = procTypeId;
+                end
             else
                 self.obj.setService(class.obj, distribution.obj, weight);
                 % Also update MATLAB-side storage to keep in sync with Java object

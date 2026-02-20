@@ -103,8 +103,10 @@ if __name__ == "__main__":
     solver = np.append(solver, MVA(model, seed=23000, cutoff=1, samples=10000))
     solver = np.append(solver, JMT(model, seed=23000, samples=10000))
     solver = np.append(solver, SSA(model, seed=23000, samples=10000))
+    solver = np.append(solver, DES(model, seed=23000, samples=10000))
 
     avg_table = np.empty(len(solver), dtype=object)
     for s in range(len(solver)):
-        print(f'\nSOLVER: {solver[s].get_name()}')
+        print(f'\nSOLVER: {solver[s].get_name().replace("Solver", "")}')
         avg_table[s] = solver[s].avg_table()
+        print(avg_table[s])

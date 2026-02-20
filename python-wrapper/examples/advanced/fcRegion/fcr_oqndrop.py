@@ -49,7 +49,7 @@ model.link(P)
 
 # Add finite capacity region with constraints
 # When region is full, jobs are dropped (lost)
-fcr = model.add_region('FCR', queue1, queue2)
+fcr = model.add_region(queue1, queue2)
 fcr.set_global_max_jobs(8)          # Global: max 8 jobs in region
 fcr.set_class_max_jobs(class1, 5)   # Class1: max 5 jobs
 fcr.set_class_max_jobs(class2, 4)   # Class2: max 4 jobs
@@ -57,7 +57,7 @@ fcr.set_drop_rule(class1, True)     # True = drop jobs
 fcr.set_drop_rule(class2, True)     # True = drop jobs
 
 # Run JMT
-solver = JMT(model, seed=23000, samples=50000, verbose=VerboseLevel.SILENT)
+solver = JMT(model, seed=23000, samples=50000)
 
 # Get results
 avg_table = solver.get_avg_table()

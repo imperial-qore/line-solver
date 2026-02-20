@@ -9,26 +9,12 @@ import jline.api.sn.snHasProductForm
 import jline.io.line_warning
 import jline.io.mfilename
 import jline.lang.NetworkStruct
-import jline.lang.constant.SchedStrategy
 import jline.VerboseLevel
 import jline.solvers.SolverOptions
 import jline.solvers.mva.MVAResult
 import jline.solvers.mva.handlers.solver_amva
 import jline.solvers.mva.handlers.solver_mva
 import jline.solvers.mva.handlers.solver_qna
-
-/**
- * Check if the network has LCFS/LCFSPR scheduling (not supported in this version).
- */
-private fun hasLcfsScheduling(sn: NetworkStruct): Boolean {
-    for (i in 0..<sn.nstations) {
-        when (sn.sched[sn.stations[i]]) {
-            SchedStrategy.LCFS, SchedStrategy.LCFSPR -> return true
-            else -> {}
-        }
-    }
-    return false
-}
 
 /**
  * MVA Analyzer class
@@ -48,10 +34,6 @@ fun solver_mva_analyzer(sn: NetworkStruct, options: SolverOptions): MVAResult {
 
         "qna" -> if (options.verbose != VerboseLevel.SILENT) ret = solver_qna(sn, options)
         "default" -> {
-            // Check for LCFS scheduling (not supported in this version)
-            if (hasLcfsScheduling(sn)) {
-                throw RuntimeException("LCFS queueing networks are not supported in this version.")
-            }
             if (sn.nchains <= 4 && sn.njobs.sumRows()
                 .toDouble() <= 20 && snHasProductForm(sn) && !snHasFractionalPopulations(sn)) {
                 // The parameters above take in the worst case a handful of ms

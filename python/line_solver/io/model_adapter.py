@@ -18,6 +18,7 @@ from itertools import combinations
 from dataclasses import dataclass
 
 from ..api.sn.network_struct import NodeType
+from ..api.sn.transforms import get_chain_for_class
 
 
 @dataclass
@@ -101,14 +102,20 @@ class ModelAdapter:
 
         # Create a copy of the model
         nonfjmodel = model.copy()
+        nonfjmodel.allow_replace = True  # Allow replacing Fork/Join with Router/Delay
 
-        # Get the linked routing matrix
-        P = nonfjmodel.get_linked_routing_matrix()
-        if P is None:
+        # Get the linked routing matrix from the ORIGINAL model (not the copy).
+        # Using the copy would trigger refresh_struct() which calls
+        # _refresh_fork_join_nodevisits() -> mmt() again, causing infinite recursion.
+        # The original model already has its struct computed at this point.
+        P_orig = model.get_linked_routing_matrix()
+        if P_orig is None:
             raise ValueError(
                 "SolverMVA can process fork-join networks only if their routing "
                 "topology has been generated using Network.link()."
             )
+        # Deep copy P so modifications don't affect the original model
+        P = [[P_orig[r][s].copy() for s in range(len(P_orig[r]))] for r in range(len(P_orig))]
 
         # Reset network structure
         nonfjmodel.reset_network(True)
@@ -124,10 +131,11 @@ class ModelAdapter:
         for f in fork_indices:
             fork_node = model._nodes[f]
             for r in range(nclasses):
-                output_strategy = fork_node.output.output_strategy.get(r, [])
-                if len(output_strategy) > 2:
-                    # Number of parallel branches
-                    orig_fanout[f, r] = len(output_strategy[2])
+                # Compute fanout from routing matrix P: count non-zero outgoing links
+                # For a Fork, fanout is the number of destinations it routes to
+                fanout_count = np.sum(P[r][r][f, :] > 0)
+                if fanout_count > 0:
+                    orig_fanout[f, r] = int(fanout_count)
                     # Divide routing probabilities by fanout
                     for s in range(nclasses):
                         if orig_fanout[f, r] > 0:
@@ -182,19 +190,32 @@ class ModelAdapter:
                 raise ValueError(
                     "SolverMVA supports at present only a single join station per fork node."
                 )
-            if len(join_idx) == 0:
-                continue
-            join_idx = join_idx[0]
+            # MATLAB: joinIdx = find(sn.fj(f,:)); if empty, join-related ops are no-ops
+            # We must NOT skip — auxiliary classes still need to be created
+            has_join = len(join_idx) > 0
+            join_idx = join_idx[0] if has_join else None
 
             # Find chains associated to forked classes
+            # Handles both 1D (chains[r] = chain_id) and 2D (chains[c,r] > 0) formats
             forked_chain_indices = []
-            for chain_idx in range(sn.nchains):
-                if np.any(sn.chains[chain_idx, forked_classes.get(f, [])] > 0):
-                    forked_chain_indices.append(chain_idx)
+            forked = forked_classes.get(f, [])
+            for class_idx in forked:
+                chain_id = get_chain_for_class(sn.chains, class_idx)
+                if chain_id >= 0 and chain_id not in forked_chain_indices:
+                    forked_chain_indices.append(chain_id)
 
             for fc in forked_chain_indices:
                 oclass_map = {}
-                inchain = np.where(sn.chains[fc, :] > 0)[0]
+                # Get classes in this chain
+                if hasattr(sn, 'inchain') and sn.inchain is not None and fc in sn.inchain:
+                    inchain = sn.inchain[fc]
+                else:
+                    # Fallback: find classes from chains matrix
+                    chains_arr = np.asarray(sn.chains)
+                    if chains_arr.ndim == 2:
+                        inchain = np.where(chains_arr[fc, :] > 0)[0]
+                    else:
+                        inchain = np.where(chains_arr == fc)[0]
 
                 for r in inchain:
                     # Create auxiliary open class
@@ -208,7 +229,10 @@ class ModelAdapter:
                     fjforkmap = np.append(fjforkmap, f)
 
                     # Compute fanout
-                    tasks_per_link = model._nodes[f].output.tasks_per_link
+                    fork_node = model._nodes[f]
+                    tasks_per_link = getattr(fork_node, '_tasks_per_link', None)
+                    if tasks_per_link is None:
+                        tasks_per_link = 1
                     new_fanout = orig_fanout[f, r] * tasks_per_link
                     fanout = np.append(fanout, new_fanout)
 
@@ -248,30 +272,80 @@ class ModelAdapter:
                             P[oclass_r.get_index0()][oclass_s.get_index0()] = P[r][s].copy()
 
                 # Set source and sink routing for auxiliary classes
+                # MATLAB mmt.m lines 122-128: first zero out source/join rows for ALL pairs
+                for r in inchain:
+                    for s in inchain:
+                        oclass_r = oclass_map.get(r)
+                        oclass_s = oclass_map.get(s)
+                        if oclass_r is not None and oclass_s is not None:
+                            P = ModelAdapter._ensure_p_size(P, max(oclass_r.get_index0(), oclass_s.get_index0()) + 1, nnodes)
+                            # Zero out source row for all class pairs
+                            P[oclass_r.get_index0()][oclass_s.get_index0()][source.get_index0(), :] = 0.0
+                            # Zero out join row (no-op if no join, matching MATLAB empty indexing)
+                            if has_join:
+                                P[oclass_r.get_index0()][oclass_s.get_index0()][join_idx, :] = 0.0
+                # Then set source->fork and join->sink for diagonal only
                 for r in inchain:
                     oclass_r = oclass_map.get(r)
                     if oclass_r is not None:
-                        P = ModelAdapter._ensure_p_size(P, oclass_r.get_index0() + 1, nnodes)
-                        # Source -> Fork
-                        P[oclass_r.get_index0()][oclass_r.get_index0()][source.get_index0(), :] = 0.0
                         P[oclass_r.get_index0()][oclass_r.get_index0()][source.get_index0(), f] = 1.0
-                        # Join -> Sink
-                        P[oclass_r.get_index0()][oclass_r.get_index0()][join_idx, :] = 0.0
-                        P[oclass_r.get_index0()][oclass_r.get_index0()][join_idx, sink.get_index0()] = 1.0
+                        # Set join->sink routing (no-op if no join)
+                        if has_join:
+                            P[oclass_r.get_index0()][oclass_r.get_index0()][join_idx, sink.get_index0()] = 1.0
+
+        # Expand ClassSwitch matrices to include auxiliary classes.
+        # Auxiliary classes must mirror the switching behavior of their
+        # corresponding original classes. For example, if original class2
+        # switches to class1, then class2.Fork1 must switch to class1.Fork1.
+        from ..lang.nodes import ClassSwitch
+        new_nclasses = len(nonfjmodel._classes)
+        for node in nonfjmodel._nodes:
+            if isinstance(node, ClassSwitch):
+                old_matrix = node._switch_matrix
+                if old_matrix is not None:
+                    old_size = old_matrix.shape[0]
+                    if old_size < new_nclasses:
+                        new_matrix = np.zeros((new_nclasses, new_nclasses))
+                        new_matrix[:old_size, :old_size] = old_matrix
+                        # For each auxiliary class, mirror its original
+                        # class's switching behavior onto auxiliary targets.
+                        # fjclassmap[aux_local] = orig_class (0-indexed).
+                        # Absolute auxiliary class index = nclasses + aux_local.
+                        for aux_local in range(len(fjclassmap)):
+                            orig_r = int(fjclassmap[aux_local])
+                            if orig_r < 0:
+                                continue
+                            abs_aux_r = nclasses + aux_local
+                            if abs_aux_r >= new_nclasses:
+                                continue
+                            # Find what class orig_r switches to
+                            for orig_s in range(old_size):
+                                if old_matrix[orig_r, orig_s] > 0:
+                                    # Find the auxiliary class corresponding
+                                    # to orig_s from the same fork as aux_local.
+                                    fork_of_aux = int(fjforkmap[aux_local])
+                                    target_aux = -1
+                                    for other_local in range(len(fjclassmap)):
+                                        if (int(fjclassmap[other_local]) == orig_s
+                                                and int(fjforkmap[other_local]) == fork_of_aux):
+                                            target_aux = nclasses + other_local
+                                            break
+                                    if target_aux >= 0 and target_aux < new_nclasses:
+                                        new_matrix[abs_aux_r, target_aux] += (
+                                            old_matrix[orig_r, orig_s]
+                                        )
+                                    else:
+                                        # No matching auxiliary; keep identity
+                                        new_matrix[abs_aux_r, abs_aux_r] += (
+                                            old_matrix[orig_r, orig_s]
+                                        )
+                        node._switch_matrix = new_matrix
 
         # Relink the model with updated routing
         nonfjmodel.relink(P)
 
-        # Disable routing for routers (formerly forks)
-        for f in fork_indices:
-            router = nonfjmodel._nodes[f]
-            for r in range(len(router.output.output_strategy)):
-                output_strategy = router.output.output_strategy.get(r, [])
-                if len(output_strategy) >= 2:
-                    from ..lang.base import RoutingStrategy
-                    if output_strategy[1] == RoutingStrategy.RAND:
-                        output_strategy[0] = nonfjmodel._classes[r].name
-                        output_strategy[1] = RoutingStrategy.DISABLED
+        # Note: Routing for auxiliary classes is already set up correctly via P matrix
+        # The routing probabilities have been divided by fanout when replacing forks
 
         return MMTResult(
             nonfjmodel=nonfjmodel,
@@ -505,15 +579,6 @@ class ModelAdapter:
                             branch_target = branches[par]
                             branch_target_idx = branch_target.get_index0() if hasattr(branch_target, 'get_index0') else branch_target._node_index
 
-                            # Clear routing for nodes not in this auxiliary class's path
-                            # Each auxiliary class cycles through: Fork -> its Queue -> Join -> Aux Delay -> Fork
-                            # They should NOT visit nodes outside this path (like Delay or other branch queues)
-                            valid_nodes = [f, branch_target_idx, join_idx, fj_auxiliary_delays[join_idx]]
-                            for i in range(P[aux_r.get_index0()][aux_s.get_index0()].shape[0]):
-                                if i not in valid_nodes:
-                                    P[aux_r.get_index0()][aux_s.get_index0()][i, :] = 0.0
-                                    P[aux_r.get_index0()][aux_s.get_index0()][:, i] = 0.0
-
                             # Fork -> specific branch target
                             P[aux_r.get_index0()][aux_s.get_index0()][f, :] = 0.0
                             P[aux_r.get_index0()][aux_s.get_index0()][f, branch_target_idx] = 1.0
@@ -525,7 +590,7 @@ class ModelAdapter:
                             P[aux_r.get_index0()][aux_s.get_index0()][fj_auxiliary_delays[join_idx], :] = 0.0
                             P[aux_r.get_index0()][aux_s.get_index0()][fj_auxiliary_delays[join_idx], f] = 1.0
 
-                        # Route original classes straight to join
+                        # Route original classes straight to join (MATLAB lines 116-118)
                         P[r][s][f, :] = 0.0
                         P[r][s][f, join_idx] = 1.0
 
@@ -658,7 +723,11 @@ class ModelAdapter:
                 if len(join_idx_arr) > 0:
                     join_idx = join_idx_arr[0]
                     s_arr = np.where((fjforkmap == i) & (fjclassmap == r))[0]
-                    s = s_arr[0] if len(s_arr) > 0 else r
+                    if len(s_arr) > 0:
+                        orig_nclasses = len(nonfjmodel._classes) - len(fjclassmap)
+                        s = orig_nclasses + s_arr[0]
+                    else:
+                        s = r
 
                     # Recursively find paths within nested fork
                     paths = ModelAdapter.find_paths(
@@ -707,26 +776,29 @@ class ModelAdapter:
         """
         Find response times along paths with class switches.
 
-        Similar to find_paths but handles class switching.
+        Traverses the routing matrix from cur_node to end_node, computing
+        response times along each parallel path. This is the core algorithm
+        for MMT fork-join analysis.
 
         Args:
-            sn: Network structure
-            P: Combined routing matrix (all classes)
-            cur_node: Current node index
-            end_node: Ending node index
-            cur_class: Current class index
-            to_merge: Classes to merge
-            QN: Queue length matrix
-            TN: Throughput matrix
+            sn: Network structure (original model)
+            P: Combined routing matrix (nclasses*nnodes x nclasses*nnodes)
+            cur_node: Current node index (0-based)
+            end_node: Ending node index (0-based)
+            cur_class: Current class index (0-based)
+            to_merge: List of classes to merge for Q/T computation
+            QN: Queue length matrix [stations x classes]
+            TN: Throughput matrix [stations x classes]
             current_time: Accumulated response time
-            fjclassmap: Class mapping
-            fjforkmap: Fork mapping
+            fjclassmap: fjclassmap[aux_idx] = original class index
+            fjforkmap: fjforkmap[aux_idx] = fork node index
             nonfjmodel: Transformed model
 
         Returns:
-            Array of response times for each path
+            Array of response times, one per parallel path
         """
         if cur_node == end_node:
+            # At destination: subtract synchronization time at join
             station = sn.nodeToStation[cur_node]
             if not np.isnan(station):
                 q_len = np.sum(QN[int(station), to_merge])
@@ -741,18 +813,31 @@ class ModelAdapter:
             nonfjmodel.refresh_struct()
             nfjsn = nonfjmodel._sn
 
-        orig_nodes = P.shape[0] // max(len(nfjsn.classnames), 1)
+        # Get original number of nodes for indexing into combined routing matrix
+        # rtorig contains the original routing matrix dimensions
+        if hasattr(nfjsn, 'rtorig') and nfjsn.rtorig is not None and len(nfjsn.rtorig) > 0:
+            if len(nfjsn.rtorig[0]) > 0 and nfjsn.rtorig[0][0] is not None:
+                orig_nodes = nfjsn.rtorig[0][0].shape[0]
+            else:
+                orig_nodes = P.shape[0] // max(len(nfjsn.classnames), 1)
+        else:
+            orig_nodes = P.shape[0] // max(len(nfjsn.classnames), 1)
 
-        # Find transitions in combined routing matrix
-        row_idx = (cur_class - 1) * orig_nodes + cur_node
-        if row_idx >= P.shape[0]:
+        # Compute row index in combined routing matrix
+        # For 0-based indexing: row = cur_class * orig_nodes + cur_node
+        row_idx = cur_class * orig_nodes + cur_node
+        if row_idx < 0 or row_idx >= P.shape[0]:
             return np.array([current_time])
 
+        # Find all transitions from current (class, node)
         for transition in np.where(P[row_idx, :] > 0)[0]:
             cur_merge = list(to_merge)
-            next_class = transition // orig_nodes + 1
-            next_node = transition - (next_class - 1) * orig_nodes
 
+            # Decode transition into (next_class, next_node) using 0-based indexing
+            next_class = transition // orig_nodes
+            next_node = transition % orig_nodes
+
+            # Update merged class list
             cur_merge[0] = next_class
 
             q_len = 0
@@ -766,21 +851,32 @@ class ModelAdapter:
                     if tput <= 0:
                         tput = 1
 
+            # Check if next node is a (nested) Fork
             if sn.nodetype[next_node] == NodeType.FORK:
                 join_idx_arr = np.where(sn.fj[next_node, :] > 0)[0]
                 if len(join_idx_arr) > 0:
                     join_idx = join_idx_arr[0]
+                    # Find auxiliary class for this (fork, class) pair
+                    # fjclassmap/fjforkmap are indexed by auxiliary class index (0-based)
+                    # The total class index in nonfjmodel is orig_nclasses + aux_idx
                     s_arr = np.where((fjforkmap == next_node) & (fjclassmap == next_class))[0]
-                    s = s_arr[0] if len(s_arr) > 0 else next_class
+                    if len(s_arr) > 0:
+                        orig_nclasses = len(nonfjmodel._classes) - len(fjclassmap)
+                        s = orig_nclasses + s_arr[0]
+                    else:
+                        s = next_class
 
+                    # Recursively find paths within nested fork-join
                     paths = ModelAdapter.find_paths_cs(
                         sn, P, next_node, join_idx, next_class,
                         cur_merge + [s], QN, TN, 0,
                         fjclassmap, fjforkmap, nonfjmodel
                     )
 
+                    # Compute E[max] for synchronization
                     d0 = ModelAdapter._compute_sync_delay(paths)
 
+                    # Set sync delay at join for nested fork
                     from ..distributions.continuous import Exp
                     sync_time = max(0, d0 - np.mean(paths))
                     for cls in cur_merge + [s]:
@@ -790,6 +886,7 @@ class ModelAdapter:
                                 Exp.fit_mean(sync_time) if sync_time > 0 else Exp(1e10)
                             )
 
+                    # Continue from join to end_node
                     nested_ri = ModelAdapter.find_paths_cs(
                         sn, P, join_idx, end_node, next_class,
                         cur_merge, QN, TN, current_time + d0,
@@ -797,6 +894,7 @@ class ModelAdapter:
                     )
                     ri.extend(nested_ri)
             else:
+                # Regular node: add response time and continue
                 nested_ri = ModelAdapter.find_paths_cs(
                     sn, P, next_node, end_node, next_class,
                     cur_merge, QN, TN, current_time + q_len / tput,
@@ -879,6 +977,21 @@ class ModelAdapter:
         Find paths with class switching.
 
         Similar to paths() but handles class switches.
+        Uses 0-based indexing for Python.
+
+        Args:
+            sn: Network structure
+            orig_nodes: Number of original nodes
+            P: Combined routing matrix
+            cur_node: Current node (0-based)
+            end_node: End node (0-based)
+            cur_class: Current class (0-based)
+            RN: Response time matrix
+            current_time: Accumulated time
+            stats: List of visited stations
+
+        Returns:
+            Tuple of (response_times, stations, updated_RN)
         """
         if cur_node == end_node:
             return np.array([current_time]), stats, RN
@@ -893,13 +1006,15 @@ class ModelAdapter:
                 current_rn = RN[int(station), cur_class]
                 stats = stats + [int(station)]
 
-        row_idx = (cur_class - 1) * orig_nodes + cur_node
-        if row_idx >= P.shape[0]:
+        # Use 0-based indexing: row = cur_class * orig_nodes + cur_node
+        row_idx = cur_class * orig_nodes + cur_node
+        if row_idx < 0 or row_idx >= P.shape[0]:
             return np.array([current_time]), stats, RN
 
         for transition in np.where(P[row_idx, :] > 0)[0]:
-            next_class = transition // orig_nodes + 1
-            next_node = transition - (next_class - 1) * orig_nodes
+            # Decode using 0-based indexing
+            next_class = transition // orig_nodes
+            next_node = transition % orig_nodes
 
             if sn.nodetype[next_node] == NodeType.FORK:
                 join_idx_arr = np.where(sn.fj[next_node, :] > 0)[0]
@@ -976,10 +1091,16 @@ class ModelAdapter:
         Vnodes = np.zeros((sn.nnodes, sn.nclasses))
 
         # Try nodevisits first
+        valid_nodevisits = False
         if sn.nodevisits is not None and len(sn.nodevisits) > 0:
             for chain_idx in range(len(sn.nodevisits)):
-                Vnodes += sn.nodevisits[chain_idx]
-            return Vnodes
+                nv = sn.nodevisits[chain_idx]
+                # Check if nodevisits entry is a proper matrix
+                if isinstance(nv, np.ndarray) and nv.shape == (sn.nnodes, sn.nclasses):
+                    Vnodes += nv
+                    valid_nodevisits = True
+            if valid_nodevisits:
+                return Vnodes
 
         # Fall back: assume all non-source/sink nodes are visited by all classes
         # This is safe for closed networks where all nodes are on the cycle

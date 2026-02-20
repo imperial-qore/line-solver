@@ -9,10 +9,17 @@ import numpy as np
 import scipy.linalg as la
 import numpy.linalg as nla
 from numpy import matlib as ml
-from butools.moments import ReducedMomsFromMoms
-from butools.reptrans import MStaircase
-import butools
-from butools.ph import MomentsFromME, MEFromMoments, CheckMERepresentation
+from ..moments.conv import ReducedMomsFromMoms
+from ..reptrans.staircase import MStaircase
+from .baseph import MomentsFromME
+from .appie import MEFromMoments
+from .check import CheckMERepresentation
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 def MEOrderFromMoments (moms, prec=1e-12):
     """

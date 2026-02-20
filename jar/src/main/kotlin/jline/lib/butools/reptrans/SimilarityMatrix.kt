@@ -5,7 +5,9 @@
  */
 package jline.lib.butools.reptrans
 
+import jline.util.matrix.ComplexMatrix
 import jline.util.matrix.Matrix
+import org.apache.commons.math3.complex.Complex
 
 /**
  * Returns the matrix that transforms A1 to A2.
@@ -16,6 +18,10 @@ import jline.util.matrix.Matrix
  *
  * Note: For the existence of a (unique) solution the larger
  * matrix has to inherit the eigenvalues of the smaller one.
+ *
+ * Uses the complex Schur decomposition (equivalent to MATLAB's schur(A,'complex'))
+ * to ensure a truly upper-triangular T matrix, which is required for the
+ * row-by-row backsolve algorithm.
  */
 fun similarityMatrix(A1: Matrix, A2: Matrix): Matrix {
     if (A1.numRows != A1.numCols || A2.numRows != A2.numCols) {
@@ -29,93 +35,100 @@ fun similarityMatrix(A1: Matrix, A2: Matrix): Matrix {
         throw IllegalArgumentException("SimilarityMatrix: The first input matrix must be smaller than the second one!")
     }
 
-    // Compute Schur decomposition - returns Map with "U" (orthogonal) and "T" (upper triangular)
-    val schur1 = A1.schur()
+    // Compute complex Schur decomposition: A = Q * R * Q^H
+    val schur1 = A1.schurComplex()
     val Q1 = schur1["U"]!!
     val R1 = schur1["T"]!!
 
-    val schur2 = A2.schur()
+    val schur2 = A2.schurComplex()
     val Q2 = schur2["U"]!!
     val R2 = schur2["T"]!!
 
-    // c1 = sum(Q2', 2) = sum of columns of Q2
-    val c1 = Matrix(N2, 1)
+    // c1 = sum(Q2', 2) = row sums of Q2^H
+    // Row i of Q2^H = conj(col i of Q2), so c1(i) = sum_j conj(Q2(j,i))
+    val c1 = ComplexMatrix(N2, 1)
     for (i in 0 until N2) {
-        var sum = 0.0
+        var sumRe = 0.0
+        var sumIm = 0.0
         for (j in 0 until N2) {
-            sum += Q2[j, i]
+            val v = Q2.get(j, i)
+            sumRe += v.real
+            sumIm += -v.imaginary  // conjugate
         }
-        c1[i, 0] = sum
+        c1.set(i, 0, Complex(sumRe, sumIm))
     }
 
-    // c2 = sum(Q1', 2) = sum of columns of Q1
-    val c2 = Matrix(N1, 1)
+    // c2 = sum(Q1', 2)
+    val c2 = ComplexMatrix(N1, 1)
     for (i in 0 until N1) {
-        var sum = 0.0
+        var sumRe = 0.0
+        var sumIm = 0.0
         for (j in 0 until N1) {
-            sum += Q1[j, i]
+            val v = Q1.get(j, i)
+            sumRe += v.real
+            sumIm += -v.imaginary  // conjugate
         }
-        c2[i, 0] = sum
+        c2.set(i, 0, Complex(sumRe, sumIm))
     }
 
-    val I = Matrix.eye(N2)
-    val X = Matrix.zeros(N1, N2)
+    val I = ComplexMatrix.eye(N2)
+    val X = ComplexMatrix.zeros(N1, N2)
 
     for (k in N1 - 1 downTo 0) {
         // M = R1(k,k)*I - R2
-        val M = I.scale(R1[k, k]).sub(R2)
+        val lambda_k = R1.get(k, k)  // Complex eigenvalue
+        val M = I.scaleComplex(lambda_k).sub(R2)
 
-        // Calculate m vector
-        val m = Matrix(1, N2)
+        // Calculate m vector (1 x N2)
+        val m = ComplexMatrix.zeros(1, N2)
         if (k < N1 - 1) {
             // m = -R1(k,k+1:end)*X(k+1:end,:)
             for (j in 0 until N2) {
-                var sum = 0.0
+                var sumRe = 0.0
+                var sumIm = 0.0
                 for (l in k + 1 until N1) {
-                    sum += R1[k, l] * X[l, j]
+                    val r = R1.get(k, l)
+                    val x = X.get(l, j)
+                    sumRe += r.real * x.real - r.imaginary * x.imaginary
+                    sumIm += r.real * x.imaginary + r.imaginary * x.real
                 }
-                m[0, j] = -sum
+                m.set(0, j, Complex(-sumRe, -sumIm))
             }
         }
 
-        // Solve the linear system [M, c1]' * x = [m, c2(k)]'
-        // This is an overdetermined system - use least squares via normal equations:
-        // A' * A * x = A' * b, where A = [M, c1]' and b = [m, c2(k)]'
-
-        // Build A = [M, c1]' which is (N2+1) x N2
-        val A = Matrix(N2 + 1, N2)
+        // Solve: MATLAB does X(k,:) = linsolve([M,c1]',[m,c2(k)]')'
+        // Build A_sys = [M, c1]^H  ((N2+1) x N2)
+        val A_sys = ComplexMatrix(N2 + 1, N2)
         for (i in 0 until N2) {
             for (j in 0 until N2) {
-                A[i, j] = M[j, i]  // Transpose of M
+                val v = M.get(i, j)
+                A_sys.set(j, i, v.conjugate())
             }
         }
-        for (j in 0 until N2) {
-            A[N2, j] = c1[j, 0]
+        for (i in 0 until N2) {
+            val v = c1.get(i, 0)
+            A_sys.set(N2, i, v.conjugate())
         }
 
-        // Build b = [m, c2(k)]' which is (N2+1) x 1
-        val b = Matrix(N2 + 1, 1)
+        // Build b_sys = [m, c2(k)]^H  ((N2+1) x 1)
+        val b_sys = ComplexMatrix(N2 + 1, 1)
         for (j in 0 until N2) {
-            b[j, 0] = m[0, j]
+            val v = m.get(0, j)
+            b_sys.set(j, 0, v.conjugate())
         }
-        b[N2, 0] = c2[k, 0]
+        val c2k = c2.get(k, 0)
+        b_sys.set(N2, 0, c2k.conjugate())
 
-        // Solve using normal equations: (A' * A) * x = A' * b
-        val At = A.transpose()
-        val AtA = At.mult(A)
-        val Atb = At.mult(b)
-
-        // Solve AtA * solution = Atb
-        val solution = Matrix(N2, 1)
-        Matrix.solve(AtA, Atb, solution)
+        // Solve A_sys * x = b_sys (overdetermined, least squares)
+        val solution = A_sys.leftMatrixDivide(b_sys)
 
         for (j in 0 until N2) {
-            X[k, j] = solution[j, 0]
+            // MATLAB: X(k,:) = linsolve(...)' — the trailing ' conjugate-transposes the solution
+            X.set(k, j, solution.get(j, 0).conjugate())
         }
     }
 
-    // B = real(Q1 * X * Q2')
-    val result = Q1.mult(X).mult(Q2.transpose())
-
-    return result
+    // B = real(Q1 * X * Q2^H)
+    val resultComplex = Q1.mult(X).mult(Q2.conjugateTranspose())
+    return resultComplex.real
 }

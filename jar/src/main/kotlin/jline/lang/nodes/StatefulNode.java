@@ -51,12 +51,14 @@ public class StatefulNode extends Node implements Serializable {
     }
 
     public void setStatePrior(Matrix prior) {
+        // Validate dimensions before modifying state
+        if (space.getNumRows() != prior.getNumRows()) {
+            throw new RuntimeException("The prior probability vector must have the same rows of the station state space vector");
+        }
         this.statePrior = prior.copy();
-        try {
-            if (space.getNumRows() != this.statePrior.getNumRows())
-                throw new Exception("The prior probability vector must have the same rows of the station state space vector");
-        } catch (Exception e) {
-            e.printStackTrace();
+        // Invalidate Network's cached struct so stateprior is re-read
+        if (this.model != null) {
+            this.model.setHasStruct(false);
         }
     }
 

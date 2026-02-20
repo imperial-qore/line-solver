@@ -300,15 +300,15 @@ nvec = [nvec0, nvecout];
     function print_progress(opt, samples_collected)
         if ~isfield(opt,'verbose') || ~opt.verbose, return; end
         if samples_collected == 1e3
-            line_printf('\b\nSSA samples: %8d\n', samples_collected);
+            line_printf('\bSSA samples: %8d', samples_collected);
         elseif opt.verbose == 2
             if samples_collected == 0
-                line_printf('\b\nSSA samples: %9d\n', samples_collected);
+                line_printf('\bSSA samples: %9d', samples_collected);
             else
-                line_printf('\b\b\b\b\b\b\b\b\b\b%9d\n', samples_collected);
+                line_printf('\b\b\b\b\b\b\b\b\b%9d', samples_collected);
             end
         elseif mod(samples_collected,1e3)==0 || opt.verbose == 2
-            line_printf('\b\b\b\b\b\b\b\b\b\b%9d\n', samples_collected);
+            line_printf('\b\b\b\b\b\b\b\b\b%9d', samples_collected);
         end
     end
 end  % next_reaction_method

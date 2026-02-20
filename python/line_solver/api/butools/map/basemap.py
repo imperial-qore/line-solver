@@ -9,10 +9,10 @@ from math import sqrt
 import numpy as np
 import numpy.matlib as ml
 import numpy.linalg as la
-import butools
-from butools.utils import Diag
-from butools.mc import CTMCSolve, DRPSolve
-from butools.map import CheckRAPRepresentation, CheckMAPRepresentation, CheckMRAPRepresentation, CheckMMAPRepresentation
+from ..utils.misc import Diag
+from ..mc.stst import CTMCSolve, DRPSolve
+from .check import CheckRAPRepresentation, CheckMAPRepresentation, CheckMRAPRepresentation, CheckMMAPRepresentation
+from ..ph.baseph import MomentsFromPH, MomentsFromME
 
 def MarginalDistributionFromRAP (H0, H1):
     """
@@ -133,7 +133,12 @@ def MarginalDistributionFromMMAP (D):
 
     return MarginalDistributionFromMRAP (D)
 
-from butools.ph import MomentsFromPH, MomentsFromME
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 def MarginalMomentsFromRAP (H0, H1, K=0):
     """

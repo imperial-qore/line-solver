@@ -136,7 +136,7 @@ fun solver_amva(sn: NetworkStruct, options: SolverOptions): MVAResult {
     var U = Matrix(M, C)
     var X: Matrix? = null
     var totiter = 0
-    if (snHasProductFormNotHetFCFS(sn) && !snHasLoadDependence(sn) && (!snHasOpenClasses(sn) || (snHasProductForm(sn) && snHasOpenClasses(sn) && options.method == "lin"))) {
+    if (snHasProductFormNotHetFCFS(sn) && !snHasLoadDependence(sn) && !snHasJointDependence(sn) && (!snHasOpenClasses(sn) || (snHasProductForm(sn) && snHasOpenClasses(sn) && options.method == "lin"))) {
         val ret = snGetProductFormChainParams(sn)
         // Note: ret returns snGetDemands, need to use correct properties
         val L0 = Matrix(ret.D)
@@ -158,7 +158,7 @@ fun solver_amva(sn: NetworkStruct, options: SolverOptions): MVAResult {
             vIdx++
         }
         when (options.config.multiserver) {
-            "default", "seidmann" -> {
+            "default", "seidmann", "rolia" -> {
                 val nserversRep = nservers.columnMajorOrder().repmat(1, C)
                 // apply seidmann
                 var i = 0
@@ -315,17 +315,12 @@ fun solver_amva(sn: NetworkStruct, options: SolverOptions): MVAResult {
             }
 
             "lin", "gflin", "egflin" -> if (nservers.elementMax() == 1.0) {
-                val schdi = arrayOfNulls<SchedStrategy>(queueIdx.size + delayIdx.size)
+                // type array must match L rows = queue stations only (MATLAB parity)
+                val schdi = arrayOfNulls<SchedStrategy>(queueIdx.size)
                 var idx = 0
-                var i = 0
-                while (i < sn.nodetype.size) {
-                    if (sn.nodetype.get(i) != NodeType.Queue && sn.nodetype.get(i) != NodeType.Delay) {
-                        i++
-                        continue
-                    }
-                    schdi[idx] = sn.sched.get(sn.stations.get(sn.nodeToStation.get(i).toInt()))
+                for (i in queueIdx) {
+                    schdi[idx] = sn.sched.get(sn.stations.get(sn.nodeToStation.get(i!!).toInt()))
                     idx++
-                    i++
                 }
 
                 val res = pfqn_linearizermx(lambda,
@@ -353,17 +348,12 @@ fun solver_amva(sn: NetworkStruct, options: SolverOptions): MVAResult {
             } else {
                 when (options.config.multiserver) {
                     "conway" -> {
-                        var schdi = arrayOfNulls<SchedStrategy>(queueIdx.size + delayIdx.size)
+                        // type array must match L rows = queue stations only (MATLAB parity)
+                        var schdi = arrayOfNulls<SchedStrategy>(queueIdx.size)
                         var idx = 0
-                        var i = 0
-                        while (i < sn.nodetype.size) {
-                            if (sn.nodetype.get(i) != NodeType.Queue && sn.nodetype.get(i) != NodeType.Delay) {
-                                i++
-                                continue
-                            }
-                            schdi[idx] = sn.sched.get(sn.stations.get(sn.nodeToStation.get(i).toInt()))
+                        for (i in queueIdx) {
+                            schdi[idx] = sn.sched.get(sn.stations.get(sn.nodeToStation.get(i!!).toInt()))
                             idx++
-                            i++
                         }
                         val res = pfqn_conwayms(L,
                             N,
@@ -393,17 +383,12 @@ fun solver_amva(sn: NetworkStruct, options: SolverOptions): MVAResult {
                     }
 
                     "krzesinski" -> {
-                        var schdi = arrayOfNulls<SchedStrategy>(queueIdx.size + delayIdx.size)
+                        // type array must match L rows = queue stations only (MATLAB parity)
+                        var schdi = arrayOfNulls<SchedStrategy>(queueIdx.size)
                         var idx = 0
-                        var i = 0
-                        while (i < sn.nodetype.size) {
-                            if (sn.nodetype.get(i) != NodeType.Queue && sn.nodetype.get(i) != NodeType.Delay) {
-                                i++
-                                continue
-                            }
-                            schdi[idx] = sn.sched.get(sn.stations.get(sn.nodeToStation.get(i).toInt()))
+                        for (i in queueIdx) {
+                            schdi[idx] = sn.sched.get(sn.stations.get(sn.nodeToStation.get(i!!).toInt()))
                             idx++
-                            i++
                         }
                         val res = pfqn_linearizermx(lambda,
                             L,
@@ -428,7 +413,7 @@ fun solver_amva(sn: NetworkStruct, options: SolverOptions): MVAResult {
                         totiter = res.totiter
                     }
 
-                    "default", "softmin", "seidmann" -> return solver_amvald(sn, options)
+                    "default", "softmin", "seidmann", "rolia" -> return solver_amvald(sn, options)
                 }
             }
 

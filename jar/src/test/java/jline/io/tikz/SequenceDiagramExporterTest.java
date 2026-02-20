@@ -23,7 +23,6 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Tests for UML sequence diagram export from LayeredNetwork models.
  */
-@Disabled("Disabled by user request")
 public class SequenceDiagramExporterTest {
 
     @TempDir

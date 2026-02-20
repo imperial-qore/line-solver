@@ -35,12 +35,13 @@ queue2.setService(job_class1, Exp(3))
 queue2.setService(job_class2, Exp(3))
 
 K = model.getNumberOfClasses()
-P = model.initRoutingMatrix()
-
-P[0][0] = [[0, 1, 0], [0, 0, 0], [1, 0, 0]]
-P[0][1] = [[0, 0, 0], [0, 0, 1], [0, 0, 0]]
-P[1][0] = [[0, 1, 0], [0, 0, 0], [1, 0, 0]]
-P[1][1] = [[0, 0, 0], [0, 0, 1], [0, 0, 0]]
+import numpy as np
+# Use dictionary format for routing with class switching
+P = {}
+P[(job_class1, job_class1)] = np.array([[0, 1, 0], [0, 0, 0], [1, 0, 0]])
+P[(job_class1, job_class2)] = np.array([[0, 0, 0], [0, 0, 1], [0, 0, 0]])
+P[(job_class2, job_class1)] = np.array([[0, 1, 0], [0, 0, 0], [1, 0, 0]])
+P[(job_class2, job_class2)] = np.array([[0, 0, 0], [0, 0, 1], [0, 0, 0]])
 
 model.link(P)
 
@@ -59,7 +60,8 @@ stations = model.getStations()
 for i in range(M):
     stations[i].setState(n[i])
 
-state = model.getState()
+target_station = stations[M-1]
+target_state = n[M-1]
 print(f'Query state: {n}\n')
 
 # Solver options
@@ -70,64 +72,64 @@ options = {
 }
 
 # Test all probability methods with multiple solvers
-print('=== get_prob_aggr (Marginal Aggregated Probabilities) ===')
+print('=== getProbAggr (Marginal Aggregated Probabilities) ===')
 print('Probability that station M is in the specified aggregated state.\n')
 
 solver_ctmc = CTMC(model, options)
-pr = solver_ctmc.get_prob_aggr(stations[M-1])
-print(f'CTMC: Station {M} is in state {state[M-1]} with probability {pr}')
+pr = solver_ctmc.getProbAggr(target_station)
+print(f'CTMC: Station {M} is in state {target_state} with probability {pr}')
 
 solver_nc = NC(model, options)
-pr = solver_nc.get_prob_aggr(stations[M-1])
-print(f'NC:   Station {M} is in state {state[M-1]} with probability {pr}')
+pr = solver_nc.getProbAggr(target_station)
+print(f'NC:   Station {M} is in state {target_state} with probability {pr}')
 
 solver_ssa = SSA(model, options)
-pr = solver_ssa.get_prob_aggr(stations[M-1])
-print(f'SSA:  Station {M} is in state {state[M-1]} with probability {pr}')
+pr = solver_ssa.getProbAggr(target_station)
+print(f'SSA:  Station {M} is in state {target_state} with probability {pr}')
 
 solver_jmt = JMT(model, options)
-pr = solver_jmt.get_prob_aggr(stations[M-1])
-print(f'JMT:  Station {M} is in state {state[M-1]} with probability {pr}')
+pr = solver_jmt.getProbAggr(target_station)
+print(f'JMT:  Station {M} is in state {target_state} with probability {pr}')
 
-print('\n=== get_prob (Marginal Detailed Probabilities) ===')
+print('\n=== getProb (Marginal Detailed Probabilities) ===')
 print('Detailed probability including service phases.\n')
 
 solver_ctmc = CTMC(model, options)
-pr = solver_ctmc.get_prob(stations[M-1])
+pr = solver_ctmc.getProb(target_station)
 print(f'CTMC: Detailed probability = {pr}')
 
 solver_ssa = SSA(model, options)
-pr = solver_ssa.get_prob(stations[M-1])
+pr = solver_ssa.getProb(target_station)
 print(f'SSA:  Detailed probability = {pr}')
 
-print('\n=== get_prob_sys_aggr (Joint Aggregated Probabilities) ===')
+print('\n=== getProbSysAggr (Joint Aggregated Probabilities) ===')
 print('Joint probability for the aggregated system state.\n')
 
 solver_ctmc = CTMC(model, options)
-pr = solver_ctmc.get_prob_sys_aggr()
+pr = solver_ctmc.getProbSysAggr()
 print(f'CTMC: Joint aggregated probability = {pr}')
 
 solver_nc = NC(model, options)
-pr = solver_nc.get_prob_sys_aggr()
+pr = solver_nc.getProbSysAggr()
 print(f'NC:   Joint aggregated probability = {pr}')
 
 solver_ssa = SSA(model, options)
-pr = solver_ssa.get_prob_sys_aggr()
+pr = solver_ssa.getProbSysAggr()
 print(f'SSA:  Joint aggregated probability = {pr}')
 
 solver_jmt = JMT(model, options)
-pr = solver_jmt.get_prob_sys_aggr()
+pr = solver_jmt.getProbSysAggr()
 print(f'JMT:  Joint aggregated probability = {pr}')
 
-print('\n=== get_prob_sys (Joint Detailed Probabilities) ===')
+print('\n=== getProbSys (Joint Detailed Probabilities) ===')
 print('Joint probability for the detailed system state (with service phases).\n')
 
 solver_ctmc = CTMC(model, options)
-pr = solver_ctmc.get_prob_sys()
+pr = solver_ctmc.getProbSys()
 print(f'CTMC: Joint detailed probability = {pr}')
 
 solver_ssa = SSA(model, options)
-pr = solver_ssa.get_prob_sys()
+pr = solver_ssa.getProbSys()
 print(f'SSA:  Joint detailed probability = {pr}')
 
 print('\nNote: Aggregated vs. Detailed state spaces:')

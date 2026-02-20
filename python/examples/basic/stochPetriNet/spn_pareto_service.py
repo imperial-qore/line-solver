@@ -36,9 +36,11 @@ if __name__ == "__main__":
     T1.setFiringOutcome(mode, jobclass, sink, 1)
 
     # Routing
-    model.addLink(source, P1)
-    model.addLink(P1, T1)
-    model.addLink(T1, sink)
+    R = model.init_routing_matrix()
+    R.set(jobclass, jobclass, source, P1, 1.0)
+    R.set(jobclass, jobclass, P1, T1, 1.0)
+    R.set(jobclass, jobclass, T1, sink, 1.0)
+    model.link(R)
 
     # Solver
     solver = JMT(model, seed=23000, samples=10000)

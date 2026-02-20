@@ -5,13 +5,17 @@ Created on Sun Aug 31 17:33:24 2014
 @author: gabor
 """
 
-import butools
 import numpy as np
 import numpy.matlib as ml
-from butools.map import CheckMAPRepresentation, CheckMMAPRepresentation, MarginalDistributionFromMMAP
 from numpy.random import rand
-from butools.mc import CTMCSolve
-from butools.utils import SumMatrixList
+from .check import CheckMAPRepresentation, CheckMMAPRepresentation
+from .basemap import MarginalDistributionFromMMAP
+from ..mc.stst import CTMCSolve
+from ..utils.misc import SumMatrixList
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
 
 
 def SamplesFromMMAP (D, k, initial=None, prec=1e-14):
@@ -210,6 +214,8 @@ def ImageFromMAP (D0, D1, outFileName="display", prec=1e-13):
         image is displayed on the screen, otherwise it is 
         written to the file. The file format is deduced 
         from the file name.
+
+
     prec : double, optional
         Transition rates less then prec are considered to
         be zero and are left out from the image. The 

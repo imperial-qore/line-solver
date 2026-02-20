@@ -155,18 +155,18 @@ public class ClosedExamplesTest {
                 "CTMC solver should use default method");
             
             if (avgTable != null) {
-                // Previous MAPE: 0.0141%, Max APE: 0.0500%
-                // Updated expected values based on actual CTMC solver output
-                double[] expectedQLen = {0.5333333333333332, 0.5333333333333332};
-                double[] expectedUtil = {0.5333333333333332, 0.5333333333333332};
-                double[] expectedRespT = {0.6666666666666666, 0.9230769230769231};
-                double[] expectedResidT = {0.6666666666666666, 0.9230769230769231};
-                double[] expectedArvR = {0.0, 0.0};
-                double[] expectedTput = {0.7999999999999998, 0.5777777777777776};
-                
-                assertEquals(2, avgTable.getQLen().size(), "Expected 2 entries (actual CTMC output)");
-                
-                assertTableMetrics(avgTable, expectedQLen, expectedUtil, expectedRespT, 
+                // Expected values from MATLAB CTMC solver (same as FCFS due to BCMP theorem)
+                // Order: Delay(Class1,Class2), Queue1(Class1,Class2)
+                double[] expectedQLen = {0.308605430321547, 0.1162477715536, 1.69139456967845, 1.8837522284464};
+                double[] expectedUtil = {0.308605430321547, 0.1162477715536, 0.462908145482321, 0.536528176401231};
+                double[] expectedRespT = {0.666666666666667, 0.216666666666667, 3.65384490678194, 3.51100335695636};
+                double[] expectedResidT = {0.666666666666667, 0.216666666666667, 3.65384490678194, 3.51100335695636};
+                double[] expectedArvR = {0.462908145482321, 0.536528176401231, 0.462908145482321, 0.536528176401231};
+                double[] expectedTput = {0.462908145482321, 0.536528176401231, 0.462908145482321, 0.536528176401231};
+
+                assertEquals(4, avgTable.getQLen().size(), "Expected 4 entries (2 stations × 2 classes)");
+
+                assertTableMetrics(avgTable, expectedQLen, expectedUtil, expectedRespT,
                                   expectedResidT, expectedArvR, expectedTput);
             }
         } catch (Exception e) {
@@ -1064,14 +1064,14 @@ public class ClosedExamplesTest {
         assertEquals("default/exact", solver.result.method, 
             "MVA solver should use default/exact method for closed models");
         
-        // Expected values from allExamplesBaseline.txt (MVA solver)
+        // Expected values from MATLAB MVA solver
         // Order: Delay1(Class1,Class2), Delay2(Class1,Class2), Queue1(Class1,Class2), Queue2(Class1,Class2)
-        double[] expectedQLen = {0.453023047411017, 0.910955361019449, 0.462979597903567, 0.930758738432915, 0.0546080819961354, 0.0568673972809099, 0.0293892726892811, 0.101418503266726};
-        double[] expectedUtil = {0.453023047411017, 0.910955361019449, 0.462979597903567, 0.930758738432915, 0.0497827524627491, 0.0495084435336657, 0.0248913762313746, 0.0891151983605983};
-        double[] expectedRespT = {91.0, 92.0, 93.0, 94.0, 10.9692773691043, 5.74320188860715, 5.90350497620078, 10.2425461222349};
-        double[] expectedResidT = {91.0, 92.0, 93.0, 94.0, 10.9692773691043, 5.74320188860715, 5.90350497620078, 10.2425461222349};
-        double[] expectedArvR = {0.00497827524627491, 0.00990168870673314, 0.00497827524627491, 0.00990168870673314, 0.00497827524627491, 0.00990168870673314, 0.00497827524627491, 0.00990168870673314};
-        double[] expectedTput = {0.00497827524627491, 0.00990168870673314, 0.00497827524627491, 0.00990168870673314, 0.00497827524627491, 0.00990168870673314, 0.00497827524627491, 0.00990168870673314};
+        double[] expectedQLen = {0.455045157326239, 0.915250653208990, 0.465046149794948, 0.935147406539621, 0.052560943314077, 0.053600791182090, 0.027347749564735, 0.096001149069299};
+        double[] expectedUtil = {0.455045157326239, 0.915250653208990, 0.465046149794948, 0.935147406539621, 0.050004962343543, 0.049741883326576, 0.025002481171771, 0.089535389987836};
+        double[] expectedRespT = {91.0, 92.0, 93.0, 94.0, 10.511145464519025, 5.387893219701717, 5.469007131102578, 9.649931069056272};
+        double[] expectedResidT = {91.0, 92.0, 93.0, 94.0, 10.511145464519025, 5.387893219701717, 5.469007131102578, 9.649931069056272};
+        double[] expectedArvR = {0.005000496234354, 0.009948376665315, 0.005000496234354, 0.009948376665315, 0.005000496234354, 0.009948376665315, 0.005000496234354, 0.009948376665315};
+        double[] expectedTput = {0.005000496234354, 0.009948376665315, 0.005000496234354, 0.009948376665315, 0.005000496234354, 0.009948376665315, 0.005000496234354, 0.009948376665315};
         
         assertEquals(8, avgTable.getQLen().size(), "Expected 8 entries (4 stations × 2 classes)");
         
@@ -1103,14 +1103,14 @@ public class ClosedExamplesTest {
         assertEquals("default", solver.result.method, 
             "JMT solver should use default method");
         
-        // Expected values from allExamplesBaseline.txt (JMT solver)
+        // Expected values from MATLAB JMT solver with WRROBIN weights (1:2 ratio for Class2)
         // Order: Queue1(Class1,Class2), Queue2(Class1,Class2), Delay(Class1,Class2)
-        double[] expectedQLen = {0.904219404875383, 0.538302585992744, 7.45912652087167, 9.91997378660599, 0.575610919327273, 0.540548053843871};
+        double[] expectedQLen = {0.904219404875383, 0.538302585992744, 7.459126520871672, 9.919973786605993, 0.575610919327273, 0.540548053843871};
         double[] expectedUtil = {0.421498976421372, 0.284732716712361, 0.440334266743539, 0.559649140776203, 0.575610919327273, 0.540548053843871};
-        double[] expectedRespT = {3.08427672076336, 2.84135192493668, 26.2087726378957, 26.6154854025782, 1.00608008235364, 0.977706224846353};
-        double[] expectedResidT = {0.771069180190841, 0.71033798123417, 6.55219315947393, 6.65387135064455, 0.503040041176818, 0.488853112423177};
+        double[] expectedRespT = {3.084276720763363, 2.841351924936681, 26.208772637895727, 26.615485402578212, 1.006080082353636, 0.977706224846353};
+        double[] expectedResidT = {0.771069180190841, 0.473558654156114, 6.552193159473932, 8.871828467526070, 0.503040041176818, 0.488853112423177};
         double[] expectedArvR = {0.285059419792997, 0.191313877879294, 0.287002849196657, 0.380799801905225, 0.568531025784562, 0.568068366379102};
-        double[] expectedTput = {0.283969771403867, 0.18983530465215, 0.286982408842826, 0.378154899924709, 0.564046582155729, 0.565322460554437};
+        double[] expectedTput = {0.283969771403867, 0.189835304652150, 0.286982408842826, 0.378154899924709, 0.564046582155729, 0.565322460554437};
         
         assertEquals(6, avgTable.getQLen().size(), "Expected 6 entries (3 stations × 2 classes)");
         
@@ -1508,7 +1508,6 @@ public class ClosedExamplesTest {
     // Queue2, Class2: QLen=0.78339, Util=0.40433, RespT=13.562, Tput=0.057762
 
     @Test
-    @Disabled("CTMC StateSpaceAggr has wrong structure for LCFS/LCFSPR - QN computed for only 2 of 4 (station,class) pairs")
     public void testCqnLcfsLcfsprCTMC() {
         // Test LCFS/LCFSPR model with CTMC solver
         Network model = ClosedModel.cqn_lcfs_lcfspr();
@@ -1616,7 +1615,6 @@ public class ClosedExamplesTest {
     }
 
     @Test
-    @Disabled("JMT LCFS/LCFSPR closed networks: 22% MAPE, 37.5% Max APE vs ground truth")
     public void testCqnLcfsLcfsprJMT() {
         // Test LCFS/LCFSPR model with JMT solver
         Network model = ClosedModel.cqn_lcfs_lcfspr();

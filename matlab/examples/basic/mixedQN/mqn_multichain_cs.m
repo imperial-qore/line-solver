@@ -51,10 +51,10 @@ node{4}.setService(jobclass{3}, Exp.fitMean(1.2));
 node{4}.setService(jobclass{4}, Exp.fitMean(1.5));
 node{4}.setService(jobclass{5}, Exp.fitMean(0.8));
 
-%% Block 4: arrival rates
-node{5}.setArrival(jobclass{3}, Exp(0.4));
-node{5}.setArrival(jobclass{4}, Exp(0.2));
-node{5}.setArrival(jobclass{5}, Exp(0.3));
+%% Block 4: arrival rates (reduced for stability)
+node{5}.setArrival(jobclass{3}, Exp(0.1));
+node{5}.setArrival(jobclass{4}, Exp(0.05));
+node{5}.setArrival(jobclass{5}, Exp(0.05));
 
 %% Block 5: routing with class switching
 M = model.getNumberOfNodes();
@@ -119,7 +119,7 @@ solver{end+1} = MVA(model, options);
 solver{end+1} = SSA(model, options);
 
 for s = 1:length(solver)
-    fprintf('SOLVER: %s\n', solver{s}.getName());
+    fprintf('SOLVER: %s\n', strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgChainTable();
     AvgTable{s}
     fprintf('\n');

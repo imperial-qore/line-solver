@@ -51,3 +51,5 @@ for i=1:model.getNumberOfStations
         AvgRespTfromCDFsim(i,c) = diff(RDsim{i,c}(:,1))'*RDsim{i,c}(2:end,2);
     end
 end
+AvgRespTfromCDFfluid
+AvgRespTfromCDFsim

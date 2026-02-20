@@ -263,7 +263,12 @@ class WorkflowActivity:
         # Handle Markovian distribution
         if self._distribution is not None and hasattr(self._distribution, 'getInitProb'):
             alpha = self._distribution.getInitProb()
-            T = self._distribution.D(0) if hasattr(self._distribution, 'D') else None
+            # Try different methods for getting the sub-generator matrix
+            T = None
+            if hasattr(self._distribution, 'getD0'):
+                T = self._distribution.getD0()
+            elif hasattr(self._distribution, 'D'):
+                T = self._distribution.D(0)
             if T is not None:
                 if alpha.ndim == 1:
                     alpha = alpha.reshape(1, -1)
@@ -583,7 +588,10 @@ class Workflow:
         # Initialize block representations
         block_alpha = [None] * n
         block_T = [None] * n
-        is_processed = [False] * n
+        # is_absorbed[i] = True means activity i was absorbed into another block and should be skipped
+        is_absorbed = [False] * n
+        # block_updated[i] = True means block_alpha[i] contains a composed block (not just the activity)
+        block_updated = [False] * n
 
         for i in range(n):
             block_alpha[i], block_T[i] = self._activities[i].getPHRepresentation()
@@ -617,13 +625,13 @@ class Workflow:
             if end_act >= 0:
                 end_alpha, end_T = self._activities[end_act].getPHRepresentation()
                 result_alpha, result_T = self._composeSerial(result_alpha, result_T, end_alpha, end_T)
-                is_processed[end_act] = True
+                is_absorbed[end_act] = True
 
             block_alpha[pre_idx] = result_alpha
             block_T[pre_idx] = result_T
-            is_processed[pre_idx] = True
+            block_updated[pre_idx] = True
             for idx in loop_acts:
-                is_processed[idx] = True
+                is_absorbed[idx] = True
 
         # Process AND-forks with matching joins
         for fork in structure['forks']:
@@ -639,15 +647,18 @@ class Workflow:
                         fork['post_acts'], block_alpha, block_T
                     )
 
-                    if not is_processed[pre_idx]:
+                    if not block_updated[pre_idx]:
                         result_alpha, result_T = self._composeSerial(
                             block_alpha[pre_idx], block_T[pre_idx],
                             par_alpha, par_T
                         )
                     else:
-                        result_alpha, result_T = par_alpha, par_T
+                        result_alpha, result_T = self._composeSerial(
+                            block_alpha[pre_idx], block_T[pre_idx],
+                            par_alpha, par_T
+                        )
 
-                    if not is_processed[post_idx]:
+                    if not is_absorbed[post_idx]:
                         result_alpha, result_T = self._composeSerial(
                             result_alpha, result_T,
                             block_alpha[post_idx], block_T[post_idx]
@@ -655,10 +666,10 @@ class Workflow:
 
                     block_alpha[pre_idx] = result_alpha
                     block_T[pre_idx] = result_T
-                    is_processed[pre_idx] = True
+                    block_updated[pre_idx] = True
                     for idx in fork['post_acts']:
-                        is_processed[idx] = True
-                    is_processed[post_idx] = True
+                        is_absorbed[idx] = True
+                    is_absorbed[post_idx] = True
 
         # Process OR-forks
         for fork in structure['forks']:
@@ -672,40 +683,44 @@ class Workflow:
                     fork['post_acts'], fork['probs'], block_alpha, block_T
                 )
 
-                if not is_processed[pre_idx]:
+                if not block_updated[pre_idx]:
                     result_alpha, result_T = self._composeSerial(
                         block_alpha[pre_idx], block_T[pre_idx],
                         or_alpha, or_T
                     )
                 else:
-                    result_alpha, result_T = or_alpha, or_T
+                    result_alpha, result_T = self._composeSerial(
+                        block_alpha[pre_idx], block_T[pre_idx],
+                        or_alpha, or_T
+                    )
 
                 if matching_join is not None:
                     post_idx = matching_join['post_act']
-                    if not is_processed[post_idx]:
+                    if not is_absorbed[post_idx]:
                         result_alpha, result_T = self._composeSerial(
                             result_alpha, result_T,
                             block_alpha[post_idx], block_T[post_idx]
                         )
-                        is_processed[post_idx] = True
+                        is_absorbed[post_idx] = True
 
                 block_alpha[pre_idx] = result_alpha
                 block_T[pre_idx] = result_T
-                is_processed[pre_idx] = True
+                block_updated[pre_idx] = True
                 for idx in fork['post_acts']:
-                    is_processed[idx] = True
+                    is_absorbed[idx] = True
 
         # Compose remaining activities in topological order
+        # Skip absorbed activities, include all others (whether their block was updated or not)
         order = self._topologicalSort(structure['adj_list'])
         alpha = None
         T = None
 
         for idx in order:
-            if not is_processed[idx] or alpha is None:
+            if not is_absorbed[idx]:
                 if alpha is None:
                     alpha = block_alpha[idx]
                     T = block_T[idx]
-                elif not is_processed[idx]:
+                else:
                     alpha, T = self._composeSerial(alpha, T, block_alpha[idx], block_T[idx])
 
         if alpha is None:
@@ -896,6 +911,67 @@ class Workflow:
             return variance / (float(mean[0, 0]) ** 2) if float(mean[0, 0]) > 0 else 1.0
         except np.linalg.LinAlgError:
             return 1.0
+
+    def sample(self, n: int = 1) -> np.ndarray:
+        """
+        Generate random samples from the workflow's phase-type distribution.
+
+        Uses the PH representation (alpha, T) to simulate absorption times.
+        For a PH distribution with sub-generator T:
+        - T[i,i] < 0: exit rate from state i is -T[i,i]
+        - T[i,j] >= 0 for i != j: transition rate from i to j
+        - Absorption rate from i: -sum(T[i,:])
+
+        Args:
+            n: Number of samples to generate
+
+        Returns:
+            numpy array of n samples (absorption times)
+        """
+        alpha, T = self.toPH()
+        n_phases = T.shape[0]
+        samples = np.zeros(n)
+
+        alpha_flat = alpha.flatten()
+
+        # Precompute rates
+        # Exit rate from each state = -T[i,i]
+        exit_rates = -np.diag(T)
+        # Absorption rate from each state = -sum(T[i,:])
+        abs_rates = -np.sum(T, axis=1)
+
+        for i in range(n):
+            time = 0.0
+            # Choose initial state according to alpha
+            state = np.random.choice(n_phases, p=alpha_flat)
+
+            while True:
+                # Time in current state (exponential with rate = exit_rate)
+                rate = exit_rates[state]
+                time += np.random.exponential(1.0 / rate)
+
+                # Determine next event: transition or absorption
+                # Probability of absorption = abs_rates[state] / exit_rates[state]
+                abs_prob = abs_rates[state] / rate
+                if np.random.random() < abs_prob:
+                    # Absorbed
+                    break
+                else:
+                    # Transition to another state
+                    # Get transition rates (off-diagonal elements of row state)
+                    trans_rates = T[state, :].copy()
+                    trans_rates[state] = 0  # No self-transitions
+                    trans_sum = np.sum(trans_rates)
+                    if trans_sum > 0:
+                        trans_probs = trans_rates / trans_sum
+                        state = np.random.choice(n_phases, p=trans_probs)
+                    else:
+                        # No transitions possible, absorb
+                        break
+
+            samples[i] = time
+
+        return samples
 
     @staticmethod
     def fromWfCommons(json_file: str) -> 'Workflow':

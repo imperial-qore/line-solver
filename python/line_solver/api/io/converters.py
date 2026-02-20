@@ -230,90 +230,179 @@ class LQNModel:
     calls: List[Dict[str, Any]]
 
 
-def qn2lqn(model: Any) -> LQNModel:
+def qn2lqn(model: Any) -> Any:
     """
     Convert a Queueing Network to Layered Queueing Network representation.
 
-    Creates an LQN model from a QN model by mapping:
-    - Delay stations to reference tasks
-    - Queue stations to tasks with entries
-    - Class routing to synchronous calls
+    Creates a LayeredNetwork model from a QN model by mapping:
+    - A pseudo host with INF servers
+    - Per-chain reference tasks with entries
+    - Queue/Delay nodes to hosts/tasks/entries/activities
+    - Routing matrix to OR-fork activity precedences
 
     Args:
-        model: Network model or NetworkStruct
+        model: Network model (must have getStruct() method)
 
     Returns:
-        LQNModel representation
+        LayeredNetwork object that can be solved by SolverLQNS
 
     References:
         MATLAB: matlab/src/io/QN2LQN.m
     """
-    if hasattr(model, 'getStruct'):
-        sn = model.getStruct()
-    else:
-        sn = model
+    from ...layered import (
+        LayeredNetwork, Processor, Task, Entry, Activity,
+        ActivityPrecedence, PrecedenceType
+    )
+    from ...constants import SchedStrategy
+    from ...distributions import Immediate
 
-    processors = []
-    calls = []
+    sn = model.getStruct() if hasattr(model, 'getStruct') else model.get_struct()
 
-    # Create one processor per station
-    for ist in range(sn.nstations):
-        sched = sn.sched[ist] if hasattr(sn, 'sched') else None
-        sched_name = sched.name if hasattr(sched, 'name') else 'FCFS'
-        node_name = sn.nodenames[ist] if hasattr(sn, 'nodenames') else f'Station{ist}'
+    nNodes = sn.nnodes
+    nClasses = sn.nclasses
+    nChains = sn.nchains
 
-        # Skip source
-        if sched_name == 'EXT':
-            continue
+    model_name = model.getName() if hasattr(model, 'getName') else (model.get_name() if hasattr(model, 'get_name') else 'model')
 
-        # Create entries for each class served at this station
-        entries = []
-        for k in range(sn.nclasses):
-            if hasattr(sn, 'rates') and not np.isnan(sn.rates[ist, k]) and sn.rates[ist, k] > 0:
-                class_name = sn.classnames[k] if hasattr(sn, 'classnames') else f'Class{k}'
-                entry = {
-                    'name': f'{node_name}_{class_name}',
-                    'service_time': 1.0 / sn.rates[ist, k],
-                    'class': k,
-                }
-                entries.append(entry)
+    lqn = LayeredNetwork(model_name)
 
-        if entries:
-            task = LQNTask(
-                name=f'Task_{node_name}',
-                entries=entries,
-                host=f'Proc_{node_name}',
-                multiplicity=int(sn.nservers[ist]) if hasattr(sn, 'nservers') else 1,
-                scheduling='ref' if sched_name == 'INF' else 'fcfs',
-            )
+    # Pseudo host with INF servers, INF scheduling
+    PH = Processor(lqn, model_name, np.inf, SchedStrategy.INF)
 
-            processor = LQNProcessor(
-                name=f'Proc_{node_name}',
-                tasks=[task],
-                multiplicity=1,
-                scheduling='fcfs',
-            )
-            processors.append(processor)
+    # Reference tasks and entries per chain
+    RT = [None] * nChains
+    RE = [None] * nChains
+    for c in range(nChains):
+        inchain = sn.inchain[c]
+        if hasattr(inchain, 'flatten'):
+            inchain = inchain.flatten().astype(int)
+        total_jobs = sum(int(sn.njobs[r]) for r in inchain)
+        RT[c] = Task(lqn, f'RefTask_{c+1}', total_jobs, SchedStrategy.REF)
+        RT[c].on(PH)
+        RE[c] = Entry(lqn, f'Chain_{c+1}')
+        RE[c].on(RT[c])
 
-    # Create calls based on routing
-    if hasattr(sn, 'rt') and sn.rt is not None:
-        for ist in range(sn.nstations):
-            for k in range(sn.nclasses):
-                for m in range(sn.nstations):
-                    for c in range(sn.nclasses):
-                        prob = sn.rt[ist * sn.nclasses + k, m * sn.nclasses + c]
-                        if prob > 0:
-                            calls.append({
-                                'from_station': ist,
-                                'from_class': k,
-                                'to_station': m,
-                                'to_class': c,
-                                'probability': prob,
-                                'type': 'sync',
-                            })
+    # Create Hosts, Tasks, Entries, Activities for Queue/Delay nodes
+    P = [None] * nNodes
+    T = [None] * nNodes
+    E = [[None] * nClasses for _ in range(nNodes)]
+    A = [[None] * nClasses for _ in range(nNodes)]
 
-    model_name = sn.name if hasattr(sn, 'name') else 'lqn_model'
-    return LQNModel(name=model_name, processors=processors, calls=calls)
+    from ..sn import NodeType as NT
+
+    for i in range(nNodes):
+        node_type = int(sn.nodetype[i])
+        if node_type == NT.QUEUE or node_type == NT.DELAY:
+            ist = int(sn.nodeToStation[i])
+            nservers = int(sn.nservers[ist]) if not np.isinf(sn.nservers[ist]) else np.inf
+            sched_strat = sn.sched[ist] if ist in sn.sched else SchedStrategy.FCFS
+            P[i] = Processor(lqn, sn.nodenames[i], nservers, sched_strat)
+            T[i] = Task(lqn, f'T_{sn.nodenames[i]}', np.inf, SchedStrategy.INF)
+            T[i].on(P[i])
+
+            for r in range(nClasses):
+                c = _find_chain(sn, r)
+                visits = sn.visits[c]
+                if visits[i, r] > 0:
+                    E[i][r] = Entry(lqn, f'E{i+1}_{r+1}')
+                    E[i][r].on(T[i])
+                    # Get service process from the model
+                    nodes = model.get_nodes()
+                    classes = model.get_classes()
+                    service_dist = nodes[i].get_service(classes[r])
+                    A[i][r] = Activity(lqn, f'Q{i+1}_{r+1}', service_dist)
+                    A[i][r].on(T[i]).bound_to(E[i][r]).replies_to(E[i][r])
+        elif node_type == NT.CLASSSWITCH:
+            pass  # no-op
+        elif node_type != NT.SOURCE and node_type != NT.SINK:
+            pass  # Skip unsupported types silently for now
+
+    # Create pseudo-activities on reference tasks
+    PA = [[[None] * nClasses for _ in range(nNodes)] for _ in range(nChains)]
+    boundToRE = [None] * nChains  # (node_idx, class_idx) or None
+
+    for i in range(nNodes):
+        node_type = int(sn.nodetype[i])
+        if node_type == NT.CLASSSWITCH:
+            for r in range(nClasses):
+                c = _find_chain(sn, r)
+                if _has_incoming_routing(sn, i, r):
+                    PA[c][i][r] = Activity(lqn, f'CS_{c+1}_{i+1}_{r+1}', Immediate.getInstance())
+                    PA[c][i][r].on(RT[c])
+        elif node_type == NT.QUEUE or node_type == NT.DELAY:
+            for r in range(nClasses):
+                c = _find_chain(sn, r)
+                visits = sn.visits[c]
+                if visits[i, r] > 0:
+                    inchain = sn.inchain[c]
+                    if hasattr(inchain, 'flatten'):
+                        inchain = inchain.flatten().astype(int)
+                    first_class = int(inchain[0])
+                    refstat = int(sn.refstat[first_class])
+                    if i == refstat and r == first_class:
+                        PA[c][i][r] = Activity(lqn, f'A{i+1}_{r+1}', Immediate.getInstance())
+                        PA[c][i][r].on(RT[c]).bound_to(RE[c]).synch_call(E[i][r])
+                        boundToRE[c] = (i, r)
+                    else:
+                        PA[c][i][r] = Activity(lqn, f'A{i+1}_{r+1}', Immediate.getInstance())
+                        PA[c][i][r].on(RT[c]).synch_call(E[i][r])
+
+    # Build OR-fork precedences from routing matrix
+    for c in range(nChains):
+        inchain = sn.inchain[c]
+        if hasattr(inchain, 'flatten'):
+            inchain = inchain.flatten().astype(int)
+
+        for i in range(nNodes):
+            node_type_i = int(sn.nodetype[i])
+            if node_type_i in (NT.QUEUE, NT.DELAY, NT.CLASSSWITCH):
+                for r in inchain:
+                    r = int(r)
+                    orfork_prec = []
+                    orfork_prob = []
+
+                    for j in range(nNodes):
+                        node_type_j = int(sn.nodetype[j])
+                        if node_type_j in (NT.QUEUE, NT.DELAY, NT.CLASSSWITCH):
+                            for s in inchain:
+                                s = int(s)
+                                pr = sn.rtnodes[i * nClasses + r, j * nClasses + s]
+                                if pr > 0 and _has_incoming_routing(sn, i, r):
+                                    if boundToRE[c] is not None:
+                                        if boundToRE[c][0] == j and boundToRE[c][1] == s:
+                                            if PA[c][i][r] is not None:
+                                                end_act = Activity(lqn,
+                                                    f'End_{c+1}_{i+1}_{r+1}',
+                                                    Immediate.getInstance())
+                                                end_act.on(RT[c])
+                                                orfork_prec.append(end_act)
+                                                orfork_prob.append(pr)
+                                        else:
+                                            if PA[c][j][s] is not None:
+                                                orfork_prec.append(PA[c][j][s])
+                                                orfork_prob.append(pr)
+
+                    if orfork_prec and PA[c][i][r] is not None:
+                        RT[c].add_precedence(
+                            ActivityPrecedence.OrFork(PA[c][i][r], orfork_prec, orfork_prob))
+
+    return lqn
+
+
+def _find_chain(sn, class_r: int) -> int:
+    """Find chain index for a given class."""
+    for c in range(sn.nchains):
+        if sn.chains[c, class_r] > 0:
+            return c
+    return 0
+
+
+def _has_incoming_routing(sn, node_i: int, class_r: int) -> bool:
+    """Check if any routing leads to (node_i, class_r)."""
+    col = node_i * sn.nclasses + class_r
+    return np.any(sn.rtnodes[:, col] > 0)
+
+
 
 
 def lqn2qn(lqn_model: LQNModel) -> Dict[str, Any]:

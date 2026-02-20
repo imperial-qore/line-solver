@@ -8,6 +8,7 @@ from jpype import JArray
 
 from line_solver import VerboseLevel, SolverType, jlineMatrixToArray, GlobalConstants, jlineMatrixFromArray, \
     jlineMapMatrixToArray, jlineMatrixCellToArray
+from line_solver.indexed_table import IndexedTable
 
 
 # Track if JAR GlobalConstants have been initialized
@@ -43,6 +44,55 @@ def _get_java_network(model):
     else:
         # Assume it's already a Java object
         return model
+
+
+class EmpiricalCDF:
+    """
+    Empirical CDF representing a discrete posterior distribution.
+
+    Provides a unified interface for accessing posterior distribution data
+    from the Posterior solver.
+    """
+
+    def __init__(self, values, probabilities, cdf, mean=None):
+        """
+        Create empirical CDF from arrays.
+
+        Args:
+            values: Array of distribution values
+            probabilities: Array of probabilities for each value
+            cdf: Array of cumulative probabilities
+            mean: Optional precomputed mean
+        """
+        self.values = np.asarray(values)
+        self.probabilities = np.asarray(probabilities)
+        self.cdf = np.asarray(cdf)
+        self._mean = mean
+
+    @property
+    def data(self):
+        """Return data as 2D array with columns [CDF, Value]."""
+        return np.column_stack([self.cdf, self.values])
+
+    def get_mean(self):
+        """Return mean of the distribution."""
+        if self._mean is not None:
+            return float(self._mean)
+        return float(np.sum(self.values * self.probabilities))
+
+    def get_percentile(self, p):
+        """Return p-th percentile (p in [0, 1])."""
+        idx = np.searchsorted(self.cdf, p)
+        if idx >= len(self.values):
+            idx = len(self.values) - 1
+        return float(self.values[idx])
+
+    def eval_cdf(self, x):
+        """Evaluate CDF at point x."""
+        for i, v in enumerate(self.values):
+            if x < v:
+                return self.cdf[i - 1] if i > 0 else 0.0
+        return 1.0
 
 
 class SampleResult:
@@ -194,33 +244,68 @@ class DistributionResult:
 class ProbabilityResult:
     """
     Container for state probability results.
-    
+
     This class holds steady-state or transient probability distributions
-    over the system state space, typically computed by CTMC solvers.
-    
+    over the system state space, typically computed by solvers like CTMC, NC, JMT.
+
+    Handles two Java ProbabilityResult types:
+    1. jline.io.Ret.ProbabilityResult - probability is a Matrix
+    2. jline.solvers.mva.ProbabilityResult - probability is a double
+
     Attributes:
-        probability: Matrix of state probabilities.
+        probability: Probability value(s) as numpy array or scalar.
         log_normalizing_constant (float): Log of normalization constant.
         is_aggregated (bool): Whether probabilities are aggregated.
         node_index: Index of specific node (for node-specific results).
         state: State space specification.
     """
-    
+
     def __init__(self, java_result):
         self.java_result = java_result
-        self.probability = jlineMatrixToArray(java_result.probability) if hasattr(java_result, 'probability') and java_result.probability is not None else None
+
+        # Handle probability field - could be Matrix (Ret.ProbabilityResult) or double (mva.ProbabilityResult)
+        if hasattr(java_result, 'probability') and java_result.probability is not None:
+            prob = java_result.probability
+            # Check if it's a Matrix by looking for Matrix-like attributes
+            if hasattr(prob, 'get') or hasattr(prob, 'getNumRows'):
+                # It's a Matrix - convert to numpy array
+                self.probability = jlineMatrixToArray(prob)
+            else:
+                # It's a scalar double
+                self.probability = float(prob)
+        else:
+            self.probability = None
+
+        # Handle fields from Ret.ProbabilityResult
         self.log_normalizing_constant = java_result.logNormalizingConstant if hasattr(java_result, 'logNormalizingConstant') else 0.0
         self.is_aggregated = java_result.isAggregated if hasattr(java_result, 'isAggregated') else False
         self.node_index = java_result.nodeIndex if hasattr(java_result, 'nodeIndex') else None
         self.state = jlineMatrixToArray(java_result.state) if hasattr(java_result, 'state') and java_result.state is not None else None
 
+        # Handle fields from mva.ProbabilityResult (for compatibility)
+        if hasattr(java_result, 'logProbability'):
+            self.log_probability = java_result.logProbability
+        else:
+            self.log_probability = self.log_normalizing_constant
+
+        # Handle probability vector from mva.ProbabilityResult
+        if hasattr(java_result, 'getProbabilityVector'):
+            prob_vec = java_result.getProbabilityVector()
+            self.probability_vector = jlineMatrixToArray(prob_vec) if prob_vec is not None else None
+        else:
+            self.probability_vector = None
+
     def get_probability(self):
-        """Get the probability matrix as a numpy array"""
+        """Get the probability value(s)"""
         return self.probability
 
     def get_log_normalizing_constant(self):
         """Get the logarithm of the normalizing constant"""
         return self.log_normalizing_constant
+
+    def get_log_probability(self):
+        """Get the logarithm of the probability (alias)"""
+        return self.log_probability
 
     def is_aggregated_result(self):
         """Check if this is an aggregated result"""
@@ -234,10 +319,30 @@ class ProbabilityResult:
         """Get the state specification"""
         return self.state
 
-    def state(self):
-        """Alias for get_state()"""
-        return self.get_state()
+    def get_probability_vector(self):
+        """Get the probability distribution vector as a numpy array"""
+        return self.probability_vector
 
+    def has_distribution(self):
+        """Check if this result contains a probability distribution (vs scalar)"""
+        return self.probability_vector is not None
+
+    def __repr__(self):
+        """String representation showing the probability value."""
+        if self.probability is not None:
+            import numpy as np
+            prob = np.array(self.probability)
+            if prob.size == 0:
+                return "ProbabilityResult(probability=[])"
+            elif prob.size == 1:
+                return str(float(prob.flat[0]))
+            else:
+                return f"ProbabilityResult(probability={self.probability})"
+        return "ProbabilityResult(probability=None)"
+
+    def __str__(self):
+        """String representation for print()."""
+        return self.__repr__()
 
 
 class Solver:
@@ -279,6 +384,9 @@ class Solver:
         }
         return options
 
+    # Alias for snake_case convention
+    default_options = defaultOptions
+
     def __init__(self, options, *args, **kwargs):
         """
         Initialize a solver with the given options.
@@ -290,7 +398,7 @@ class Solver:
         """
         self.solveropt = options
         self._verbose_silent = False
-        self._table_silent = False
+        self._table_silent = True  # Suppress automatic table printing by default
 
         for key, value in kwargs.items():
             self._process_solver_option(key, value)
@@ -328,6 +436,12 @@ class Solver:
                     ctr += 2
                 elif args[ctr] == 'verbose':
                     self._process_verbose_option(args[ctr + 1])
+                    ctr += 2
+                elif args[ctr] == 'iter_max':
+                    self.solveropt.obj.iter_max = int(args[ctr + 1])
+                    ctr += 2
+                elif args[ctr] == 'iter_tol':
+                    self.solveropt.obj.iter_tol = float(args[ctr + 1])
                     ctr += 2
                 else:
                     ctr += 1
@@ -383,6 +497,16 @@ class Solver:
                 self.solveropt.obj.init_sol = jlineMatrixFromArray(value)
             else:
                 self.solveropt.obj.init_sol = value
+        elif key == 'config':
+            # Handle nested config options like config={'nonmkv': 'none'}
+            if isinstance(value, dict):
+                config_obj = self.solveropt.obj.config
+                for config_key, config_value in value.items():
+                    if hasattr(config_obj, config_key):
+                        setattr(config_obj, config_key, config_value)
+        elif key == 'fork_join':
+            # Set fork_join on the config object (e.g., 'ht', 'mmt', 'default')
+            self.solveropt.obj.config.fork_join = str(value)
         else:
             if hasattr(self.solveropt.obj, key):
                 try:
@@ -391,7 +515,13 @@ class Solver:
                     pass
 
     def _process_verbose_option(self, value):
-        """Process verbose option handling both old and new formats"""
+        """Process verbose option handling both old and new formats.
+
+        Note: verbose controls iteration logging, not table output.
+        Table output is controlled separately by _table_silent (via table_silent kwarg).
+        This matches MATLAB behavior where verbose=false silences logs but tables
+        are still displayed.
+        """
         if isinstance(value, bool):
             if value:
                 self.solveropt.obj.verbose(jpype.JPackage('jline').VerboseLevel.STD)
@@ -411,7 +541,6 @@ class Solver:
                 self.solveropt.obj.verbose(
                     jpype.JPackage('jline').VerboseLevel.SILENT)
                 self._verbose_silent = True
-                self._table_silent = True
             elif value == VerboseLevel.STD:
                 self.solveropt.obj.verbose(jpype.JPackage('jline').VerboseLevel.STD)
             elif value == VerboseLevel.DEBUG:
@@ -420,11 +549,14 @@ class Solver:
     def getName(self):
         """
         Get the name of this solver.
-        
+
         Returns:
             str: The solver name (e.g., 'MVA', 'JMT', 'SSA').
         """
-        return self.obj.getName()
+        name = str(self.obj.getName())
+        if name.startswith('Solver'):
+            name = name[6:]
+        return name
 
     @staticmethod
     def defaultOptions():
@@ -494,6 +626,21 @@ class NetworkSolver(Solver):
         super().__init__(options, *args, **kwargs)
         pass
 
+    @property
+    def model(self):
+        """
+        Get the network model being solved.
+
+        Returns:
+            Network: The network model object.
+        """
+        return getattr(self, '_model', None)
+
+    @model.setter
+    def model(self, value):
+        """Set the network model being solved."""
+        self._model = value
+
     def getAvgNodeTable(self):
         """
         Get average performance metrics per node.
@@ -527,7 +674,7 @@ class NetworkSolver(Solver):
         classnames = []
         for i in range(len(jobclasses)):
             classnames.append(str(jobclasses[i]))
-        AvgTable = pd.DataFrame(np.concatenate([[QLen, Util, RespT, ResidT, ArvR, Tput]]).T, columns=cols)
+        AvgTable = pd.DataFrame(np.column_stack([QLen, Util, RespT, ResidT, ArvR, Tput]), columns=cols)
         tokeep = ~(AvgTable <= 0.0).all(axis=1)
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Node", nodenames)
@@ -573,7 +720,7 @@ class NetworkSolver(Solver):
         chainnames = []
         for i in range(len(jobchains)):
             chainnames.append(str(jobchains[i]))
-        AvgChainTable = pd.DataFrame(np.concatenate([[QLen, Util, RespT, ResidT, ArvR, Tput]]).T, columns=cols)
+        AvgChainTable = pd.DataFrame(np.column_stack([QLen, Util, RespT, ResidT, ArvR, Tput]), columns=cols)
         tokeep = ~(AvgChainTable <= 0.0).all(axis=1)
         AvgChainTable.insert(0, "Chain", chainnames)
         AvgChainTable.insert(0, "Station", statnames)
@@ -618,7 +765,7 @@ class NetworkSolver(Solver):
         chainnames = []
         for i in range(len(jobchains)):
             chainnames.append(str(jobchains[i]))
-        AvgChainTable = pd.DataFrame(np.concatenate([[QLen, Util, RespT, ResidT, ArvR, Tput]]).T, columns=cols)
+        AvgChainTable = pd.DataFrame(np.column_stack([QLen, Util, RespT, ResidT, ArvR, Tput]), columns=cols)
         tokeep = ~(AvgChainTable <= 0.0).all(axis=1)
         AvgChainTable.insert(0, "Chain", chainnames)
         AvgChainTable.insert(0, "Node", nodenames)
@@ -670,15 +817,17 @@ class NetworkSolver(Solver):
         classnames = []
         for i in range(len(jobclasses)):
             classnames.append(str(jobclasses[i]))
-        AvgTable = pd.DataFrame(np.concatenate([[QLen, Util, RespT, ResidT, ArvR, Tput]]).T, columns=cols)
+        AvgTable = pd.DataFrame(np.column_stack([QLen, Util, RespT, ResidT, ArvR, Tput]), columns=cols)
         tokeep = ~(AvgTable <= 0.0).all(axis=1)
         AvgTable.insert(0, "JobClass", classnames)
         AvgTable.insert(0, "Station", statnames)
         AvgTable = AvgTable.loc[tokeep]
+        # Wrap in IndexedTable for consistent formatting
+        result = IndexedTable(AvgTable)
         if not self._table_silent:
-            print(AvgTable)
+            print(result)
 
-        return AvgTable
+        return result
 
     avg_table = getAvgTable
     getAvgT = getAvgTable
@@ -710,7 +859,7 @@ class NetworkSolver(Solver):
         inchains = []
         for i in range(len(jobinchains)):
             inchains.append(str(jobinchains[i]))
-        AvgSysTable = pd.DataFrame(np.concatenate([[SysRespT, SysTput]]).T, columns=cols)
+        AvgSysTable = pd.DataFrame(np.column_stack([SysRespT, SysTput]), columns=cols)
         tokeep = ~(AvgSysTable <= 0.0).all(axis=1)
         AvgSysTable.insert(0, "JobClasses", inchains)
         AvgSysTable.insert(0, "Chain", chains)
@@ -759,7 +908,7 @@ class NetworkSolver(Solver):
         for i in range(len(jobclasses)):
             classnames.append(str(jobclasses[i]))
 
-        DeadlineTable = pd.DataFrame(np.concatenate([[RespT, Trdn, SysTrdn]]).T, columns=cols)
+        DeadlineTable = pd.DataFrame(np.column_stack([RespT, Trdn, SysTrdn]), columns=cols)
         tokeep = ~(DeadlineTable <= 0.0).all(axis=1)
         DeadlineTable.insert(0, "JobClass", classnames)
         DeadlineTable.insert(0, "Station", statnames)
@@ -1180,16 +1329,16 @@ class NetworkSolver(Solver):
         Returns:
             float or numpy.ndarray: State probability
         """
+        # JAR prob() takes int node index, not a Node object
         if hasattr(node, 'obj'):
-            if state is not None:
-                java_result = self.obj.prob(node.obj, jlineMatrixFromArray(state))
-            else:
-                java_result = self.obj.prob(node.obj)
+            node_index = int(node.obj.getStationIdx())
         else:
-            if state is not None:
-                java_result = self.obj.prob(int(node), jlineMatrixFromArray(state))
-            else:
-                java_result = self.obj.prob(int(node))
+            node_index = int(node)
+
+        if state is not None:
+            java_result = self.obj.prob(node_index, jlineMatrixFromArray(state))
+        else:
+            java_result = self.obj.prob(node_index)
 
         if hasattr(java_result, 'getScalarProbability'):
             return java_result.getScalarProbability()
@@ -2053,6 +2202,7 @@ class NetworkSolver(Solver):
     get_avg_tput_chain = getAvgTputChain
     get_avg_util_chain = getAvgUtilChain
     get_cdf_respt = getCdfRespT
+    get_cdf_resp_t = getCdfRespT
     get_prob_aggr = getProbAggr
     get_prob = getProb
     get_solver_type = getSolverType
@@ -2100,7 +2250,13 @@ class SolverCTMC(NetworkSolver):
             super().__init__(options, *args[2:], **kwargs)
         else:
             options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.CTMC)
-            super().__init__(options, *args[1:], **kwargs)
+            # Handle dict options passed as args[1]
+            extra_args = args[1:]
+            if len(args) > 1 and isinstance(args[1], dict):
+                # Merge dict options into kwargs
+                kwargs = {**args[1], **kwargs}
+                extra_args = args[2:]
+            super().__init__(options, *extra_args, **kwargs)
         model = args[0]
         java_network = _get_java_network(model)
         self.obj = jpype.JPackage('jline').solvers.ctmc.SolverCTMC(java_network, self.solveropt.obj)
@@ -2200,6 +2356,101 @@ class SolverCTMC(NetworkSolver):
 
     tran_prob_sys_aggr = getTranProbSysAggr
 
+    def getTranAvg(self, Qt=None, Ut=None, Tt=None):
+        """Get transient average station metrics.
+
+        Args:
+            Qt: Optional queue length handles
+            Ut: Optional utilization handles
+            Tt: Optional throughput handles
+
+        Returns:
+            Tuple of (QNclass_t, UNclass_t, TNclass_t) containing transient metrics
+            Each element is a list of lists [station][class] containing time series data
+        """
+        import numpy as np
+
+        # Run transient analysis if not done yet
+        self.obj.getTranAvg()
+
+        # Get dimensions
+        M = self._model.getNumberOfStations()
+        K = self._model.getNumberOfClasses()
+
+        # Initialize result structures
+        QNclass_t = [[None for _ in range(K)] for _ in range(M)]
+        UNclass_t = [[None for _ in range(K)] for _ in range(M)]
+        TNclass_t = [[None for _ in range(K)] for _ in range(M)]
+
+        # Check if transient results exist
+        if not hasattr(self.obj, 'result') or self.obj.result is None:
+            return QNclass_t, UNclass_t, TNclass_t
+
+        result = self.obj.result
+        if not hasattr(result, 'Tran') or result.Tran is None:
+            return QNclass_t, UNclass_t, TNclass_t
+
+        tran = result.Tran
+        if not hasattr(tran, 'Avg') or tran.Avg is None:
+            return QNclass_t, UNclass_t, TNclass_t
+
+        avg = tran.Avg
+
+        import jpype
+        JInt = jpype.JInt
+
+        def _extract_tran_metric(metric_map, ist, k):
+            """Extract transient metric from Java HashMap<Integer, HashMap<Integer, Matrix>>."""
+            inner = metric_map.get(JInt(ist))
+            if inner is None:
+                return None
+            data = inner.get(JInt(k))
+            if data is None or data.getNumRows() == 0:
+                return None
+            rows = data.getNumRows()
+            cols = data.getNumCols()
+            arr = np.zeros((rows, cols))
+            for i in range(rows):
+                for j in range(cols):
+                    arr[i, j] = data.get(i, j)
+            class MetricResult:
+                pass
+            mr = MetricResult()
+            mr.t = arr[:, 1].tolist() if cols >= 2 else []
+            mr.metric = arr[:, 0].tolist() if cols >= 1 else []
+            return mr
+
+        # Extract transient queue length
+        if hasattr(avg, 'Q') and avg.Q is not None:
+            for ist in range(M):
+                for k in range(K):
+                    try:
+                        QNclass_t[ist][k] = _extract_tran_metric(avg.Q, ist, k)
+                    except:
+                        pass
+
+        # Extract transient utilization
+        if hasattr(avg, 'U') and avg.U is not None:
+            for ist in range(M):
+                for k in range(K):
+                    try:
+                        UNclass_t[ist][k] = _extract_tran_metric(avg.U, ist, k)
+                    except:
+                        pass
+
+        # Extract transient throughput
+        if hasattr(avg, 'T') and avg.T is not None:
+            for ist in range(M):
+                for k in range(K):
+                    try:
+                        TNclass_t[ist][k] = _extract_tran_metric(avg.T, ist, k)
+                    except:
+                        pass
+
+        return QNclass_t, UNclass_t, TNclass_t
+
+    tran_avg = getTranAvg
+
     def getProbSysAggr(self):
         """
         Get aggregated system-wide state probabilities.
@@ -2219,6 +2470,26 @@ class SolverCTMC(NetworkSolver):
             return None
 
     prob_sys_aggr = getProbSysAggr
+
+    def getProbSys(self):
+        """
+        Get system-wide joint state probabilities.
+
+        Returns probability distribution over full system states
+        for the CTMC model.
+
+        Returns:
+            ProbabilityResult: System-wide joint state probabilities
+        """
+        try:
+            java_result = self.obj.probSys()
+            return ProbabilityResult(java_result)
+        except Exception as e:
+            if not self._verbose_silent:
+                print(f"CTMC getProbSys failed: {e}")
+            return None
+
+    prob_sys = getProbSys
 
     def sample(self, node, numSamples):
         """
@@ -2291,42 +2562,129 @@ class SolverCTMC(NetworkSolver):
         Get steady-state expected reward values.
 
         Computes the steady-state expected reward for reward functions
-        previously defined using model.setReward().
-
-        Args:
-            reward_name (str, optional): Name of specific reward to get.
-                                        If None, returns all rewards as a dict.
+        previously defined using model.setReward(). Rewards are computed
+        in Python-space using the Java solver's state space and steady-state
+        distribution.
 
         Returns:
-            dict or float: If reward_name is None, returns a dictionary mapping
-                          reward names to their expected values.
-                          If reward_name is specified, returns the float value
-                          for that specific reward.
-
-        Raises:
-            Exception: If reward computation fails or reward name not found.
+            Tuple of (R, names) where:
+            - R: numpy array of expected reward values
+            - names: list of reward function names
 
         Example:
-            # Get all rewards
-            rewards = solver.getAvgReward()
-            print(rewards)  # {'QueueLength': 1.5, 'Utilization': 0.75}
-
-            # Get specific reward
-            qlen = solver.getAvgReward('QueueLength')  # Returns 1.5
+            >>> model.setReward('QueueLength', lambda state: state.at(queue, oclass))
+            >>> solver = CTMC(model)
+            >>> R, names = solver.getAvgReward()
         """
+        import inspect
+
+        # Get Python-side reward functions from the model
+        py_rewards = getattr(self.model, '_py_rewards', None)
+        if py_rewards is None or len(py_rewards) == 0:
+            return np.array([]), []
+
+        # Run the Java CTMC solver to get state space and pi
         try:
-            if reward_name is not None:
-                return float(self.obj.getAvgReward(reward_name))
-            else:
-                java_map = self.obj.getAvgReward()
-                result = {}
-                for entry in java_map.entrySet():
-                    result[str(entry.getKey())] = float(entry.getValue())
-                return result
+            self.obj.runAnalyzer()
+        except Exception:
+            pass  # May already be solved
+
+        # Get aggregated state space from Java: shape (nstates, nstations * nclasses)
+        try:
+            java_ssq = self.obj.getStateSpaceAggr()
+            nrows = int(java_ssq.getNumRows())
+            ncols = int(java_ssq.getNumCols())
+            space_aggr = np.zeros((nrows, ncols))
+            for i in range(nrows):
+                for j in range(ncols):
+                    space_aggr[i, j] = float(java_ssq.get(i, j))
         except Exception as e:
             if not self._verbose_silent:
-                print(f"CTMC getAvgReward failed: {e}")
-            raise
+                print(f"CTMC getAvgReward: cannot get state space: {e}")
+            return np.array([0.0] * len(py_rewards)), list(py_rewards.keys())
+
+        # Get steady-state distribution: solve pi * Q = 0 from generator matrix
+        try:
+            java_Q = self.obj.result.infGen
+            nstates = int(java_Q.getNumRows())
+            Q = np.zeros((nstates, nstates))
+            for i in range(nstates):
+                for j in range(nstates):
+                    Q[i, j] = float(java_Q.get(i, j))
+            # Solve pi * Q = 0, sum(pi) = 1
+            # Replace last column of Q^T with ones for normalization
+            A = Q.T.copy()
+            A[-1, :] = 1.0
+            b = np.zeros(nstates)
+            b[-1] = 1.0
+            pi = np.linalg.solve(A, b)
+            pi[pi < 1e-14] = 0.0
+            pi = pi / np.sum(pi)
+        except Exception as e:
+            if not self._verbose_silent:
+                print(f"CTMC getAvgReward: cannot compute steady state: {e}")
+            return np.array([0.0] * len(py_rewards)), list(py_rewards.keys())
+
+        if len(pi) == 0 or len(space_aggr) == 0:
+            return np.array([0.0] * len(py_rewards)), list(py_rewards.keys())
+
+        # Build mappings for RewardState
+        from .lang.reward_state import RewardState
+        java_sn = self.model.obj.getStruct(True)
+
+        nclasses = int(java_sn.nclasses)
+        nstations = int(java_sn.nstations)
+        nnodes = int(java_sn.nnodes)
+
+        # Build node-to-station mapping: 1-based node index -> 1-based station index
+        nodes_to_station = {}
+        for ind in range(nnodes):
+            if bool(java_sn.isstation.get(ind)):
+                station_idx = int(java_sn.nodeToStation.get(ind))
+                nodes_to_station[ind + 1] = station_idx + 1
+
+        # Build class-to-index mapping: 1-based class index -> 1-based class index
+        classes_to_idx = {}
+        for r in range(nclasses):
+            classes_to_idx[r + 1] = r + 1
+
+        # Build a minimal sn wrapper for RewardState
+        from ._lang import _JavaSnWrapper
+        sn_wrap = _JavaSnWrapper(java_sn)
+
+        # Compute expected rewards
+        R = []
+        names = list(py_rewards.keys())
+
+        for name, reward_fn in py_rewards.items():
+            expected_value = 0.0
+            # Determine argument count
+            try:
+                sig = inspect.signature(reward_fn)
+                n_params = len(sig.parameters)
+            except (ValueError, TypeError):
+                n_params = 1
+
+            for state_idx in range(len(space_aggr)):
+                prob = pi[state_idx]
+                if prob <= 0:
+                    continue
+
+                state_vec = space_aggr[state_idx]
+                reward_state = RewardState(state_vec, sn_wrap, nodes_to_station, classes_to_idx)
+
+                try:
+                    if n_params >= 2:
+                        reward_value = reward_fn(reward_state, sn_wrap)
+                    else:
+                        reward_value = reward_fn(reward_state)
+                    expected_value += prob * reward_value
+                except Exception:
+                    pass
+
+            R.append(expected_value)
+
+        return np.array(R), names
 
     get_avg_reward = getAvgReward
 
@@ -2412,12 +2770,32 @@ class SolverENV(EnsembleSolver):
         self._model = args[0]
 
         _initialize_jar_globals()
-        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.ENV)
-        super().__init__(options, *args[1:], **kwargs)
+        # Check if user provided options as third argument
+        if len(args) > 2 and args[2] is not None and hasattr(args[2], 'obj'):
+            options = args[2]
+        else:
+            options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.ENV)
+        super().__init__(options, *args[1:2], **kwargs)  # Only pass solver_arg, not options
         model = args[0]
-        solvers = jpype.JPackage('jline').solvers.NetworkSolver[len(args[1])]
-        for i in range(len(solvers)):
-            solvers[i] = args[1][i].obj
+
+        # Handle solvers as list or factory function
+        solver_arg = args[1]
+        if callable(solver_arg):
+            # solver_arg is a factory function - create solvers for each stage model
+            ensemble = model.getEnsemble()
+            solver_list = []
+            for stage_model in ensemble:
+                if stage_model is not None:
+                    solver_list.append(solver_arg(stage_model))
+                else:
+                    solver_list.append(None)
+        else:
+            solver_list = solver_arg
+
+        solvers = jpype.JPackage('jline').solvers.NetworkSolver[len(solver_list)]
+        for i in range(len(solver_list)):
+            if solver_list[i] is not None:
+                solvers[i] = solver_list[i].obj
         java_network = _get_java_network(model)
         self.obj = jpype.JPackage('jline').solvers.env.SolverENV(java_network, solvers, self.solveropt.obj)
 
@@ -2431,7 +2809,7 @@ class SolverENV(EnsembleSolver):
         Returns:
             Ensemble average results
         """
-        return self.obj.ensembleAvg()
+        return self.obj.getEnsembleAvg()
 
     def printAvgTable(self):
         self.obj.printAvgTable()
@@ -2443,6 +2821,105 @@ class SolverENV(EnsembleSolver):
     print_avg_table = printAvgTable
     print_avg_t = printAvgT
 
+    def avg(self):
+        """
+        Compute average performance metrics across environments.
+
+        Returns:
+            Tuple of (QN, UN, TN) - queue lengths, utilizations, throughputs
+        """
+        import numpy as np
+
+        # Run solver if needed
+        if not hasattr(self, '_result') or self._result is None:
+            self.obj.runAnalyzer()
+
+        # Get result from Java object
+        result = self.obj.result
+        if result is None or not hasattr(result, 'Avg'):
+            # Try to compute from getEnsembleAvg which returns NetworkAvgTable
+            ensemble_result = self.getEnsembleAvg()
+            if ensemble_result is not None:
+                # NetworkAvgTable has getQLen(), getUtil(), getTput() methods
+                QN = np.asarray(list(ensemble_result.getQLen()))
+                UN = np.asarray(list(ensemble_result.getUtil()))
+                TN = np.asarray(list(ensemble_result.getTput()))
+                self._result = (QN, UN, TN)
+                return QN, UN, TN
+            return np.array([]), np.array([]), np.array([])
+
+        # Extract Q, U, T from Avg result
+        avg = result.Avg
+        QN = np.asarray(avg.Q) if hasattr(avg, 'Q') else np.array([])
+        UN = np.asarray(avg.U) if hasattr(avg, 'U') else np.array([])
+        TN = np.asarray(avg.T) if hasattr(avg, 'T') else np.array([])
+
+        self._result = (QN, UN, TN)
+        return QN, UN, TN
+
+    def avg_table(self):
+        """
+        Get average metrics as a table.
+
+        Returns:
+            DataFrame with performance metrics including QLen, Util, RespT, Tput
+        """
+        import pandas as pd
+        import numpy as np
+
+        if not hasattr(self, '_result') or self._result is None:
+            self.avg()
+
+        QN, UN, TN = self._result
+
+        # Build table - get node names from first stage model in the ensemble
+        data = []
+        model = self._model
+
+        # Get the first stage model from the ensemble to get node names
+        nodes = []
+        if hasattr(model, 'getEnsemble'):
+            ensemble = model.getEnsemble()
+            if len(ensemble) > 0 and ensemble[0] is not None:
+                stage_model = ensemble[0]
+                if hasattr(stage_model, 'getNodes'):
+                    nodes = list(stage_model.getNodes())
+                elif hasattr(stage_model, 'nodes'):
+                    nodes = list(stage_model.nodes)
+        elif hasattr(model, 'getNodes'):
+            nodes = list(model.getNodes())
+        elif hasattr(model, 'nodes'):
+            nodes = list(model.nodes)
+        elif hasattr(model, 'get_nodes'):
+            nodes = list(model.get_nodes())
+
+        for i, node in enumerate(nodes):
+            if hasattr(node, 'getName') and callable(getattr(node, 'getName')):
+                node_name = str(node.getName())
+            elif hasattr(node, 'name') and callable(getattr(node, 'name')):
+                node_name = str(node.name())
+            else:
+                node_name = f'Node{i}'
+            qlen = float(QN[i]) if i < len(QN) else 0.0
+            util = float(UN[i]) if i < len(UN) else 0.0
+            tput = float(TN[i]) if i < len(TN) else 0.0
+            respt = qlen / tput if tput > 1e-10 else 0.0
+            row = {
+                'Node': node_name,
+                'QLen': qlen,
+                'Util': util,
+                'RespT': respt,
+                'Tput': tput,
+            }
+            data.append(row)
+
+        df = pd.DataFrame(data)
+        return df
+
+    # Aliases for MATLAB/Java API compatibility
+    getAvg = avg
+    getAvgTable = avg_table
+
     def runAnalyzer(self):
         """
         Run the performance analysis.
@@ -2451,6 +2928,45 @@ class SolverENV(EnsembleSolver):
         and compute performance metrics across all solver instances.
         """
         self.obj.runAnalyzer()
+
+    def generator(self):
+        """
+        Get the infinitesimal generator matrices for the random environment model.
+
+        Returns the combined infinitesimal generator for the random environment
+        and the individual stage generators.
+
+        This method requires all sub-solvers to be CTMC solvers (SolverCTMC).
+
+        Returns:
+            Tuple of (renvInfGen, stageInfGen) where:
+            - renvInfGen: Combined infinitesimal generator for the random environment (numpy array)
+            - stageInfGen: List of infinitesimal generators for each stage (list of numpy arrays)
+        """
+        import numpy as np
+        from scipy import sparse
+
+        # Call Java getGenerator method
+        result = self.obj.getGenerator()
+
+        # Convert Java sparse matrix to numpy
+        renvInfGen_java = result.renvInfGen
+        if renvInfGen_java is not None:
+            # Convert from Java Matrix to numpy array
+            renvInfGen = np.asarray(renvInfGen_java.toArray2D())
+        else:
+            renvInfGen = np.array([])
+
+        # Convert stage generators
+        stageInfGen = []
+        if result.stageInfGen is not None:
+            for gen in result.stageInfGen:
+                if gen is not None:
+                    stageInfGen.append(np.asarray(gen.toArray2D()))
+                else:
+                    stageInfGen.append(None)
+
+        return renvInfGen, stageInfGen
 
     def getName(self):
         """
@@ -2677,7 +3193,12 @@ class SolverFluid(NetworkSolver):
             super().__init__(options, *args[2:], **kwargs)
         else:
             options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.FLUID)
-            super().__init__(options, *args[1:], **kwargs)
+            # Handle dict options passed as args[1]
+            extra_args = args[1:]
+            if len(args) > 1 and isinstance(args[1], dict):
+                kwargs = {**args[1], **kwargs}
+                extra_args = args[2:]
+            super().__init__(options, *extra_args, **kwargs)
         self.model = args[0]
         self._model = self.model  # For consistency with other solvers
         java_network = _get_java_network(self.model)
@@ -2697,21 +3218,46 @@ class SolverFluid(NetworkSolver):
     avgT = getAvgTable
     aT = getAvgTable
 
-    def getTranAvg(self):
+    def getTranAvg(self, Qt=None, Ut=None, Tt=None):
+        import numpy as np
+
+        # Trigger transient analysis if not done yet
+        self.obj.getTranAvg()
 
         result = self.obj.result
+
+        if result is None or result.QNt is None:
+            M = self._model.getNumberOfStations()
+            K = self._model.getNumberOfClasses()
+            return ([[None]*K for _ in range(M)],
+                    [[None]*K for _ in range(M)],
+                    [[None]*K for _ in range(M)])
 
         M = result.QNt.length
         K = result.QNt[0].length
 
-        def extract(metrics):
-            return [[jlineMatrixToArray(metrics[i][k]) for k in range(K)] for i in range(M)]
+        def to_metric_results(metrics):
+            out = [[None for _ in range(K)] for _ in range(M)]
+            for i in range(M):
+                for k in range(K):
+                    arr = jlineMatrixToArray(metrics[i][k])
+                    if arr is not None and len(arr) > 0:
+                        arr = np.array(arr)
+                        class MetricResult:
+                            pass
+                        mr = MetricResult()
+                        if arr.ndim == 2 and arr.shape[1] >= 2:
+                            mr.metric = arr[:, 0].tolist()
+                            mr.t = arr[:, 1].tolist()
+                        else:
+                            mr.metric = arr.flatten().tolist()
+                            mr.t = list(range(len(mr.metric)))
+                        out[i][k] = mr
+            return out
 
-        return {
-            'QNt': extract(result.QNt),
-            'UNt': extract(result.UNt),
-            'TNt': extract(result.TNt),
-        }
+        return (to_metric_results(result.QNt),
+                to_metric_results(result.UNt),
+                to_metric_results(result.TNt))
 
     tran_avg = getTranAvg
 
@@ -2831,6 +3377,7 @@ class SolverFluid(NetworkSolver):
 
     get_tran_avg = getTranAvg
     get_cdf_respt = getCdfRespT
+    get_cdf_resp_t = getCdfRespT
     get_cdf_passt = getCdfPassT
 
 
@@ -2869,7 +3416,13 @@ class SolverJMT(NetworkSolver):
             super().__init__(options, *args[2:], **kwargs)
         else:
             options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.JMT)
-            super().__init__(options, *args[1:], **kwargs)
+            # Handle dict options passed as args[1]
+            extra_args = args[1:]
+            if len(args) > 1 and isinstance(args[1], dict):
+                # Merge dict options into kwargs
+                kwargs = {**args[1], **kwargs}
+                extra_args = args[2:]
+            super().__init__(options, *extra_args, **kwargs)
         self.model = args[0]
 
         package_dir = os.path.dirname(os.path.abspath(__file__))
@@ -3180,10 +3733,13 @@ class SolverJMT(NetworkSolver):
     get_prob_sys_aggr = getProbSysAggr
     prob_sys_aggr = getProbSysAggr
     get_cdf_respt = getCdfRespT
+    get_cdf_resp_t = getCdfRespT
     cdf_respt = getCdfRespT
     cdf_resp_t = getCdfRespT
     get_tran_cdf_respt = getTranCdfRespT
+    get_tran_cdf_resp_t = getTranCdfRespT
     get_tran_cdf_passt = getTranCdfPassT
+    get_tran_cdf_pass_t = getTranCdfPassT
     sample_sys_aggr = sampleSysAggr
     #sample_sys = sampleSys
 
@@ -3225,12 +3781,32 @@ class SolverMAM(NetworkSolver):
         self._model = args[0]
 
         _initialize_jar_globals()
-        if len(args) > 1 and hasattr(args[1], 'obj'):
-            options = args[1]
-            super().__init__(options, *args[2:], **kwargs)
+
+        # Check if second arg is a method string (like 'inap') or SolverOptions
+        method = None
+        if len(args) > 1:
+            if isinstance(args[1], str):
+                # Second arg is method name (e.g., MAM(model, 'inap'))
+                method = args[1]
+                remaining_args = args[2:]
+            elif hasattr(args[1], 'obj'):
+                # Second arg is SolverOptions
+                options = args[1]
+                super().__init__(options, *args[2:], **kwargs)
+                model = args[0]
+                java_network = _get_java_network(model)
+                self.obj = jpype.JPackage('jline').solvers.mam.SolverMAM(java_network, self.solveropt.obj)
+                return
+            else:
+                remaining_args = args[1:]
         else:
-            options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.MAM)
-            super().__init__(options, *args[1:], **kwargs)
+            remaining_args = ()
+
+        # Create default options and set method if provided
+        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.MAM)
+        if method:
+            options.method(method)
+        super().__init__(options, *remaining_args, **kwargs)
         model = args[0]
         java_network = _get_java_network(model)
         self.obj = jpype.JPackage('jline').solvers.mam.SolverMAM(java_network, self.solveropt.obj)
@@ -3364,6 +3940,7 @@ class SolverMAM(NetworkSolver):
 
     cdf_respt = getCdfRespT
     get_cdf_respt = getCdfRespT
+    get_cdf_resp_t = getCdfRespT
     getSjrnT = getCdfRespT
     sjrn_t = getSjrnT
 
@@ -3723,10 +4300,11 @@ class SolverQNS(NetworkSolver):
     def __init__(self, *args, method='default', **kwargs):
         self._model = args[0] if args else kwargs.get('model')
         self._method = method
-        self._table_silent = kwargs.get('table_silent', False)
+        self._table_silent = kwargs.get('table_silent', True)  # Suppress automatic table printing by default
 
         _initialize_jar_globals()
         options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.QNS)
+        options.obj.method(method)  # Pass method to Java options using fluent setter
         super().__init__(options, *args[1:], **kwargs)
         model = args[0]
         java_network = _get_java_network(model)
@@ -3808,7 +4386,7 @@ class SolverLQNS(Solver):
     def __init__(self, *args, method='default', **kwargs):
         self._model = args[0] if args else kwargs.get('model')
         self._method = method
-        self._table_silent = kwargs.get('table_silent', False)
+        self._table_silent = kwargs.get('table_silent', True)  # Suppress automatic table printing by default
 
         _initialize_jar_globals()
         options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.LQNS)
@@ -3869,7 +4447,7 @@ class SolverLQNS(Solver):
         mynodetypes = []
         for i in range(len(nodetypes)):
             mynodetypes.append(str(nodetypes[i]))
-        AvgTable = pd.DataFrame(np.concatenate([[QLen, Util, RespT, ResidT, ArvR, Tput]]).T, columns=cols)
+        AvgTable = pd.DataFrame(np.column_stack([QLen, Util, RespT, ResidT, ArvR, Tput]), columns=cols)
         tokeep = ~(AvgTable <= 0.0).all(axis=1)
         AvgTable.insert(0, "NodeType", mynodetypes)
         AvgTable.insert(0, "Node", mynodenames)
@@ -3945,11 +4523,70 @@ class SolverLN(EnsembleSolver):
         self._model = args[0]
 
         _initialize_jar_globals()
-        options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.LN)
-        super().__init__(options, *args[1:], **kwargs)
         model = args[0]
         java_network = _get_java_network(model)
-        self.obj = jpype.JPackage('jline').solvers.ln.SolverLN(java_network, self.solveropt.obj)
+
+        # Parse arguments: LN(model), LN(model, options), or LN(model, function, options)
+        user_options = None
+        solver_function = None
+        remaining_args = []
+
+        for i, arg in enumerate(args[1:], 1):
+            if isinstance(arg, SolverOptions):
+                # This is a SolverOptions object
+                user_options = arg
+            elif callable(arg) and not isinstance(arg, type):
+                # This is a solver factory function (ignored - JAR handles FunctionTask)
+                solver_function = arg
+            else:
+                remaining_args.append(arg)
+
+        # Use user options if provided, otherwise create default
+        if user_options is not None:
+            options = user_options
+        else:
+            options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.LN)
+
+        super().__init__(options, *remaining_args, **kwargs)
+
+        # Detect the sub-solver type from the user-provided factory function
+        sub_solver_type = jpype.JPackage('jline').lang.constant.SolverType.MVA  # default
+        if solver_function is not None:
+            # Map Python solver class names to JAR SolverType enum names
+            _solver_type_map = {
+                'SolverNC': 'NC', 'SolverMVA': 'MVA', 'SolverCTMC': 'CTMC',
+                'SolverSSA': 'SSA', 'SolverFluid': 'FLUID', 'SolverMAM': 'MAM',
+                'SolverJMT': 'JMT', 'SolverAUTO': 'AUTO',
+            }
+            # Detect solver type by inspecting the factory's code constants and closure
+            # This handles lambdas like: lambda m: NC(m, options) or lambda m: SolverNC(m, options)
+            try:
+                import inspect
+                _detected = False
+                # Check global references in the function's code
+                if hasattr(solver_function, '__code__'):
+                    for name in solver_function.__code__.co_names:
+                        if name in _solver_type_map:
+                            _st = _solver_type_map[name]
+                            sub_solver_type = getattr(jpype.JPackage('jline').lang.constant.SolverType, _st)
+                            _detected = True
+                            break
+                # Also check closure variables (handles aliases like NC = SolverNC)
+                if not _detected and hasattr(solver_function, '__globals__'):
+                    for name in solver_function.__code__.co_names:
+                        val = solver_function.__globals__.get(name)
+                        if val is not None and isinstance(val, type):
+                            val_name = val.__name__
+                            if val_name in _solver_type_map:
+                                _st = _solver_type_map[val_name]
+                                sub_solver_type = getattr(jpype.JPackage('jline').lang.constant.SolverType, _st)
+                                break
+            except Exception:
+                pass  # Fall back to MVA if detection fails
+
+        # Create the SolverLN with detected layer solver type
+        self.obj = jpype.JPackage('jline').solvers.ln.SolverLN(
+            java_network, sub_solver_type, self.solveropt.obj)
 
     def runAnalyzer(self):
         """Run the LN analysis."""
@@ -3980,7 +4617,7 @@ class SolverLN(EnsembleSolver):
         mynodetypes = []
         for i in range(len(nodetypes)):
             mynodetypes.append(str(nodetypes[i]))
-        AvgTable = pd.DataFrame(np.concatenate([[QLen, Util, RespT, ResidT, ArvR, Tput]]).T, columns=cols)
+        AvgTable = pd.DataFrame(np.column_stack([QLen, Util, RespT, ResidT, ArvR, Tput]), columns=cols)
         tokeep = ~(AvgTable <= 0.0).all(axis=1)
         AvgTable.insert(0, "NodeType", mynodetypes)
         AvgTable.insert(0, "Node", mynodenames)
@@ -3988,9 +4625,12 @@ class SolverLN(EnsembleSolver):
         if not self._table_silent:
             print(AvgTable)
 
-        return AvgTable
+        # Return as IndexedTable for MATLAB-style number formatting
+        from .indexed_table import IndexedTable
+        return IndexedTable(AvgTable)
 
     avg_table = getAvgTable
+    avgTable = getAvgTable
 
     def avgT(self):
         """Short alias for avgTable/getAvgTable."""
@@ -4127,7 +4767,13 @@ class SolverNC(NetworkSolver):
             super().__init__(options, *args[2:], **kwargs)
         else:
             options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.NC)
-            super().__init__(options, *args[1:], **kwargs)
+            # Handle dict options passed as args[1]
+            extra_args = args[1:]
+            if len(args) > 1 and isinstance(args[1], dict):
+                # Merge dict options into kwargs
+                kwargs = {**args[1], **kwargs}
+                extra_args = args[2:]
+            super().__init__(options, *extra_args, **kwargs)
         model = args[0]
         java_network = _get_java_network(model)
         self.obj = jpype.JPackage('jline').solvers.nc.SolverNC(java_network, self.solveropt.obj)
@@ -4221,7 +4867,7 @@ class SolverNC(NetworkSolver):
     @staticmethod
     def supportsModel(model):
         java_solver_class = jpype.JPackage('jline').solvers.nc.SolverNC
-        return java_solver_class.supports(model.obj if hasattr(model, 'obj') else model)
+        return java_solver_class.supportsModel(model.obj if hasattr(model, 'obj') else model)
 
     get_prob_sys_aggr = getProbSysAggr
     prob_sys_aggr = getProbSysAggr
@@ -4434,6 +5080,36 @@ class SolverSSA(NetworkSolver):
                 print(f"SSA getTranProbSysAggr failed: {e}")
             return None
 
+    def getProbSysAggr(self):
+        """
+        Get aggregated system-wide state probabilities.
+
+        Returns:
+            ProbabilityResult: Aggregated system state probabilities
+        """
+        try:
+            java_result = self.obj.probSysAggr()
+            return ProbabilityResult(java_result)
+        except Exception as e:
+            if not self._verbose_silent:
+                print(f"SSA getProbSysAggr failed: {e}")
+            return None
+
+    def getProbSys(self):
+        """
+        Get detailed system-wide state probabilities.
+
+        Returns:
+            ProbabilityResult: Detailed system state probabilities
+        """
+        try:
+            java_result = self.obj.probSys()
+            return ProbabilityResult(java_result)
+        except Exception as e:
+            if not self._verbose_silent:
+                print(f"SSA getProbSys failed: {e}")
+            return None
+
     sample_sys_aggr = sampleSysAggr
     sample_sys = sampleSys
     tran_prob = getTranProb
@@ -4444,6 +5120,10 @@ class SolverSSA(NetworkSolver):
     get_tran_prob_sys = getTranProbSys
     tran_prob_sys_aggr = getTranProbSysAggr
     get_tran_prob_sys_aggr = getTranProbSysAggr
+    prob_sys_aggr = getProbSysAggr
+    get_prob_sys_aggr = getProbSysAggr
+    prob_sys = getProbSys
+    get_prob_sys = getProbSys
 
 
 class SolverDES(NetworkSolver):
@@ -4772,7 +5452,7 @@ class SolverAuto(NetworkSolver):
     get_avg = getAvg
     get_avg_qlen = getAvgQLen
     get_avg_util = getAvgUtil
-    get_avg_resp_t = getAvgRespT
+    get_avg_respt = getAvgRespT
     get_avg_resid_t = getAvgResidT
     get_avg_tput = getAvgTput
     get_avg_arv_r = getAvgArvR
@@ -4786,7 +5466,7 @@ class SolverAuto(NetworkSolver):
     get_avg_arv_r_chain = getAvgArvRChain
     get_avg_qlen_chain = getAvgQLenChain
     get_avg_resid_t_chain = getAvgResidTChain
-    get_avg_resp_t_chain = getAvgRespTChain
+    get_avg_respt_chain = getAvgRespTChain
     get_avg_tput_chain = getAvgTputChain
     get_avg_util_chain = getAvgUtilChain
 
@@ -4987,17 +5667,43 @@ class SolverOptions():
     def method(self, value):
         self.obj.method(value)
 
+    @property
+    def samples(self):
+        return self.obj.samples
+
+    @samples.setter
     def samples(self, value):
-        self.obj.samples(value)
+        self.obj.samples(int(value))
 
+    @property
+    def seed(self):
+        return self.obj.seed
+
+    @seed.setter
     def seed(self, value):
-        self.obj.seed(value)
+        self.obj.seed(int(value))
 
-    def verbose(self, value):
+    def set_verbose(self, value):
         if hasattr(value, 'value'):
             self.obj.verbose(value.value)
         else:
             self.obj.verbose(value)
+
+    @property
+    def verbose(self):
+        return self.obj.verbose
+
+    @verbose.setter
+    def verbose(self, value):
+        self.set_verbose(value)
+
+    @property
+    def keep(self):
+        return self.obj.keep
+
+    @keep.setter
+    def keep(self, value):
+        self.obj.keep(bool(value))
 
     @property
     def config(self):
@@ -5029,6 +5735,26 @@ class SolverOptions():
     @tol.setter
     def tol(self, value):
         self.obj.tol = value
+
+    @property
+    def timespan(self):
+        return self.obj.timespan
+
+    @timespan.setter
+    def timespan(self, value):
+        from jpype import JArray, JDouble
+        if hasattr(value, '__iter__'):
+            self.obj.timespan = JArray(JDouble)(value)
+        else:
+            self.obj.timespan = value
+
+    @property
+    def stiff(self):
+        return self.obj.stiff
+
+    @stiff.setter
+    def stiff(self, value):
+        self.obj.stiff = bool(value)
 
     def __setitem__(self, key, value):
         """Support dictionary-style assignment for solver options."""
@@ -5397,7 +6123,7 @@ class SolverPosterior(EnsembleSolver):
             classnames.append(str(jobclasses[i]))
 
         AvgTable = pd.DataFrame(
-            np.concatenate([[QLen, Util, RespT, ResidT, ArvR, Tput]]).T,
+            np.column_stack([QLen, Util, RespT, ResidT, ArvR, Tput]),
             columns=cols
         )
         tokeep = ~(AvgTable <= 0.0).all(axis=1)
@@ -5430,8 +6156,8 @@ class SolverPosterior(EnsembleSolver):
             data.append({
                 'Alternative': row.alternativeIdx,
                 'Probability': row.probability,
-                'Station': row.station,
-                'JobClass': row.jobClass,
+                'Station': str(row.station),
+                'JobClass': str(row.jobClass),
                 'Q': row.Q,
                 'U': row.U,
                 'R': row.R,
@@ -5454,16 +6180,16 @@ class SolverPosterior(EnsembleSolver):
             job_class: JobClass object
 
         Returns:
-            dict: Dictionary with 'values', 'probabilities', 'cdf' arrays
+            EmpiricalCDF: Object with 'values', 'probabilities', 'cdf' arrays and '.data' property
         """
         java_cdf = self.obj.getPosteriorDist(metric, station.obj, job_class.obj)
 
-        return {
-            'values': np.array([float(v) for v in java_cdf.values]),
-            'probabilities': np.array([float(p) for p in java_cdf.probabilities]),
-            'cdf': np.array([float(c) for c in java_cdf.cdf]),
-            'mean': float(java_cdf.getMean())
-        }
+        return EmpiricalCDF(
+            values=np.array([float(v) for v in java_cdf.values]),
+            probabilities=np.array([float(p) for p in java_cdf.probabilities]),
+            cdf=np.array([float(c) for c in java_cdf.cdf]),
+            mean=float(java_cdf.getMean())
+        )
 
     def hasPriorDistribution(self):
         """

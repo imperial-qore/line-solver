@@ -34,12 +34,21 @@ import jline.solvers.fluid.SolverFluid;
 import jline.solvers.jmt.SolverJMT;
 import jline.solvers.nc.SolverNC;
 import jline.util.matrix.Matrix;
+import jline.util.Maths;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 public class SolverMVATest {
+
+  @BeforeAll
+  public static void setUp() {
+    // Ensure MATLAB-compatible random number generation
+    Maths.setRandomNumbersMatlab(true);
+    // Set verbose level to SILENT to suppress warnings during tests
+    GlobalConstants.setVerbose(VerboseLevel.SILENT);
+  }
 
   double tolerance = 1e-6;
 

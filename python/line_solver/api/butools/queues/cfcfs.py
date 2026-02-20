@@ -1,12 +1,19 @@
 import numpy as np
 import numpy.matlib as ml
 import scipy.linalg as la
-import butools
 import math
-from butools.mam import GeneralFluidSolve
-from butools.utils import Linsolve, Diag
-from butools.reptrans import SimilarityMatrixForVectors
-from butools.mc import CTMCSolve, CheckGenerator
+from ..mam.fluid import GeneralFluidSolve
+from ..utils.misc import Linsolve, Diag
+from ..reptrans.similarity import SimilarityMatrixForVectors
+from ..mc.stst import CTMCSolve
+from ..mc.check import CheckGenerator
+
+from .. import checkInput, checkPrecision
+class _butools_settings:
+    checkInput = checkInput
+    checkPrecision = checkPrecision
+butools = _butools_settings()
+
 
 def FluidQueue (Q, Rin, Rout, *argv):
     """

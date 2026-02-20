@@ -20,7 +20,7 @@ P{1,1} = circul(2);
 
 model.link(P);
 %%
-solver = JMT(model,'seed',23000);
+solver = JMT(model,'seed',23000,'samples',1e4);
 RDsim = solver.getCdfRespT();
 fprintf(1,'\n')
 for i=1:model.getNumberOfStations

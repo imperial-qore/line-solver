@@ -65,12 +65,20 @@ def get_sched_strategy_id(strategy: Any) -> int:
     Returns:
         Integer ID for the strategy
     """
-    if isinstance(strategy, int):
+    # Check if it's a plain int (not an enum) - if so, return directly
+    # Note: IntEnum is a subclass of int, so check for enum first
+    from enum import IntEnum
+    if isinstance(strategy, int) and not isinstance(strategy, IntEnum):
         return strategy
 
-    # Handle JPype enum
+    # Handle both Python enum and JPype enum
     if hasattr(strategy, 'name'):
-        name = str(strategy.name()).upper()
+        # For Python enums, name is a property; for JPype, it might be a method
+        name_attr = strategy.name
+        if callable(name_attr):
+            name = str(name_attr()).upper()
+        else:
+            name = str(name_attr).upper()
     elif hasattr(strategy, 'value'):
         name = str(strategy.value).upper()
     else:

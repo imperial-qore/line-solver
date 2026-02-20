@@ -19,6 +19,10 @@
         <!-- Build output directory (default: local target/, use -Dtmp=true for /tmp/target) -->
         <buildDir>${project.basedir}/target</buildDir>
 
+        <!-- Test tag filtering (default: exclude slow tests) -->
+        <groups></groups>
+        <excludedGroups>slow</excludedGroups>
+
         <!-- Build optimization -->
         <maven.compile.fork>true</maven.compile.fork>
         <maven.compiler.fork>true</maven.compiler.fork>
@@ -49,12 +53,11 @@
         </profile>
         <profile>
             <!-- Tmp build profile: redirects output to /tmp/target/ -->
-            <!-- Usage: mvn test -Dtmp=true -->
+            <!-- Usage: mvn test -Dtmp -->
             <id>tmp-build</id>
             <activation>
                 <property>
                     <name>tmp</name>
-                    <value>true</value>
                 </property>
             </activation>
             <properties>
@@ -525,6 +528,8 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <skipTests>${skipTests}</skipTests>
+                    <groups>${groups}</groups>
+                    <excludedGroups>${excludedGroups}</excludedGroups>
                     <reportFormat>brief</reportFormat>
                     <useFile>false</useFile>
                     <printSummary>true</printSummary>
@@ -718,6 +723,11 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-math3</artifactId>
             <version>3.6.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.ojalgo</groupId>
+            <artifactId>ojalgo</artifactId>
+            <version>53.1.1</version>
         </dependency>
         <dependency>
             <groupId>org.hipparchus</groupId>

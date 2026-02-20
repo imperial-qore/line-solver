@@ -27,6 +27,7 @@ data class MAPRepresentation(val D0: Matrix, val D1: Matrix)
  * @return The MAPRepresentation containing D0 and D1 matrices
  * @throws IllegalArgumentException if no feasible MAP is found
  */
+@JvmOverloads
 fun randomMAP(
     order: Int,
     mean: Double = 1.0,

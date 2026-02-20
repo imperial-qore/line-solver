@@ -240,7 +240,7 @@ fun dtmc_stochcomp(P: Matrix, I: IntArray? = null): Matrix {
     }
 
     // S = P11 + P12 * (I - P22)^{-1} * P21
-    // First compute (I - P22)^{-1}
+    // MATLAB uses S2 \ P21 (linear solve), so we do the same
     val IminusP22 = Matrix(m2, m2)
     for (i in 0 until m2) {
         for (j in 0 until m2) {
@@ -248,47 +248,36 @@ fun dtmc_stochcomp(P: Matrix, I: IntArray? = null): Matrix {
         }
     }
 
-    // Compute inverse using Apache Commons Math
-    val realMatrix = MatrixUtils.createRealMatrix(m2, m2)
+    // Solve (I - P22) * X = P21 using LU decomposition (matches MATLAB S2 \ P21)
+    val S2_real = MatrixUtils.createRealMatrix(m2, m2)
     for (i in 0 until m2) {
         for (j in 0 until m2) {
-            realMatrix.setEntry(i, j, IminusP22.get(i, j))
+            S2_real.setEntry(i, j, IminusP22.get(i, j))
         }
     }
 
-    val invMatrix = try {
-        LUDecomposition(realMatrix).solver.inverse
+    val P21_real = MatrixUtils.createRealMatrix(m2, m1)
+    for (i in 0 until m2) {
+        for (j in 0 until m1) {
+            P21_real.setEntry(i, j, P21.get(i, j))
+        }
+    }
+
+    val solvedMatrix = try {
+        LUDecomposition(S2_real).solver.solve(P21_real)
     } catch (e: Exception) {
-        // Return P11 if inversion fails
+        // Return P11 if solve fails
         return P11
     }
 
-    val invIminusP22 = Matrix(m2, m2)
-    for (i in 0 until m2) {
-        for (j in 0 until m2) {
-            invIminusP22.set(i, j, invMatrix.getEntry(i, j))
-        }
-    }
-
-    // Compute P12 * invIminusP22
-    val temp = Matrix(m1, m2)
-    for (i in 0 until m1) {
-        for (j in 0 until m2) {
-            var sum = 0.0
-            for (k in 0 until m2) {
-                sum += P12.get(i, k) * invIminusP22.get(k, j)
-            }
-            temp.set(i, j, sum)
-        }
-    }
-
-    // Compute temp * P21 and add to P11
+    // Compute P12 * solvedMatrix and add to P11
+    // solvedMatrix is (m2 x m1) = (I-P22)^{-1} * P21
     val S = Matrix(m1, m1)
     for (i in 0 until m1) {
         for (j in 0 until m1) {
             var sum = P11.get(i, j)
             for (k in 0 until m2) {
-                sum += temp.get(i, k) * P21.get(k, j)
+                sum += P12.get(i, k) * solvedMatrix.getEntry(k, j)
             }
             S.set(i, j, sum)
         }

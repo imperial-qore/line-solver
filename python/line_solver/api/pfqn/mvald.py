@@ -9,6 +9,19 @@ the number of jobs present.
 import numpy as np
 from typing import Tuple, Optional
 
+# Try to import JIT-compiled kernels
+try:
+    from .mvald_jit import (
+        HAS_NUMBA as MVALD_HAS_NUMBA,
+        mvald_iteration_kernel_jit,
+    )
+except ImportError:
+    MVALD_HAS_NUMBA = False
+    mvald_iteration_kernel_jit = None
+
+# Threshold for using JIT (number of population states)
+MVALD_JIT_THRESHOLD = 100
+
 
 def _pprod_init(N: np.ndarray) -> np.ndarray:
     """Initialize population product iterator.
@@ -146,6 +159,27 @@ def pfqn_mvald(
 
     # Number of population states
     num_states = int(np.prod(N + 1))
+
+    # Safety check: prevent memory explosion for large state spaces
+    # The algorithm allocates pi_all with shape (M, Ntot+1, num_states)
+    # For num_states > 100000, this can easily exceed available memory
+    MAX_STATES = 100000
+    if num_states > MAX_STATES:
+        raise MemoryError(
+            f"State space too large for exact load-dependent MVA: {num_states} states "
+            f"(population N={N.tolist()}). Consider reducing population or using "
+            f"approximate methods. Maximum supported: {MAX_STATES} states."
+        )
+
+    # Use JIT kernel for large state spaces
+    if MVALD_HAS_NUMBA and num_states > MVALD_JIT_THRESHOLD:
+        N_float = N.astype(np.float64)
+        XN_jit, QN_jit, UN_jit, CN_jit, lGN_jit, is_stable, pi_jit = mvald_iteration_kernel_jit(
+            L, N_float, Z, mu, stabilize
+        )
+        # The JIT kernel returns simplified lGN (just final value), need to wrap
+        lGN_out = lGN_jit
+        return XN_jit, QN_jit, UN_jit, CN_jit, lGN_out, is_stable, pi_jit
 
     # Throughputs for each population
     Xs = np.zeros((R, num_states))

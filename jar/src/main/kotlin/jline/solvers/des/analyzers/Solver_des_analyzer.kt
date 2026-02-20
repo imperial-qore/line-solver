@@ -225,7 +225,7 @@ private fun validateJacksonNetwork(sn: NetworkStruct): Boolean {
         ProcessType.UNIFORM,
         ProcessType.GAMMA,
         ProcessType.PARETO,
-        // ProcessType.WEIBULL, // TODO: Weibull support disabled - parameter mapping needs investigation
+        ProcessType.WEIBULL,
         ProcessType.LOGNORMAL
     )
     for ((_, procMap) in sn.procid) {

@@ -1,7 +1,6 @@
 # LINE Solver JAR
 
-This repository includes the JAR-based API of the LINE solver, written in Java and Kotlin. The API is used both by the MATLAB and Python codebases and
-can be also used for stand-alone JVM programs.
+This repository includes the JAR-based API of the LINE solver, written in Java and Kotlin. The API is used both by the MATLAB and Python codebases and can be also used for stand-alone JVM programs.
 
 ## Quick start
 #### Default JAR
@@ -27,18 +26,32 @@ The result will be located under the ../common/maven/ folder.
 mvn install -P jar-mvn
 ```
 
+#### Run tests
+Run all tests excluding slow tests (default):
+```
+mvn test -DskipTests=false
+```
+Run all tests including slow tests:
+```
+mvn test -DskipTests=false -DexcludedGroups=
+```
+Run only slow tests:
+```
+mvn test -DskipTests=false -DexcludedGroups= -Dgroups=slow
+```
+
 #### Run all benchmarks
 Run the complete benchmark suite (OQN, MQN, CQN, FJ, LQN) with all solvers (Fluid, MVA, NC, Auto, QNS, MAM):
 ```
 mvn compile exec:java -Pbench -Dtmp=true
 ```
 
-#### Javadoc
+#### API Documentation
 
-Generate the Javadoc documentation with:
+Generate the API documentation with Dokka (for Kotlin/Java interoperability):
 
 ```
-mvn javadoc:javadoc
+mvn dokka:dokka
 ```
 
 Alternatively, use the dedicated script (run from the `doc/` directory):
@@ -51,10 +64,5 @@ cd ../doc
 You can browse the JAR class hierarchy at [this page](https://line-solver.sourceforge.net/javadoc/index.html).
 
 ## Documentation
-Download the Java/Kotlin version of the [manual](https://sourceforge.net/p/line-solver/code/ci/master/tree/doc/LINE-java.pdf?format=raw).
-
-## Version
-
-This version is an alpha release with support for basic models with open and closed classes. MVA, Fluid, MAM, NC, SSA, and
-JMT solvers are mostly functional.
+Download the Java/Kotlin version of the [manual](https://line-solver.sourceforge.net/doc/LINE-java.pdf).
 

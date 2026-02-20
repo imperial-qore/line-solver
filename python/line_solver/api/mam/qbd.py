@@ -328,7 +328,8 @@ def qbd_bmapbmap1(
     A_1 = np.kron(np.eye(na), D1_srv)
 
     # Boundary blocks (for level 0)
-    B0 = np.kron(D0_arr, np.eye(ns))
+    # MATLAB: B0 = krons(MAPa{1}, eye(ns)) = kron(D0_arr, I_ns) + kron(I_na, I_ns)
+    B0 = np.kron(D0_arr, np.eye(ns)) + np.eye(na * ns)
 
     B1_list = []
     for b in range(maxbatch):
@@ -403,64 +404,41 @@ def qbd_mapmap1(
     A_1 = np.kron(np.eye(na), D1_srv)  # Backward (services)
     A0bar = np.kron(D0_arr, np.eye(ns))  # Boundary local
 
-    # Compute R and G using QBD solver
-    result = qbd_rg(A_1, A0, A1)
-    R = result.R
-    G = result.G
-    U = result.U
-    eta = result.eta
+    # Solve QBD using Cyclic Reduction (matching MATLAB: QBD_CR(A_1, A0, A1))
+    from ..smc import qbd_cr, qbd_pi
+    cr_result = qbd_cr(A_1, A0, A1)
+    G = cr_result['G']
+    R = cr_result['R']
+    U = cr_result['U']
 
-    # Compute queue length distribution using matrix-geometric method
-    # Solve pi_0 from: pi_0 * (A0bar + R * A_1) * e = 0, pi_0 * e = 1 - rho
-    # For now, use simplified approach
-    I = np.eye(R.shape[0])
-    try:
-        inv_I_minus_R = linalg.inv(I - R)
-    except LinAlgError:
-        inv_I_minus_R = linalg.pinv(I - R)
+    # Compute caudal characteristic (eta = spectral radius of R)
+    eta_val = np.max(np.abs(linalg.eigvals(R)))
 
-    # Compute steady-state distribution at level 0
-    # Solve: pi_0 * (A0bar + R * A_1) = 0 with normalization
-    L0 = A0bar + R @ A_1
-    try:
-        from ..mc.ctmc import ctmc_solve
-        pi0 = ctmc_solve(L0.T).flatten()
-    except:
-        # Fallback to eigenvalue method
-        eigvals, eigvecs = linalg.eig(L0.T)
-        idx = np.argmin(np.abs(eigvals))
-        pi0 = np.real(eigvecs[:, idx]).flatten()
-        pi0 = np.abs(pi0) / np.sum(np.abs(pi0))
+    # Compute queue length distribution using QBD_pi
+    # MATLAB: pqueue = QBD_pi(A_1, A0bar, R, 'MaxNumComp', 1e2)
+    pi_flat = qbd_pi(A_1, A0bar, R, max_num_comp=100)
+    n_phases = na * ns
+    num_levels = len(pi_flat) // n_phases
+    pqueue = pi_flat.reshape(num_levels, n_phases)
 
-    # Normalize
-    norm_const = np.sum(pi0) * np.sum(inv_I_minus_R, axis=1).mean()
-    if norm_const > 0:
-        pi0 = pi0 / norm_const * (1 - actual_util)
+    # Retry with more components if needed (MATLAB line 75-77)
+    if np.sum(np.sum(pqueue[1:, :], axis=1)) < actual_util * 0.99:
+        pi_flat = qbd_pi(A_1, A0bar, R, max_num_comp=20000)
+        num_levels = len(pi_flat) // n_phases
+        pqueue = pi_flat.reshape(num_levels, n_phases)
 
-    # Build queue length distribution (first few levels)
-    max_levels = 100
-    pqueue = np.zeros((max_levels, na * ns))
-    pqueue[0, :] = pi0
-
-    pi_n = pi0.copy()
-    for n in range(1, max_levels):
-        pi_n = pi_n @ R
-        pqueue[n, :] = pi_n
-        if np.sum(pi_n) < 1e-12:
-            break
-
-    # Compute performance measures
+    # Compute performance measures (matching MATLAB lines 79-88)
     if na == 1 and ns == 1:
-        UN = 1 - pqueue[0, 0]
-        QN = np.sum(np.arange(pqueue.shape[0]) * pqueue.flatten())
+        UN = 1.0 - pqueue[0, 0]
+        QN = float(np.arange(pqueue.shape[0]) @ pqueue.flatten())
     else:
-        UN = 1 - np.sum(pqueue[0, :])
-        QN = np.sum(np.arange(pqueue.shape[0])[:, None] * np.sum(pqueue, axis=1, keepdims=True))
+        UN = 1.0 - np.sum(pqueue[0, :])
+        QN = float(np.arange(pqueue.shape[0]) @ np.sum(pqueue, axis=1))
 
     XN = lambda_a
     MAPs_scaled = (D0_srv, D1_srv)
 
-    return XN, QN, UN, pqueue, R, eta, G, A_1, A0, A1, U, MAPs_scaled
+    return XN, QN, UN, pqueue, R, eta_val, G, A_1, A0, A1, U, MAPs_scaled
 
 
 def qbd_raprap1(
@@ -521,62 +499,50 @@ def qbd_raprap1(
     lambda_s = map_lambda(H0_srv, H1_srv)
     actual_util = lambda_a / lambda_s
 
-    # Build QBD blocks (same structure as MAP/MAP/1)
-    F = np.kron(H1_arr, np.eye(ns))  # Forward (arrivals)
-    L = np.kron(H0_arr, np.eye(ns)) + np.kron(np.eye(na), H0_srv)  # Local
-    B = np.kron(np.eye(na), H1_srv)  # Backward (services)
+    # Build QBD blocks matching MATLAB Q_RAP_RAP_1.m
+    # A0 = kron(eye(mA), D1)   -- backward (service completions)
+    # A1 = kron(C0, eye(mS)) + kron(eye(mA), D0)  -- local (Kronecker sum)
+    # A2 = kron(C1, eye(mS))   -- forward (arrivals)
+    A0 = np.kron(np.eye(na), H1_srv)        # B (backward)
+    A1 = np.kron(H0_arr, np.eye(ns)) + np.kron(np.eye(na), H0_srv)  # L (local)
+    A2 = np.kron(H1_arr, np.eye(ns))        # F (forward)
+    B0 = A0.copy()
+    B1 = np.kron(H0_arr, np.eye(ns))        # Boundary local
 
-    # Compute R and G
-    result = qbd_rg(B, L, F)
-    R = result.R
-    G = result.G
-    eta = result.eta if result.eta is not None else np.max(np.abs(linalg.eigvals(R)))
+    # Solve QBD using Cyclic Reduction with RAP components
+    from ..smc import qbd_cr, qbd_pi
+    cr_result = qbd_cr(A0, A1, A2, rap_comp=True)
+    G = cr_result['G']
+    R = cr_result['R']
 
-    # Compute queue length distribution
-    # Solve pi_0 from boundary condition
-    A0bar = np.kron(H0_arr, np.eye(ns))
-    L0 = A0bar + R @ B
+    # Compute queue length distribution using QBD_pi with RAPComp
+    pi_flat = qbd_pi(B0, B1, R, max_num_comp=50, rap_comp=True)
+    n_phases = na * ns
+    num_levels = len(pi_flat) // n_phases
 
-    try:
-        from ..mc.ctmc import ctmc_solve
-        pi0 = ctmc_solve(L0.T).flatten()
-    except:
-        eigvals, eigvecs = linalg.eig(L0.T)
-        idx = np.argmin(np.abs(eigvals))
-        pi0 = np.real(eigvecs[:, idx]).flatten()
-        pi0 = np.abs(pi0) / np.sum(np.abs(pi0))
+    # Compute queue length distribution (probabilities per level)
+    ql = np.zeros(num_levels)
+    for i in range(num_levels):
+        ql[i] = np.sum(pi_flat[i * n_phases:(i + 1) * n_phases])
 
-    # Normalize
-    I = np.eye(R.shape[0])
-    try:
-        inv_I_minus_R = linalg.inv(I - R)
-    except LinAlgError:
-        inv_I_minus_R = linalg.pinv(I - R)
+    # Reshape pqueue as levels x phases
+    pqueue = pi_flat.reshape(num_levels, n_phases)
 
-    norm_const = np.sum(pi0 @ inv_I_minus_R)
-    if norm_const > 0:
-        pi0 = pi0 / norm_const
+    # Compute performance measures matching MATLAB qbd_raprap1.m
+    eta = float(np.max(np.abs(linalg.eigvals(R))))
 
-    # Build queue length distribution
-    max_levels = 100
-    pqueue = np.zeros((max_levels, na * ns))
-    pqueue[0, :] = pi0
-
-    pi_n = pi0.copy()
-    for n in range(1, max_levels):
-        pi_n = pi_n @ R
-        pqueue[n, :] = pi_n
-        if np.sum(pi_n) < 1e-12:
-            break
-
-    # Compute performance measures
     if na == 1 and ns == 1:
-        UN = 1 - pqueue[0, 0]
+        UN = 1.0 - pqueue[0, 0]
     else:
-        UN = 1 - np.sum(pqueue[0, :])
+        UN = 1.0 - np.sum(pqueue[0, :])
 
-    QN = np.sum(np.arange(pqueue.shape[0])[:, None] * np.sum(pqueue, axis=1, keepdims=True))
+    QN = float(np.arange(pqueue.shape[0]) @ np.sum(pqueue, axis=1))
     XN = lambda_a
+
+    # Return B, L, F using original naming convention
+    B = A0
+    L = A1
+    F = A2
 
     return XN, QN, UN, pqueue, R, eta, G, B, L, F
 
@@ -615,14 +581,25 @@ def qbd_setupdelayoff(
     References:
         Original MATLAB: matlab/src/api/mam/qbd_setupdelayoff.m
     """
-    from ..butools.ph.baseph import AcyclicPHFromMeansAndSCVs
+    # Try to import AcyclicPHFromMeansAndSCVs, but it may not exist
+    try:
+        from ..butools.ph.baseph import AcyclicPHFromMeansAndSCVs
+        HAS_ACYCLIC_PH = True
+    except ImportError:
+        HAS_ACYCLIC_PH = False
+        AcyclicPHFromMeansAndSCVs = None
 
     # Fit PH distributions for setup and turn-off phases
-    try:
-        alpha_ph = AcyclicPHFromMeansAndSCVs([1.0 / alpharate], [alphascv])
-        alpha_D0 = alpha_ph[1]  # Subgenerator matrix
-        alpha_D1 = -alpha_D0 @ np.ones((alpha_D0.shape[0], 1))
-    except:
+    alpha_D0 = None
+    if HAS_ACYCLIC_PH:
+        try:
+            alpha_ph = AcyclicPHFromMeansAndSCVs([1.0 / alpharate], [alphascv])
+            alpha_D0 = alpha_ph[1]  # Subgenerator matrix
+            alpha_D1 = -alpha_D0 @ np.ones((alpha_D0.shape[0], 1))
+        except:
+            alpha_D0 = None
+
+    if alpha_D0 is None:
         # Fallback to Erlang approximation
         na = max(1, int(round(1.0 / alphascv)))
         rate_a = na * alpharate
@@ -632,11 +609,16 @@ def qbd_setupdelayoff(
         alpha_D1 = np.zeros((na, 1))
         alpha_D1[-1, 0] = rate_a
 
-    try:
-        beta_ph = AcyclicPHFromMeansAndSCVs([1.0 / betarate], [betascv])
-        beta_D0 = beta_ph[1]
-        beta_D1 = -beta_D0 @ np.ones((beta_D0.shape[0], 1))
-    except:
+    beta_D0 = None
+    if HAS_ACYCLIC_PH:
+        try:
+            beta_ph = AcyclicPHFromMeansAndSCVs([1.0 / betarate], [betascv])
+            beta_D0 = beta_ph[1]
+            beta_D1 = -beta_D0 @ np.ones((beta_D0.shape[0], 1))
+        except:
+            beta_D0 = None
+
+    if beta_D0 is None:
         # Fallback to Erlang approximation
         nb = max(1, int(round(1.0 / betascv)))
         rate_b = nb * betarate
@@ -701,37 +683,82 @@ def qbd_setupdelayoff(
         elif i < nb - 1:
             L0[na + i, na + i + 1] = -beta_D0[i, i]
 
-    # Compute R matrix
+    # Compute R matrix using QBD_CR equivalent
     R = qbd_R(B, L, F)
 
-    # Compute steady-state distribution at level 0
-    try:
-        from ..mc.dtmc import dtmc_solve
-        pi_boundary = dtmc_solve(L0 + R @ B)
-    except:
-        pi_boundary = np.ones(n) / n
-
-    # Normalize
+    # Compute steady-state distribution using QBD_pi algorithm
+    # Follow MATLAB QBD_pi: convert to discrete time first
     I = np.eye(n)
+
+    # Uniformization: find maximum exit rate from boundary block
+    lamb = max(-np.diag(L0))
+    if lamb <= 0:
+        lamb = 1.0
+
+    # Convert to discrete time stochastic matrices
+    B1_dt = L0 / lamb + I  # Boundary local block
+    B0_dt = B / lamb       # Backward transitions
+
+    # Compute stochastic matrix for level 0
+    stat_matrix = B1_dt + R @ B0_dt
+
+    # Find stationary distribution using stat() approach:
+    # Solve: K @ [A - I, e] = [0, ..., 0, 1]
+    # This is equivalent to: K @ (A - I) = 0 and K @ e = 1
+    e = np.ones((n, 1))
+    aug_matrix = np.hstack([stat_matrix - I, e])
+    y = np.zeros(n + 1)
+    y[-1] = 1.0
+
+    # Solve K @ aug_matrix = y using least squares (K = y @ pinv(aug_matrix))
     try:
-        inv_I_minus_R = linalg.inv(I - R)
-    except LinAlgError:
-        inv_I_minus_R = linalg.pinv(I - R)
+        pi0 = linalg.lstsq(aug_matrix.T, y, cond=None)[0]
+    except:
+        pi0 = np.linalg.lstsq(aug_matrix.T, y, rcond=None)[0]
+    pi0 = np.abs(pi0)  # Ensure non-negative
 
-    norm_const = np.sum(pi_boundary @ inv_I_minus_R)
+    # Normalize using QBD normalization: pi @ (I-R)^{-1} @ 1 = 1
+    try:
+        temp = linalg.inv(I - R)
+    except:
+        temp = linalg.pinv(I - R)
+
+    norm_const = pi0 @ temp @ np.ones(n)
     if norm_const > 0:
-        pi_boundary = pi_boundary / norm_const
+        pi0 = pi0 / norm_const
 
-    # Compute queue length distribution and mean
-    max_levels = 1000
+    # Build full probability vector pn following MATLAB QBD_pi
+    # Generate level probabilities until total mass approaches 1
+    max_num_comp = 500
+    pi_levels = [pi0]
+    sum_pi = np.sum(pi0)
+    numit = 1
+
+    while sum_pi < 1 - 1e-10 and numit < max_num_comp:
+        pi_next = pi_levels[-1] @ R
+        pi_levels.append(pi_next)
+        numit += 1
+        sum_pi += np.sum(pi_next)
+
+    # Concatenate all levels into a single vector (like MATLAB's reshape(pi', 1, []))
+    pn = np.concatenate(pi_levels)
+
+    # Compute QN using MATLAB's exact indexing
+    # MATLAB code: j = n+1; QN = QN + ni*sum(pn(j:(j+n))); j = j+n
+    # MATLAB's pn(j:(j+n)) includes (n+1) elements due to inclusive 1-based indexing
+    # Python equivalent: pn[j:j+n+1] where j starts at n (0-based)
     QN = 0.0
-    pi_n = pi_boundary.copy()
+    j = n  # 0-based index (equivalent to MATLAB's j=n+1 in 1-based)
+    ni = 0
 
-    for level in range(1, max_levels):
-        pi_n = pi_n @ R
-        level_prob = np.sum(pi_n)
-        QN += level * level_prob
-        if level_prob < 1e-12:
+    while True:
+        ni += 1
+        # MATLAB: sum(pn(j:(j+n))) includes elements j to j+n (inclusive)
+        # Python: pn[j:j+n+1] gives same range
+        end_idx = min(j + n + 1, len(pn))
+        QN += ni * np.sum(pn[j:end_idx])
+        j += n
+        if j + n >= len(pn):
             break
 
     return QN

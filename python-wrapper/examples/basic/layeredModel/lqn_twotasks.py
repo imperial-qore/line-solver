@@ -44,8 +44,9 @@ if __name__ == "__main__":
     print('LQNS Results:')
     print(avg_table_lqns)
 
-    # Solve with LN using NC solver
-    solver_ln = SolverLN(model, method='nc', verbose=False)
+    # Solve with LN solver using NC as the layer solver (matches MATLAB)
+    # MATLAB: solver{2} = LN(model, @(l)NC(l,solveroptions), lnoptions);
+    solver_ln = SolverLN(model, lambda m: SolverNC(m, verbose=False), verbose=False)
     avg_table_ln = solver_ln.get_avg_table()
-    print('\nLN Results (with NC solver):')
+    print('\nNC Results:')
     print(avg_table_ln)

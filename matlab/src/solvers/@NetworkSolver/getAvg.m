@@ -169,7 +169,7 @@ if sn.nchains > 0 && ~hasSPN  % Only check reachability if chains are defined an
                     % For fork-join models, don't zero out if the metric has a non-zero value
                     % from simulation - the visits calculation doesn't capture fork-join semantics
                     % where Join outputs the parent class
-                    if hasForkJoin && metric(i,k) > GlobalConstants.FineTol
+                    if hasForkJoin && ~isempty(metric) && metric(i,k) > GlobalConstants.FineTol
                         continue; % Trust the simulation result
                     end
                     outData(i,k) = 0;

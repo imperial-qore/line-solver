@@ -8,9 +8,20 @@ layered queueing networks.
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any, Union
-from enum import Enum
+from enum import Enum, IntEnum
 
 from .constants import SchedStrategy
+
+
+class LayeredNetworkElement(IntEnum):
+    """Element types in layered queueing networks (matches MATLAB enum values)."""
+    PROCESSOR = 0
+    TASK = 1
+    ENTRY = 2
+    ACTIVITY = 3
+    CALL = 4
+from .lang.base import ReplacementStrategy
+from .distributions import Immediate, Exp
 
 
 class CallType(Enum):
@@ -29,18 +40,13 @@ class PrecedenceType(Enum):
     CACHE_ACCESS = 'CACHE_ACCESS'  # Cache access pattern (hit/miss)
 
 
-class ReplacementStrategy(Enum):
-    """Cache replacement strategies."""
-    FIFO = 'FIFO'  # First-In First-Out
-    LRU = 'LRU'    # Least Recently Used
-    RR = 'RR'      # Random Replacement
-    SFIFO = 'SFIFO'  # Segmented FIFO
-
-
 def _get_dist_mean(dist) -> float:
     """Get mean from distribution (handles dataclass and native distributions)."""
     if dist is None:
         return 0.0
+    # Handle numeric types directly
+    if isinstance(dist, (int, float)):
+        return float(dist)
     if hasattr(dist, 'mean') and not callable(dist.mean):
         # Dataclass Distribution with .mean field
         return dist.mean
@@ -600,6 +606,10 @@ class Task:
             self.name = name_or_mult
             self.multiplicity = mult_or_sched
             self.sched_strategy = self._convert_sched_strategy(sched)
+            # MATLAB sets multiplicity to Inf when scheduling is INF with finite multiplicity
+            # This is necessary for correct njobs computation in SolverLN
+            if self.sched_strategy == SchedStrategy.INF and np.isfinite(self.multiplicity):
+                self.multiplicity = np.inf
             # Register with model
             if hasattr(self._model, 'add_task'):
                 self._model.add_task(self)
@@ -609,6 +619,9 @@ class Task:
             self.name = model_or_name
             self.multiplicity = name_or_mult
             self.sched_strategy = self._convert_sched_strategy(mult_or_sched)
+            # MATLAB sets multiplicity to Inf when scheduling is INF with finite multiplicity
+            if self.sched_strategy == SchedStrategy.INF and np.isfinite(self.multiplicity):
+                self.multiplicity = np.inf
 
         self.processor = None
         self.think_time = None
@@ -761,6 +774,10 @@ class Task:
     get_setup_time_mean = getSetupTimeMean
     get_delay_off_time_mean = getDelayOffTimeMean
 
+    def is_function_task(self) -> bool:
+        """Return False for regular Task. FunctionTask overrides this."""
+        return False
+
 
 class Processor:
     """
@@ -890,6 +907,8 @@ class CacheTask(Task):
         self.sched_strategy = SchedStrategy.FCFS
         self.processor = None
         self.think_time = None
+        self.setup_time = None
+        self.delay_off_time = None
         self.entries = []
         self.activities = []
         self.precedences = []
@@ -984,15 +1003,24 @@ class LayeredNetworkStruct:
 
     # Matrices
     mult: np.ndarray = None          # Multiplicities
+    repl: np.ndarray = None          # Replication factors
+    maxmult: np.ndarray = None       # Max multiplicities (for servers)
     graph: np.ndarray = None         # Adjacency graph
     iscaller: np.ndarray = None      # Caller matrix
     issynccaller: np.ndarray = None  # Sync caller matrix
     isasynccaller: np.ndarray = None # Async caller matrix
     isref: np.ndarray = None         # Reference task flags
+    iscache: np.ndarray = None       # Cache task flags (True if task is a CacheTask)
+    nitems: np.ndarray = None        # Number of items for CacheTask/ItemEntry
+    itemcap: Dict[int, np.ndarray] = field(default_factory=dict)  # Cache capacity per level
+    replacestrat: np.ndarray = None  # Cache replacement strategy
+    itemproc: Dict[int, object] = field(default_factory=dict)     # Item popularity distribution
     callpair: np.ndarray = None      # Call pairs (caller_act, callee_entry, mean_calls)
     parent: np.ndarray = None        # Parent relationships
     replygraph: np.ndarray = None    # Reply graph (nacts x nentries)
     actphase: np.ndarray = None      # Activity phase (1 or 2) for each activity
+    actposttype: np.ndarray = None   # Activity post-precedence type (POST_AND, POST_OR, POST_SEQ)
+    actpretype: np.ndarray = None    # Activity pre-precedence type (PRE_AND, PRE_OR, PRE_SEQ)
 
     # Names
     names: np.ndarray = None
@@ -1164,6 +1192,281 @@ class LayeredNetwork:
 
         return tshift, eshift, ashift, idx - 1
 
+    def _lsn_max_multiplicity(self, lqn: 'LayeredNetworkStruct', nidx: int) -> np.ndarray:
+        """
+        Compute maximum multiplicity (throughput capacity) for each node.
+
+        This implements the MATLAB lsn_max_multiplicity algorithm using
+        Kahn's algorithm for topological sorting to propagate flow constraints
+        through the network.
+
+        Args:
+            lqn: The LayeredNetworkStruct being built
+            nidx: Total number of indices
+
+        Returns:
+            Array of maxmult values indexed by node index
+        """
+        # Use DAG for flow propagation (needs to be built or use graph)
+        # The DAG excludes loop-back edges
+        n = nidx + 1
+
+        # Get the adjacency graph (use dag if available, else graph)
+        if hasattr(lqn, 'dag') and lqn.dag is not None:
+            ag = (lqn.dag > 0).astype(int)
+        elif hasattr(lqn, 'graph') and lqn.graph is not None:
+            ag = (lqn.graph > 0).astype(int)
+        else:
+            # If no graph yet, return mult as fallback
+            maxmult = np.zeros((1, n))
+            for proc in self.processors:
+                idx = self._proc_idx[proc]
+                mult_val = lqn.mult[0, idx] if idx < lqn.mult.shape[1] else 1.0
+                if np.isinf(mult_val):
+                    maxmult[0, idx] = 0
+                else:
+                    maxmult[0, idx] = mult_val
+            for task in self.tasks:
+                idx = self._task_idx[task]
+                maxmult[0, idx] = lqn.mult[0, idx] if idx < lqn.mult.shape[1] else 1.0
+            return maxmult
+
+        # Ensure ag is the right size
+        if ag.shape[0] < n:
+            new_ag = np.zeros((n, n))
+            new_ag[:ag.shape[0], :ag.shape[1]] = ag
+            ag = new_ag
+
+        # Get mult and type arrays
+        # MATLAB (lsn_max_multiplicity.m lines 59-61):
+        # if length(mult) < n
+        #     mult(end+1:n) = Inf;
+        # end
+        # This pads mult with Inf for entries and activities, allowing flow to pass through
+        mult = lqn.mult.flatten() if lqn.mult is not None else np.ones(n)
+        if len(mult) < n:
+            new_mult = np.ones(n) * np.inf
+            new_mult[:len(mult)] = mult
+            mult = new_mult
+        # Replace zeros with Inf for entries and activities (they don't limit flow)
+        # MATLAB only defines mult for hosts+tasks; entries/activities get Inf by padding
+        for i in range(n):
+            if mult[i] == 0:
+                mult[i] = np.inf
+
+        # Build isref array (need to set it before this function is called)
+        isref = np.zeros(n)
+        for task in self.tasks:
+            if task.sched_strategy == SchedStrategy.REF:
+                isref[self._task_idx[task]] = 1
+
+        # Build type array
+        type_arr = np.zeros(n)
+        for proc in self.processors:
+            type_arr[self._proc_idx[proc]] = LayeredNetworkElement.PROCESSOR
+        for task in self.tasks:
+            type_arr[self._task_idx[task]] = LayeredNetworkElement.TASK
+        for entry in self.entries:
+            type_arr[self._entry_idx[entry]] = LayeredNetworkElement.ENTRY
+        for act in self.activities:
+            type_arr[self._act_idx[act]] = LayeredNetworkElement.ACTIVITY
+
+        # Topological sort using Kahn's algorithm
+        order = self._kahn_topological_sort(ag)
+
+        # Initially load ref task multiplicity into inflow
+        inflow = np.zeros(n)
+        for i in range(n):
+            if type_arr[i] == LayeredNetworkElement.TASK and isref[i]:
+                inflow[i] = mult[i]
+            # Also account for entries with open arrivals
+            elif type_arr[i] == LayeredNetworkElement.ENTRY:
+                if hasattr(lqn, 'arrival') and lqn.arrival is not None:
+                    if isinstance(lqn.arrival, dict) and i in lqn.arrival:
+                        inflow[i] = 1
+                    elif isinstance(lqn.arrival, list) and i < len(lqn.arrival) and lqn.arrival[i] is not None:
+                        inflow[i] = 1
+
+        outflow = np.zeros(n)
+
+        # Propagate flow through DAG in topological order
+        for k in range(len(order)):
+            i = order[k]
+            outflow[i] = min(inflow[i], mult[i])
+            for j in range(n):
+                if j != i and ag[i, j]:
+                    inflow[j] = inflow[j] + outflow[i]
+
+        # For non-ref tasks with INF mult, set outflow = Inf (MATLAB lines 73-77)
+        for i in range(n):
+            if type_arr[i] == LayeredNetworkElement.TASK and np.isinf(mult[i]) and not isref[i]:
+                outflow[i] = np.inf
+
+        # For non-ref tasks with finite mult that didn't receive flow, use their mult
+        # This handles the case where flow doesn't propagate to tasks in the graph
+        # but they still have a finite multiplicity that should be used
+        for i in range(n):
+            if type_arr[i] == LayeredNetworkElement.TASK and not isref[i]:
+                if outflow[i] == 0 and not np.isinf(mult[i]) and mult[i] > 0:
+                    outflow[i] = mult[i]
+
+        # For processors whose tasks have non-zero maxmult but the processor itself has 0,
+        # use the processor's mult. This happens when tasks don't receive flow through
+        # the graph but still have a finite multiplicity.
+        for proc in self.processors:
+            proc_idx = self._proc_idx[proc]
+            if outflow[proc_idx] == 0 and not np.isinf(mult[proc_idx]) and mult[proc_idx] > 0:
+                outflow[proc_idx] = mult[proc_idx]
+
+        return outflow.reshape(1, -1)
+
+    def _kahn_topological_sort(self, ag: np.ndarray) -> List[int]:
+        """
+        Perform topological sort using Kahn's algorithm.
+
+        Args:
+            ag: Adjacency matrix (ag[i,j] = 1 means edge from i to j)
+
+        Returns:
+            List of node indices in topological order
+        """
+        n = ag.shape[0]
+        in_degree = np.sum(ag, axis=0).astype(int)  # Count incoming edges for each node
+        queue = [i for i in range(n) if in_degree[i] == 0]
+        order = []
+
+        while queue:
+            node = queue.pop(0)
+            order.append(node)
+            for j in range(n):
+                if ag[node, j]:
+                    in_degree[j] -= 1
+                    if in_degree[j] == 0:
+                        queue.append(j)
+
+        # If not all nodes are in order, there's a cycle - return partial order
+        if len(order) < n:
+            # Add remaining nodes
+            for i in range(n):
+                if i not in order:
+                    order.append(i)
+
+        return order
+
+    def _get_prec_type(self, prec) -> PrecedenceType:
+        """
+        Get the PrecedenceType from either layered.py or workflow.py ActivityPrecedence.
+
+        This handles the class name collision where both modules define ActivityPrecedence
+        with different attribute names (prec_type vs pre_type/post_type).
+        """
+        # If it has prec_type attribute, use it directly (layered.py ActivityPrecedence)
+        if hasattr(prec, 'prec_type') and prec.prec_type is not None:
+            return prec.prec_type
+
+        # workflow.py ActivityPrecedence uses pre_type and post_type
+        # Map post_type to our PrecedenceType enum
+        if hasattr(prec, 'post_type') and prec.post_type is not None:
+            post_type = prec.post_type
+            # Handle both string and enum values
+            post_type_str = post_type if isinstance(post_type, str) else str(post_type)
+            post_type_upper = post_type_str.upper().replace('-', '_')
+
+            if 'POST_AND' in post_type_upper or 'AND' in post_type_upper:
+                return PrecedenceType.PARALLEL
+            elif 'POST_OR' in post_type_upper or '_OR' in post_type_upper:
+                return PrecedenceType.CHOICE
+            elif 'POST_LOOP' in post_type_upper or 'LOOP' in post_type_upper:
+                return PrecedenceType.LOOP
+            else:
+                return PrecedenceType.SERIAL
+
+        # Default to SERIAL
+        return PrecedenceType.SERIAL
+
+    def _get_prec_activities(self, prec):
+        """
+        Get the activities list from either layered.py or workflow.py ActivityPrecedence.
+
+        For workflow.py ActivityPrecedence, this returns post_acts which contains
+        [loop_body_activities..., end_activity] for loops, or just post_activities
+        for other types.
+        """
+        # layered.py uses 'activities' for serial and loop body
+        if hasattr(prec, 'activities') and prec.activities:
+            return prec.activities
+        # workflow.py uses 'post_acts' for the activities list
+        if hasattr(prec, 'post_acts') and prec.post_acts:
+            return prec.post_acts
+        # Also try post_activities as fallback
+        if hasattr(prec, 'post_activities') and prec.post_activities:
+            return prec.post_activities
+        return []
+
+    def _get_prec_pre_activities(self, prec):
+        """Get pre_activities from either ActivityPrecedence type."""
+        if hasattr(prec, 'pre_activities') and prec.pre_activities:
+            return prec.pre_activities
+        # workflow.py uses 'pre_acts'
+        if hasattr(prec, 'pre_acts') and prec.pre_acts:
+            return prec.pre_acts
+        return []
+
+    def _get_prec_post_activities(self, prec):
+        """Get post_activities from either ActivityPrecedence type."""
+        if hasattr(prec, 'post_activities') and prec.post_activities:
+            return prec.post_activities
+        # workflow.py uses 'post_acts'
+        if hasattr(prec, 'post_acts') and prec.post_acts:
+            return prec.post_acts
+        return []
+
+    def _get_prec_count(self, prec) -> float:
+        """Get loop count from either ActivityPrecedence type."""
+        if hasattr(prec, 'count') and prec.count is not None:
+            return float(prec.count)
+        if hasattr(prec, 'post_params') and prec.post_params is not None:
+            params = prec.post_params
+            if isinstance(params, np.ndarray) and params.size > 0:
+                return float(params.flat[0])
+            elif isinstance(params, (list, tuple)) and len(params) > 0:
+                return float(params[0])
+        return 1.0
+
+    def _get_prec_probabilities(self, prec):
+        """Get probabilities from either ActivityPrecedence type."""
+        if hasattr(prec, 'probabilities') and prec.probabilities:
+            return prec.probabilities
+        if hasattr(prec, 'post_params') and prec.post_params is not None:
+            params = prec.post_params
+            if isinstance(params, np.ndarray):
+                return params.flatten().tolist()
+            elif isinstance(params, (list, tuple)):
+                return list(params)
+        return []
+
+    def _get_act_idx(self, act):
+        """
+        Get the index for an activity from _act_idx.
+
+        Handles both Activity objects and string names.
+        """
+        # Direct lookup if it's an Activity object
+        if act in self._act_idx:
+            return self._act_idx[act]
+
+        # If it's a string, look up by name
+        if isinstance(act, str):
+            for activity, idx in self._act_idx.items():
+                if hasattr(activity, 'name') and activity.name == act:
+                    return idx
+
+        return None
+
+    def _act_in_idx(self, act) -> bool:
+        """Check if an activity (object or name) is in _act_idx."""
+        return self._get_act_idx(act) is not None
+
     def getStruct(self) -> LayeredNetworkStruct:
         """
         Build and return the internal structure representation.
@@ -1211,21 +1514,72 @@ class LayeredNetwork:
             lqn.names[idx] = act.name
             lqn.hashnames[idx] = act.name
 
+        # Build type array (matches MATLAB LayeredNetworkElement enum)
+        # 0=PROCESSOR, 1=TASK, 2=ENTRY, 3=ACTIVITY
+        lqn.type = np.zeros(nidx + 1, dtype=int)
+        for proc in self.processors:
+            lqn.type[self._proc_idx[proc]] = 0  # PROCESSOR
+        for task in self.tasks:
+            lqn.type[self._task_idx[task]] = 1  # TASK
+        for entry in self.entries:
+            lqn.type[self._entry_idx[entry]] = 2  # ENTRY
+        for act in self.activities:
+            lqn.type[self._act_idx[act]] = 3  # ACTIVITY
+
         # Build multiplicity matrix
         lqn.mult = np.zeros((1, nidx + 1))
         for proc in self.processors:
             lqn.mult[0, self._proc_idx[proc]] = proc.multiplicity
         for task in self.tasks:
             mult = task.multiplicity
+            # Keep float('inf') as np.inf - solver_ln.py handles infinite servers
             if mult == float('inf'):
-                mult = 1e9  # Large number for infinite server
+                mult = np.inf
             lqn.mult[0, self._task_idx[task]] = mult
+
+        # Build replication factors (defaults to 1)
+        # MATLAB: lsn.repl is indexed by host/task index (1:tshift+ntasks)
+        # We need to cover all indices up to nidx for consistent indexing
+        lqn.repl = np.ones((1, nidx + 1))
+
+        # Note: maxmult is computed later after the graph is built
 
         # Build reference task flags
         lqn.isref = np.zeros((nidx + 1, 1))
         for task in self.tasks:
             if task.sched_strategy == SchedStrategy.REF:
                 lqn.isref[self._task_idx[task], 0] = 1
+
+        # Build cache task flags (matches MATLAB: lsn.iscache = lsn.nitems > 0)
+        lqn.iscache = np.zeros((nidx + 1, 1))
+        for task in self.tasks:
+            if isinstance(task, CacheTask):
+                lqn.iscache[self._task_idx[task], 0] = 1
+
+        # Build cache-related arrays (matches MATLAB getStruct.m lines 66-68, 135-137, 183-184)
+        lqn.nitems = np.zeros((nidx + 1, 1))
+        lqn.itemcap = {}
+        lqn.replacestrat = np.zeros((nidx + 1, 1), dtype=int)
+        lqn.itemproc = {}
+
+        for task in self.tasks:
+            idx = self._task_idx[task]
+            if isinstance(task, CacheTask):
+                lqn.nitems[idx, 0] = task.total_items
+                # Convert cache_capacity to array if needed
+                cap = task.cache_capacity
+                if isinstance(cap, (list, tuple)):
+                    lqn.itemcap[idx] = np.array(cap, dtype=int)
+                else:
+                    lqn.itemcap[idx] = np.array([int(cap)])
+                # Store replacement strategy as integer
+                lqn.replacestrat[idx, 0] = task.replacement_strategy.value if hasattr(task.replacement_strategy, 'value') else int(task.replacement_strategy)
+
+        for entry in self.entries:
+            idx = self._entry_idx[entry]
+            if isinstance(entry, ItemEntry):
+                lqn.nitems[idx, 0] = entry.total_items
+                lqn.itemproc[idx] = entry.access_prob
 
         # Build caller matrices
         lqn.iscaller = np.zeros((nidx + 1, nidx + 1))
@@ -1252,25 +1606,60 @@ class LayeredNetwork:
                 target_task = target_entry.task
                 target_task_idx = self._task_idx[target_task]
 
-                # Mark caller relationship
+                # Mark caller relationships (matches MATLAB getStruct.m lines 294-297)
+                # MATLAB sets: iscaller(tidx, target_tidx), iscaller(aidx, target_tidx),
+                #              iscaller(tidx, target_eidx), iscaller(aidx, target_eidx)
                 lqn.iscaller[caller_task_idx, target_task_idx] = 1
+                lqn.iscaller[act_idx, target_task_idx] = 1
+                lqn.iscaller[caller_task_idx, target_entry_idx] = 1
+                lqn.iscaller[act_idx, target_entry_idx] = 1
 
                 if call_type == CallType.SYNC:
                     lqn.issynccaller[caller_task_idx, target_task_idx] = 1
+                    lqn.issynccaller[act_idx, target_task_idx] = 1
+                    lqn.issynccaller[caller_task_idx, target_entry_idx] = 1
+                    lqn.issynccaller[act_idx, target_entry_idx] = 1
                 else:
                     lqn.isasynccaller[caller_task_idx, target_task_idx] = 1
+                    lqn.isasynccaller[act_idx, target_task_idx] = 1
+                    lqn.isasynccaller[caller_task_idx, target_entry_idx] = 1
+                    lqn.isasynccaller[act_idx, target_entry_idx] = 1
 
-                calls.append((act_idx, target_entry_idx, mean_calls))
+                calls.append((act_idx, target_entry_idx, mean_calls, call_type))
+
+        # Note: For INF scheduling tasks, Java does not modify the task multiplicity.
+        # The MATLAB warning "Finite multiplicity is not allowed with INF scheduling"
+        # applies to processors, not tasks. Task multiplicity is kept as specified.
+        # This matches Java behavior in LayeredNetwork.java.
 
         lqn.ncalls = len(calls)
         if calls:
             lqn.callpair = np.zeros((lqn.ncalls + 1, 4))
-            for i, (act_idx, entry_idx, mean_calls) in enumerate(calls, 1):
+            lqn.calltype = np.zeros(lqn.ncalls + 1, dtype=int)
+            lqn.callproc = [None] * (lqn.ncalls + 1)
+            for i, (act_idx, entry_idx, mean_calls, call_type) in enumerate(calls, 1):
                 lqn.callpair[i, 1] = act_idx
                 lqn.callpair[i, 2] = entry_idx
                 lqn.callpair[i, 3] = mean_calls
+                # calltype: 1=SYNC, 2=ASYNC (matches MATLAB CallType enum)
+                lqn.calltype[i] = 1 if call_type == CallType.SYNC else 2
+                # callproc: distribution for call multiplicity
+                lqn.callproc[i] = Exp.fit_mean(mean_calls) if mean_calls > 0 else Immediate()
         else:
             lqn.callpair = np.zeros((1, 4))
+            lqn.calltype = np.zeros(1, dtype=int)
+            lqn.callproc = [None]
+
+        # Build callsof mapping (activity -> list of call indices)
+        # This maps each source activity to the calls it makes
+        lqn.callsof = {}
+        for cidx in range(1, lqn.ncalls + 1):
+            if cidx < lqn.callpair.shape[0]:
+                src_aidx = int(lqn.callpair[cidx, 1])
+                if src_aidx > 0:
+                    if src_aidx not in lqn.callsof:
+                        lqn.callsof[src_aidx] = []
+                    lqn.callsof[src_aidx].append(cidx)
 
         # Build parent relationships
         lqn.parent = np.zeros((nidx + 1, 1))
@@ -1334,7 +1723,17 @@ class LayeredNetwork:
                     lqn.actsof[task_idx].append(act_idx)
 
         # Build host demands
+        # MATLAB sets hostdem for tasks (mean=0), entries (Immediate/mean=0), and activities
         lqn.hostdem = {}
+        # Tasks have hostdem = 0 (they don't consume CPU directly)
+        for task in self.tasks:
+            task_idx = self._task_idx[task]
+            lqn.hostdem[task_idx] = Immediate()
+        # Entries have hostdem = Immediate (mean=0)
+        for entry in self.entries:
+            entry_idx = self._entry_idx[entry]
+            lqn.hostdem[entry_idx] = Immediate()
+        # Activities have actual host demands
         for act in self.activities:
             act_idx = self._act_idx[act]
             lqn.hostdem[act_idx] = _get_dist_mean(act.host_demand)
@@ -1348,6 +1747,21 @@ class LayeredNetwork:
             else:
                 lqn.think[task_idx] = 0.0
 
+        # Build setup times and delay-off times (for FunctionTask/FaaS modeling)
+        lqn.setuptime = {}
+        lqn.delayofftime = {}
+        lqn.isfunction = np.zeros((1, nidx + 1))
+        for task in self.tasks:
+            task_idx = self._task_idx[task]
+            has_setup = task.setup_time is not None and _get_dist_mean(task.setup_time) > 0
+            has_delayoff = task.delay_off_time is not None and _get_dist_mean(task.delay_off_time) > 0
+            if has_setup or has_delayoff or task.is_function_task():
+                lqn.isfunction[0, task_idx] = 1
+                if task.setup_time:
+                    lqn.setuptime[task_idx] = task.setup_time
+                if task.delay_off_time:
+                    lqn.delayofftime[task_idx] = task.delay_off_time
+
         # Build scheduling strategies
         lqn.sched = {}
         for proc in self.processors:
@@ -1355,20 +1769,73 @@ class LayeredNetwork:
         for task in self.tasks:
             lqn.sched[self._task_idx[task]] = task.sched_strategy.value
 
+        # Build activity precedence type arrays
+        # Matches MATLAB: actposttype, actpretype indexed by activity number (1 to nacts)
+        # Values match ActivityPrecedenceType enum IDs:
+        # ID_PRE_SEQ=1, ID_POST_SEQ=2, ID_PRE_AND=11, ID_POST_AND=12, ID_PRE_OR=21, ID_POST_OR=22
+        lqn.actposttype = np.ones(lqn.nacts + 1) * 2  # Default: POST_SEQ (2)
+        lqn.actpretype = np.ones(lqn.nacts + 1) * 1   # Default: PRE_SEQ (1)
+
+        # Populate actposttype and actpretype from precedence constraints
+        for task in self.tasks:
+            for prec in task.precedences:
+                prec_type = self._get_prec_type(prec)
+                if prec_type == PrecedenceType.PARALLEL:
+                    # AND-fork: post_activities are POST_AND (only if multiple targets = fork, not join)
+                    post_activities = self._get_prec_post_activities(prec)
+                    if post_activities and len(post_activities) > 1:
+                        for post_act in post_activities:
+                            if post_act in self._act_idx:
+                                act_idx = self._act_idx[post_act]
+                                act_local = act_idx - ashift  # Convert to local activity index
+                                if 0 < act_local <= lqn.nacts:
+                                    lqn.actposttype[act_local] = 12  # ID_POST_AND
+                    # AND-join: pre_activities are PRE_AND
+                    pre_activities = self._get_prec_pre_activities(prec)
+                    if pre_activities and len(pre_activities) > 1:
+                        for pre_act in pre_activities:
+                            if pre_act in self._act_idx:
+                                act_idx = self._act_idx[pre_act]
+                                act_local = act_idx - ashift
+                                if 0 < act_local <= lqn.nacts:
+                                    lqn.actpretype[act_local] = 2  # ID_PRE_AND
+                elif prec_type == PrecedenceType.CHOICE:
+                    # OR-fork: post_activities are POST_OR (only if multiple targets = fork, not join)
+                    post_activities = self._get_prec_post_activities(prec)
+                    if post_activities and len(post_activities) > 1:
+                        for post_act in post_activities:
+                            if post_act in self._act_idx:
+                                act_idx = self._act_idx[post_act]
+                                act_local = act_idx - ashift
+                                if 0 < act_local <= lqn.nacts:
+                                    lqn.actposttype[act_local] = 22  # ID_POST_OR
+                    # OR-join: pre_activities are PRE_OR
+                    pre_activities = self._get_prec_pre_activities(prec)
+                    if pre_activities and len(pre_activities) > 1:
+                        for pre_act in pre_activities:
+                            if pre_act in self._act_idx:
+                                act_idx = self._act_idx[pre_act]
+                                act_local = act_idx - ashift
+                                if 0 < act_local <= lqn.nacts:
+                                    lqn.actpretype[act_local] = 3  # ID_PRE_OR
+
         # Build graph (adjacency matrix)
+        # MATLAB convention: graph[child, parent] = 1 (element points to its parent/owner)
         lqn.graph = np.zeros((nidx + 1, nidx + 1))
-        # Add edges from processors to tasks
+        # Track loop-back edges for DAG construction (matches MATLAB loop_back_edges)
+        loop_back_edges = np.zeros((nidx + 1, nidx + 1), dtype=bool)
+        # Add edges from tasks to processors (task points to its parent processor)
         for task in self.tasks:
             task_idx = self._task_idx[task]
             if task.processor:
                 proc_idx = self._proc_idx[task.processor]
-                lqn.graph[proc_idx, task_idx] = 1
-        # Add edges from tasks to entries
+                lqn.graph[task_idx, proc_idx] = 1  # task -> processor (parent)
+        # Add edges from tasks to entries (task points to its entries)
         for entry in self.entries:
             entry_idx = self._entry_idx[entry]
             if entry.task:
                 task_idx = self._task_idx[entry.task]
-                lqn.graph[task_idx, entry_idx] = 1
+                lqn.graph[task_idx, entry_idx] = 1  # task -> entry (ownership)
         # Add edges from entries to activities
         for act in self.activities:
             act_idx = self._act_idx[act]
@@ -1382,33 +1849,203 @@ class LayeredNetwork:
                 entry_idx = self._entry_idx[target_entry]
                 lqn.graph[act_idx, entry_idx] = 1
 
+        # Note: We DO NOT add entry->task edges because combined with task->entry edges,
+        # they would create cycles that break the topological sort in lsn_max_multiplicity.
+        # Instead, the task maxmult is handled specially in lsn_max_multiplicity.
+
+        # Add edges for precedence constraints (serial, and-fork, and-join, etc.)
+        for task in self.tasks:
+            for prec in task.precedences:
+                prec_type = self._get_prec_type(prec)
+                activities = self._get_prec_activities(prec)
+                pre_activities = self._get_prec_pre_activities(prec)
+                post_activities = self._get_prec_post_activities(prec)
+                probabilities = self._get_prec_probabilities(prec)
+
+                if prec_type == PrecedenceType.SERIAL and activities:
+                    # Serial chain: A -> B -> C creates edges A->B and B->C
+                    for i in range(len(activities) - 1):
+                        pre_act = activities[i]
+                        post_act = activities[i + 1]
+                        if self._act_in_idx(pre_act) and self._act_in_idx(post_act):
+                            pre_aidx = self._get_act_idx(pre_act)
+                            post_aidx = self._get_act_idx(post_act)
+                            lqn.graph[pre_aidx, post_aidx] = 1.0
+                elif prec_type == PrecedenceType.PARALLEL:
+                    # AND-fork/join: pre_activities -> post_activities
+                    if pre_activities and post_activities:
+                        for pre_act in pre_activities:
+                            for post_act in post_activities:
+                                if self._act_in_idx(pre_act) and self._act_in_idx(post_act):
+                                    pre_aidx = self._get_act_idx(pre_act)
+                                    post_aidx = self._get_act_idx(post_act)
+                                    lqn.graph[pre_aidx, post_aidx] = 1.0
+                elif prec_type == PrecedenceType.CHOICE:
+                    # OR-fork/join: pre_activities -> post_activities with probabilities
+                    if pre_activities and post_activities:
+                        probs = probabilities if probabilities else [1.0 / len(post_activities)] * len(post_activities)
+                        for pre_act in pre_activities:
+                            for i, post_act in enumerate(post_activities):
+                                if self._act_in_idx(pre_act) and self._act_in_idx(post_act):
+                                    pre_aidx = self._get_act_idx(pre_act)
+                                    post_aidx = self._get_act_idx(post_act)
+                                    prob = probs[i] if i < len(probs) else 1.0 / len(post_activities)
+                                    lqn.graph[pre_aidx, post_aidx] = prob
+                elif prec_type == PrecedenceType.CACHE_ACCESS:
+                    # Cache access: access_act -> [hit_act, miss_act] with probabilities
+                    # Compute expected hit/miss probabilities from CacheTask configuration
+                    hit_prob = 0.5  # Default if cache config not available
+                    miss_prob = 0.5
+                    if isinstance(task, CacheTask):
+                        # For Random Replacement (RR) with uniform access:
+                        # Expected hit probability = cache_capacity / total_items
+                        # This is also a reasonable approximation for LRU/FIFO in steady-state
+                        # Handle cache_capacity being a list (sum all levels for multi-level cache)
+                        cache_cap = task.cache_capacity
+                        if isinstance(cache_cap, (list, tuple)):
+                            cache_cap = sum(cache_cap) if cache_cap else 0
+                        total_items = task.total_items
+                        if isinstance(total_items, (list, tuple)):
+                            total_items = total_items[0] if total_items else 1
+                        if total_items > 0:
+                            hit_prob = min(float(cache_cap) / float(total_items), 1.0)
+                            miss_prob = 1.0 - hit_prob
+                    if pre_activities and post_activities:
+                        for pre_act in pre_activities:
+                            # post_activities is [hit_activity, miss_activity]
+                            for i, post_act in enumerate(post_activities):
+                                if self._act_in_idx(pre_act) and self._act_in_idx(post_act):
+                                    pre_aidx = self._get_act_idx(pre_act)
+                                    post_aidx = self._get_act_idx(post_act)
+                                    # First post_activity is hit, second is miss
+                                    prob = hit_prob if i == 0 else miss_prob
+                                    lqn.graph[pre_aidx, post_aidx] = prob
+                elif prec_type == PrecedenceType.LOOP:
+                    # Loop: pre_act -> loop_body_activities -> end_activity
+                    # Loop structure (matches MATLAB getStruct.m lines 436-450):
+                    # - pre_activities[0] is the entry activity that triggers the loop
+                    # - activities contains [loop_body_activities..., end_activity]
+                    # - count is the expected number of iterations
+                    # Graph edges:
+                    # - entry -> first_loop_act (prob 1.0)
+                    # - last_loop_body_act -> first_loop_act (prob 1 - 1/count) [loop back]
+                    # - last_loop_body_act -> end_act (prob 1/count) [exit loop]
+                    counts = self._get_prec_count(prec)
+                    loop_pre_activities = pre_activities if pre_activities else self._get_prec_pre_activities(prec)
+                    loop_activities = activities if activities else self._get_prec_activities(prec)
+                    if loop_pre_activities and loop_activities and len(loop_activities) >= 1:
+                        loop_entry_act = loop_pre_activities[0]
+                        # activities = [loop_body_activities..., end_activity]
+                        # For Loop(A1, [A2, A3], 3): loop body = [A2], end = A3
+                        loop_body_acts = loop_activities[:-1] if len(loop_activities) > 1 else []
+                        loop_end_act = loop_activities[-1]
+
+                        if self._act_in_idx(loop_entry_act):
+                            loop_entry_aidx = self._get_act_idx(loop_entry_act)
+
+                            if counts < 1:
+                                # When expected iterations < 1, we may skip loop entirely
+                                # E[iterations] = counts means P(enter loop) = counts
+                                if loop_body_acts and self._act_in_idx(loop_body_acts[0]):
+                                    first_loop_aidx = self._get_act_idx(loop_body_acts[0])
+                                    lqn.graph[loop_entry_aidx, first_loop_aidx] = counts
+                                if self._act_in_idx(loop_end_act):
+                                    loop_end_aidx = self._get_act_idx(loop_end_act)
+                                    lqn.graph[loop_entry_aidx, loop_end_aidx] = 1.0 - counts
+                                # Connect loop body in serial
+                                cur_aidx = first_loop_aidx if loop_body_acts else loop_entry_aidx
+                                for i in range(1, len(loop_body_acts)):
+                                    if self._act_in_idx(loop_body_acts[i]):
+                                        next_aidx = self._get_act_idx(loop_body_acts[i])
+                                        lqn.graph[cur_aidx, next_aidx] = 1.0
+                                        cur_aidx = next_aidx
+                                # After loop body, exit to end (no looping back for counts < 1)
+                                if loop_body_acts and self._act_in_idx(loop_end_act):
+                                    lqn.graph[cur_aidx, self._get_act_idx(loop_end_act)] = 1.0
+                            else:
+                                # When expected iterations >= 1, always enter loop
+                                # E[iterations] = 1/(1-p) = counts => p = 1 - 1/counts
+                                # Connect entry to first loop activity
+                                cur_aidx = loop_entry_aidx
+                                for loop_act in loop_body_acts:
+                                    if self._act_in_idx(loop_act):
+                                        next_aidx = self._get_act_idx(loop_act)
+                                        lqn.graph[cur_aidx, next_aidx] = 1.0
+                                        cur_aidx = next_aidx
+
+                                # If no loop body, entry connects directly to end
+                                if not loop_body_acts:
+                                    if self._act_in_idx(loop_end_act):
+                                        lqn.graph[loop_entry_aidx, self._get_act_idx(loop_end_act)] = 1.0
+                                else:
+                                    # Loop back edge: last_body -> first_body with prob (1 - 1/counts)
+                                    first_loop_aidx = self._get_act_idx(loop_body_acts[0])
+                                    loop_back_prob = 1.0 - 1.0 / counts
+                                    exit_prob = 1.0 / counts
+                                    lqn.graph[cur_aidx, first_loop_aidx] = loop_back_prob
+                                    # Mark this as a loop-back edge for DAG construction
+                                    loop_back_edges[cur_aidx, first_loop_aidx] = True
+                                    # Exit edge: last_body -> end with prob 1/counts
+                                    if self._act_in_idx(loop_end_act):
+                                        loop_end_aidx = self._get_act_idx(loop_end_act)
+                                        lqn.graph[cur_aidx, loop_end_aidx] = exit_prob
+
+        # Build DAG (graph without loop-back edges) - matches MATLAB getStruct.m line 631
+        lqn.dag = lqn.graph.copy()
+        lqn.dag[loop_back_edges] = 0
+
+        # Reverse edges from TASK to ENTRY for non-reference tasks
+        # This enables proper flow propagation in _lsn_max_multiplicity
+        # Matches MATLAB getStruct.m lines 598-606
+        for i in range(1, nidx + 1):
+            if lqn.type[i] == LayeredNetworkElement.TASK and lqn.isref[i, 0] == 0:
+                for j in range(1, nidx + 1):
+                    if lqn.type[j] == LayeredNetworkElement.ENTRY and lqn.dag[i, j] != 0:
+                        lqn.dag[i, j] = 0
+                        lqn.dag[j, i] = 1
+
         # Build replygraph (nacts x nentries) - which activities reply to which entries
         lqn.replygraph = np.zeros((lqn.nacts, lqn.nentries))
         for act in self.activities:
-            act_idx = self._act_idx[act] - ashift  # Convert to 0-based activity index
-            if hasattr(act, 'reply_entries') and act.reply_entries:
-                for reply_entry in act.reply_entries:
-                    entry_idx = self._entry_idx[reply_entry] - eshift  # Convert to 0-based entry index
+            act_idx = self._act_idx[act] - ashift - 1  # Convert to 0-based activity index
+            # Check for reply_entry (singular) - set by replies_to() method
+            if hasattr(act, 'reply_entry') and act.reply_entry is not None:
+                reply_entry = act.reply_entry
+                if reply_entry in self._entry_idx:
+                    entry_idx = self._entry_idx[reply_entry] - eshift - 1  # Convert to 0-based entry index
                     if 0 <= act_idx < lqn.nacts and 0 <= entry_idx < lqn.nentries:
                         lqn.replygraph[act_idx, entry_idx] = 1
+            # Also check reply_entries (plural) for backwards compatibility
+            if hasattr(act, 'reply_entries') and act.reply_entries:
+                for reply_entry in act.reply_entries:
+                    if reply_entry in self._entry_idx:
+                        entry_idx = self._entry_idx[reply_entry] - eshift - 1  # Convert to 0-based entry index
+                        if 0 <= act_idx < lqn.nacts and 0 <= entry_idx < lqn.nentries:
+                            lqn.replygraph[act_idx, entry_idx] = 1
 
         # Build actphase - phase number (1 or 2) for each activity
         lqn.actphase = np.ones(lqn.nacts)  # Default phase is 1
         for act in self.activities:
-            act_idx = self._act_idx[act] - ashift  # Convert to 0-based activity index
+            act_idx = self._act_idx[act] - ashift - 1  # Convert to 0-based activity index
             if hasattr(act, 'phase') and act.phase is not None:
-                lqn.actphase[act_idx] = act.phase
+                if 0 <= act_idx < lqn.nacts:
+                    lqn.actphase[act_idx] = act.phase
+
+        # Build maxmult using lsn_max_multiplicity algorithm (matches MATLAB)
+        # This computes the maximum throughput capacity for each node
+        # Must be called AFTER graph is built since it uses the DAG for flow propagation
+        lqn.maxmult = self._lsn_max_multiplicity(lqn, nidx)
 
         # Validation: Check for non-terminal reply activities
         # An activity that replies to an entry should not have Phase 1 successor activities
         # Phase 2 successors are allowed (post-reply processing)
         for a in range(lqn.nacts):
             if np.any(lqn.replygraph[a, :] > 0):  # activity 'a' replies to some entry
-                aidx = ashift + a  # global activity index
+                aidx = ashift + a + 1  # global activity index (1-based)
                 for succ in range(nidx + 1):
                     if lqn.graph[aidx, succ] != 0:  # successor exists
                         if succ > eshift + lqn.nentries:  # successor is an activity
-                            succ_act_idx = succ - ashift  # convert to activity array index
+                            succ_act_idx = succ - ashift - 1  # convert to activity array index
                             if 0 <= succ_act_idx < lqn.nacts and lqn.actphase[succ_act_idx] == 1:
                                 raise ValueError(
                                     f"Unsupported replyTo in non-terminal activity: "
@@ -2022,6 +2659,8 @@ class LayeredNetwork:
                     multiplicity = 1.0
 
             if scheduling.upper() == 'INF':
+                # MATLAB overrides multiplicity to Inf for INF scheduling processors
+                # (shows a warning but still uses Inf multiplicity)
                 multiplicity = float('inf')
                 sched = SchedStrategy.INF
             else:
@@ -2043,6 +2682,9 @@ class LayeredNetwork:
                         task_mult = 1.0
 
                 if task_sched.upper() == 'INF':
+                    # MATLAB overrides task_mult to Inf for INF scheduling tasks
+                    # (shows a warning but still uses Inf multiplicity)
+                    # This is important for njobs calculation which uses mult for population
                     task_mult = float('inf')
                     task_sched_enum = SchedStrategy.INF
                 else:
@@ -2062,6 +2704,57 @@ class LayeredNetwork:
                     entry_name = entry_elem.get('name', '')
                     entry = model.add_entry(entry_name, task)
                     entry_map[entry_name] = entry
+
+                    # Handle entry-phase-activities (phase-based entries)
+                    # Convert to activity-graph format for consistency
+                    epa_elem = entry_elem.find('./entry-phase-activities')
+                    if epa_elem is not None:
+                        phase_activities = []
+                        for act_elem in epa_elem.findall('./activity'):
+                            act_name = act_elem.get('name', '')
+                            demand_mean = float(act_elem.get('host-demand-mean', '0'))
+                            phase = int(act_elem.get('phase', '1'))
+
+                            if demand_mean <= 0:
+                                demand = Distribution(mean=0.0, scv=1.0)
+                            else:
+                                demand = Distribution(mean=demand_mean, scv=1.0)
+
+                            activity = model.add_activity(act_name, demand, task)
+                            activity_map[act_name] = activity
+                            phase_activities.append((phase, activity))
+
+                            # Parse calls within phase activity
+                            for call_elem in act_elem.findall('./synch-call'):
+                                dest = call_elem.get('dest', '')
+                                mean_calls = float(call_elem.get('calls-mean', '1'))
+                                if not hasattr(activity, '_pending_calls'):
+                                    activity._pending_calls = []
+                                activity._pending_calls.append((dest, mean_calls, CallType.SYNC))
+
+                            for call_elem in act_elem.findall('./asynch-call'):
+                                dest = call_elem.get('dest', '')
+                                mean_calls = float(call_elem.get('calls-mean', '1'))
+                                if not hasattr(activity, '_pending_calls'):
+                                    activity._pending_calls = []
+                                activity._pending_calls.append((dest, mean_calls, CallType.ASYNC))
+
+                        # Sort by phase and set up binding/reply
+                        phase_activities.sort(key=lambda x: x[0])
+                        if phase_activities:
+                            # First activity is bound to entry
+                            first_activity = phase_activities[0][1]
+                            first_activity.bound_to(entry)
+
+                            # Last activity replies to entry (for non-REF tasks)
+                            if task_sched_enum != SchedStrategy.REF:
+                                last_activity = phase_activities[-1][1]
+                                last_activity.replies_to(entry)
+
+                            # Create serial precedence if multiple phases
+                            if len(phase_activities) > 1:
+                                acts = [pa[1] for pa in phase_activities]
+                                task.add_precedence(ActivityPrecedence.Serial(acts))
 
                 for ta_elem in task_elem.findall('./task-activities'):
                     for act_elem in ta_elem.findall('./activity'):
@@ -2186,10 +2879,31 @@ class LayeredNetwork:
             return SchedStrategy.FCFS
 
 
+class FunctionTask(Task):
+    """
+    Function Task for serverless/FaaS modeling.
+
+    FunctionTask represents a serverless function with:
+    - Cold start time (setup_time): Time to initialize a new function instance
+    - Delay-off time (delay_off_time): Time before an idle instance is torn down
+
+    These parameters affect the effective service time when function instances
+    need to be started or are being recycled.
+    """
+
+    def __init__(self, model_or_name, name_or_mult=None, mult_or_sched=None, sched=None):
+        """Initialize a FunctionTask with flexible arguments."""
+        super().__init__(model_or_name, name_or_mult, mult_or_sched, sched)
+        self._is_function_task = True
+
+    def is_function_task(self) -> bool:
+        """Return True to indicate this is a FunctionTask."""
+        return True
+
+
 # Convenience aliases for compatibility
 Processor = Processor
 Task = Task
-FunctionTask = Task  # Alias for backward compatibility (FaaS/serverless modeling)
 Entry = Entry
 Activity = Activity
 LayeredNetwork = LayeredNetwork

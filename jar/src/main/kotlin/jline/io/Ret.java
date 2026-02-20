@@ -934,9 +934,10 @@ public class Ret {
      * Constructor initializing the sample data, number of types, and type indices.
      */
     public static class mamMMAPSample {
-        double[] samples; // sample
-        int ntypes; // type
-        int[] types; // type
+        double[] samples; // inter-arrival times
+        int ntypes; // number of event types
+        int[] types; // event type for each sample
+        int[] states; // state sequence (state at the time of each event)
 
         /*
          * @param s  the array of sampled inter-arrival times
@@ -947,18 +948,36 @@ public class Ret {
             samples = s;
             types = t;
             ntypes = nt;
+            states = null;
         }
-        
+
+        /*
+         * @param s  the array of sampled inter-arrival times
+         * @param nt the number of different types of arrivals
+         * @param t  the array indicating the type of each sampled arrival
+         * @param sts the array of state indices at each event
+         */
+        public mamMMAPSample(double[] s, int nt, int[] t, int[] sts) {
+            samples = s;
+            types = t;
+            ntypes = nt;
+            states = sts;
+        }
+
         public double[] getSamples() {
             return samples;
         }
-        
+
         public int[] getTypes() {
             return types;
         }
-        
+
         public int getNtypes() {
             return ntypes;
+        }
+
+        public int[] getStates() {
+            return states;
         }
     }
 

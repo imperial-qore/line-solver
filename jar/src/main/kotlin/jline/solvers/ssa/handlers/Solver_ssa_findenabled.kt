@@ -136,13 +136,15 @@ fun solver_ssa_findenabled(sn: NetworkStruct,
                         // Check if the source node (node_a) has state-dependent routing
                         if (node_a.get(act)!! < sn.nnodes && sn.isstatedep.get(node_a.get(act)!!, 2) == 1.0) {
                             // State-dependent routing: probability depends on current and next state
-                            // Convert stateCell and next_state maps from Int -> Matrix to Node -> Matrix
+                            // Convert stateCell and next_state maps from stateful index -> Matrix to Node -> Matrix
+                            // IMPORTANT: Use sn.stateful (not model.getStatefulNodes()) to get the same Node
+                            // objects that are captured by the routing lambda in Network.refreshRouting()
                             val stateCell_node: MutableMap<jline.lang.nodes.Node?, jline.util.matrix.Matrix?> = HashMap()
                             for (entry in stateCell.entries) {
-                                val node_index = entry.key
+                                val stateful_index = entry.key
                                 val matrix = entry.value
-                                if (node_index != null) {
-                                    val node = solverSSA.model.getNodes().get(node_index)
+                                if (stateful_index != null && stateful_index < sn.stateful.size) {
+                                    val node = sn.stateful.get(stateful_index)
                                     if (node != null) {
                                         stateCell_node.put(node, matrix)
                                     }
@@ -150,10 +152,10 @@ fun solver_ssa_findenabled(sn: NetworkStruct,
                             }
                             val nextState_node: MutableMap<jline.lang.nodes.Node?, jline.util.matrix.Matrix?> = HashMap()
                             for (entry in next_state.get(act)!!.entries) {
-                                val node_index = entry.key
+                                val stateful_index = entry.key
                                 val matrix = entry.value
-                                if (node_index != null) {
-                                    val node = solverSSA.model.getNodes().get(node_index)
+                                if (stateful_index != null && stateful_index < sn.stateful.size) {
+                                    val node = sn.stateful.get(stateful_index)
                                     if (node != null) {
                                         nextState_node.put(node, matrix)
                                     }
@@ -173,7 +175,7 @@ fun solver_ssa_findenabled(sn: NetworkStruct,
                         prob_sync_p.put(act, 1.0)
                     }
                     if (!java.lang.Double.isNaN(rate_a.get(act)!!.toDouble())) {
-                        if (!next_state.get(act)!!.isEmpty()) {
+                        if (next_state.get(act)!!.size == stateCell.size) {
                             if (event_a.get(act) == EventType.DEP) {
                                 isf_p = sn.nodeToStateful.get(node_p.get(act)!!).toInt()
                                 node_a_sf.put(act, isf_a)

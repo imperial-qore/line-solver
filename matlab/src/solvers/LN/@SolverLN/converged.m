@@ -109,6 +109,12 @@ if it>1
         self.averagingstart = it;
     end
 
+    % Print iteration error for tracing
+    if self.options.verbose
+        line_printf(sprintf('MaxIterErr=%.6e (tol=%.6e, hasconv=%d)', ...
+            self.maxitererr(it), self.options.iter_tol, self.hasconverged));
+    end
+
     %% Update relaxation factor for adaptive/auto modes
     relax_mode = self.options.config.relax;
     if strcmpi(relax_mode, 'adaptive') || strcmpi(relax_mode, 'auto')

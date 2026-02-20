@@ -186,7 +186,7 @@ switch event
             outspace_k = [space_buf_k, space_srv_k, space_var_k];
             % remove states where new arrival violates capacity or cutoff constraints
             [oi,oir] = State.toMarginalAggr(sn,ind,outspace_k,K,Ks,space_buf_k,space_srv_k,space_var_k);
-            en_o = classcap(ist,class)>= oir(:,class) | capacity(ist)*ones(size(oi,1),1) >= oi;
+            en_o = classcap(ist,class)>= oir(:,class) & capacity(ist)*ones(size(oi,1),1) >= oi;
 
             if size(outspace,2)>size(outspace_k(en_o,:),2)
                 outspace = [outspace; zeros(1,size(outspace,2)-size(outspace_k(en_o,:),2)),outspace_k(en_o,:)];

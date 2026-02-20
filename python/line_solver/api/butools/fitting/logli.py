@@ -7,7 +7,7 @@ Created on Wed Mar 20 08:24:03 2013
 import numpy as np
 import numpy.matlib as ml
 import math
-from butools.mc import DTMCSolve
+from ..mc.stst import DTMCSolve
 
 #def LikelihoodFromTrace (trace, A, B, prec=1e-14):
 #

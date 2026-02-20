@@ -26,14 +26,12 @@ import jline.util.matrix.MatrixCell
  */
 
 fun map_scale(D0: Matrix, D1: Matrix, newMean: Double): MatrixCell {
-    val D = MatrixCell()
-    D[0] = D0.copy()
-    D[1] = D1.copy()
-    map_normalize(D[0], D[1])
     val ratio = map_mean(D0, D1) / newMean
-    D[0].scaleEq(ratio)
-    D[1].scaleEq(ratio)
-    return D
+    val D0s = D0.copy()
+    val D1s = D1.copy()
+    D0s.scaleEq(ratio)
+    D1s.scaleEq(ratio)
+    return map_normalize(D0s, D1s)
 }
 
 /**

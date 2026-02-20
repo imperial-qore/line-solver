@@ -9,11 +9,11 @@ from math import sqrt
 import numpy as np
 import numpy.matlib as ml
 import numpy.linalg as la
-import butools
-from butools.utils import Diag, SumMatrixList
-from butools.moments import MomsFromFactorialMoms, JMomsFromJFactorialMoms
-from butools.mc import DTMCSolve, DRPSolve
-from butools.dmap import CheckDRAPRepresentation, CheckDMAPRepresentation, CheckDMRAPRepresentation, CheckDMMAPRepresentation
+from ..utils.misc import Diag, SumMatrixList
+from ..moments.conv import MomsFromFactorialMoms, JMomsFromJFactorialMoms
+from ..mc.stst import DTMCSolve, DRPSolve
+from .check import CheckDRAPRepresentation, CheckDMAPRepresentation, CheckDMRAPRepresentation, CheckDMMAPRepresentation
+from ..dph.basedph import MomentsFromDPH, MomentsFromMG
 
 def MarginalDistributionFromDRAP (H0, H1):
     """
@@ -133,7 +133,12 @@ def MarginalDistributionFromDMMAP (D):
 
     return MarginalDistributionFromDMRAP (D)
 
-from butools.dph import MomentsFromDPH, MomentsFromMG
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 def MarginalMomentsFromDRAP (H0, H1, K=0):
     """

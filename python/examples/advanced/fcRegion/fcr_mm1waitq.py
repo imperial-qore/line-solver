@@ -30,12 +30,12 @@ P1.set(jobclass1, jobclass1, queue1, sink1, 1.0)
 model1.link(P1)
 
 # Add FCR with blocking - jobs wait when region is full
-fcr = model1.add_region('FCR', queue1)
+fcr = model1.add_region(queue1)
 fcr.set_global_max_jobs(10)
 fcr.set_drop_rule(jobclass1, False)  # False = block (wait)
 
 # Model 2: Standard M/M/1 (no FCR)
-model2 = Network('MM1')
+model2 = Network('M/M/1')
 
 source2 = Source(model2, 'Source')
 queue2 = Queue(model2, 'Queue', SchedStrategy.FCFS)
@@ -51,36 +51,11 @@ P2.set(jobclass2, jobclass2, source2, queue2, 1.0)
 P2.set(jobclass2, jobclass2, queue2, sink2, 1.0)
 model2.link(P2)
 
-# Solve both models
-solver1 = JMT(model1, seed=23000, samples=100000, verbose=VerboseLevel.SILENT)
-solver2 = JMT(model2, seed=23000, samples=100000, verbose=VerboseLevel.SILENT)
+# Solve both models and compare results
+solver1 = JMT(model1, seed=23000, samples=100000)
+avgTable1 = solver1.get_avg_node_table()
+print(avgTable1)
 
-# Compare results
-print('\n=== Comparison: FCR Blocking vs M/M/1 ===\n')
-
-avg_table1 = solver1.get_avg_table()
-avg_table2 = solver2.get_avg_table()
-
-# Extract queue metrics (row 1 is the Queue node)
-queue_idx = 1
-print('Queue Metrics:')
-print('                    FCR Blocking    M/M/1')
-print(f'Queue Length:       {avg_table1.QLen[queue_idx]:.4f}          {avg_table2.QLen[queue_idx]:.4f}')
-print(f'Utilization:        {avg_table1.Util[queue_idx]:.4f}          {avg_table2.Util[queue_idx]:.4f}')
-print(f'Response Time:      {avg_table1.RespT[queue_idx]:.4f}          {avg_table2.RespT[queue_idx]:.4f}')
-print(f'Throughput:         {avg_table1.Tput[queue_idx]:.4f}          {avg_table2.Tput[queue_idx]:.4f}')
-
-# Theoretical M/M/1 values
-rho = arrival_rate / service_rate
-theoretical_Q = rho / (1 - rho)
-theoretical_U = rho
-theoretical_R = 1 / (service_rate - arrival_rate)
-theoretical_X = arrival_rate
-
-print('\nTheoretical M/M/1:')
-print(f'Queue Length:       {theoretical_Q:.4f}')
-print(f'Utilization:        {theoretical_U:.4f}')
-print(f'Response Time:      {theoretical_R:.4f}')
-print(f'Throughput:         {theoretical_X:.4f}')
-
-print('\n==> FCR with blocking matches M/M/1 (jobs wait, no loss)')
+solver2 = JMT(model2, seed=23000, samples=100000)
+avgTable2 = solver2.get_avg_node_table()
+print(avgTable2)

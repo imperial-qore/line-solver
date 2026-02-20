@@ -12,7 +12,7 @@ This example demonstrates:
 from line_solver import *
 
 if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
+    GlobalConstants.set_verbose(VerboseLevel.SILENT)
 
     model = LayeredNetwork('test_LQN_4')
 

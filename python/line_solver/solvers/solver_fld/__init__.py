@@ -26,9 +26,19 @@ from dataclasses import dataclass
 
 from .options import SolverFLDOptions, FLDResult
 from .utils import extract_metrics_from_handler_result, compute_response_times, compute_cycle_times, compute_system_throughput
+from ...api.sn.transforms import sn_get_residt_from_respt
+from ...api.sn import NodeType
+from ..base import NetworkSolver
+from ...indexed_table import IndexedTable
+
+# Import base SolverOptions for type checking
+try:
+    from line_solver.solvers import SolverOptions as BaseSolverOptions
+except ImportError:
+    BaseSolverOptions = None
 
 
-class SolverFLD:
+class SolverFLD(NetworkSolver):
     """Native Python solver for fluid approximation of queueing networks.
 
     Provides a unified interface to multiple fluid approximation algorithms,
@@ -85,8 +95,8 @@ class SolverFLD:
         'fluid.pnorm': 'matrix',
         'softmin': 'closing',
         'fluid.softmin': 'closing',
-        'statedep': 'closing',
-        'fluid.statedep': 'closing',
+        'statedep': 'matrix',  # Use matrix method for state-dependent (closing is incomplete)
+        'fluid.statedep': 'matrix',
         'closing': 'closing',
         'fluid.closing': 'closing',
         'diffusion': 'diffusion',
@@ -181,6 +191,17 @@ class SolverFLD:
         elif isinstance(method_or_options, SolverFLDOptions):
             options = method_or_options
             method = options.method
+        elif BaseSolverOptions is not None and isinstance(method_or_options, BaseSolverOptions):
+            # Convert base SolverOptions to SolverFLDOptions
+            base_opts = method_or_options
+            method = getattr(base_opts, 'method', 'default')
+            opts_kwargs = {}
+            for attr in ['method', 'tol', 'iter_max', 'iter_tol', 'verbose', 'timespan', 'samples', 'stiff']:
+                if hasattr(base_opts, attr):
+                    val = getattr(base_opts, attr)
+                    if val is not None:
+                        opts_kwargs[attr] = val
+            options = SolverFLDOptions(**opts_kwargs)
         elif isinstance(method_or_options, dict):
             # Dict passed as second argument - treat as options
             method = method_or_options.get('method', 'default')
@@ -207,6 +228,32 @@ class SolverFLD:
         self.options = options
         self.result = None
         self.runtime = 0.0
+
+    def reset(self):
+        """Reset the solver, clearing cached results and struct cache.
+
+        Matches MATLAB behavior where reset() invalidates the cached struct
+        so the solver re-reads the model state on the next analysis run.
+        """
+        self.result = None
+        self.runtime = 0.0
+        self.sn = None  # Force re-read of network struct (matching MATLAB)
+
+    def setInitialState(self, Q: np.ndarray):
+        """Set initial state from queue length marginals.
+
+        Args:
+            Q: Queue lengths array of shape (M,) or (M, K) where M=stations, K=classes
+        """
+        Q = np.atleast_2d(Q)
+        if Q.shape[0] == 1:
+            Q = Q.T  # Convert row to column
+        M, K = Q.shape
+
+        # Build initial state vector matching ODE state dimension
+        # For simple models: state is just queue lengths per (station, class)
+        init_sol = Q.flatten()
+        self.options.init_sol = init_sol
 
     def getName(self) -> str:
         """Get the name of this solver."""
@@ -244,54 +291,214 @@ class SolverFLD:
 
         raise ValueError("Cannot extract network structure from model")
 
+    def _dispatch_method(self, method_key):
+        """Dispatch to the appropriate solver method and return the result."""
+        if method_key == 'matrix':
+            return self._solve_matrix()
+        elif method_key == 'closing':
+            return self._solve_closing()
+        elif method_key == 'diffusion':
+            return self._solve_diffusion()
+        elif method_key == 'mfq':
+            return self._solve_mfq()
+        elif method_key == 'aoi':
+            return self._solve_aoi()
+        else:
+            raise ValueError(f"Unknown method: {method_key}")
+
+    def _build_init_sol_from_raw_states(self, raw_state_per_isf, sn):
+        """Build FLD ODE initial state vector from raw per-node states.
+
+        Matches MATLAB solver_fluid_initsol.m logic: extracts per-phase
+        service counts from FCFS states and distributes jobs across phases.
+
+        Args:
+            raw_state_per_isf: dict mapping stateful index -> raw state array
+            sn: NetworkStruct
+
+        Returns:
+            init_sol numpy array for the ODE, or None if phases unavailable
+        """
+        from ...api.sn import SchedStrategy
+
+        M = sn.nstations
+        K = sn.nclasses
+
+        # Compute phases per (station, class) from proc
+        phases = np.ones((M, K), dtype=int)
+        if hasattr(sn, 'proc') and sn.proc is not None:
+            for i in range(M):
+                for r in range(K):
+                    proc_ir = None
+                    if isinstance(sn.proc, dict):
+                        if i in sn.proc and r in sn.proc[i]:
+                            proc_ir = sn.proc[i][r]
+                    elif isinstance(sn.proc, list) and i < len(sn.proc):
+                        if sn.proc[i] is not None and r < len(sn.proc[i]):
+                            proc_ir = sn.proc[i][r]
+                    if proc_ir is not None:
+                        if isinstance(proc_ir, dict):
+                            if 'k' in proc_ir:
+                                phases[i, r] = int(proc_ir['k'])
+                        elif isinstance(proc_ir, (list, tuple)) and len(proc_ir) >= 2:
+                            D0 = proc_ir[0]
+                            if hasattr(D0, 'shape'):
+                                phases[i, r] = D0.shape[0]
+
+        init_sol = []
+        sched_dict = sn.sched if sn.sched else {}
+
+        for ist in range(M):
+            isf = int(sn.stationToStateful[ist])
+            raw_state = raw_state_per_isf.get(isf)
+            sched = sched_dict.get(ist)
+
+            # Check if Source station - skip (no mass)
+            node_idx = int(sn.stationToNode[ist]) if ist < len(sn.stationToNode) else ist
+            is_source = (node_idx < len(sn.nodetype)
+                         and sn.nodetype[node_idx] == NodeType.SOURCE)
+            if sched == SchedStrategy.EXT:
+                is_source = True
+            if is_source:
+                for k in range(K):
+                    for _ in range(int(phases[ist, k])):
+                        init_sol.append(0.0)
+                continue
+
+            if raw_state is None:
+                for k in range(K):
+                    for _ in range(int(phases[ist, k])):
+                        init_sol.append(0.0)
+                continue
+
+            raw_state = np.asarray(raw_state, dtype=float).flatten()
+            phasesz = phases[ist, :]
+            total_srv = int(np.sum(phasesz))
+
+            is_fcfs = (sched in (SchedStrategy.FCFS, SchedStrategy.HOL,
+                                 SchedStrategy.LCFS, SchedStrategy.LCFSPR)
+                       if sched is not None else False)
+
+            if is_fcfs and len(raw_state) > total_srv:
+                # FCFS state: [buffer..., service_phase_counts...]
+                buf_width = len(raw_state) - total_srv
+                space_buf = raw_state[:buf_width]
+                space_srv = raw_state[buf_width:]
+
+                # Extract kir from service phase counts
+                kir = {}
+                offset = 0
+                for r in range(K):
+                    for k in range(int(phasesz[r])):
+                        kir[(r, k)] = float(space_srv[offset])
+                        offset += 1
+
+                # Compute nir: total jobs of class r at station
+                nir = np.zeros(K)
+                for r in range(K):
+                    sir_r = sum(kir[(r, k)] for k in range(int(phasesz[r])))
+                    buf_count = float(np.sum(space_buf == (r + 1)))
+                    nir[r] = sir_r + buf_count
+
+                # Build init_sol entries (matching MATLAB solver_fluid_initsol)
+                for r in range(K):
+                    nph = int(phasesz[r])
+                    if nph == 0:
+                        continue
+                    # Phase 1: nir - sum(kir[r,k] for k>0)
+                    later = sum(kir.get((r, k), 0) for k in range(1, nph))
+                    init_sol.append(nir[r] - later)
+                    # Phase k > 1: kir[r,k]
+                    for k in range(1, nph):
+                        init_sol.append(kir.get((r, k), 0))
+            else:
+                # INF/PS/SIRO: state is marginal counts, all in phase 1
+                for k in range(K):
+                    nph = int(phasesz[k])
+                    if nph == 0:
+                        continue
+                    n_jobs = float(raw_state[k]) if k < len(raw_state) else 0.0
+                    init_sol.append(n_jobs)
+                    for _ in range(1, nph):
+                        init_sol.append(0.0)
+
+        return np.array(init_sol, dtype=float)
+
+    def _get_fld_state_spaces_and_priors(self):
+        """Get per-node state spaces and priors for pprod iteration.
+
+        Returns:
+            Tuple of (per_node_spaces, per_node_priors, stateful_nodes, cur_states)
+            where stateful_nodes is list of (node_index, isf) tuples and
+            cur_states holds original states for restoration.
+        """
+        per_node_spaces = []
+        per_node_priors = []
+        stateful_nodes = []
+        cur_states = []
+
+        nodeToStateful = np.asarray(self.sn.nodeToStateful).flatten() \
+            if hasattr(self.sn, 'nodeToStateful') else np.array([])
+        K = self.sn.nclasses
+
+        for ind in range(self.sn.nnodes):
+            if hasattr(self.sn, 'isstateful') and self.sn.isstateful[ind]:
+                isf = int(nodeToStateful[ind])
+                stateful_nodes.append((ind, isf))
+
+                node = self.network._nodes[ind]
+
+                # Save current state for restoration
+                cur_state = node.get_state() if hasattr(node, 'get_state') else None
+                if cur_state is not None:
+                    cur_states.append(np.array(cur_state).copy())
+                else:
+                    cur_states.append(None)
+
+                # Get per-node state space
+                node_space = getattr(node, '_state_space', None)
+                if node_space is not None and len(node_space) > 0:
+                    node_space = np.atleast_2d(node_space)
+                else:
+                    node_state = node.get_state() if hasattr(node, 'get_state') else None
+                    if node_state is not None:
+                        node_space = np.atleast_2d(np.asarray(node_state).flatten())
+                    else:
+                        node_space = np.zeros((1, K))
+                per_node_spaces.append(node_space)
+
+                # Get per-node state prior
+                node_prior = getattr(node, '_state_prior', None)
+                if node_prior is not None:
+                    node_prior = np.asarray(node_prior).flatten()
+                    if len(node_prior) < node_space.shape[0]:
+                        padded = np.zeros(node_space.shape[0])
+                        padded[:len(node_prior)] = node_prior
+                        node_prior = padded
+                else:
+                    node_prior = np.zeros(node_space.shape[0])
+                    node_prior[0] = 1.0
+                per_node_priors.append(node_prior)
+
+        return per_node_spaces, per_node_priors, stateful_nodes, cur_states
+
     def runAnalyzer(self) -> 'SolverFLD':
         """Execute the fluid analysis using the configured method.
 
-        Performs ODE integration or analytical solution to compute steady-state
-        performance metrics (queue lengths, utilizations, response times, etc.)
-        for the queueing network.
+        Supports state prior iteration (pprod loop): when the model has
+        multiple possible initial states weighted by priors, runs the
+        analysis for each state and accumulates weighted results.
+        Matches MATLAB SolverFLD/runAnalyzer.m lines 112-208.
 
         Returns
         -------
         SolverFLD
             Returns self to enable method chaining and fluent interface
-
-        Raises
-        ------
-        ValueError
-            If selected method is invalid or network constraints violated
-            (e.g., diffusion on open network, mfq on multi-queue network)
-
-        Notes
-        -----
-        - First time calls resolve method alias to internal implementation
-        - Calls appropriate internal solve method based on self.options.method
-        - Updates self.result with FLDResult object
-        - Records execution time in self.runtime
-        - If verbose=True, prints method and timing information
-
-        Performance characteristics:
-        - matrix: O(M²K + ODE_steps), typically 0.1-1s for realistic networks
-        - mfq: O(K), typically <0.01s (analytical solution)
-        - diffusion: O(num_steps × M × K), typically 0.5-5s
-        - closing: O(iter_max × ODE_steps), typically 1-10s
-
-        Examples
-        --------
-        Basic analysis:
-            >>> solver = SolverFLD(network)
-            >>> solver.runAnalyzer()
-            >>> qlen = solver.getAvgQLen()
-
-        Method chaining:
-            >>> qlen = SolverFLD(network).runAnalyzer().getAvgQLen()
-
-        Verbose output:
-            >>> opts = SolverFLDOptions(verbose=True)
-            >>> SolverFLD(network, options=opts).runAnalyzer()
-            # Output: SolverFLD: Using method 'matrix'
-            #         Completed in 0.234s
         """
+        # Re-read network struct if invalidated by reset() (matching MATLAB)
+        if self.sn is None:
+            self.sn = self._get_network_struct(self.network)
+
         method_key = self._resolve_method()
 
         if self.options.verbose:
@@ -299,35 +506,212 @@ class SolverFLD:
 
         start_time = time.time()
 
-        # Method dispatch
-        if method_key == 'matrix':
-            self.result = self._solve_matrix()
-        elif method_key == 'closing':
-            self.result = self._solve_closing()
-        elif method_key == 'diffusion':
-            self.result = self._solve_diffusion()
-        elif method_key == 'mfq':
-            self.result = self._solve_mfq()
-        elif method_key == 'aoi':
-            self.result = self._solve_aoi()
+        # Get per-node state spaces and priors for pprod loop
+        per_node_spaces, per_node_priors, stateful_nodes, cur_states = \
+            self._get_fld_state_spaces_and_priors()
+        sizes = [s.shape[0] for s in per_node_spaces]
+        n_nodes = len(stateful_nodes)
+
+        total_combinations = 1
+        for s in sizes:
+            total_combinations *= s
+
+        if total_combinations <= 1:
+            # Single state - no pprod loop needed
+            self.result = self._dispatch_method(method_key)
         else:
-            raise ValueError(f"Unknown method: {method_key}")
+            # pprod loop over all initial state combinations
+            # (matching MATLAB runAnalyzer.m lines 122-208)
+            M = self.sn.nstations
+            K = self.sn.nclasses
+            Q_accum = np.zeros((M, K))
+            U_accum = np.zeros((M, K))
+            R_accum = np.zeros((M, K))
+            T_accum = np.zeros((M, K))
+            C_accum = np.zeros((1, K))
+            X_accum = np.zeros((1, K))
+            Qt_accum = {}
+            Ut_accum = {}
+            Tt_accum = {}
+            t_accum = None
+            first_result = True
+            last_xvec = None
+            total_iter = 0
+
+            s0_id = [0] * n_nodes
+            while True:
+                # Compute joint prior probability
+                s0prior_val = 1.0
+                for i in range(n_nodes):
+                    s0prior_val *= per_node_priors[i][s0_id[i]]
+
+                if s0prior_val > 0:
+                    # Set node states on model
+                    for i, (ind, isf) in enumerate(stateful_nodes):
+                        self.network._nodes[ind].setState(
+                            per_node_spaces[i][s0_id[i]])
+
+                    # Build raw state map for init_sol computation
+                    raw_state_per_isf = {}
+                    for i, (ind, isf) in enumerate(stateful_nodes):
+                        raw_state_per_isf[isf] = per_node_spaces[i][s0_id[i]]
+
+                    # Get fresh sn
+                    self.network._has_struct = False
+                    self.network._sn = None
+                    self.sn = self._get_network_struct(self.network)
+
+                    # Build init_sol from raw states (with per-phase info)
+                    # Matches MATLAB solver_fluid_initsol.m
+                    init_sol = self._build_init_sol_from_raw_states(
+                        raw_state_per_isf, self.sn)
+                    saved_init_sol = self.options.init_sol
+                    self.options.init_sol = init_sol
+
+                    # Run solver
+                    result = self._dispatch_method(method_key)
+                    self.options.init_sol = saved_init_sol
+
+                    if result is not None:
+                        last_xvec = result.xvec
+                        total_iter = max(total_iter, result.iterations)
+
+                        if first_result:
+                            Q_accum = result.QN * s0prior_val
+                            U_accum = result.UN * s0prior_val
+                            R_accum = result.RN * s0prior_val
+                            T_accum = result.TN * s0prior_val
+                            C_accum = result.CN * s0prior_val
+                            X_accum = result.XN * s0prior_val
+                            t_accum = result.t
+
+                            if result.QNt:
+                                for key, val in result.QNt.items():
+                                    Qt_accum[key] = val * s0prior_val
+                            if result.UNt:
+                                for key, val in result.UNt.items():
+                                    Ut_accum[key] = val * s0prior_val
+                            if result.TNt:
+                                for key, val in result.TNt.items():
+                                    Tt_accum[key] = val * s0prior_val
+                            first_result = False
+                        else:
+                            Q_accum += result.QN * s0prior_val
+                            U_accum += result.UN * s0prior_val
+                            R_accum += result.RN * s0prior_val
+                            T_accum += result.TN * s0prior_val
+                            C_accum += result.CN * s0prior_val
+                            X_accum += result.XN * s0prior_val
+
+                            # Accumulate transient with interpolation
+                            if result.QNt and result.t is not None and t_accum is not None:
+                                tunion = np.union1d(t_accum, result.t)
+                                for key in result.QNt:
+                                    if key in Qt_accum:
+                                        old_data = np.interp(tunion, t_accum, Qt_accum[key])
+                                        new_data = np.interp(tunion, result.t, result.QNt[key])
+                                        Qt_accum[key] = old_data + s0prior_val * new_data
+                                    else:
+                                        Qt_accum[key] = result.QNt[key] * s0prior_val
+                                for key in (result.UNt or {}):
+                                    if key in Ut_accum:
+                                        old_data = np.interp(tunion, t_accum, Ut_accum[key])
+                                        new_data = np.interp(tunion, result.t, result.UNt[key])
+                                        Ut_accum[key] = old_data + s0prior_val * new_data
+                                    else:
+                                        Ut_accum[key] = result.UNt[key] * s0prior_val
+                                for key in (result.TNt or {}):
+                                    if key in Tt_accum:
+                                        old_data = np.interp(tunion, t_accum, Tt_accum[key])
+                                        new_data = np.interp(tunion, result.t, result.TNt[key])
+                                        Tt_accum[key] = old_data + s0prior_val * new_data
+                                    else:
+                                        Tt_accum[key] = result.TNt[key] * s0prior_val
+                                t_accum = tunion
+
+                # Advance pprod
+                carry = True
+                for i in range(n_nodes - 1, -1, -1):
+                    if carry:
+                        s0_id[i] += 1
+                        if s0_id[i] >= sizes[i]:
+                            s0_id[i] = 0
+                        else:
+                            carry = False
+                            break
+                if carry:
+                    break
+
+            # Restore original states
+            for i, (ind, isf) in enumerate(stateful_nodes):
+                if cur_states[i] is not None:
+                    self.network._nodes[ind].setState(cur_states[i])
+            self.network._has_struct = False
+            self.network._sn = None
+            self.sn = self._get_network_struct(self.network)
+
+            # Build accumulated result
+            from line_solver.api.sn.getters import sn_get_arvr_from_tput
+            from line_solver.api.sn.transforms import sn_get_residt_from_respt
+            AN = sn_get_arvr_from_tput(self.sn, T_accum)
+            WN = sn_get_residt_from_respt(self.sn, R_accum, None)
+
+            self.result = FLDResult(
+                QN=Q_accum, UN=U_accum, RN=R_accum, TN=T_accum,
+                CN=C_accum, XN=X_accum, AN=AN, WN=WN,
+                t=t_accum, QNt=Qt_accum, UNt=Ut_accum, TNt=Tt_accum,
+                xvec=last_xvec, iterations=total_iter,
+                runtime=0.0, method=method_key
+            )
 
         self.runtime = time.time() - start_time
 
-        if self.options.verbose:
-            print(f"  Completed in {self.runtime:.3f}s")
+        # Print completion message (matches MATLAB verbose=STD default)
+        import sys as _sys
+        py_version = f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}"
+        print(f"Fluid analysis [method: {method_key}, lang: python, env: {py_version}] completed in {self.runtime:.6f}s.")
 
         return self
 
     def _resolve_method(self) -> str:
         """Resolve method name to internal key.
 
+        Automatically selects 'closing' method when DPS scheduling is present,
+        as the matrix method does not support DPS.
+
         Returns:
             Internal method key
         """
         method = self.options.method
-        return self.METHODS.get(method, method)
+        resolved = self.METHODS.get(method, method)
+
+        # Check for DPS scheduling - matrix method doesn't support it
+        if resolved == 'matrix' and self._has_dps_scheduling():
+            return 'closing'
+
+        return resolved
+
+    def _has_dps_scheduling(self) -> bool:
+        """Check if network has DPS (Discriminatory Processor Sharing) scheduling.
+
+        Returns:
+            True if any station has DPS scheduling
+        """
+        from line_solver.api.sn import SchedStrategy
+
+        sched_dict = self.sn.sched if self.sn.sched else {}
+        for i in range(self.sn.nstations):
+            station_sched = sched_dict.get(i)
+            if station_sched is None:
+                continue
+            # Handle both enum and integer representations
+            if station_sched == SchedStrategy.DPS:
+                return True
+            if hasattr(station_sched, 'value') and station_sched.value == SchedStrategy.DPS.value:
+                return True
+            if isinstance(station_sched, int) and station_sched == SchedStrategy.DPS.value:
+                return True
+        return False
 
     def _solve_matrix(self) -> FLDResult:
         """Solve using matrix method (existing handler implementation).
@@ -337,7 +721,20 @@ class SolverFLD:
         """
         from line_solver.api.solvers.fld.handler import solver_fld, SolverFLDOptions as HandlerFLDOptions
 
+        # Get initial state from network marginals if set
+        init_sol = self.options.init_sol
+        if init_sol is None and hasattr(self.sn, 'state') and self.sn.state is not None:
+            # Try to use network's current state
+            try:
+                state = np.array(self.sn.state).flatten()
+                if len(state) > 0 and np.sum(state) > 0:
+                    init_sol = state
+            except:
+                pass
+
         # Convert options to handler format
+        # Only pass pstar when explicitly set (matching MATLAB default: no p-norm smoothing)
+        pstar_list = [self.options.pstar] * self.sn.nstations if self.options.pstar is not None else None
         handler_opts = HandlerFLDOptions(
             method=self.options.method,
             tol=self.options.tol,
@@ -345,8 +742,9 @@ class SolverFLD:
             stiff=self.options.stiff,
             iter_max=self.options.iter_max,
             timespan=self.options.timespan,
-            pstar=[self.options.pstar] * self.sn.nstations,
-            num_cdf_pts=200
+            pstar=pstar_list,
+            num_cdf_pts=200,
+            init_sol=init_sol
         )
 
         # Solve
@@ -354,6 +752,30 @@ class SolverFLD:
 
         # Extract metrics
         QN, UN, RN, TN, CN, XN = extract_metrics_from_handler_result(handler_result, self.sn)
+
+        # Extract transient data from handler result
+        QNt = {}
+        UNt = {}
+        TNt = {}
+        if hasattr(handler_result, 'Qt') and handler_result.Qt is not None:
+            M = len(handler_result.Qt)
+            K = len(handler_result.Qt[0]) if M > 0 else 0
+            for i in range(M):
+                for r in range(K):
+                    if handler_result.Qt[i][r] is not None:
+                        QNt[(i, r)] = np.array(handler_result.Qt[i][r])
+                    if hasattr(handler_result, 'Ut') and handler_result.Ut is not None:
+                        UNt[(i, r)] = np.array(handler_result.Ut[i][r])
+                    if hasattr(handler_result, 'Tt') and handler_result.Tt is not None:
+                        TNt[(i, r)] = np.array(handler_result.Tt[i][r])
+
+        # Compute proper arrival rates from throughputs using routing
+        from line_solver.api.sn.getters import sn_get_arvr_from_tput
+        AN = sn_get_arvr_from_tput(self.sn, TN) if TN is not None else None
+
+        # Compute proper residence times from response times
+        from line_solver.api.sn.transforms import sn_get_residt_from_respt
+        WN = sn_get_residt_from_respt(self.sn, RN, None) if RN is not None else None
 
         # Build result
         result = FLDResult(
@@ -363,7 +785,12 @@ class SolverFLD:
             TN=TN,
             CN=CN,
             XN=XN,
+            AN=AN,
+            WN=WN,
             t=handler_result.t,
+            QNt=QNt,
+            UNt=UNt,
+            TNt=TNt,
             xvec=handler_result.odeStateVec,
             iterations=handler_result.it,
             runtime=self.runtime,
@@ -475,6 +902,15 @@ class SolverFLD:
         UN = self.result.UN
         RN = self.result.RN
         TN = self.result.TN if self.result.TN is not None else np.zeros((nstations, nclasses))
+        AN = self.result.AN if hasattr(self.result, 'AN') and self.result.AN is not None else TN
+
+        # Compute ResidT using proper visit ratios from network structure
+        # This uses the correct formula: WN[ist,k] = RN[ist,k] * V[ist,k] / V[refstat,refclass]
+        if self.sn is not None and self.sn.visits:
+            WN = sn_get_residt_from_respt(self.sn, RN, None)
+        else:
+            # Fallback: ResidT = RespT (no visit information available)
+            WN = RN.copy()
 
         rows = []
         for i in range(nstations):
@@ -482,7 +918,9 @@ class SolverFLD:
                 qlen = QN[i, r] if i < QN.shape[0] and r < QN.shape[1] else 0
                 util = UN[i, r] if i < UN.shape[0] and r < UN.shape[1] else 0
                 respt = RN[i, r] if i < RN.shape[0] and r < RN.shape[1] else 0
+                residt = WN[i, r] if i < WN.shape[0] and r < WN.shape[1] else respt
                 tput = TN[i, r] if i < TN.shape[0] and r < TN.shape[1] else 0
+                arvr = AN[i, r] if i < AN.shape[0] and r < AN.shape[1] else tput
 
                 # Skip zero rows
                 if abs(qlen) < 1e-12 and abs(util) < 1e-12 and abs(tput) < 1e-12:
@@ -494,17 +932,20 @@ class SolverFLD:
                     'QLen': qlen,
                     'Util': util,
                     'RespT': respt,
-                    'ResidT': respt,  # Same as RespT for FLD
-                    'ArvR': tput,  # For closed networks, arrival rate = throughput
+                    'ResidT': residt,
+                    'ArvR': arvr,
                     'Tput': tput,
                 })
 
         df = pd.DataFrame(rows)
 
-        if len(df) > 0 and not getattr(self, '_table_silent', False):
-            print(df.to_string(index=False))
+        # Wrap in IndexedTable for consistent formatting
+        result = IndexedTable(df)
 
-        return df
+        if len(df) > 0 and not getattr(self, '_table_silent', False):
+            print(result)
+
+        return result
 
     def getAvgQLen(self) -> np.ndarray:
         """Get average queue lengths per station.
@@ -639,8 +1080,7 @@ class SolverFLD:
     def getAvgSysRespT(self) -> np.ndarray:
         """Get average system response time per job class.
 
-        Returns the total time a customer spends in the system (sum across all
-        stations) for each job class.
+        Returns the total time a customer spends in the system for each job class.
 
         Returns
         -------
@@ -655,8 +1095,8 @@ class SolverFLD:
 
         Notes
         -----
-        This is the sum of response times across all stations. For a tandem
-        network: C = W1 + W2 + ... + WM.
+        For closed networks: uses Little's Law C = N/X
+        For open networks: sum of response times across all stations
 
         Examples
         --------
@@ -666,7 +1106,25 @@ class SolverFLD:
         """
         if self.result is None:
             self.runAnalyzer()
-        return np.sum(self.result.RN, axis=0)
+
+        RN = self.result.RN
+        XN = self.result.XN.flatten() if self.result.XN is not None else np.zeros(RN.shape[1])
+        njobs = self.sn.njobs.flatten() if self.sn is not None and hasattr(self.sn, 'njobs') else None
+        nclasses = RN.shape[1]
+        C = np.zeros(nclasses)
+
+        for k in range(nclasses):
+            if njobs is not None and k < len(njobs) and np.isfinite(njobs[k]):
+                # Closed class: use Little's Law (matching MATLAB getAvgSys.m line 135)
+                if XN[k] > 0:
+                    C[k] = njobs[k] / XN[k]
+                else:
+                    C[k] = np.inf
+            else:
+                # Open class: sum of response times across all stations
+                C[k] = np.sum(RN[:, k])
+
+        return C
 
     def getAvgSysTput(self) -> float:
         """Get average system-wide throughput.
@@ -1114,12 +1572,23 @@ class SolverFLD:
     # =====================================================================
 
     def getAvgResidT(self) -> np.ndarray:
-        """Get average residence times per station (alias for response times).
+        """Get average residence times per station (M x K).
+
+        Residence time is computed from response time using visit ratios:
+        WN[ist,k] = RN[ist,k] * V[ist,k] / V[refstat,refclass]
 
         Returns:
-            (M,) array of residence times
+            (M, K) array of residence times
         """
-        return self.getAvgRespT()
+        if self.result is None:
+            self.runAnalyzer()
+
+        # Compute ResidT using proper visit ratios from network structure
+        if self.sn is not None and self.sn.visits:
+            return sn_get_residt_from_respt(self.sn, self.result.RN, None)
+        else:
+            # Fallback: ResidT = RespT (no visit information available)
+            return self.result.RN.copy()
 
     def getAvgWaitT(self) -> np.ndarray:
         """Get average waiting times per station.
@@ -1359,37 +1828,45 @@ class SolverFLD:
     # TRANSIENT METHODS
     # =====================================================================
 
-    def getTranAvg(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Get transient average metrics.
+    def getTranAvg(self, *args):
+        """Get transient average metrics in MATLAB-compatible format.
 
-        Returns time-varying averages from ODE solution.
+        Args:
+            *args: Optional transient handles (Qt, Ut, Tt) for MATLAB API compatibility.
 
         Returns:
-            Tuple of (Qt, Ut, Tt) where each is (time_points, M, K) array
+            Tuple of (QNt, UNt, TNt) where each is a nested list [M][K] of TranResult objects.
         """
+        from ...constants import TranResult
+
         if self.result is None:
             self.runAnalyzer()
 
-        # Extract transient data from ODE solution if available
-        if hasattr(self.result, 't') and self.result.t is not None:
-            t = self.result.t
-            xvec = self.result.xvec if hasattr(self.result, 'xvec') else None
+        M = self.result.QN.shape[0]
+        K = self.result.QN.shape[1]
+        t = self.result.t if hasattr(self.result, 't') and self.result.t is not None else np.array([0.0, 1000.0])
 
-            if xvec is not None and len(xvec) > 0:
-                # xvec contains queue lengths over time
-                Qt = np.array(xvec)
-                # Estimate utilization and throughput from queue lengths
-                Ut = np.clip(Qt, 0, 1)  # Approximate
-                Tt = np.gradient(Qt, t, axis=0) if len(t) > 1 else Qt
+        QNt = [[None for _ in range(K)] for _ in range(M)]
+        UNt = [[None for _ in range(K)] for _ in range(M)]
+        TNt = [[None for _ in range(K)] for _ in range(M)]
 
-                return Qt, Ut, Tt
+        has_transient = (hasattr(self.result, 'QNt') and self.result.QNt and len(self.result.QNt) > 0)
 
-        # Fallback: return steady-state replicated
-        Q = self.result.QN
-        U = self.result.UN
-        T = self.result.TN
+        for i in range(M):
+            for r in range(K):
+                if has_transient and (i, r) in self.result.QNt:
+                    QNt[i][r] = TranResult(t, self.result.QNt[(i, r)])
+                    UNt[i][r] = TranResult(t, self.result.UNt.get((i, r), self.result.QNt[(i, r)]))
+                    TNt[i][r] = TranResult(t, self.result.TNt.get((i, r), self.result.QNt[(i, r)]))
+                else:
+                    q_val = float(self.result.QN[i, r])
+                    u_val = float(self.result.UN[i, r])
+                    t_val = float(self.result.TN[i, r]) if self.result.TN.ndim > 1 else float(self.result.TN[r])
+                    QNt[i][r] = TranResult(t, np.full(len(t), q_val))
+                    UNt[i][r] = TranResult(t, np.full(len(t), u_val))
+                    TNt[i][r] = TranResult(t, np.full(len(t), t_val))
 
-        return Q[np.newaxis, :, :], U[np.newaxis, :, :], T[np.newaxis, :, :]
+        return QNt, UNt, TNt
 
     # =====================================================================
     # SAMPLING METHODS (Not Supported - Analytical Solver)
@@ -1548,13 +2025,12 @@ class SolverFLD:
         rows = []
 
         station_names = getattr(self.sn, 'nodenames', None) or [f'Station{i}' for i in range(nstations)]
-        chain_names = [f'Chain{c}' for c in range(nchains)]
 
         for i in range(nstations):
             for c in range(nchains):
                 rows.append({
                     'Station': station_names[i] if i < len(station_names) else f'Station{i}',
-                    'Chain': chain_names[c],
+                    'Chain': f'Chain{c + 1}',  # 1-based to match MATLAB
                     'QLen': QN[i, c],
                     'Util': UN[i, c],
                     'RespT': RN[i, c],
@@ -1939,7 +2415,6 @@ class SolverFLD:
     sysAvgT = getAvgSysTable
 
     # Snake case aliases
-    avg_table = getAvgTable
     avg_node_table = getAvgNodeTable
     avg_chain_table = getAvgChainTable
     avg_node_chain_table = getAvgNodeChainTable
@@ -1947,12 +2422,13 @@ class SolverFLD:
     run_analyzer = runAnalyzer
     cdf_resp_t = getCdfRespT
     cdf_respt = getCdfRespT
+    get_cdf_resp_t = getCdfRespT
     perct_resp_t = getPerctRespT
     perct_respt = getPerctRespT
     avg_qlen = getAvgQLen
     avg_util = getAvgUtil
-    avg_resp_t = getAvgRespT
     avg_respt = getAvgRespT
+    get_avg_respt = getAvgRespT
     avg_tput = getAvgTput
 
 

@@ -42,12 +42,12 @@ print('=== Cyclic Polling - Gated Service Policy ===\n')
 
 # Solve with MVA (exact solution)
 print('MVA Solution (exact):')
-avg_table_mva = MVA(model).get_avg_table()
+avg_table_mva = MVA(model).getAvgTable()
 print(avg_table_mva)
 
 # Solve with JMT simulation
 print('\nJMT Simulation:')
-avg_table_jmt = JMT(model, seed=23000, samples=int(1e6)).get_avg_table()
+avg_table_jmt = JMT(model, seed=23000, samples=int(1e6)).getAvgTable()
 print(avg_table_jmt)
 
 print('\nNote: In gated polling, the server serves only jobs present at the queue')

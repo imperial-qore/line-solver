@@ -25,6 +25,7 @@ PN  = nan(self.lqn.nidx,1); % utilization will be first stored here
 SN  = nan(self.lqn.nidx,1); % response time will be first stored here
 WN  = nan(self.lqn.nidx,1); % residence time
 AN  = nan(self.lqn.nidx,1); % not available yet
+WN_processed = false(self.lqn.nidx,1); % track activities already accumulated into task WN
 E = self.nlayers;
 for e=1:E
     clientIdx = self.ensemble{e}.attribute.clientIdx;
@@ -164,8 +165,13 @@ for e=1:E
                 RN(aidx) = RN(aidx) + self.results{end,e}.RN(serverIdx,c);
                 if isnan(WN(aidx)), WN(aidx)=0; end
                 if isnan(WN(tidx)), WN(tidx)=0; end
-                WN(aidx) = WN(aidx) + self.results{end,e}.WN(serverIdx,c);
-                WN(tidx) = WN(tidx) + self.results{end,e}.WN(serverIdx,c);
+                % Use self.residt (computed via QN/TN_ref in updateMetricsDefault)
+                % instead of layer WN to avoid fork+loop visit distortion
+                WN(aidx) = self.residt(aidx);
+                if ~WN_processed(aidx)
+                    WN(tidx) = WN(tidx) + self.residt(aidx);
+                    WN_processed(aidx) = true;
+                end
                 if isnan(QN(aidx)), QN(aidx)=0; end
                 QN(aidx) = QN(aidx) + self.results{end,e}.QN(serverIdx,c);
         end

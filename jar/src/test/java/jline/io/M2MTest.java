@@ -11,9 +11,11 @@ import jline.solvers.mva.SolverMVA;
 import jline.solvers.mam.SolverMAM;
 import jline.solvers.ctmc.SolverCTMC;
 import jline.solvers.ssa.SolverSSA;
+import jline.GlobalConstants;
 import jline.util.Maths;
 import jline.util.matrix.Matrix;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -29,7 +31,15 @@ public class M2MTest {
 
     @TempDir
     Path tempDir;
-  
+
+    @BeforeAll
+    public static void setUp() {
+        // Ensure MATLAB-compatible random number generation
+        Maths.setRandomNumbersMatlab(true);
+        // Set verbose level to SILENT to suppress warnings during tests
+        GlobalConstants.setVerbose(VerboseLevel.SILENT);
+    }
+
     @BeforeEach
   public void matlabRandomSeedSetUp() {
     Maths.setRandomNumbersMatlab(true);

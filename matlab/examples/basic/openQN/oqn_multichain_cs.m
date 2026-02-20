@@ -54,15 +54,15 @@ node{5}.setService(jobclass{3}, Exp.fitMean(0.8));
 node{5}.setService(jobclass{4}, Exp.fitMean(1.0));
 node{5}.setService(jobclass{5}, Exp.fitMean(0.25));
 
-%% Block 4: arrival rates
+%% Block 4: arrival rates (reduced to ensure stability at all stations)
 % Interactive requests
-node{1}.setArrival(jobclass{1}, Exp(0.8));
-node{1}.setArrival(jobclass{2}, Exp(0.3));
+node{1}.setArrival(jobclass{1}, Exp(0.3));
+node{1}.setArrival(jobclass{2}, Exp(0.1));
 % Batch jobs
-node{1}.setArrival(jobclass{3}, Exp(0.5));
-node{1}.setArrival(jobclass{4}, Exp(0.4));
+node{1}.setArrival(jobclass{3}, Exp(0.15));
+node{1}.setArrival(jobclass{4}, Exp(0.12));
 % Real-time tasks
-node{1}.setArrival(jobclass{5}, Exp(0.6));
+node{1}.setArrival(jobclass{5}, Exp(0.2));
 
 %% Block 5: routing with class switching
 M = model.getNumberOfNodes();
@@ -133,7 +133,7 @@ solver{end+1} = FLD(model, options);
 solver{end+1} = SSA(model, options);
 
 for s = 1:length(solver)
-    fprintf('SOLVER: %s\n', solver{s}.getName());
+    fprintf('SOLVER: %s\n', strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgTable();
     AvgTable{s}
     fprintf('\n');

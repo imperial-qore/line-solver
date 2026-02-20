@@ -16,7 +16,7 @@ import numpy as np
 from numpy.linalg import LinAlgError
 from scipy import linalg
 from scipy.sparse import csc_matrix, issparse
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import spsolve, gmres
 from scipy.sparse.csgraph import connected_components
 from scipy.integrate import solve_ivp
 from typing import Dict, Any, Optional, List, Tuple, Union
@@ -32,6 +32,23 @@ except ImportError:
         def decorator(func):
             return func
         return decorator if args and callable(args[0]) else decorator
+
+# Try to import JIT-compiled kernels
+try:
+    from .ctmc_jit import (
+        HAS_NUMBA as CTMC_HAS_NUMBA,
+        time_reverse_kernel_jit,
+        randomization_step_jit,
+        simulate_ctmc_jit,
+    )
+except ImportError:
+    CTMC_HAS_NUMBA = False
+    time_reverse_kernel_jit = None
+    randomization_step_jit = None
+    simulate_ctmc_jit = None
+
+# Threshold for using JIT (number of states)
+CTMC_JIT_THRESHOLD = 20
 
 
 def ctmc_makeinfgen(Q: np.ndarray) -> np.ndarray:
@@ -120,75 +137,102 @@ def ctmc_solve(Q: np.ndarray) -> np.ndarray:
     # Ensure valid generator
     Q = ctmc_makeinfgen(Q)
 
-    # Check for weakly connected components
-    components = _find_weakly_connected_components(Q)
-
-    if len(components) > 1:
-        # Reducible chain: solve each component separately
-        p = np.zeros(n)
-        for comp in components:
-            if len(comp) == 1:
-                p[comp[0]] = 1.0
-            else:
-                # Extract submatrix for component
-                idx = np.array(comp)
-                Qc = Q[np.ix_(idx, idx)]
-                Qc = ctmc_makeinfgen(Qc)
-                pc = ctmc_solve(Qc)
-                for i, state in enumerate(comp):
-                    p[state] = pc[i]
-
-        # Normalize
-        p /= p.sum()
-        return p
-
-    # Remove zero rows/cols (absorbing states with no outgoing transitions)
-    row_sums = np.abs(Q).sum(axis=1)
-    col_sums = np.abs(Q).sum(axis=0)
-    active = (row_sums > 0) & (col_sums > 0)
-
-    if not np.any(active):
-        # All states are isolated
+    # Check for all-zero generator (matches MATLAB lines 84-87)
+    if np.all(Q == 0):
         return np.ones(n) / n
 
-    active_idx = np.where(active)[0]
-    Qnnz = Q[np.ix_(active_idx, active_idx)]
-    Qnnz = ctmc_makeinfgen(Qnnz)
+    # Iteratively remove zero rows/cols until active set stabilizes
+    # This matches MATLAB's while loop (lines 97-113) which repeatedly
+    # filters states with zero row OR column sums
+    nnzel = np.arange(n)
+    Qnnz = Q.copy()
+    Qnnz_prev_size = -1
+
+    while len(Qnnz) != Qnnz_prev_size:
+        Qnnz_prev_size = len(Qnnz)
+        row_sums = np.abs(Qnnz).sum(axis=1)
+        col_sums = np.abs(Qnnz).sum(axis=0)
+        active = (row_sums > 0) & (col_sums > 0)
+
+        if not np.any(active):
+            # Active set became empty - return uniform (matches MATLAB lines 115-118)
+            return np.ones(n) / n
+
+        active_local = np.where(active)[0]
+        nnzel = nnzel[active_local]
+        Qnnz = Qnnz[np.ix_(active_local, active_local)]
+        Qnnz = ctmc_makeinfgen(Qnnz)
+
+    # Check if Qnnz is empty after iterations
+    if Qnnz.size == 0:
+        return np.ones(n) / n
+
+    active_idx = nnzel
 
     # Solve the system: π * Q = 0, with Σπ = 1
-    # Replace last column of Q with ones (normalization constraint)
-    # Then solve Q^T * π^T = b
+    # Match JAR/MATLAB approach: replace last column with 1s, solve Q'x = b
+    # This correctly returns NaN for reducible/singular chains, triggering
+    # the fallback to dtmc_solve_reducible in callers.
     n_active = len(active_idx)
 
-    # Replace last column with 1s (before transpose)
-    Qnnz_mod = Qnnz.copy()
-    Qnnz_mod[:, -1] = 1.0
+    # Check for multiple weakly connected components first (matches JAR lines 46-73)
+    sub_components = _find_weakly_connected_components(Qnnz)
+    if len(sub_components) > 1:
+        pi_active = np.zeros(n_active)
+        for comp in sub_components:
+            idx = np.array(comp)
+            Qc = Qnnz[np.ix_(idx, idx)]
+            Qc = ctmc_makeinfgen(Qc)
+            pc = ctmc_solve(Qc)
+            for i, state in enumerate(comp):
+                pi_active[state] = pc[i]
+        if pi_active.sum() > 0:
+            pi_active /= pi_active.sum()
+        else:
+            pi_active = np.ones(n_active) / n_active
 
-    # Transpose and solve
-    A = Qnnz_mod.T
+        p = np.zeros(n)
+        p[active_idx] = pi_active
+        p = np.maximum(p, 0.0)
+        if p.sum() > 0:
+            p /= p.sum()
+        else:
+            p = np.ones(n) / n
+        return p
+
+    # Single component: solve Q'x = b with last column replaced by 1s
+    # This matches JAR ctmc_solve lines 147-157
+    Qsol = Qnnz.copy()
+    Qsol[:, -1] = 1.0  # Replace last column with 1s
     b = np.zeros(n_active)
-    b[-1] = 1.0
+    b[-1] = 1.0  # Normalization constraint
+
+    pi_active = np.full(n_active, np.nan)
+
+    # Check if the system is rank-deficient (singular) before solving.
+    # MATLAB's backslash returns NaN for singular matrices, but numpy's
+    # linalg.solve may return a (wrong) particular solution.
+    # Detect this by checking the rank of Qsol.T.
+    qsol_rank = np.linalg.matrix_rank(Qsol.T)
+    if qsol_rank < n_active:
+        # Matrix is singular - return NaN to trigger fallback in caller
+        # (matches MATLAB ctmc_solve behavior for reducible generators)
+        p = np.zeros(n)
+        p[active_idx] = pi_active  # NaN values
+        return p
 
     try:
-        pi_active = linalg.solve(A, b)
-    except LinAlgError:
-        # Fallback: use least squares
-        pi_active, _, _, _ = linalg.lstsq(A, b)
+        pi_active = np.linalg.solve(Qsol.T, b)
+    except np.linalg.LinAlgError:
+        pass  # Leave as NaN - will trigger fallback in caller
 
-    # Handle numerical issues
+    # If solution has NaN, try weakly connected component decomposition
+    # (matches JAR lines 159-201)
     if np.any(np.isnan(pi_active)):
-        # Try recursive decomposition
-        sub_components = _find_weakly_connected_components(Qnnz)
-        if len(sub_components) > 1:
-            pi_active = np.zeros(n_active)
-            for comp in sub_components:
-                idx = np.array(comp)
-                Qc = Qnnz[np.ix_(idx, idx)]
-                Qc = ctmc_makeinfgen(Qc)
-                pc = ctmc_solve(Qc)
-                for i, state in enumerate(comp):
-                    pi_active[state] = pc[i]
-            pi_active /= pi_active.sum()
+        # Already checked components above and found only 1, so just return NaN
+        p = np.zeros(n)
+        p[active_idx] = pi_active
+        return p
 
     # Map back to full state space
     p = np.zeros(n)
@@ -216,6 +260,163 @@ def ctmc_solve_reducible(Q: np.ndarray) -> np.ndarray:
     """
     # ctmc_solve already handles reducible chains
     return ctmc_solve(Q)
+
+
+def ctmc_solve_reducible_blkdecomp(
+    Q: np.ndarray,
+    pin: Optional[np.ndarray] = None
+) -> np.ndarray:
+    """
+    Solve reducible CTMCs via direct block decomposition on the generator.
+
+    Algorithm (based on SMART's computeInfinityDistribution):
+      1. Decompose states into transient and recurrent classes via SCC
+      2. For transient states: solve n * Q_tt = -p0_t for expected sojourn
+      3. Compute hitting probabilities: h = n * Q_ta + p0_r
+      4. For each recurrent class: solve pi_c * Q_cc = 0, scale by hitting prob
+
+    This avoids the randomization to DTMC used in ctmc_solve_reducible.
+
+    Args:
+        Q: Infinitesimal generator matrix (possibly reducible)
+        pin: Initial probability distribution (optional)
+
+    Returns:
+        Steady-state probability vector
+    """
+    Q = np.asarray(Q, dtype=np.float64)
+    N = Q.shape[0]
+
+    if N == 1:
+        return np.array([1.0])
+
+    # Ensure valid generator
+    Q = ctmc_makeinfgen(Q)
+
+    # Find strongly connected components
+    Adj = Q.copy()
+    np.fill_diagonal(Adj, 0.0)
+    n_components, scc_labels = connected_components(
+        csc_matrix(Adj > 0), directed=True, connection='strong',
+        return_labels=True
+    )
+
+    # Irreducible case
+    if n_components == 1:
+        return ctmc_solve(Q)
+
+    num_scc = n_components
+    scc_idx = [np.where(scc_labels == i)[0] for i in range(num_scc)]
+
+    # Classify SCCs as recurrent (no outgoing edges) or transient
+    is_rec = np.zeros(num_scc, dtype=bool)
+    for i in range(num_scc):
+        states_i = scc_idx[i]
+        outgoing = 0.0
+        for s in states_i:
+            for j in range(num_scc):
+                if j != i:
+                    outgoing += np.sum(Adj[s, scc_idx[j]])
+        is_rec[i] = outgoing < 1e-10
+
+    trans_scc_ids = np.where(~is_rec)[0]
+    rec_scc_ids = np.where(is_rec)[0]
+
+    # Gather ordered state indices
+    trans_states = np.sort(np.concatenate([scc_idx[i] for i in trans_scc_ids])
+                           ) if len(trans_scc_ids) > 0 else np.array([], dtype=int)
+    rec_states = np.sort(np.concatenate([scc_idx[i] for i in rec_scc_ids])
+                         ) if len(rec_scc_ids) > 0 else np.array([], dtype=int)
+    nt = len(trans_states)
+    nr = len(rec_states)
+
+    # Extract Q sub-blocks
+    Q_tt = None
+    Q_ta = None
+    if nt > 0 and nr > 0:
+        Q_tt = Q[np.ix_(trans_states, trans_states)]
+        Q_ta = Q[np.ix_(trans_states, rec_states)]
+
+    # Compute per-SCC limiting distributions
+    pis = np.zeros((num_scc, N))
+
+    for s in range(num_scc):
+        class_states = scc_idx[s]
+        class_size = len(class_states)
+
+        # Build initial distribution: uniform within SCC s
+        p0 = np.zeros(N)
+        p0[class_states] = 1.0 / class_size
+
+        # Compute absorption probabilities into recurrent states
+        hit = np.zeros(nr)
+
+        if nt > 0 and Q_tt is not None and Q_ta is not None:
+            p0_t = p0[trans_states]
+            if np.any(np.abs(p0_t) > 0):
+                # Solve n * Q_tt = -p0_t  =>  Q_tt' * n' = -p0_t'
+                # Q_tt is non-singular (Hurwitz) for transient states
+                try:
+                    sojourn = np.linalg.solve(Q_tt.T, -p0_t)
+                except np.linalg.LinAlgError:
+                    sojourn = np.linalg.lstsq(Q_tt.T, -p0_t, rcond=None)[0]
+                hit = sojourn @ Q_ta
+
+        # Add initial mass already in recurrent states
+        hit = hit + p0[rec_states]
+
+        # Solve steady-state per recurrent class, scaled by hitting probability
+        for c in rec_scc_ids:
+            idx_c = scc_idx[c]
+            # Map class states to positions in rec_states
+            loc = np.searchsorted(rec_states, idx_c)
+            reachprob = np.sum(hit[loc])
+
+            if reachprob < 1e-15:
+                continue
+
+            if len(idx_c) == 1:
+                # Absorbing state: hitting probability IS the final probability
+                pis[s, idx_c[0]] = reachprob
+            else:
+                # Solve pi_c * Q_cc = 0 within this recurrent class
+                Q_cc = Q[np.ix_(idx_c, idx_c)]
+                pi_c = ctmc_solve(Q_cc)
+                pis[s, idx_c] = pi_c * reachprob
+
+    # Compute initial SCC probabilities for weighted average
+    if pin is None:
+        pinl = np.ones(num_scc)
+        # Zero out SCCs containing states with zero column sums (no incoming)
+        col_sums = np.sum(np.abs(Q), axis=0)
+        for j in np.where(col_sums < 1e-12)[0]:
+            pinl[scc_labels[j]] = 0.0
+        total_pinl = np.sum(pinl)
+        if total_pinl > 0:
+            pinl /= total_pinl
+        else:
+            pinl = np.ones(num_scc) / num_scc
+    else:
+        pinl = np.zeros(num_scc)
+        for i in range(num_scc):
+            pinl[i] = np.sum(pin[scc_idx[i]])
+
+    # Weighted average over starting SCCs
+    pi = np.zeros(N)
+    for i in range(num_scc):
+        if pinl[i] > 0:
+            pi += pis[i, :] * pinl[i]
+
+    # Special case: single transient SCC without explicit initial distribution
+    if len(trans_scc_ids) == 1 and pin is None:
+        pi = pis[trans_scc_ids[0], :]
+
+    # Normalize
+    total = np.sum(pi)
+    if total > 0:
+        pi /= total
+
+    return pi
 
 
 def ctmc_transient(
@@ -443,14 +644,15 @@ def ctmc_stochcomp(
     Q22 = Q[np.ix_(Ic, Ic)]
 
     # S = Q11 + Q12 * (-Q22)^{-1} * Q21
-    # T = Q12 * (-Q22)^{-1} * Q21
+    # T = (-Q22) \ Q21, then T = Q12 * T
+    # Match MATLAB: use linear system solve instead of explicit inverse
     Q22_neg = -Q22
     try:
-        Q22_inv = linalg.inv(Q22_neg)
+        T = linalg.solve(Q22_neg, Q21)
     except LinAlgError:
-        Q22_inv = linalg.pinv(Q22_neg)
+        T = linalg.pinv(Q22_neg) @ Q21
 
-    T = Q12 @ Q22_inv @ Q21
+    T = Q12 @ T
     S = Q11 + T
 
     return {
@@ -488,6 +690,11 @@ def ctmc_timereverse(
         pi = np.asarray(pi, dtype=np.float64).flatten()
 
     n = Q.shape[0]
+
+    # Use JIT kernel for larger state spaces
+    if CTMC_HAS_NUMBA and n > CTMC_JIT_THRESHOLD:
+        return time_reverse_kernel_jit(Q, pi)
+
     Q_rev = np.zeros_like(Q)
 
     for i in range(n):
@@ -564,6 +771,18 @@ def ctmc_simulate(
 
     Q = np.asarray(Q, dtype=np.float64)
     n = Q.shape[0]
+
+    # Use JIT kernel for simulation
+    if CTMC_HAS_NUMBA and max_events > 100:
+        random_uniforms = np.random.rand(2 * max_events)
+        states, times, sojourn_times = simulate_ctmc_jit(
+            Q, initial_state, max_time, max_events, random_uniforms
+        )
+        return {
+            'states': states,
+            'times': times,
+            'sojourn_times': sojourn_times
+        }
 
     states = [initial_state]
     times = [0.0]
@@ -873,6 +1092,7 @@ def ctmc_ssg_reachability(sn: Any, options: Optional[Dict] = None) -> CtmcSsgRes
 __all__ = [
     'ctmc_solve',
     'ctmc_solve_reducible',
+    'ctmc_solve_reducible_blkdecomp',
     'ctmc_makeinfgen',
     'ctmc_transient',
     'ctmc_uniformization',

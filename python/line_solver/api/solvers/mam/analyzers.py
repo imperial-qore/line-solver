@@ -138,7 +138,7 @@ def solver_mam_analyzer(
         MAMResult with all performance metrics
 
     Raises:
-        RuntimeError: For unsupported configurations (e.g., mixed models)
+        RuntimeError: For unsupported configurations (e.g., mna method with mixed models)
     """
     start_time = time.time()
 
@@ -147,12 +147,9 @@ def solver_mam_analyzer(
 
     method = options.method.lower()
 
-    # Check for mixed model (not supported)
+    # Check model type
     is_open = sn_is_open_model(sn)
     is_closed = sn_is_closed_model(sn)
-
-    if is_open and is_closed:
-        raise RuntimeError("SolverMAM does not support mixed models with both open and closed classes.")
 
     result = MAMResult()
     ret = None

@@ -158,13 +158,36 @@ fun solver_ssa_nrm(sn_in: NetworkStruct, options: SolverOptions): SolverSSAResul
                     when (sn.sched.get(sn.stations.get(sn.nodeToStation.get(ind).toInt()))) {
                         SchedStrategy.EXT -> base
                         SchedStrategy.INF -> base * X.get(fromIdx[j], 0)
-                        SchedStrategy.PS, SchedStrategy.DPS, SchedStrategy.GPS,
-                        SchedStrategy.PSPRIO, SchedStrategy.DPSPRIO, SchedStrategy.GPSPRIO -> {
+                        SchedStrategy.PS, SchedStrategy.DPS, SchedStrategy.GPS -> {
                             if (R == 1) { // single class
                                 base * min(mi[ind], X.get(fromIdx[j], 0))
                             } else {
                                 val total = (0 until R).sumOf { X.get(ind * R + it, 0) } + epstol
                                 base * (X.get(fromIdx[j], 0) / total) * min(mi[ind], total)
+                            }
+                        }
+                        SchedStrategy.PSPRIO, SchedStrategy.DPSPRIO, SchedStrategy.GPSPRIO -> {
+                            if (R == 1) { // single class - no priority effect
+                                base * min(mi[ind], X.get(fromIdx[j], 0))
+                            } else {
+                                val total = (0 until R).sumOf { X.get(ind * R + it, 0) } + epstol
+                                // Find minimum priority among present classes
+                                var minPrio = Int.MAX_VALUE
+                                for (rr in 0 until R) {
+                                    if (X.get(ind * R + rr, 0) > 0) {
+                                        val classPrio = sn.classprio.get(rr).toInt()
+                                        if (classPrio < minPrio) {
+                                            minPrio = classPrio
+                                        }
+                                    }
+                                }
+                                val classPrio = sn.classprio.get(r).toInt()
+                                // If total <= servers OR this class has highest priority
+                                if (total <= mi[ind] || classPrio == minPrio) {
+                                    base * (X.get(fromIdx[j], 0) / total) * min(mi[ind], total)
+                                } else {
+                                    0.0 // Not in highest priority group - no service
+                                }
                             }
                         }
                         else -> base * X.get(fromIdx[j], 0)
@@ -308,17 +331,43 @@ fun next_reaction_method_direct(S: Matrix,
                     SchedStrategy.INF, SchedStrategy.EXT -> {
                         UN.set(ist, k, UN.get(ist, k) + currentPop * dt)
                     }
-                    SchedStrategy.PS, SchedStrategy.DPS, SchedStrategy.GPS,
-                    SchedStrategy.PSPRIO, SchedStrategy.DPSPRIO, SchedStrategy.GPSPRIO -> {
+                    SchedStrategy.PS, SchedStrategy.DPS, SchedStrategy.GPS -> {
                         val phEntry = PH.get(sn.stations.get(ist))?.get(sn.jobclasses.get(k))
                         if (phEntry != null && !phEntry.isEmpty) {
-                            rates.get(ist, k)
                             val servers = S_servers.get(ist)
                             val totalPop = (0 until R).sumOf { nvec.get(ind * R + it, 0) }
                             val utilization = if (totalPop > 0) {
                                 (currentPop / totalPop) * min(servers, totalPop) / servers
                             } else 0.0
                             UN.set(ist, k, UN.get(ist, k) + utilization * dt)
+                        }
+                    }
+                    SchedStrategy.PSPRIO, SchedStrategy.DPSPRIO, SchedStrategy.GPSPRIO -> {
+                        val phEntry = PH.get(sn.stations.get(ist))?.get(sn.jobclasses.get(k))
+                        if (phEntry != null && !phEntry.isEmpty) {
+                            val servers = S_servers.get(ist)
+                            val totalPop = (0 until R).sumOf { nvec.get(ind * R + it, 0) }
+                            if (totalPop > 0) {
+                                // Find minimum priority among present classes
+                                var minPrio = Int.MAX_VALUE
+                                for (rr in 0 until R) {
+                                    if (nvec.get(ind * R + rr, 0) > 0) {
+                                        val classPrio = sn.classprio.get(rr).toInt()
+                                        if (classPrio < minPrio) {
+                                            minPrio = classPrio
+                                        }
+                                    }
+                                }
+                                val classPrio = sn.classprio.get(k).toInt()
+                                val utilization = if (totalPop <= servers || classPrio == minPrio) {
+                                    // If total <= servers, all jobs get service proportionally
+                                    // Or this class has highest priority
+                                    (currentPop / totalPop) * min(servers, totalPop) / servers
+                                } else {
+                                    0.0 // Not in highest priority group - no utilization
+                                }
+                                UN.set(ist, k, UN.get(ist, k) + utilization * dt)
+                            }
                         }
                     }
                     else -> {}

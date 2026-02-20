@@ -1,9 +1,14 @@
 import numpy as np
-import butools
-from butools.reptrans import SimilarityMatrix
-from butools.dph import CheckDPHRepresentation, CheckMGRepresentation
+from ..reptrans.similarity import SimilarityMatrix
+from .check import CheckDPHRepresentation, CheckMGRepresentation
 import scipy.linalg as la
 import numpy.matlib as ml
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 def AcyclicDPHFromMG (alpha, A, maxSize=100, precision=1e-14):
     """

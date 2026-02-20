@@ -76,11 +76,11 @@ fun qsys_mapg1(
 
     // Extract queue length moments
     val ncMoms = result["ncMoms"]?.get(0)
-    val meanQL = ncMoms?.get(0, 0) ?: 0.0
+    val meanQL: Double = ncMoms?.get(0, 0) ?: 0.0
 
     // Extract sojourn time moments
     val stMoms = result["stNoms"]?.get(0)
-    val meanST = stMoms?.get(0, 0) ?: 0.0
+    val meanST: Double = stMoms?.get(0, 0) ?: 0.0
 
     // Waiting time = sojourn time - service time
     val meanWT = maxOf(0.0, meanST - meanService)

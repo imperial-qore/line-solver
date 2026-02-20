@@ -42,7 +42,7 @@ public class ClassSwitchExamplesTest {
         // Test the cs_implicit example with MVA solver
         Network model = ClassSwitchingModel.cs_implicit();
 
-        SolverMVA solver = new SolverMVA(model, "verbose", VerboseLevel.STD);
+        SolverMVA solver = new SolverMVA(model, "verbose", VerboseLevel.SILENT);
         NetworkAvgChainTable avgTable = solver.getAvgChainTable();
 
         // Check if results are computed
@@ -76,7 +76,7 @@ public class ClassSwitchExamplesTest {
         // Test the cs_multi_diamond example with MVA solver
         Network model = ClassSwitchingModel.cs_multi_diamond();
         
-        SolverMVA solver = new SolverMVA(model, "verbose", VerboseLevel.STD);
+        SolverMVA solver = new SolverMVA(model, "verbose", VerboseLevel.SILENT);
         NetworkAvgChainTable avgTable = solver.getAvgChainTable();
         //avgTable.print();
 
@@ -110,7 +110,7 @@ public class ClassSwitchExamplesTest {
         // Test the cs_single_diamond example with MVA solver
         Network model = ClassSwitchingModel.cs_single_diamond();
         
-        SolverMVA solver = new SolverMVA(model, "verbose", VerboseLevel.STD);
+        SolverMVA solver = new SolverMVA(model, "verbose", VerboseLevel.SILENT);
         NetworkAvgChainTable avgTable = solver.getAvgChainTable();
 
         // Check if results are computed
@@ -139,7 +139,6 @@ public class ClassSwitchExamplesTest {
     // This model has a transient class (Class1 -> Class2/Class3) with reducible routing chain.
     // The dtmc_solve_reducible function properly handles transient states.
 
-    @Disabled
     @Test
     public void testCsTransientClassMVA() {
         // Test the cs_transient_class example with MVA solver

@@ -284,6 +284,7 @@ public class SolverDES extends NetworkSolver {
                 "Linkage", "Enabling", "Timing", "Firing", "Storage",  // Petri net section support
                 "Logger", "LogTunnel",  // Logger node support
                 "Cache", "CacheClassSwitcher",  // Cache node support with hit/miss class switching
+                "ReplacementStrategy_LRU", "ReplacementStrategy_FIFO", "ReplacementStrategy_RR", "ReplacementStrategy_SFIFO",  // Cache replacement strategies
                 "Buffer",  // Finite buffer capacity support
                 "Region",  // Finite capacity region support
                 "Exp", "Erlang", "HyperExp", "PH", "APH", "Coxian", "Cox2", "MAP", "MMAP", "BMAP", "MMPP2", "ME", "RAP", "Immediate", "Disabled", "Replayer",

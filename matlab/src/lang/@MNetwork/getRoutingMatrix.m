@@ -55,34 +55,32 @@ for ind=1:I
     outputStrategy = node_i.output.outputStrategy;
     switch class(node_i.output)
         case 'Forker'
+            % Fork nodes send to ALL branches with probability 1.0 each
+            % (not 1.0/fanout). A Fork with arrival rate lambda sends
+            % lambda to EACH outgoing branch, not lambda/fanout.
             for k=1:K
                 outputStrategy_k = outputStrategy{k};
-                if length(outputStrategy_k) >= 3 && ~isempty(outputStrategy_k{end})
-                    fanout = length(outputStrategy_k{end});
-                else
-                    fanout = sum(conn(ind,:));
-                end
                 switch sn.routing(ind,k)
                     case RoutingStrategy.PROB
                         % Use output strategy destinations (includes ClassSwitch nodes)
                         if ~isempty(outputStrategy_k) && length(outputStrategy_k) >= 3 && ~isempty(outputStrategy_k{end})
                             for t=1:length(outputStrategy_k{end})
                                 jnd = outputStrategy_k{end}{t}{1}.index;
-                                rtnodes((ind-1)*K+k,(jnd-1)*K+k) = 1.0/fanout;
+                                rtnodes((ind-1)*K+k,(jnd-1)*K+k) = 1.0;
                             end
                         else
                             % Fallback: uniform to all connected nodes
                             for jnd=1:I
                                 if conn(ind,jnd)>0
-                                    rtnodes((ind-1)*K+k,(jnd-1)*K+k) = 1.0/fanout;
+                                    rtnodes((ind-1)*K+k,(jnd-1)*K+k) = 1.0;
                                 end
                             end
                         end
                     otherwise
-                        % Non-PROB routing: uniform to all connected nodes
+                        % Non-PROB routing: route to all connected nodes
                         for jnd=1:I
                             if conn(ind,jnd)>0
-                                rtnodes((ind-1)*K+k,(jnd-1)*K+k) = 1.0/fanout;
+                                rtnodes((ind-1)*K+k,(jnd-1)*K+k) = 1.0;
                             end
                         end
                 end
@@ -116,7 +114,7 @@ for ind=1:I
                                 end
                             end
                         end
-                    case {RoutingStrategy.RAND, RoutingStrategy.RROBIN, RoutingStrategy.WRROBIN, RoutingStrategy.JSQ}
+                    case {RoutingStrategy.RAND, RoutingStrategy.RROBIN, RoutingStrategy.JSQ}
                         if isinf(NK(k)) % open class
                             for jnd=1:I
                                 if conn(ind,jnd)>0
@@ -131,6 +129,74 @@ for ind=1:I
                             for jnd=1:I
                                 if connectionsClosed(ind,jnd)>0
                                     rtnodes((ind-1)*K+k,(jnd-1)*K+k)=1/(sum(connectionsClosed(ind,:)));
+                                end
+                            end
+                        end
+                    case RoutingStrategy.WRROBIN
+                        % Weighted round-robin: compute routing probabilities from weights
+                        % Weights are stored in outputStrategy_k{3} as {destination, weight} pairs
+                        if ~isempty(outputStrategy_k) && length(outputStrategy_k) >= 3 && ~isempty(outputStrategy_k{3})
+                            % Compute total weight (excluding sink for closed classes)
+                            totalWeight = 0;
+                            for t=1:length(outputStrategy_k{3})
+                                dest = outputStrategy_k{3}{t}{1};
+                                destIdx = dest.index;
+                                weight = outputStrategy_k{3}{t}{2};
+                                % For closed classes, exclude sink
+                                if ~isinf(NK(k)) && ~isempty(idxSink) && destIdx == idxSink
+                                    continue;
+                                end
+                                totalWeight = totalWeight + weight;
+                            end
+                            % Set routing probabilities based on weights
+                            if totalWeight > 0
+                                for t=1:length(outputStrategy_k{3})
+                                    dest = outputStrategy_k{3}{t}{1};
+                                    destIdx = dest.index;
+                                    weight = outputStrategy_k{3}{t}{2};
+                                    % For closed classes, exclude sink
+                                    if ~isinf(NK(k)) && ~isempty(idxSink) && destIdx == idxSink
+                                        continue;
+                                    end
+                                    rtnodes((ind-1)*K+k,(destIdx-1)*K+k) = weight / totalWeight;
+                                end
+                            else
+                                % Fallback to uniform if no weights sum to positive
+                                if isinf(NK(k))
+                                    for jnd=1:I
+                                        if conn(ind,jnd)>0
+                                            rtnodes((ind-1)*K+k,(jnd-1)*K+k)=1/sum(conn(ind,:));
+                                        end
+                                    end
+                                elseif ~isa(node_i,'Source') && ~isSink_i
+                                    connectionsClosed = conn;
+                                    if ~isempty(idxSink) && connectionsClosed(ind,idxSink)
+                                        connectionsClosed(ind,idxSink) = 0;
+                                    end
+                                    for jnd=1:I
+                                        if connectionsClosed(ind,jnd)>0
+                                            rtnodes((ind-1)*K+k,(jnd-1)*K+k)=1/(sum(connectionsClosed(ind,:)));
+                                        end
+                                    end
+                                end
+                            end
+                        else
+                            % Fallback to uniform if no weight data available
+                            if isinf(NK(k))
+                                for jnd=1:I
+                                    if conn(ind,jnd)>0
+                                        rtnodes((ind-1)*K+k,(jnd-1)*K+k)=1/sum(conn(ind,:));
+                                    end
+                                end
+                            elseif ~isa(node_i,'Source') && ~isSink_i
+                                connectionsClosed = conn;
+                                if ~isempty(idxSink) && connectionsClosed(ind,idxSink)
+                                    connectionsClosed(ind,idxSink) = 0;
+                                end
+                                for jnd=1:I
+                                    if connectionsClosed(ind,jnd)>0
+                                        rtnodes((ind-1)*K+k,(jnd-1)*K+k)=1/(sum(connectionsClosed(ind,:)));
+                                    end
                                 end
                             end
                         end

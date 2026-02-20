@@ -26,21 +26,20 @@ fun fluidStationaryDistr(
     x: DoubleArray
 ): Matrix {
     val N = mass0.numCols
+    val Np = K.numRows
     val result = Matrix.zeros(x.size, N)
 
+    // closing = -K^{-1} * clo
+    val closing = K.neg().inv().mult(clo)
+    val I = Matrix.eye(Np)
+
     for (i in x.indices) {
-        if (x[i] == 0.0) {
-            // At zero, return mass0
-            for (j in 0 until N) {
-                result[i, j] = mass0[0, j]
-            }
-        } else {
-            // For x > 0, compute ini * e^(K*x) * clo
-            val expKx = K.scale(x[i]).expm()
-            val density = ini.mult(expKx).mult(clo)
-            for (j in 0 until N) {
-                result[i, j] = density[0, j]
-            }
+        // y(x) = mass0 + ini * (I - e^(K*x)) * closing
+        val expKx = K.scale(x[i]).expm()
+        val IminusExp = I.sub(expKx)
+        val contrib = ini.mult(IminusExp).mult(closing)
+        for (j in 0 until N) {
+            result[i, j] = mass0[0, j] + contrib[0, j]
         }
     }
 

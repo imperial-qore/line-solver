@@ -12,6 +12,7 @@ from typing import Dict, Any, Optional
 import os
 
 from ...api.sn import NetworkStruct, NodeType
+from ...api.sn.demands import sn_get_demands_chain
 
 
 def write_jmva(sn: NetworkStruct, output_path: str, options: Optional[Dict[str, Any]] = None) -> str:
@@ -37,14 +38,12 @@ def write_jmva(sn: NetworkStruct, output_path: str, options: Optional[Dict[str, 
     model.set('xmlns:xsi', 'http://www.w3.org/2001/XMLSchema-instance')
     model.set('xsi:noNamespaceSchemaLocation', 'JMTmodel.xsd')
 
-    # Algorithm type element
-    alg_type = SubElement(model, 'algType')
-    _set_algorithm_name(alg_type, sn, method)
-    alg_type.set('tolerance', '1.0E-7')
-    alg_type.set('maxSamples', str(samples))
-
-    # Get demands per chain
-    Dchain, STchain, Vchain, Nchain, alpha = _get_demands_chain(sn)
+    # Get demands per chain using proper chain aggregation
+    demands = sn_get_demands_chain(sn)
+    Lchain = demands.Lchain      # Dchain in JMVA context = Lchain
+    STchain = demands.STchain
+    Vchain = demands.Vchain
+    Nchain = demands.Nchain.flatten()
 
     # Parameters element
     parameters = SubElement(model, 'parameters')
@@ -131,10 +130,12 @@ def write_jmva(sn: NetworkStruct, output_path: str, options: Optional[Dict[str, 
                 stat_srv_time.set('customerclass', f'Chain{c+1:02d}')
 
                 # Build load-dependent service time string
+                # Position k = service time when k customers present
+                # For multiserver: ST(n) = ST / min(n, nservers)
                 total_pop = int(np.sum([n for n in Nchain if np.isfinite(n)]))
                 nservers = sn.nservers[i] if i < len(sn.nservers) else 1
-                ld_srv_string = str(st_value)
-                for n in range(1, total_pop + 1):
+                ld_srv_string = str(st_value)  # n=1: base service time
+                for n in range(2, total_pop + 1):
                     ld_srv_string += f';{st_value / min(n, nservers)}'
                 stat_srv_time.text = ld_srv_string
             else:
@@ -149,10 +150,10 @@ def write_jmva(sn: NetworkStruct, output_path: str, options: Optional[Dict[str, 
             visit_elem.set('customerclass', f'Chain{c+1:02d}')
 
             st_value = STchain[i, c] if i < STchain.shape[0] and c < STchain.shape[1] else 0.0
-            d_value = Dchain[i, c] if i < Dchain.shape[0] and c < Dchain.shape[1] else 0.0
+            l_value = Lchain[i, c] if i < Lchain.shape[0] and c < Lchain.shape[1] else 0.0
 
             if st_value > 0:
-                val = d_value / st_value
+                val = l_value / st_value
             else:
                 val = 0.0
             visit_elem.text = str(val)
@@ -163,7 +164,7 @@ def write_jmva(sn: NetworkStruct, output_path: str, options: Optional[Dict[str, 
 
     for c in range(sn.nchains):
         class_ref = SubElement(ref_stations, 'Class')
-        class_ref.set('name', f'Chain{c+1}')
+        class_ref.set('name', f'Chain{c+1:02d}')
 
         # Get reference station for this chain
         if sn.inchain is not None and c < len(sn.inchain):
@@ -183,7 +184,10 @@ def write_jmva(sn: NetworkStruct, output_path: str, options: Optional[Dict[str, 
 
     # Algorithm parameters
     alg_params = SubElement(model, 'algParams')
-    alg_params.append(alg_type)
+    alg_type = SubElement(alg_params, 'algType')
+    _set_algorithm_name(alg_type, sn, method)
+    alg_type.set('tolerance', '1.0E-7')
+    alg_type.set('maxSamples', str(samples))
     compare_algs = SubElement(alg_params, 'compareAlgs')
     compare_algs.set('value', 'false')
 
@@ -233,81 +237,6 @@ def _set_algorithm_name(alg_elem: Element, sn: NetworkStruct, method: str) -> No
         alg_elem.set('name', 'De Souza-Muntz Linearizer')
     else:
         alg_elem.set('name', 'MVA')
-
-
-def _get_demands_chain(sn: NetworkStruct):
-    """
-    Calculate demands per chain (aggregated from class demands).
-
-    Returns:
-        Dchain: Service demands per chain [M x C]
-        STchain: Service times per chain [M x C]
-        Vchain: Visits per chain [M x C]
-        Nchain: Population per chain [C]
-        alpha: Class-to-chain probabilities
-    """
-    M = sn.nstations
-    K = sn.nclasses
-    C = sn.nchains
-
-    # Initialize matrices
-    Dchain = np.zeros((M, C))
-    STchain = np.zeros((M, C))
-    Vchain = np.zeros((M, C))
-    Nchain = np.zeros(C)
-    alpha = np.zeros((K, C))
-
-    # Build alpha matrix (class to chain mapping)
-    if sn.chains is not None:
-        for c in range(C):
-            for k in range(K):
-                if c < sn.chains.shape[0] and k < sn.chains.shape[1]:
-                    if sn.chains[c, k] > 0:
-                        alpha[k, c] = 1.0
-
-    # Calculate Nchain (population per chain)
-    for c in range(C):
-        for k in range(K):
-            if alpha[k, c] > 0 and k < len(sn.njobs):
-                if np.isfinite(sn.njobs[k]):
-                    Nchain[c] += sn.njobs[k]
-
-    # Calculate service times and demands per chain
-    for i in range(M):
-        for c in range(C):
-            st_sum = 0.0
-            weight_sum = 0.0
-
-            for k in range(K):
-                if alpha[k, c] > 0:
-                    if sn.rates is not None and i < sn.rates.shape[0] and k < sn.rates.shape[1]:
-                        rate = sn.rates[i, k]
-                        if rate > 0 and not np.isnan(rate):
-                            st = 1.0 / rate
-                            st_sum += st
-                            weight_sum += 1.0
-
-            if weight_sum > 0:
-                STchain[i, c] = st_sum / weight_sum
-
-            # Calculate visits from routing
-            if sn.visits is not None:
-                visit_sum = 0.0
-                for k in range(K):
-                    if alpha[k, c] > 0:
-                        if i < sn.visits.shape[0] and k < sn.visits.shape[1]:
-                            visit_sum += sn.visits[i, k]
-                if weight_sum > 0:
-                    Vchain[i, c] = visit_sum / weight_sum
-                else:
-                    Vchain[i, c] = 1.0  # Default visit
-            else:
-                Vchain[i, c] = 1.0  # Default visit
-
-            # Demand = Service time * Visits
-            Dchain[i, c] = STchain[i, c] * Vchain[i, c]
-
-    return Dchain, STchain, Vchain, Nchain, alpha
 
 
 def _element_to_string(elem: Element) -> bytes:

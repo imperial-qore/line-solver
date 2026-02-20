@@ -73,6 +73,7 @@ import jline.io.Ret;
 import static jline.api.mam.Map2_fitKt.map2_fit;
 import kotlin.Triple;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -107,6 +108,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * @see SolverDESTestFixtures
  */
 public class SolverDESTest extends SolverDESTestFixtures {
+
+    // Static initializer to ensure verbose is SILENT from the very start
+    static {
+        GlobalConstants.setVerbose(VerboseLevel.SILENT);
+    }
 
     // FiniteBuffer JMT reference values (seed=23000, samples=1000000)
     public static final double[] FINITEBUFFER_JMT_QLEN = new double[] {0.000000000000000e+00, 2.925560600827287e+00};
@@ -199,6 +205,11 @@ public class SolverDESTest extends SolverDESTestFixtures {
     @BeforeAll
     public static void setUp() {
         Maths.setRandomNumbersMatlab(true);
+        GlobalConstants.setVerbose(VerboseLevel.SILENT);
+    }
+
+    @BeforeEach
+    public void setUpEach() {
         GlobalConstants.setVerbose(VerboseLevel.SILENT);
     }
 
@@ -1843,6 +1854,11 @@ public class SolverDESTest extends SolverDESTestFixtures {
     @Nested
     class SchedulingTests {
 
+        @BeforeEach
+        public void setUpSchedulingTests() {
+            GlobalConstants.setVerbose(VerboseLevel.SILENT);
+        }
+
         @Nested
         class FiniteCapacityTests {
 
@@ -2126,25 +2142,9 @@ public class SolverDESTest extends SolverDESTestFixtures {
         @Nested
         class PrioritySchedulingTests {
 
-                @Test
-                @Disabled("Run manually to regenerate JMT reference values")
-                public void regenerate_priority_jmt_references() {
-                    int samples = 1000000;
-                    int seed = BASE_SEED;
-
-                    System.out.println("=== Regenerating JMT reference values for priority tests ===\n");
-
-                    // SimplePriorityMM1
-                    System.out.println("// SimplePriorityMM1 JMT reference values (seed=" + seed + ", samples=" + samples + ")");
-                    printJMTReference("SIMPLEPRIORITYMM1", createSimplePriorityMM1Network(), seed, samples);
-
-                    // PSPRIO
-                    System.out.println("\n// PSPRIO JMT reference values (seed=" + seed + ", samples=" + samples + ")");
-                    printJMTReference("PSPRIO", createPSPRIONetwork(), seed, samples);
-
-                    // LargeNonBCMPPriority
-                    System.out.println("\n// LargeNonBCMPPriority JMT reference values (seed=" + seed + ", samples=" + samples + ")");
-                    printJMTReference("LARGENONBCMPPRIORITY", createLargeNonBCMPPriorityNetwork(), seed, samples);
+                @BeforeEach
+                public void setUpPriorityTests() {
+                    GlobalConstants.setVerbose(VerboseLevel.SILENT);
                 }
 
                 @Test
@@ -2457,7 +2457,6 @@ public class SolverDESTest extends SolverDESTestFixtures {
                 }
 
                 @Test
-                @Disabled("DES vs JMT LCFS/LCFSPR: 27% throughput MRE exceeds 5% tolerance")
                 public void test_cqn_lcfs_lcfspr_vs_jmt() {
                     Network model = ClosedModel.cqn_lcfs_lcfspr();
 
@@ -2756,7 +2755,6 @@ public class SolverDESTest extends SolverDESTestFixtures {
                 }
 
                 @Test
-                @Disabled("DES only supports Jackson networks with exponential service; Weibull distribution unsupported")
                 public void testWeibullDistribution() {
                     Network model = new Network("M/Weibull/1");
                     Source source = new Source(model, "Source");
@@ -2765,7 +2763,7 @@ public class SolverDESTest extends SolverDESTestFixtures {
 
                     OpenClass jobClass = new OpenClass(model, "Class1", 0);
                     source.setArrival(jobClass, Exp.fitMean(2.0));
-                    queue.setService(jobClass, new Weibull(1.0, 2.0));
+                    queue.setService(jobClass, new Weibull(2.0, 1.0));  // shape=2, scale=1, mean≈0.886, rho≈0.44
 
                     RoutingMatrix P = model.initRoutingMatrix();
                     P.set(jobClass, jobClass, source, queue, 1.0);
@@ -5098,6 +5096,9 @@ public class SolverDESTest extends SolverDESTestFixtures {
         @Nested
         class LNTests {
 
+            	/*
+            	 * COMMENTED OUT: DES no longer supports LQNs
+            	 *
             	@Test
             	@Disabled("DES vs LN: Large errors for LayeredNetwork models (known issue, not setup/delayoff specific)")
             	@DisplayName("LN Validation: FunctionTask with setup/delayoff")
@@ -5217,6 +5218,7 @@ public class SolverDESTest extends SolverDESTestFixtures {
             			String.format("At least 80%% of throughput metrics should match (got %.0f%%)",
             				tputMatchRate * 100));
             	}
+            	*/
 
         }
 
@@ -5459,8 +5461,8 @@ public class SolverDESTest extends SolverDESTestFixtures {
 		queue2.setNumberOfServers(1);
 		queue2.setCap(3);  // Total capacity = 3 (queue + in service)
 
-		// Queue1 has BAS - blocks when Queue2 is full
-		queue1.setDropRule(jobClass, DropStrategy.BlockingAfterService);
+		// Queue2 has BAS - blocks upstream server when Queue2 is full (JMT convention: BAS on destination)
+		queue2.setDropRule(jobClass, DropStrategy.BlockingAfterService);
 
 		// Routing
 		RoutingMatrix P = model.initRoutingMatrix();
@@ -6338,14 +6340,6 @@ public class SolverDESTest extends SolverDESTestFixtures {
 
 		return new MarkedMAP(mmap);
 	}
-    private String formatArray(java.util.List<Double> values) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < values.size(); i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(String.format("%.15e", values.get(i)));
-        }
-        return sb.toString();
-    }
     private double getQueueLength(NetworkAvgTable table, Queue queue, OpenClass jobClass) {
         for (int i = 0; i < table.getStationNames().size(); i++) {
             if (table.getStationNames().get(i).equals(queue.getName()) &&
@@ -6373,20 +6367,6 @@ public class SolverDESTest extends SolverDESTestFixtures {
         }
         return 0.0;
     }
-    private void printJMTReference(String prefix, Network model, int seed, int samples) {
-        SolverOptions jmtOptions = new SolverOptions(SolverType.JMT);
-        jmtOptions.verbose = VerboseLevel.SILENT;
-        jmtOptions.samples = samples;
-        jmtOptions.seed = seed;
-        SolverJMT solverJMT = new SolverJMT(model, jmtOptions);
-        NetworkAvgTable jmtTable = solverJMT.getAvgTable();
-
-        System.out.println("public static final double[] " + prefix + "_JMT_QLEN = new double[] {" + formatArray(jmtTable.getQLen()) + "};");
-        System.out.println("public static final double[] " + prefix + "_JMT_UTIL = new double[] {" + formatArray(jmtTable.getUtil()) + "};");
-        System.out.println("public static final double[] " + prefix + "_JMT_TPUT = new double[] {" + formatArray(jmtTable.getTput()) + "};");
-        System.out.println("public static final double[] " + prefix + "_JMT_RESPT = new double[] {" + formatArray(jmtTable.getRespT()) + "};");
-    }
-
 	private void testBASBlockingVsJMTImpl(boolean printDebug) {
 		Network model = createBASTandemNetwork();
 		int samples = 1000000;
@@ -6449,10 +6429,15 @@ public class SolverDESTest extends SolverDESTestFixtures {
 		// Tolerance for stochastic comparison (10% relative error)
 		double tol = 0.10;
 
-		// Queue length assertions intentionally omitted for BAS open networks.
-		// JMT has a known limitation where it doesn't correctly model BAS blocking effects
-		// on queue lengths in open networks. DES correctly shows higher Queue1 length due
-		// to blocking. See JMT-BAS.md for detailed analysis.
+		// Queue length comparisons
+		double q1QlenRelErr = Math.abs(desQLen.get(1) - jmtQLen.get(1)) / Math.max(jmtQLen.get(1), 0.001);
+		double q2QlenRelErr = Math.abs(desQLen.get(2) - jmtQLen.get(2)) / Math.max(jmtQLen.get(2), 0.001);
+		assertTrue(q1QlenRelErr <= tol,
+				"Queue1 QLen relative error " + String.format("%.2f%%", q1QlenRelErr * 100) +
+						" exceeds tolerance " + String.format("%.2f%%", tol * 100));
+		assertTrue(q2QlenRelErr <= tol,
+				"Queue2 QLen relative error " + String.format("%.2f%%", q2QlenRelErr * 100) +
+						" exceeds tolerance " + String.format("%.2f%%", tol * 100));
 
 		// Utilization comparisons
 		double q1UtilRelErr = Math.abs(desUtil.get(1) - jmtUtil.get(1)) / Math.max(jmtUtil.get(1), 0.001);
@@ -7347,25 +7332,6 @@ public class SolverDESTest extends SolverDESTestFixtures {
 		fail(String.format("Could not find metric for station '%s' and class '%s'", stationName, className));
 		return Double.NaN;
 	}
-
-	// ==================== BAS (Blocking After Service) Tests ====================
-
-	/**
-	 * Creates a simple tandem network with BAS blocking.
-	 * Source -> Queue1 (BAS) -> Queue2 (finite capacity) -> Sink
-	 */
-
-	/**
-	 * Test BAS blocking behavior by comparing DES with JMT.
-	 * With BAS, jobs block at Queue1 when Queue2 is full, causing backpressure.
-	 */
-	@Disabled("Queue1 QLen shows 54.32% error - DES blocked job accounting needs investigation")
-
-	/**
-	 * Debug version of BAS blocking test that prints values for investigation.
-	 * This test is NOT disabled and prints comparison values.
-	 */
-
 
 	// ==================== Setup/Delayoff Tests (from SetupDelayoffTest) ====================
 

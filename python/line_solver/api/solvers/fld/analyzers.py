@@ -20,6 +20,8 @@ from ...sn import (
     SchedStrategy,
     NodeType,
 )
+from ...sn.getters import sn_get_arvr_from_tput
+from ...sn.transforms import sn_get_residt_from_respt
 # Import standalone FluFluQueue using direct file import to avoid butools package dependency
 # This is necessary because the queues __init__.py imports modules that require external butools
 import importlib.util as _imputil
@@ -31,6 +33,31 @@ _fluflu_spec.loader.exec_module(_fluflu_module)
 FluFluQueue = _fluflu_module.FluFluQueue
 FluFluResultData = _fluflu_module.FluFluResult
 from .handler import solver_fld, SolverFLDOptions, SolverFLDReturn
+
+
+def _sched_is(station_sched, *strategies) -> bool:
+    """
+    Check if station_sched matches any of the given strategies.
+
+    Handles both enum and integer representations of scheduling strategies.
+
+    Args:
+        station_sched: Scheduling strategy (enum or int)
+        strategies: SchedStrategy enum values to check against
+
+    Returns:
+        True if station_sched matches any of the strategies
+    """
+    if station_sched is None:
+        return False
+    for strat in strategies:
+        if station_sched == strat:
+            return True
+        if hasattr(station_sched, 'value') and station_sched.value == strat.value:
+            return True
+        if isinstance(station_sched, int) and station_sched == strat.value:
+            return True
+    return False
 
 
 @dataclass
@@ -172,14 +199,14 @@ def closing_method_analyzer(
         for k in range(K):
             # Compute throughput at station m for class k
             if V_agg[m, k] > 0:
-                if station_sched == SchedStrategy.INF:
+                if _sched_is(station_sched, SchedStrategy.INF):
                     # Delay station: throughput = arrival rate
                     T[m, k] = total_lambda if k < len(rates) else 0
                     Q[m, k] = T[m, k] * S[m, k] * V_agg[m, k]
                     U[m, k] = Q[m, k]
                     R[m, k] = S[m, k] * V_agg[m, k]
 
-                elif station_sched == SchedStrategy.PS:
+                elif _sched_is(station_sched, SchedStrategy.PS):
                     # Processor Sharing: exact geometric approximation
                     # Simplified computation for state-dependent PS
                     T[m, k] = total_lambda * V_agg[m, k] / np.sum(V_agg[m, :])
@@ -195,7 +222,7 @@ def closing_method_analyzer(
                         R[m, k] = Q[m, k] / (T[m, k] + 1e-10)
                         U[m, k] = 1.0
 
-                elif station_sched == SchedStrategy.DPS:
+                elif _sched_is(station_sched, SchedStrategy.DPS):
                     # Discriminatory Processor Sharing: weighted by schedparam
                     T[m, k] = total_lambda * V_agg[m, k] / np.sum(V_agg[m, :])
 
@@ -305,7 +332,14 @@ def _has_dps_scheduling(sn: NetworkStruct) -> bool:
     sched_dict = sn.sched if sn.sched else {}
     for i in range(sn.nstations):
         station_sched = sched_dict.get(i)
+        if station_sched is None:
+            continue
+        # Handle both enum and integer representations
         if station_sched == SchedStrategy.DPS:
+            return True
+        if hasattr(station_sched, 'value') and station_sched.value == SchedStrategy.DPS.value:
+            return True
+        if isinstance(station_sched, int) and station_sched == SchedStrategy.DPS.value:
             return True
     return False
 
@@ -408,8 +442,8 @@ def solver_fld_analyzer(
         result.TN = ret.T
         result.CN = ret.C
         result.XN = ret.X
-        result.AN = ret.T.copy() if ret.T is not None else None  # Arrival rates ≈ throughputs
-        result.WN = ret.R.copy() if ret.R is not None else None  # Waiting times ≈ response times
+        result.AN = sn_get_arvr_from_tput(sn, ret.T) if ret.T is not None else None  # Compute proper arrival rates
+        result.WN = sn_get_residt_from_respt(sn, ret.R, None) if ret.R is not None else None  # Compute proper residence times
         result.QNt = ret.Qt
         result.UNt = ret.Ut
         result.TNt = ret.Tt

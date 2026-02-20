@@ -852,9 +852,12 @@ class LayeredNetworkStruct():
             self.hostdem[i] = jlineFromDistribution(distrib)
 
         self.think = np.empty(self.nidx, dtype=object)
-        for i in range(len(jsn.think)):
-            distrib = jsn.think.get(jpype.JPackage('java').lang.Integer(1 + i))
-            self.think[i] = jlineFromDistribution(distrib)
+        # think map uses absolute task indices as keys (tshift+1 to tshift+ntasks)
+        for key in jsn.think.keySet():
+            key_int = int(key)
+            distrib = jsn.think.get(key)
+            if key_int < self.nidx:
+                self.think[key_int] = jlineFromDistribution(distrib)
 
         self.callproc = np.empty(self.nidx, dtype=object)
         for i in range(len(jsn.callproc)):
@@ -1350,20 +1353,25 @@ class ActivityPrecedence:
     # Python snake_case aliases for compatibility
     @staticmethod
     def serial(acts):
-        """Python snake_case alias for Serial(). Takes a list of activities."""
+        """Python snake_case alias for Serial(). Takes a list of activities.
+
+        Returns an array of ActivityPrecedence objects representing the serial chain.
+        For N activities, returns N-1 precedence relationships.
+        """
         if not acts:
             raise ValueError("serial() requires at least one activity")
         if len(acts) == 1:
             return jpype.JPackage('jline').lang.layered.ActivityPrecedence.Serial(
                 acts[0].obj.getName(), acts[0].obj.getName())
-        # For multiple activities, chain them together serially
-        result = jpype.JPackage('jline').lang.layered.ActivityPrecedence.Serial(
-            acts[0].obj.getName(), acts[1].obj.getName())
-        for i in range(2, len(acts)):
-            # Chain subsequent activities
-            result = jpype.JPackage('jline').lang.layered.ActivityPrecedence.Serial(
-                acts[i-1].obj.getName(), acts[i].obj.getName())
-        return result
+        # Build a Java list of activity names
+        java_list = jpype.java.util.ArrayList()
+        for act in acts:
+            if hasattr(act, 'obj'):
+                java_list.add(act.obj.getName())
+            else:
+                java_list.add(str(act))
+        # Call Java's Serial(List) which returns ActivityPrecedence[]
+        return jpype.JPackage('jline').lang.layered.ActivityPrecedence.Serial(java_list)
 
     @staticmethod
     def AndFork(preAct, postActs):
@@ -1478,6 +1486,31 @@ class ActivityPrecedence:
     def cache_access(preAct, postActs):
         """Snake case alias for CacheAccess"""
         return ActivityPrecedence.CacheAccess(preAct, postActs)
+
+    @staticmethod
+    def and_fork(preAct, postActs):
+        """Snake case alias for AndFork"""
+        return ActivityPrecedence.AndFork(preAct, postActs)
+
+    @staticmethod
+    def and_join(preActs, postAct, quorum=None):
+        """Snake case alias for AndJoin"""
+        return ActivityPrecedence.AndJoin(preActs, postAct, quorum)
+
+    @staticmethod
+    def or_fork(preAct, postActs, probs):
+        """Snake case alias for OrFork"""
+        return ActivityPrecedence.OrFork(preAct, postActs, probs)
+
+    @staticmethod
+    def or_join(preActs, postAct):
+        """Snake case alias for OrJoin"""
+        return ActivityPrecedence.OrJoin(preActs, postAct)
+
+    @staticmethod
+    def loop(preAct, postActs, counts):
+        """Snake case alias for Loop"""
+        return ActivityPrecedence.Loop(preAct, postActs, counts)
 
     @staticmethod
     def fromActivities(preActs, postActs, preType, postType=None, preParams=None, postParams=None):

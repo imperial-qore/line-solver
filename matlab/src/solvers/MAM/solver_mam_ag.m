@@ -233,8 +233,14 @@ for k = 1:numProcesses
     % Convert to valid infinitesimal generator
     Q{k} = ctmc_makeinfgen(Qk);
 
-    % Solve for equilibrium distribution
-    pi{k} = ctmc_solve(Q{k});
+    % Solve for equilibrium distribution using birth-death recursion for
+    % tridiagonal generators (numerically stable for large state spaces),
+    % falling back to ctmc_solve otherwise
+    if is_tridiagonal(Q{k})
+        pi{k} = birth_death_solve(Q{k});
+    else
+        pi{k} = ctmc_solve(Q{k});
+    end
 end
 
 end
@@ -663,6 +669,50 @@ for ist = 1:M
     end
 end
 
+% Handle self-looping classes: they always stay at their reference station
+% and share the server with other classes under PS scheduling.
+% Only override if the method did not already compute SLC metrics (QN == 0).
+if isfield(sn, 'isslc') && any(sn.isslc)
+    for r = 1:K
+        if sn.isslc(r)
+            refst = sn.refstat(r);
+            if refst > 0 && refst <= M && QN(refst, r) == 0
+                % Self-looping class: all jobs stay at reference station
+                QN(refst, r) = sn.njobs(r);
+
+                % Service rate for this class
+                mu_ir = sn.rates(refst, r);
+                if ~isnan(mu_ir) && mu_ir > 0
+                    nservers = sn.nservers(refst);
+                    if isinf(nservers)
+                        % Delay (infinite server): no capacity constraint,
+                        % each job gets dedicated service
+                        UN(refst, r) = QN(refst, r);
+                        TN(refst, r) = mu_ir * QN(refst, r);
+                    else
+                        % Queue (finite server): capacity constraint applies
+                        % Get utilization from other classes at this station
+                        other_util = 0;
+                        for s = 1:K
+                            if s ~= r && ~sn.isslc(s)
+                                other_util = other_util + UN(refst, s);
+                            end
+                        end
+
+                        % Remaining capacity is shared with SLC
+                        remaining_capacity = max(0, 1 - other_util);
+
+                        % SLC utilization: min(demand, remaining capacity)
+                        slc_demand = QN(refst, r) / mu_ir;
+                        UN(refst, r) = min(slc_demand, remaining_capacity);
+                        TN(refst, r) = mu_ir * UN(refst, r);
+                    end
+                end
+            end
+        end
+    end
+end
+
 % Response times from Little's law: R = Q / T
 for ist = 1:M
     for r = 1:K
@@ -703,4 +753,56 @@ for r = 1:K
     end
 end
 
+end
+
+function pi = birth_death_solve(Q)
+% BIRTH_DEATH_SOLVE Solve equilibrium of a birth-death (tridiagonal) CTMC
+%
+% For a birth-death chain with birth rate lambda_n = Q(n, n+1) and
+% death rate mu_n = Q(n, n-1), the equilibrium is computed using the
+% recursion pi(n) = pi(n-1) * lambda(n-1) / mu(n).
+%
+% This is numerically stable and avoids the ill-conditioned linear system
+% that plagues null-space methods for large state spaces.
+
+n = size(Q, 1);
+if n <= 1
+    pi = 1;
+    return;
+end
+
+pi = zeros(1, n);
+pi(1) = 1.0;
+
+for i = 2:n
+    birth_rate = Q(i-1, i);
+    death_rate = Q(i, i-1);
+    if death_rate > 0
+        pi(i) = pi(i-1) * birth_rate / death_rate;
+    else
+        pi(i) = 0;
+    end
+end
+
+total = sum(pi);
+if total > 0
+    pi = pi / total;
+else
+    pi = ones(1, n) / n;
+end
+
+end
+
+function result = is_tridiagonal(Q)
+% IS_TRIDIAGONAL Check if a matrix is tridiagonal
+n = size(Q, 1);
+result = true;
+for i = 1:n
+    for j = 1:n
+        if abs(i - j) > 1 && abs(Q(i, j)) > 1e-14
+            result = false;
+            return;
+        end
+    end
+end
 end

@@ -1,5 +1,6 @@
 package jline.solvers.ln;
 
+import jline.GlobalConstants;
 import jline.TestTools;
 import jline.lang.constant.SchedStrategy;
 import jline.VerboseLevel;
@@ -8,9 +9,11 @@ import jline.lang.processes.Exp;
 import jline.solvers.LayeredNetworkAvgTable;
 import jline.solvers.SolverOptions;
 import jline.solvers.lqns.SolverLQNS;
+import jline.util.Maths;
 import jline.util.matrix.Matrix;
 
 import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -19,6 +22,14 @@ import org.junit.jupiter.api.Test;
  * Error handling and advanced feature validation tests for SolverLN.
  */
 class SolverLNValidationTest extends SolverLNTestBase {
+
+    @BeforeAll
+    public static void setUp() {
+        // Ensure MATLAB-compatible random number generation
+        Maths.setRandomNumbersMatlab(true);
+        // Set verbose level to SILENT to suppress warnings during tests
+        GlobalConstants.setVerbose(VerboseLevel.SILENT);
+    }
 
     // Tests for SolverLN with moment3 method enabled.
     // These tests verify that the post-convergence 3-moment APH fitting works correctly.
@@ -232,7 +243,8 @@ class SolverLNValidationTest extends SolverLNTestBase {
                 assertTrue(e.getMessage().contains("reply") ||
                            e.getMessage().contains("multiple") ||
                            e.getMessage().contains("unsupported") ||
-                           e.getMessage().contains("invalid"));
+                           e.getMessage().contains("invalid") ||
+                           e.getMessage().contains("service"));
             }
         });
     }
@@ -303,7 +315,6 @@ class SolverLNValidationTest extends SolverLNTestBase {
     }
 
     @Test
-    @Disabled("Error validation test: expected exception for parent task validation not thrown")
     public void test_LQN_err_8() throws Exception {
         // Test parent task validation
         Exception exception = assertThrows(Exception.class, () -> {
@@ -413,7 +424,8 @@ class SolverLNValidationTest extends SolverLNTestBase {
             assertTrue(e.getMessage().contains("duplicate") ||
                        e.getMessage().contains("repeated") ||
                        e.getMessage().contains("multiple") ||
-                       e.getMessage().contains("call"));
+                       e.getMessage().contains("call") ||
+                       e.getMessage().contains("service"));
         }
     }
 

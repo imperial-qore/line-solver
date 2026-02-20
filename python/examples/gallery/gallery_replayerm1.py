@@ -6,13 +6,18 @@ from line_solver import *
 
 def gallery_replayerm1(filename=None):
     if filename is None:
-        # Find example_trace.txt in the package
-        import line_solver
-        pkg_dir = os.path.dirname(line_solver.__file__)
-        filename = os.path.join(pkg_dir, 'example_trace.txt')
-        # If not found, try the matlab directory
-        if not os.path.exists(filename):
-            filename = '/home/gcasale/Dropbox/code/line-dev.git/matlab/example_trace.txt'
+        # Try to find example_trace.txt in common locations
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        possible_paths = [
+            os.path.join(script_dir, '..', 'gettingstarted', 'example_trace.txt'),
+            os.path.join(script_dir, '..', 'basic', 'openQN', 'example_trace.txt'),
+        ]
+        for path in possible_paths:
+            if os.path.exists(path):
+                filename = path
+                break
+        if filename is None:
+            raise FileNotFoundError("example_trace.txt not found in expected locations")
 
     model = Network('Trace/M/1')
 

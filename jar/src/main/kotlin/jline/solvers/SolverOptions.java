@@ -278,6 +278,15 @@ public class SolverOptions {
                 this.iter_max = 200;
                 this.stiff = true;
                 this.timespan[0] = 0;
+                // Reduce min step to handle Immediate transition rates (~1e8)
+                // MATLAB's ode15s has effectively no minimum step constraint
+                this.odesolvers.odeminstep = 1e-14;
+                this.odesolvers.accurateODESolver =
+                    new DormandPrince54Integrator(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol);
+                this.odesolvers.fastStiffODESolver =
+                    new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 3, 3);
+                this.odesolvers.accurateStiffODESolver =
+                    new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 12, 5);
                 break;
             case LN:
                 this.config.interlocking = false; // do not change, true unstable as of 2.0.38
@@ -294,7 +303,6 @@ public class SolverOptions {
                 this.config.mol_min_steps = 2; // Minimum outer iterations before checking convergence
                 this.timespan = new double[]{Inf, Inf};
                 this.keep = true;
-                this.verbose = VerboseLevel.STD;
                 this.iter_max = 200; // More iterations for difficult LQN models
                 this.iter_tol = 5e-3; // Convergence tolerance (looser than default for LQN models)
                 this.tol = 1e-4;
@@ -303,7 +311,7 @@ public class SolverOptions {
                 this.timespan = new double[]{Inf, Inf};
                 this.keep = true;
                 this.verbose = VerboseLevel.SILENT;  // MATLAB has "false" which maps to SILENT
-                this.config.multiserver = "default";
+                this.config.multiserver = "rolia";
                 break;
             case MAM:
                 this.iter_max = 100;
@@ -330,7 +338,7 @@ public class SolverOptions {
                 // JMT uses default settings (as per MATLAB implementation)
                 break;
             case QNS:
-                this.config.multiserver = "default";
+                this.config.multiserver = "rolia";
                 break;
             default: // Global options unless overridden by a solver
         }

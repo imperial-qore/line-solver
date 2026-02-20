@@ -518,5 +518,81 @@ classdef Environment < Ensemble
             self.addNodeBreakdown(baseModel, nodeName, breakdownDist, downServiceDist, resetBreakdown);
             self.addNodeRepair(nodeName, repairDist, resetRepair);
         end
+
+        function self = setBreakdownResetPolicy(self, nodeOrName, resetFun)
+            % SELF = SETBREAKDOWNRESETPOLICY(NODEORNAME, RESETFUN)
+            % Update the reset policy for breakdown transitions (UP -> DOWN) of a node
+            %
+            % Parameters:
+            %   nodeOrName - Node object or name of the node
+            %   resetFun - Function to reset queue lengths on breakdown
+            %              Example: @(q) 0*q to clear queues, @(q) q to keep jobs
+            %
+            % Example:
+            %   env.setBreakdownResetPolicy('Server1', @(q) 0*q);
+            %   % Or using node object:
+            %   env.setBreakdownResetPolicy(queue, @(q) 0*q);
+
+            % Extract node name if a Node object is passed
+            if isa(nodeOrName, 'Node')
+                nodeName = nodeOrName.name;
+            else
+                nodeName = nodeOrName;
+            end
+
+            downStageName = sprintf('DOWN_%s', nodeName);
+
+            % Find UP and DOWN stage indices
+            upIdx = self.envGraph.findnode('UP');
+            downIdx = self.envGraph.findnode(downStageName);
+
+            if isempty(upIdx) || upIdx == 0
+                line_error(mfilename, 'UP stage not found. Call addNodeBreakdown first.');
+            end
+            if isempty(downIdx) || downIdx == 0
+                line_error(mfilename, sprintf('DOWN stage for node "%s" not found. Call addNodeBreakdown first.', nodeName));
+            end
+
+            % Update the reset function for the breakdown transition (UP -> DOWN)
+            self.resetFun{upIdx, downIdx} = resetFun;
+        end
+
+        function self = setRepairResetPolicy(self, nodeOrName, resetFun)
+            % SELF = SETREPAIRRESETPOLICY(NODEORNAME, RESETFUN)
+            % Update the reset policy for repair transitions (DOWN -> UP) of a node
+            %
+            % Parameters:
+            %   nodeOrName - Node object or name of the node
+            %   resetFun - Function to reset queue lengths on repair
+            %              Example: @(q) q to keep jobs, @(q) 0*q to clear queues
+            %
+            % Example:
+            %   env.setRepairResetPolicy('Server1', @(q) q);
+            %   % Or using node object:
+            %   env.setRepairResetPolicy(queue, @(q) q);
+
+            % Extract node name if a Node object is passed
+            if isa(nodeOrName, 'Node')
+                nodeName = nodeOrName.name;
+            else
+                nodeName = nodeOrName;
+            end
+
+            downStageName = sprintf('DOWN_%s', nodeName);
+
+            % Find UP and DOWN stage indices
+            upIdx = self.envGraph.findnode('UP');
+            downIdx = self.envGraph.findnode(downStageName);
+
+            if isempty(upIdx) || upIdx == 0
+                line_error(mfilename, 'UP stage not found. Call addNodeBreakdown first.');
+            end
+            if isempty(downIdx) || downIdx == 0
+                line_error(mfilename, sprintf('DOWN stage for node "%s" not found. Call addNodeBreakdown first.', nodeName));
+            end
+
+            % Update the reset function for the repair transition (DOWN -> UP)
+            self.resetFun{downIdx, upIdx} = resetFun;
+        end
     end
 end

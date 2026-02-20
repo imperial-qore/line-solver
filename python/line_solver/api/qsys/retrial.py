@@ -344,23 +344,138 @@ class RetrialQueueAnalyzer:
         """
         Extract BMAP parameters from arrival process.
 
+        LINE stores arrival processes in MAP format: {D0, D1, D2, ...}
+        where D0 is the "hidden" generator and D1, D2, ... are arrival matrices.
+
         Returns:
             BmapMatrix instance or None if arrival is not BMAP/MAP
         """
-        # Placeholder implementation
-        # Would extract D0, D1, D2, ... from sn.proc{arrival_station}
+        sn = self.sn
+
+        # Find source station
+        source_idx = None
+        for i in range(sn.nstations):
+            node_idx = int(sn.stationToNode[i])
+            # Check if this is a source node
+            if hasattr(sn, 'nodetype') and sn.nodetype[node_idx] == 0:  # Source type
+                source_idx = i
+                break
+
+        if source_idx is None:
+            return None
+
+        # Extract process from sn.proc
+        # Assume single class for now (classIdx = 0)
+        class_idx = 0
+        if not hasattr(sn, 'proc') or sn.proc is None:
+            return None
+
+        try:
+            proc = sn.proc[source_idx][class_idx]
+        except (IndexError, KeyError, TypeError):
+            return None
+
+        if proc is None or not isinstance(proc, (list, tuple)) or len(proc) < 2:
+            return None
+
+        D0 = np.atleast_2d(proc[0])
+        D_batch = []
+
+        # Check if D0 looks like a subgenerator (negative diagonal)
+        if D0.shape[0] == D0.shape[1]:
+            diag_D0 = np.diag(D0)
+            if np.all(diag_D0 <= 0):
+                # This is in MAP format {D0, D1, ...}
+                for i in range(1, len(proc)):
+                    D_batch.append(np.atleast_2d(proc[i]))
+                return BmapMatrix(D0=D0, D_batch=D_batch)
+
+        # Try to interpret as PH format {alpha, T} and convert to MAP
+        alpha = np.atleast_1d(proc[0]).flatten()
+        T = np.atleast_2d(proc[1])
+
+        if len(alpha) == T.shape[0] == T.shape[1]:
+            n = len(alpha)
+            e = np.ones(n)
+            # Convert PH to MAP: D0 = T, D1 = (-T*e)*alpha
+            D0_new = T
+            D1_new = np.outer(-T @ e, alpha)
+            return BmapMatrix(D0=D0_new, D_batch=[D1_new])
+
         return None
 
     def extract_ph_service(self) -> Optional[PhDistribution]:
         """
         Extract Phase-Type service parameters.
 
+        LINE stores PH in MAP format: {D0, D1}
+        D0 = T (subgenerator matrix)
+        D1 = S0 * alpha (exit rate times initial prob)
+
         Returns:
             PhDistribution instance or None if service is not PH
         """
-        # Placeholder implementation
-        # Would extract beta, S from sn.proc{service_station}
-        return None
+        sn = self.sn
+
+        # Find queue station
+        queue_idx = None
+        for i in range(sn.nstations):
+            node_idx = int(sn.stationToNode[i])
+            # Check if this is a queue node
+            if hasattr(sn, 'nodetype') and sn.nodetype[node_idx] == 1:  # Queue type
+                queue_idx = i
+                break
+
+        if queue_idx is None:
+            return None
+
+        # Extract process from sn.proc
+        class_idx = 0
+        if not hasattr(sn, 'proc') or sn.proc is None:
+            return None
+
+        try:
+            proc = sn.proc[queue_idx][class_idx]
+        except (IndexError, KeyError, TypeError):
+            return None
+
+        if proc is None or not isinstance(proc, (list, tuple)) or len(proc) < 2:
+            return None
+
+        D0 = np.atleast_2d(proc[0])
+        D1 = np.atleast_2d(proc[1])
+
+        # Validate dimensions
+        n = D0.shape[0]
+        if D0.shape[1] != n or D1.shape[0] != n or D1.shape[1] != n:
+            return None
+
+        # S = D0 (subgenerator)
+        S = D0
+
+        # S0 = -S * ones (exit rates)
+        e = np.ones(n)
+        S0 = -S @ e
+
+        # Extract alpha from D1 = S0 * alpha
+        # Find a row with non-zero exit rate
+        idx = np.where(S0 > 1e-10)[0]
+        if len(idx) == 0:
+            # All rows have zero exit rate - use uniform
+            beta = np.ones(n) / n
+        else:
+            # alpha = D1(idx,:) / S0(idx)
+            beta = D1[idx[0], :] / S0[idx[0]]
+
+        # Ensure beta is properly normalized
+        beta = beta.flatten()
+        if abs(np.sum(beta) - 1) > 1e-6:
+            if np.sum(beta) > 0:
+                beta = beta / np.sum(beta)
+            else:
+                beta = np.ones(n) / n
+
+        return PhDistribution(beta=beta, S=S)
 
     def extract_retrial_parameters(self) -> Optional[Dict[str, float]]:
         """
@@ -372,10 +487,67 @@ class RetrialQueueAnalyzer:
             - gamma: Orbit impatience rate (reneging rate)
             - p: Batch rejection probability
             - R: Threshold for admission control
+            - N: Number of servers
         """
-        # Placeholder implementation
-        # Would extract from queue configuration
-        return None
+        sn = self.sn
+        params = {
+            'alpha': 0.1,  # Default retrial rate
+            'gamma': 0.0,  # Default orbit impatience (no abandonment)
+            'p': 0.0,      # Default batch rejection probability
+            'R': 0,        # Default admission threshold
+            'N': 1         # Default number of servers
+        }
+
+        # Find queue station
+        queue_idx = None
+        for i in range(sn.nstations):
+            node_idx = int(sn.stationToNode[i])
+            if hasattr(sn, 'nodetype') and sn.nodetype[node_idx] == 1:
+                queue_idx = i
+                break
+
+        if queue_idx is None:
+            return None
+
+        class_idx = 0
+
+        # Extract number of servers
+        if hasattr(sn, 'nservers'):
+            try:
+                params['N'] = int(sn.nservers[queue_idx])
+            except (IndexError, TypeError):
+                pass
+
+        # Extract retrial rate from retrialDelays if available
+        if hasattr(sn, 'retrialDelays') and sn.retrialDelays is not None:
+            try:
+                retrial_dist = sn.retrialDelays[queue_idx][class_idx]
+                if retrial_dist is not None and isinstance(retrial_dist, (list, tuple)):
+                    # For Exp(alpha), the rate matrix is -alpha
+                    params['alpha'] = -float(retrial_dist[1][0, 0])
+            except (IndexError, TypeError, KeyError):
+                pass
+
+        # Extract orbit impatience rate
+        if hasattr(sn, 'orbitImpatience') and sn.orbitImpatience is not None:
+            try:
+                impatience_dist = sn.orbitImpatience[queue_idx][class_idx]
+                if impatience_dist is not None and isinstance(impatience_dist, (list, tuple)):
+                    params['gamma'] = -float(impatience_dist[1][0, 0])
+            except (IndexError, TypeError, KeyError):
+                pass
+
+        # Extract batch rejection probability
+        if hasattr(sn, 'batchRejectProb') and sn.batchRejectProb is not None:
+            try:
+                params['p'] = float(sn.batchRejectProb[queue_idx, class_idx])
+            except (IndexError, TypeError):
+                pass
+
+        # Set admission threshold R = N - 1 by default
+        params['R'] = params['N'] - 1
+
+        return params
 
     def build_qbd_statespace(self,
                             bmap: BmapMatrix,
@@ -385,31 +557,91 @@ class RetrialQueueAnalyzer:
         """
         Build QBD state space for the retrial queue.
 
-        This constructs the generator matrix blocks for the QBD process.
+        This constructs the generator matrix blocks for the QBD process
+        following the BMAP/PH/N/N retrial queue formulation.
 
         Args:
             bmap: BMAP arrival process
             ph_service: PH service distribution
-            retrial_params: Retrial parameters (alpha, gamma, p, R)
+            retrial_params: Retrial parameters (alpha, gamma, p, R, N)
 
         Returns:
             QbdStatespace instance or None if construction fails
         """
-        # Placeholder implementation
-        # Would construct A0, A1, A2, B0 matrices
-        # based on BMAP, PH, and retrial parameters
-        return None
+        if bmap is None or ph_service is None or retrial_params is None:
+            return None
+
+        # Extract parameters
+        D0 = bmap.D0
+        D1 = bmap.D_batch[0] if bmap.D_batch else np.zeros_like(D0)
+        beta = ph_service.beta
+        S = ph_service.S
+        alpha = retrial_params.get('alpha', 0.1)
+        gamma = retrial_params.get('gamma', 0.0)
+        N = retrial_params.get('N', 1)
+
+        # Dimensions
+        m_a = D0.shape[0]  # BMAP phases
+        m_s = S.shape[0]   # Service phases
+        phase_dim = m_a * m_s * N  # Combined phase dimension
+
+        # Exit rate vector for service
+        e_s = np.ones(m_s)
+        S0 = -S @ e_s
+
+        # Identity matrices
+        I_a = np.eye(m_a)
+        I_s = np.eye(m_s)
+
+        # Build QBD generator blocks
+        # A0: transitions that increase level (arrivals to orbit)
+        # A1: transitions at same level
+        # A2: transitions that decrease level (retrials from orbit)
+
+        # Simplified construction for single-server case
+        if N == 1:
+            # Phase = (arrival phase, service phase, server state)
+            # Server state: 0 = idle, 1 = busy
+
+            # Build A0 (arrivals when server busy - go to orbit)
+            A0 = np.kron(D1, I_s)
+
+            # Build A2 (retrials from orbit when server becomes free)
+            A2 = alpha * np.kron(I_a, np.outer(S0, beta))
+
+            # Build A1 (internal transitions + arrivals when idle)
+            A1 = np.kron(D0, I_s) + np.kron(I_a, S)
+
+            # Add impatience (customers leaving orbit)
+            if gamma > 0:
+                A1 = A1 + gamma * np.eye(phase_dim)
+
+            # Boundary block B0
+            B0 = np.kron(D0 + D1, I_s) + np.kron(I_a, S)
+
+        else:
+            # Multi-server case - more complex construction
+            # Placeholder: return None for now
+            return None
+
+        return QbdStatespace(
+            A0=A0,
+            A1=A1,
+            A2=A2,
+            B0=B0,
+            max_level=self.max_retrial_orbit,
+            phase_dim=phase_dim
+        )
 
     def analyze(self) -> RetrialQueueResult:
         """
         Analyze the retrial queue.
 
-        This is the main entry point for analysis. Currently returns
-        a placeholder result. Full implementation would:
+        This is the main entry point for analysis:
         1. Detect queue type
         2. Extract arrival and service parameters
         3. Build QBD state space
-        4. Solve for stationary distribution
+        4. Solve for stationary distribution using matrix-analytic methods
         5. Compute performance metrics
 
         Returns:
@@ -420,20 +652,169 @@ class RetrialQueueAnalyzer:
         if queue_type == QueueType.STANDARD:
             raise ValueError("Standard queue - use standard analyzer")
 
-        # Placeholder result
-        result = RetrialQueueResult(
+        # Extract parameters
+        bmap = self.extract_bmap()
+        ph_service = self.extract_ph_service()
+        retrial_params = self.extract_retrial_parameters()
+
+        if bmap is None or ph_service is None or retrial_params is None:
+            return RetrialQueueResult(
+                queue_type=queue_type,
+                L_orbit=0.0,
+                N_server=0.0,
+                utilization=0.0,
+                throughput=0.0,
+                P_idle=1.0,
+                P_empty_orbit=1.0,
+                converged=False,
+                error=np.inf
+            )
+
+        # Build QBD state space
+        qbd = self.build_qbd_statespace(bmap, ph_service, retrial_params)
+
+        if qbd is None:
+            return RetrialQueueResult(
+                queue_type=queue_type,
+                L_orbit=0.0,
+                N_server=0.0,
+                utilization=0.0,
+                throughput=0.0,
+                P_idle=1.0,
+                P_empty_orbit=1.0,
+                converged=False,
+                error=np.inf
+            )
+
+        # Solve QBD using matrix-geometric method
+        try:
+            pi, R, converged, iterations, error = self._solve_qbd_matrix_geometric(qbd)
+        except Exception:
+            return RetrialQueueResult(
+                queue_type=queue_type,
+                L_orbit=0.0,
+                N_server=0.0,
+                utilization=0.0,
+                throughput=0.0,
+                P_idle=1.0,
+                P_empty_orbit=1.0,
+                converged=False,
+                error=np.inf
+            )
+
+        # Compute performance metrics
+        N = retrial_params.get('N', 1)
+        arrival_rate = bmap.arrival_rate
+        service_rate = ph_service.rate if hasattr(ph_service, 'rate') else 1.0 / ph_service.mean
+
+        # Expected number in orbit (sum over levels weighted by level)
+        L_orbit = 0.0
+        for level in range(len(pi)):
+            L_orbit += level * np.sum(pi[level])
+
+        # Server utilization
+        P_idle = np.sum(pi[0]) if len(pi) > 0 else 1.0
+        utilization = 1.0 - P_idle
+
+        # Throughput via departure rate
+        throughput = utilization * N * service_rate
+
+        # Expected number being served
+        N_server = utilization * N
+
+        # Probability orbit is empty
+        P_empty_orbit = np.sum(pi[0]) if len(pi) > 0 else 1.0
+
+        return RetrialQueueResult(
             queue_type=queue_type,
-            L_orbit=0.0,
-            N_server=0.0,
-            utilization=0.0,
-            throughput=0.0,
-            P_idle=1.0,
-            P_empty_orbit=1.0,
-            converged=False,
-            error=np.inf
+            L_orbit=L_orbit,
+            N_server=N_server,
+            utilization=utilization,
+            throughput=throughput,
+            P_idle=P_idle,
+            P_empty_orbit=P_empty_orbit,
+            stationary_dist=pi if converged else None,
+            truncation_level=len(pi) - 1 if pi is not None else 0,
+            converged=converged,
+            iterations=iterations,
+            error=error
         )
 
-        return result
+    def _solve_qbd_matrix_geometric(self, qbd: QbdStatespace) -> Tuple[np.ndarray, np.ndarray, bool, int, float]:
+        """
+        Solve QBD process using matrix-geometric method.
+
+        The rate matrix R satisfies: A0 + R*A1 + R^2*A2 = 0
+
+        Args:
+            qbd: QBD state space with generator blocks
+
+        Returns:
+            Tuple of (stationary distribution, R matrix, converged, iterations, error)
+        """
+        A0 = qbd.A0
+        A1 = qbd.A1
+        A2 = qbd.A2
+        n = A0.shape[0]
+
+        # Initialize R matrix
+        R = np.zeros((n, n))
+
+        # Iteration for R: R = -A0 * (A1 + R*A2)^{-1}
+        converged = False
+        iterations = 0
+        error = np.inf
+
+        for it in range(self.max_iterations):
+            iterations = it + 1
+
+            try:
+                # Compute (A1 + R*A2)^{-1}
+                inv_term = np.linalg.inv(A1 + R @ A2)
+                R_new = -A0 @ inv_term
+            except np.linalg.LinAlgError:
+                break
+
+            # Check convergence
+            error = np.max(np.abs(R_new - R))
+            R = R_new
+
+            if error < self.tolerance:
+                converged = True
+                break
+
+        if not converged:
+            return None, R, False, iterations, error
+
+        # Compute boundary probabilities
+        # pi_0 satisfies: pi_0 * (B0 + R*A2) = 0, sum(pi_0) * (I - R)^{-1} * e = 1
+        try:
+            B = qbd.B0 + R @ A2
+            # Find null space
+            eigvals, eigvecs = np.linalg.eig(B.T)
+            null_idx = np.argmin(np.abs(eigvals))
+            pi_0 = np.real(eigvecs[:, null_idx])
+            pi_0 = np.abs(pi_0)
+
+            # Normalize
+            I_minus_R_inv = np.linalg.inv(np.eye(n) - R)
+            e = np.ones(n)
+            norm_factor = pi_0 @ I_minus_R_inv @ e
+            if norm_factor > 0:
+                pi_0 = pi_0 / norm_factor
+        except np.linalg.LinAlgError:
+            return None, R, False, iterations, error
+
+        # Build stationary distribution up to truncation level
+        pi = [pi_0]
+        current = pi_0
+        for level in range(1, qbd.max_level + 1):
+            current = current @ R
+            if np.sum(current) < self.tolerance:
+                break
+            pi.append(current.copy())
+
+        return np.array(pi), R, converged, iterations, error
 
 
 def qsys_bmapphnn_retrial(

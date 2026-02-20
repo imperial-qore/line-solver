@@ -29,7 +29,9 @@ import jline.solvers.fluid.analyzers.ClosingAndStateDepMethodsAnalyzer;
 import jline.solvers.fluid.analyzers.FluidAnalyzer;
 import jline.solvers.fluid.analyzers.MFQAnalyzer;
 import jline.solvers.fluid.analyzers.MatrixMethodAnalyzer;
+import jline.solvers.fluid.handlers.MethodStepHandler;
 import jline.solvers.fluid.handlers.PassageTimeODE;
+import jline.util.Maths;
 import jline.util.PopulationLattice;
 import jline.util.matrix.Matrix;
 import jline.util.matrix.MatrixCell;
@@ -160,7 +162,6 @@ public class SolverFluid extends NetworkSolver {
         Matrix[][] passageTimeResults = passageTime();
         ((FluidResult) this.result).distribC = passageTimeResults;
         ((FluidResult) this.result).distribRuntime = (System.nanoTime() - startTime) / 1000000000.0;
-        // TODO: change the code below to setDistribResults method once implemented
 
         // Create and populate the distribution result
         DistributionResult distResult = new DistributionResult(sn.nstations, sn.nclasses, "response_time");
@@ -209,13 +210,18 @@ public class SolverFluid extends NetworkSolver {
                             null);
             // Binomial approximation with mean fitted to queue-lengths.
             // Rainer Schmidt, "An approximate MVA ...", PEVA 29:245-254, 1997.
+            Matrix N = sn.njobs;
+            Matrix Q = this.result.QN;
+            Matrix nir = stats.nir;
             ((FluidResult) this.result).logPnir = 0;
-            for (int r = 0; r < stats.nir.getNumCols(); r++) {
-                // TODO x 3: logPnir = logPnir + nchoosekln(N(r),nir(r));
-                // logPnir = logPnir + nir(r)*log(Q(ist,r)/N(r));
-                // logPnir = logPnir + (N(r)-nir(r))*log(1-Q(ist,r)/N(r));
+            for (int r = 0; r < nir.getNumCols(); r++) {
+                int Nr = (int) N.get(0, r);
+                int nirVal = (int) nir.get(0, r);
+                double Qir = Q.get(ist, r);
+                ((FluidResult) this.result).logPnir += Maths.logBinomial(Nr, nirVal);
+                ((FluidResult) this.result).logPnir += nirVal * FastMath.log(Qir / Nr);
+                ((FluidResult) this.result).logPnir += (Nr - nirVal) * FastMath.log(1 - Qir / Nr);
             }
-            // TODO: return real part of the array only
             ((FluidResult) this.result).Pnir = FastMath.exp(((FluidResult) this.result).logPnir);
             return new ProbabilityResult(((FluidResult) this.result).Pnir);
         } else {
@@ -244,7 +250,6 @@ public class SolverFluid extends NetworkSolver {
         initSol();
         ((FluidResult) this.result).distribC = passageTime();
         ((FluidResult) this.result).distribRuntime = (System.nanoTime() - startTime) / 1000000000.0;
-        // TODO: add in setDistribResults method once implemented
         return new DistributionResult(sn.nstations, sn.nclasses, "passage_time");
     }
 
@@ -531,11 +536,10 @@ public class SolverFluid extends NetworkSolver {
                                 }
                             }
                             
-                            // CRITICAL: Also prevent other stations from routing TO the transient class at station i
+                            // Prevent other stations from routing TO the transient class at station i
                             // This prevents loops where transient class returns to station i
                             for (int j = 0; j < M; j++) {
                                 if (j != i) {
-                                    // No station (except i itself) should route to the transient class at station i
                                     newRT.set(j * Kc + K, i * Kc + K, 0);
                                 }
                             }
@@ -591,25 +595,19 @@ public class SolverFluid extends NetworkSolver {
                                 }
                             }
 
-                            // Determine max integration time
+                            // Determine max integration time (matching MATLAB: nonZeroRates > tol)
                             double minNonZeroRate = POSITIVE_INFINITY;
                             for (int row = 0; row < M; row++) {
                                 for (int col = 0; col < K; col++) {
                                     double val = slowrate.get(row, col);
-                                    if (val > GlobalConstants.CoarseTol && val < minNonZeroRate) {
+                                    if (val > options.tol && val < minNonZeroRate) {
                                         minNonZeroRate = val;
                                     }
                                 }
                             }
                             
                             // Solve ODE until T = 100 events with slowest exit rate
-                            // For open networks, use a smaller time range for better resolution
                             double T = abs(100 / minNonZeroRate);
-                            if (sn.jobclasses.get(c).getJobClassType() == JobClassType.OPEN) {
-                                // For open networks, most of the CDF is in the early part
-                                // Use a much smaller range for better resolution of early percentiles
-                                T = Math.min(T, 5.0); // Limit to 5 time units for fine resolution
-                            }
                             double[] tRange = {0, T};
                             
 
@@ -650,121 +648,44 @@ public class SolverFluid extends NetworkSolver {
                             boolean finished = false;
                             double tref = 0;
                             boolean stiff = options.stiff;
-
-                            // NOTE: Immediate rate rescaling removed - immediate transitions are now
-                            // eliminated via stochastic complementation in the preprocessing step
-                            // (see ode_eliminate_immediate in MATLAB or corresponding JAR implementation)
+                            double ptTol = options.tol;
 
                             while (iter <= options.iter_max && !finished) {
 
-                                // Select ODE solver based on stiffness
-                                FirstOrderIntegrator odeSolver;
+                                // Use LSODA (stiff solver) for passage time ODE, matching MATLAB ode15s.
+                                // Use tight tolerances for accurate CDF representation.
+                                Matrix tmpTIter;
+                                Matrix tmpStateIter;
 
-                                if (stiff) {
-                                    odeSolver = options.odesolvers.accurateStiffODESolver;
-                                } else {
-                                    odeSolver = options.odesolvers.accurateODESolver;
-                                }
-
-                                // Use a combination of fine linear spacing at the beginning and log spacing later
-                                // This ensures we capture the rapid changes in the CDF at small times
-                                int numTimePoints = options.config.num_cdf_pts;
-                                double[] timePoints = new double[numTimePoints];
-                                
-                                // For exponential distributions, most mass exits within a few mean times
-                                // Use very fine spacing in the first portion
-                                double meanServiceTime = 1.0 / minNonZeroRate; // Approximate mean service time
-
-                                double maxCdfCoverage = 0.999; // do not go to p=1 exactly
-
-                                for (int tp = 0; tp < numTimePoints; tp++) {
-                                    double p = maxCdfCoverage * tp / (numTimePoints - 1.0);
-                                    timePoints[tp] = -meanServiceTime * Math.log(1.0 - p);
-                                    if (timePoints[tp] > T / 5.0) {
-                                        timePoints[tp] = T / 5.0; // clamp if needed
-                                    }
-                                    
-                                    // Ensure monotonically increasing time points to prevent LSODA issues
-                                    if (tp > 0 && timePoints[tp] <= timePoints[tp-1]) {
-                                        timePoints[tp] = timePoints[tp-1] + 1e-12;
-                                    }
-                                }
-
-                                // Storage for results
-                                Matrix tmpTIter = new Matrix(numTimePoints, 1);
-                                Matrix tmpStateIter = new Matrix(numTimePoints, initialState.length);
-                                
                                 try {
-                                    // Store initial state
-                                    tmpTIter.set(0, 0, timePoints[0]);
-                                    for (int j = 0; j < initialState.length; j++) {
-                                        tmpStateIter.set(0, j, initialState[j]);
-                                    }
-                                    
-                                    // Integrate to each time point
-                                    double[] currentState = initialState.clone();
-                                    for (int tp = 1; tp < numTimePoints; tp++) {
-                                        double[] tempState = new double[initialState.length];
-                                        
-                                        // Check for duplicate time points to avoid LSODA infinite loop
-                                        if (Math.abs(timePoints[tp] - timePoints[tp-1]) < 1e-12) {
-                                            // Skip integration if time points are identical, just copy state
-                                            System.arraycopy(currentState, 0, tempState, 0, currentState.length);
-                                        } else {
-                                            try {
-                                                odeSolver.integrate(ode, timePoints[tp-1], currentState, timePoints[tp], tempState);
-                                            } catch (RuntimeException odeException) {
-                                                // If LSODA fails, try falling back to DormandPrince54 (non-stiff solver)
-                                                if (odeException.getMessage() != null &&
-                                                    (odeException.getMessage().contains("apparent infinite loop") ||
-                                                     odeException.getMessage().contains("convergence") ||
-                                                     odeException.getMessage().contains("error test failed"))) {
-                                                    try {
-                                                        // Fall back to non-stiff solver
-                                                        options.odesolvers.accurateODESolver.integrate(ode, timePoints[tp-1], currentState, timePoints[tp], tempState);
-                                                    } catch (RuntimeException fallbackException) {
-                                                        // If fallback also fails, copy the previous state
-                                                        System.arraycopy(currentState, 0, tempState, 0, currentState.length);
-                                                    }
-                                                } else {
-                                                    // Re-throw other ODE errors
-                                                    throw odeException;
-                                                }
-                                            }
+                                    // Use LSODA for passage time ODE
+                                    // Use small min step (1e-12) to handle stiff initial conditions
+                                    LSODA lsodaSolver = new LSODA(
+                                            1e-12, options.odesolvers.odemaxstep,
+                                            ptTol, ptTol, 12, 5);
+                                    double[] tempState = new double[initialState.length];
+                                    lsodaSolver.integrate(ode, 0, initialState, T, tempState);
+
+                                    int numSteps = lsodaSolver.getStepsTaken() + 1;
+                                    ArrayList<Double> tHistory = lsodaSolver.getTvec();
+                                    ArrayList<Double[]> yHistory = lsodaSolver.getYvec();
+
+                                    // Use raw LSODA step points with non-negative clamping
+                                    tmpTIter = new Matrix(numSteps, 1);
+                                    tmpStateIter = new Matrix(numSteps, initialState.length);
+                                    for (int step = 0; step < numSteps; step++) {
+                                        tmpTIter.set(step, 0, tHistory.get(step));
+                                        Double[] yStep = yHistory.get(step);
+                                        for (int j = 0; j < initialState.length; j++) {
+                                            tmpStateIter.set(step, j, Math.max(0, yStep[j]));
                                         }
-                                        
-                                        // Store results
-                                        tmpTIter.set(tp, 0, timePoints[tp]);
-                                        for (int j = 0; j < tempState.length; j++) {
-                                            tmpStateIter.set(tp, j, Math.max(0, tempState[j])); // Ensure non-negative
-                                        }
-                                        
-                                        // Update current state for next integration
-                                        currentState = tempState.clone();
                                     }
-                                    
-                                    // Copy final state
-                                    System.arraycopy(currentState, 0, nextState, 0, currentState.length);
-                                    
+
+                                    System.arraycopy(tempState, 0, nextState, 0, tempState.length);
+
                                 } catch (RuntimeException e) {
                                     e.printStackTrace();
-                                    throw new RuntimeException("ODE Solver Failed: " + e.getMessage() + 
-                                        ". This may be due to numerical issues with the model configuration, " + 
-                                        "particularly class switching or complex routing patterns. " + 
-                                        "Try using a different solver method or simplifying the model.");
-                                }
-                                
-                                if (tmpStateIter.getNumRows() > 0) {
-                                    // Check initial and final states
-                                    for (int row = 0; row < Math.min(3, tmpStateIter.getNumRows()); row++) {
-                                        for (int col = 0; col < Math.min(8, tmpStateIter.getNumCols()); col++) {
-                                        }
-                                    }
-                                    double initSum = 0, finalSum = 0;
-                                    for (Integer idx : idxN) {
-                                        initSum += tmpStateIter.get(0, idx);
-                                        finalSum += tmpStateIter.get(tmpStateIter.getNumRows()-1, idx);
-                                    }
+                                    throw new RuntimeException("ODE Solver Failed: " + e.getMessage());
                                 }
 
                                 iter++;
@@ -816,125 +737,116 @@ public class SolverFluid extends NetworkSolver {
                                     tmpRT[i][c][1].set(row, 0, cdfValue);
                                 }
                                 
-                                // Check for large CDF jumps and refine if needed
-                                double maxCdfJump = 0.001; // Maximum allowed CDF jump (0.1%)
-                                boolean needsRefinement = false;
-                                int refineStartIdx = -1;
-                                
-                                for (int row = 1; row < fullTMax && !needsRefinement; row++) {
-                                    double cdfCurrent = tmpRT[i][c][1].get(row, 0);
-                                    double cdfPrevious = tmpRT[i][c][1].get(row - 1, 0);
-                                    double cdfJump = cdfCurrent - cdfPrevious;
-                                    
-                                    if (cdfJump > maxCdfJump) {
-                                        needsRefinement = true;
-                                        refineStartIdx = row - 1;
-                                        if (options.verbose == VerboseLevel.DEBUG) {
-                                            System.out.printf("WARNING: Large CDF jump of %.2f%% detected at Station %d, Class %d between t=%.6f and t=%.6f%n",
-                                                cdfJump * 100, i, c,
-                                                tmpRT[i][c][0].get(row - 1, 0),
-                                                tmpRT[i][c][0].get(row, 0));
-                                        }
-                                    }
+                                // Iterative CDF refinement - detect and refine large CDF jumps
+                                double maxCdfJump = 0.0005;
+                                int maxRefinementIterations = 5;
+                                int refinementIter = 0;
+
+                                // Create ODE solver for refinement
+                                FirstOrderIntegrator refineOdeSolver;
+                                if (options.stiff) {
+                                    refineOdeSolver = options.odesolvers.accurateStiffODESolver;
+                                } else {
+                                    refineOdeSolver = options.odesolvers.accurateODESolver;
                                 }
-                                
-                                // If refinement is needed, add more time points in the problematic region
-                                if (needsRefinement && refineStartIdx >= 0) {
-                                    // Get the time interval where refinement is needed
-                                    double t1 = tmpRT[i][c][0].get(refineStartIdx, 0);
-                                    double t2 = tmpRT[i][c][0].get(refineStartIdx + 1, 0);
-                                    
-                                    // Create refined time points with linear spacing
-                                    int numRefinedPoints = 20; // Add 20 points in the interval
-                                    Matrix refinedT = new Matrix(numRefinedPoints, 1);
-                                    Matrix refinedStates = new Matrix(numRefinedPoints, initialState.length);
-                                    
-                                    // Create ODE solver for refinement
-                                    FirstOrderIntegrator refineOdeSolver;
-                                    if (options.stiff) {
-                                        refineOdeSolver = options.odesolvers.accurateStiffODESolver;
-                                    } else {
-                                        refineOdeSolver = options.odesolvers.accurateODESolver;
-                                    }
-                                    
-                                    for (int rp = 0; rp < numRefinedPoints; rp++) {
-                                        double alpha = rp / (double)(numRefinedPoints - 1);
-                                        double tRefined = t1 + alpha * (t2 - t1);
-                                        refinedT.set(rp, 0, tRefined);
-                                        
-                                        // Integrate to this refined time point
-                                        double[] refinedState = new double[initialState.length];
-                                        try {
-                                            // Get the state at the start of the interval
-                                            double[] startState = new double[initialState.length];
-                                            for (int j = 0; j < initialState.length; j++) {
-                                                startState[j] = stateFull.get(refineStartIdx, j);
+
+                                boolean keepRefining = true;
+                                while (keepRefining && refinementIter < maxRefinementIterations) {
+                                    keepRefining = false;
+
+                                    for (int row = 1; row < fullTMax; row++) {
+                                        double cdfCurrent = tmpRT[i][c][1].get(row, 0);
+                                        double cdfPrevious = tmpRT[i][c][1].get(row - 1, 0);
+                                        double cdfJump = cdfCurrent - cdfPrevious;
+
+                                        if (cdfJump > maxCdfJump) {
+                                            refinementIter++;
+
+                                            // Get the time interval where refinement is needed
+                                            int refineStartIdx = row - 1;
+                                            double t1 = tmpRT[i][c][0].get(refineStartIdx, 0);
+                                            double t2 = tmpRT[i][c][0].get(refineStartIdx + 1, 0);
+
+                                            // Create refined time points with linear spacing
+                                            int numRefinedPoints = 20;
+                                            Matrix refinedT = new Matrix(numRefinedPoints, 1);
+                                            Matrix refinedStates = new Matrix(numRefinedPoints, initialState.length);
+
+                                            for (int rp = 0; rp < numRefinedPoints; rp++) {
+                                                double alpha = rp / (double)(numRefinedPoints - 1);
+                                                double tRefined = t1 + alpha * (t2 - t1);
+                                                refinedT.set(rp, 0, tRefined);
+
+                                                double[] refinedState = new double[initialState.length];
+                                                try {
+                                                    double[] startState = new double[initialState.length];
+                                                    for (int j = 0; j < initialState.length; j++) {
+                                                        startState[j] = stateFull.get(refineStartIdx, j);
+                                                    }
+                                                    refineOdeSolver.integrate(ode, t1, startState, tRefined, refinedState);
+
+                                                    for (int j = 0; j < refinedState.length; j++) {
+                                                        refinedStates.set(rp, j, Math.max(0, refinedState[j]));
+                                                    }
+                                                } catch (Exception e) {
+                                                    for (int j = 0; j < initialState.length; j++) {
+                                                        double v1 = stateFull.get(refineStartIdx, j);
+                                                        double v2 = stateFull.get(refineStartIdx + 1, j);
+                                                        refinedStates.set(rp, j, v1 + alpha * (v2 - v1));
+                                                    }
+                                                }
                                             }
-                                            refineOdeSolver.integrate(ode, t1, startState, tRefined, refinedState);
-                                            
-                                            for (int j = 0; j < refinedState.length; j++) {
-                                                refinedStates.set(rp, j, Math.max(0, refinedState[j]));
+
+                                            // Merge refined points into the results
+                                            Matrix newTFull = new Matrix(fullTMax + numRefinedPoints - 2, 1);
+                                            Matrix newStateFull = new Matrix(fullTMax + numRefinedPoints - 2, initialState.length);
+
+                                            for (int mrow = 0; mrow <= refineStartIdx; mrow++) {
+                                                newTFull.set(mrow, 0, tFull.get(mrow, 0));
+                                                for (int j = 0; j < initialState.length; j++) {
+                                                    newStateFull.set(mrow, j, stateFull.get(mrow, j));
+                                                }
                                             }
-                                        } catch (Exception e) {
-                                            // If integration fails, use linear interpolation
-                                            for (int j = 0; j < initialState.length; j++) {
-                                                double v1 = stateFull.get(refineStartIdx, j);
-                                                double v2 = stateFull.get(refineStartIdx + 1, j);
-                                                refinedStates.set(rp, j, v1 + alpha * (v2 - v1));
+
+                                            for (int rp = 1; rp < numRefinedPoints; rp++) {
+                                                int newRow = refineStartIdx + rp;
+                                                newTFull.set(newRow, 0, refinedT.get(rp, 0));
+                                                for (int j = 0; j < initialState.length; j++) {
+                                                    newStateFull.set(newRow, j, refinedStates.get(rp, j));
+                                                }
                                             }
+
+                                            for (int mrow = refineStartIdx + 2; mrow < fullTMax; mrow++) {
+                                                int newRow = mrow + numRefinedPoints - 2;
+                                                newTFull.set(newRow, 0, tFull.get(mrow, 0));
+                                                for (int j = 0; j < initialState.length; j++) {
+                                                    newStateFull.set(newRow, j, stateFull.get(mrow, j));
+                                                }
+                                            }
+
+                                            tFull = newTFull;
+                                            stateFull = newStateFull;
+                                            fullTMax = tFull.getNumRows();
+
+                                            // Recompute CDF with refined points
+                                            tmpRT[i][c][0] = tFull;
+                                            tmpRT[i][c][1] = tFull.copy();
+                                            for (int cdfRow = 0; cdfRow < fullTMax; cdfRow++) {
+                                                tmpSum = 0;
+                                                for (Integer idx : idxN) {
+                                                    tmpSum += stateFull.get(cdfRow, idx);
+                                                }
+                                                double cdfValue = 1 - tmpSum / fluid_c;
+                                                tmpRT[i][c][1].set(cdfRow, 0, cdfValue);
+                                            }
+
+                                            // Verbose: refined CDF grid
+                                            // System.out.printf("INFO: Added %d refined points between t=%.6f and t=%.6f%n",
+                                            //     numRefinedPoints, t1, t2);
+
+                                            keepRefining = true;
+                                            break; // Restart inner loop with updated arrays (matching MATLAB)
                                         }
-                                    }
-                                    
-                                    // Merge refined points into the results
-                                    Matrix newTFull = new Matrix(fullTMax + numRefinedPoints - 2, 1);
-                                    Matrix newStateFull = new Matrix(fullTMax + numRefinedPoints - 2, initialState.length);
-                                    
-                                    // Copy points before refinement
-                                    for (int row = 0; row <= refineStartIdx; row++) {
-                                        newTFull.set(row, 0, tFull.get(row, 0));
-                                        for (int j = 0; j < initialState.length; j++) {
-                                            newStateFull.set(row, j, stateFull.get(row, j));
-                                        }
-                                    }
-                                    
-                                    // Add refined points (excluding first which duplicates refineStartIdx)
-                                    for (int rp = 1; rp < numRefinedPoints; rp++) {
-                                        int newRow = refineStartIdx + rp;
-                                        newTFull.set(newRow, 0, refinedT.get(rp, 0));
-                                        for (int j = 0; j < initialState.length; j++) {
-                                            newStateFull.set(newRow, j, refinedStates.get(rp, j));
-                                        }
-                                    }
-                                    
-                                    // Copy points after refinement (excluding the point at refineStartIdx+1)
-                                    for (int row = refineStartIdx + 2; row < fullTMax; row++) {
-                                        int newRow = row + numRefinedPoints - 2;
-                                        newTFull.set(newRow, 0, tFull.get(row, 0));
-                                        for (int j = 0; j < initialState.length; j++) {
-                                            newStateFull.set(newRow, j, stateFull.get(row, j));
-                                        }
-                                    }
-                                    
-                                    // Update the results with refined data
-                                    tFull = newTFull;
-                                    stateFull = newStateFull;
-                                    fullTMax = tFull.getNumRows();
-                                    
-                                    // Recompute CDF with refined points
-                                    tmpRT[i][c][0] = tFull;
-                                    tmpRT[i][c][1] = tFull.copy();
-                                    for (int row = 0; row < fullTMax; row++) {
-                                        tmpSum = 0;
-                                        for (Integer idx : idxN) {
-                                            tmpSum += stateFull.get(row, idx);
-                                        }
-                                        double cdfValue = 1 - tmpSum / fluid_c;
-                                        tmpRT[i][c][1].set(row, 0, cdfValue);
-                                    }
-                                    
-                                    if (options.verbose == VerboseLevel.DEBUG) {
-                                        System.out.printf("INFO: Added %d refined points between t=%.6f and t=%.6f%n",
-                                            numRefinedPoints, t1, t2);
                                     }
                                 }
                                 
@@ -950,97 +862,36 @@ public class SolverFluid extends NetworkSolver {
                                     double extendedT = T * (1 + extendIterations); // Increase time span
                                     double[] extendedTRange = {0, extendedT};
                                     
-                                    // Re-run ODE integration with extended time interval
-                                    Matrix extendedTFull = new Matrix(0, 1);
-                                    Matrix extendedStateFull = new Matrix(0, initialState.length);
-                                    
-                                    double extendedTref = 0;
-                                    double[] extendedInitialState = new double[initialState.length];
-                                    System.arraycopy(initialState, 0, extendedInitialState, 0, initialState.length);
-                                    
-                                    boolean extendedFinished = false;
-                                    int extendedIter = 0;
-                                    
-                                    while (!extendedFinished && extendedIter < options.iter_max) {
-                                        extendedIter++;
-                                        
-                                        // Use same time points but over extended range
-                                        int extendedNumTimePoints = 1000;
-                                        double[] extendedTimePoints = new double[extendedNumTimePoints];
-                                        double extendedMeanServiceTime = 1.0 / minNonZeroRate;
-                                        double extendedMaxCdfCoverage = 0.999;
-                                        
-                                        for (int tp = 0; tp < extendedNumTimePoints; tp++) {
-                                            double p = extendedMaxCdfCoverage * tp / (extendedNumTimePoints - 1.0);
-                                            extendedTimePoints[tp] = -extendedMeanServiceTime * Math.log(1.0 - p);
-                                            if (extendedTimePoints[tp] > extendedT / 5.0) {
-                                                extendedTimePoints[tp] = extendedT / 5.0;
+                                    // Re-run ODE integration with extended time using raw LSODA steps
+                                    try {
+                                        LSODA extLsoda = new LSODA(
+                                                1e-12, options.odesolvers.odemaxstep,
+                                                ptTol, ptTol, 12, 5);
+                                        double[] extTemp = new double[initialState.length];
+                                        extLsoda.integrate(ode, 0, initialState, extendedT, extTemp);
+
+                                        int extSteps = extLsoda.getStepsTaken() + 1;
+                                        ArrayList<Double> extTHist = extLsoda.getTvec();
+                                        ArrayList<Double[]> extYHist = extLsoda.getYvec();
+
+                                        // Use raw LSODA steps (no densification)
+                                        Matrix extTIter = new Matrix(extSteps, 1);
+                                        Matrix extStateIter = new Matrix(extSteps, initialState.length);
+                                        for (int step = 0; step < extSteps; step++) {
+                                            extTIter.set(step, 0, extTHist.get(step));
+                                            Double[] extYStep = extYHist.get(step);
+                                            for (int j = 0; j < initialState.length; j++) {
+                                                extStateIter.set(step, j, Math.max(0, extYStep[j]));
                                             }
                                         }
-                                        
-                                        Matrix extendedTmpTIter = new Matrix(extendedNumTimePoints, 1);
-                                        Matrix extendedTmpStateIter = new Matrix(extendedNumTimePoints, extendedInitialState.length);
-                                        
-                                        try {
-                                            extendedTmpTIter.set(0, 0, extendedTimePoints[0]);
-                                            for (int j = 0; j < extendedInitialState.length; j++) {
-                                                extendedTmpStateIter.set(0, j, extendedInitialState[j]);
-                                            }
-                                            
-                                            FirstOrderIntegrator extendedOdeSolver;
-                                            if (options.stiff) {
-                                                extendedOdeSolver = options.odesolvers.accurateStiffODESolver;
-                                            } else {
-                                                extendedOdeSolver = options.odesolvers.accurateODESolver;
-                                            }
-                                            
-                                            // Integrate to each time point
-                                            double[] currentState = extendedInitialState.clone();
-                                            for (int tp = 1; tp < extendedNumTimePoints; tp++) {
-                                                double[] tempState = new double[extendedInitialState.length];
-                                                extendedOdeSolver.integrate(ode, extendedTimePoints[tp-1], currentState, extendedTimePoints[tp], tempState);
-                                                
-                                                extendedTmpTIter.set(tp, 0, extendedTimePoints[tp]);
-                                                for (int j = 0; j < tempState.length; j++) {
-                                                    extendedTmpStateIter.set(tp, j, tempState[j]);
-                                                }
-                                                currentState = tempState;
-                                            }
-                                            
-                                            int extendedTmpTMax = extendedTmpTIter.getNumRows();
-                                            extendedTFull = Matrix.concatRows(extendedTFull, extendedTmpTIter, null);
-                                            extendedStateFull = Matrix.concatRows(extendedStateFull, extendedTmpStateIter, null);
-                                            
-                                        } catch (Exception e) {
-                                            // If integration fails, break and use current results
-                                            break;
-                                        }
-                                        
-                                        // Check if we've reached steady state
-                                        int extendedTmpTMax = extendedTmpTIter.getNumRows();
-                                        double extendedTmpSum = 0;
-                                        for (Integer idx : idxN) {
-                                            extendedTmpSum += extendedTmpStateIter.get(extendedTmpTMax - 1, idx);
-                                        }
-                                        if (extendedTmpSum < 0.000000001) {
-                                            extendedFinished = true;
-                                        }
-                                        extendedTref += extendedTmpTIter.get(extendedTmpTMax - 1, 0);
-                                        for (int idx = 0; idx < extendedInitialState.length; idx++) {
-                                            extendedInitialState[idx] = extendedTmpStateIter.get(extendedTmpTMax - 1, idx);
-                                        }
-                                    }
-                                    
-                                    // Update results with extended integration
-                                    if (extendedTFull.getNumRows() > 0) {
-                                        tFull = extendedTFull;
-                                        stateFull = extendedStateFull;
+
+                                        // Update results
+                                        tFull = extTIter;
+                                        stateFull = extStateIter;
                                         fullTMax = tFull.getNumRows();
-                                        
-                                        // Recompute CDF with extended results
+
                                         tmpRT[i][c][0] = tFull;
                                         tmpRT[i][c][1] = tFull.copy();
-                                        
                                         for (int row = 0; row < fullTMax; row++) {
                                             tmpSum = 0;
                                             for (Integer idx : idxN) {
@@ -1049,18 +900,15 @@ public class SolverFluid extends NetworkSolver {
                                             double cdfValue = 1 - tmpSum / fluid_c;
                                             tmpRT[i][c][1].set(row, 0, cdfValue);
                                         }
-                                        
-                                        // Check new first CDF value
+
                                         firstCdfValue = tmpRT[i][c][1].get(0, 0);
-                                    } else {
-                                        // If extension failed, break the loop
+                                    } catch (Exception e) {
                                         break;
                                     }
                                 }
                             } else {
                                 tmpRT[i][c][1].ones();
                             }
-                            
 
                             if (iter > options.iter_max) {
                                 line_warning("SolverFluid",
@@ -1151,7 +999,6 @@ public class SolverFluid extends NetworkSolver {
                 break;
             }
         }
-        
         boolean hasDPS = false;
         for (SchedStrategy sched : sn.sched.values()) {
             if (sched == SchedStrategy.DPS) {
@@ -1172,7 +1019,7 @@ public class SolverFluid extends NetworkSolver {
                 }
                 break;
             case "default":
-                if (hasOpenClasses || hasDPS) {
+                if (hasDPS) {
                     actualMethod = "closing";
                     options.method = "closing";
                 } else {
@@ -1203,10 +1050,9 @@ public class SolverFluid extends NetworkSolver {
                     "SolverFluid does not support a timespan that is a single point. Setting options.timespan[0] to 0.");
             options.timespan[0] = 0;
         }
-        // TODO: implement the below method and then uncomment
-    /*if (enableChecks && !supports(model)) {
-      throw new RuntimeException("This model contains features not supported by the solver.");
-    }*/
+        if (this.enableChecks && !supports(this.model)) {
+            throw new RuntimeException("This model contains features not supported by the solver.");
+        }
 
         int M = sn.nstations;
         int K = sn.nclasses;
@@ -1252,7 +1098,13 @@ public class SolverFluid extends NetworkSolver {
 
         int i = 0;
         for (Station station : this.model.getStations()) {
-            s0_sz.set(0, i, sn.state.get(station).getNumRows()); // Get number of states for each station
+            // Use sn.space for state count (matching MATLAB sn.space), fall back to sn.state
+            Matrix spaceMatrix = (sn.space != null) ? sn.space.get(station) : null;
+            if (spaceMatrix != null && spaceMatrix.getNumRows() > 0) {
+                s0_sz.set(0, i, spaceMatrix.getNumRows());
+            } else {
+                s0_sz.set(0, i, sn.state.get(station).getNumRows());
+            }
             i++;
         }
         Matrix s0_sz_1 = s0_sz.copy();
@@ -1283,12 +1135,14 @@ public class SolverFluid extends NetworkSolver {
                 }
             }
 
-            // Update sn after updating the state of the stations
-            NetworkStruct sn_cur = this.model.getStruct(false).copy();
+            // Update sn after updating the state of the stations (use true to refresh state)
+            NetworkStruct sn_cur = this.model.getStruct(true).copy();
 
             //System.out.println("Prior probability (s0prior_val): " + s0prior_val);
 
             if (s0prior_val > 0) {
+                // Clear init_sol so initSol() is called fresh for each state iteration
+                options.init_sol = new Matrix(1, 0);
                 runMethodSpecificAnalyzer(sn_cur); // run analyzer
 
                 // Handles the results returned by the solver
@@ -1329,11 +1183,23 @@ public class SolverFluid extends NetworkSolver {
 
                     // Check if this is the first time adding results or not
                     if (Qt[0][0].isEmpty()) {
+                        // First state: create 2-column [value, time] matrices matching MATLAB format
+                        // MATLAB: Qt{ist,r} = [Qfull_t{ist,r} * s0prior_val, t];
                         for (int ist = 0; ist < M; ist++) {
                             for (int r = 0; r < K; r++) {
-                                result.QNt[ist][r].scaleEq(s0prior_val, Qt[ist][r]);
-                                result.UNt[ist][r].scaleEq(s0prior_val, Ut[ist][r]);
-                                result.TNt[ist][r].scaleEq(s0prior_val, Tt[ist][r]);
+                                int nTimePoints = result.QNt[ist][r].getNumRows();
+                                Qt[ist][r] = new Matrix(nTimePoints, 2);
+                                Ut[ist][r] = new Matrix(nTimePoints, 2);
+                                Tt[ist][r] = new Matrix(nTimePoints, 2);
+                                for (int ti = 0; ti < nTimePoints; ti++) {
+                                    double tVal = result.t.get(ti, 0);
+                                    Qt[ist][r].set(ti, 0, result.QNt[ist][r].get(ti, 0) * s0prior_val);
+                                    Qt[ist][r].set(ti, 1, tVal);
+                                    Ut[ist][r].set(ti, 0, result.UNt[ist][r].get(ti, 0) * s0prior_val);
+                                    Ut[ist][r].set(ti, 1, tVal);
+                                    Tt[ist][r].set(ti, 0, result.TNt[ist][r].get(ti, 0) * s0prior_val);
+                                    Tt[ist][r].set(ti, 1, tVal);
+                                }
                             }
                         }
                     } else {
@@ -1459,10 +1325,29 @@ public class SolverFluid extends NetworkSolver {
         result.TN = T;
         result.CN = C;
         result.XN = X;
-        // TODO: replace with setTranAvgResults method once implemented
-        result.QNt = Qt;
-        result.UNt = Ut;
-        result.TNt = Tt;
+        // Strip time column from Qt/Ut/Tt before storing (internally they are [value, time]
+        // but result.QNt/UNt/TNt should be value-only 1-column matrices)
+        Matrix[][] QtOut = new Matrix[M][K];
+        Matrix[][] UtOut = new Matrix[M][K];
+        Matrix[][] TtOut = new Matrix[M][K];
+        for (int ist = 0; ist < M; ist++) {
+            for (int r = 0; r < K; r++) {
+                if (Qt[ist][r].getNumCols() >= 2) {
+                    QtOut[ist][r] = Qt[ist][r].getColumn(0);
+                    UtOut[ist][r] = Ut[ist][r].getColumn(0);
+                    TtOut[ist][r] = Tt[ist][r].getColumn(0);
+                } else {
+                    QtOut[ist][r] = Qt[ist][r];
+                    UtOut[ist][r] = Ut[ist][r];
+                    TtOut[ist][r] = Tt[ist][r];
+                }
+            }
+        }
+        // Set transient results using setTranAvgResults
+        Matrix[][] RNt = new Matrix[0][0];
+        Matrix[][] CNt = new Matrix[0][0];
+        Matrix[][] XNt = new Matrix[0][0];
+        this.setTranAvgResults(QtOut, UtOut, RNt, TtOut, CNt, XNt, result.runtime);
         //sn = this.model.getStruct();
         AvgHandle TH = getAvgTputHandles();
         Matrix AN = snGetArvRFromTput(sn, result.TN, TH);

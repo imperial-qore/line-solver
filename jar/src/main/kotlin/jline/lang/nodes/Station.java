@@ -8,6 +8,7 @@ package jline.lang.nodes;
 import jline.GlobalConstants;
 import jline.lang.ClosedClass;
 import jline.lang.JobClass;
+import jline.lang.OpenClass;
 import jline.lang.NetworkStruct;
 import jline.lang.constant.*;
 import jline.lang.processes.*;
@@ -353,7 +354,8 @@ public abstract class Station extends ServiceNode implements Serializable {
             JobClass jobclass = this.model.getClassByIndex(r);
             if (!source.containsJobClass(jobclass)) {
                 source.setArrival(jobclass, new Disabled());
-                source.setRouting(jobclass, RoutingStrategy.DISABLED);
+                // Open classes without arrivals should still route (for class switching pass-through)
+                source.setRouting(jobclass, (jobclass instanceof OpenClass) ? RoutingStrategy.RAND : RoutingStrategy.DISABLED);
                 Matrix nan_matrix = new Matrix(1, 1, 1);
                 nan_matrix.fill(Double.NaN);
                 MatrixCell tmp = new MatrixCell();

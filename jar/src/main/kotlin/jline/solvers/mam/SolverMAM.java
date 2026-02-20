@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 
 import static jline.api.sn.SnGetArvRFromTputKt.snGetArvRFromTput;
+import static jline.api.sn.SnGetResidTFromRespTKt.snGetResidTFromRespT;
 import static jline.io.InputOutputKt.*;
 import static jline.solvers.mam.analyzers.Solver_mam_analyzerKt.solver_mam_analyzer;
 import static jline.solvers.mam.handlers.Solver_mam_passage_timeKt.solver_mam_passage_time;
@@ -134,16 +135,6 @@ public class SolverMAM extends NetworkSolver {
         double start = System.nanoTime();
         NetworkStruct sn = getStruct();
 
-        // Check if the model is mixed (has both open and closed classes)
-        boolean hasOpen = model.hasOpenClasses();
-        boolean hasClosed = model.hasClosedClasses();
-        boolean isMixed = hasOpen && hasClosed;
-
-        if (isMixed) {
-            line_error(mfilename(new Object() {}), "SolverMAM does not support mixed models with both open and closed classes.");
-            return;
-        }
-
         // Check if network has Fork-Join topology
         Pair<Boolean, FJInfo> fjCheck = isFJ(sn);
         if (fjCheck.getFirst()) {
@@ -188,10 +179,12 @@ public class SolverMAM extends NetworkSolver {
                 options.method, sn.nstations, sn.nclasses));
         if (true) { // ~snHasMultipleClosedClasses(sn)
             line_debug(options.verbose, "Running MAM analysis, calling solver_mam_analyzer");
-            SolverResult res = solver_mam_analyzer(sn, options);
+            MAMResult res = solver_mam_analyzer(sn, options);
 
             AvgHandle T = getAvgTputHandles();
             Matrix AN = snGetArvRFromTput(sn, res.TN, T);
+            AvgHandle W = getAvgResidTHandles();
+            Matrix WN = snGetResidTFromRespT(sn, res.RN, W);
 
             double finish = System.nanoTime();
             res.runtime = (finish - start) / 1000000000.0;
@@ -201,8 +194,7 @@ public class SolverMAM extends NetworkSolver {
             } else {
                 methodName = options.method;
             }
-            Matrix WN = new Matrix(sn.nnodes, sn.nclasses);
-            this.setAvgResults(res.QN, res.UN, res.RN, res.TN, AN, WN, res.CN, res.XN, res.runtime, methodName, options.samples);
+            this.setAvgResults(res.QN, res.UN, res.RN, res.TN, AN, WN, res.CN, res.XN, res.runtime, methodName, res.iter);
         } else {
             line_warning(mfilename(new Object() {
             }), "SolverMAM supports at most a single closed class.");

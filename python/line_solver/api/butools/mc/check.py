@@ -7,7 +7,13 @@ Created on Fri Jul 25 16:57:48 2014
 
 import numpy as np
 import numpy.linalg as la
-import butools
+# Use local butools settings instead of external package
+from .. import checkPrecision, verbose
+# Create a butools-like namespace for backward compatibility
+class _butools_settings:
+    checkPrecision = checkPrecision
+    verbose = verbose
+butools = _butools_settings()
 
 def CheckGenerator (Q, transient=False, prec=None):
     """

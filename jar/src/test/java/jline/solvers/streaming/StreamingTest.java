@@ -118,6 +118,7 @@ public class StreamingTest {
     private StreamingOptions createTestStreamingOptions(int sampleFrequency) {
         return new StreamingOptions()
                 .endpoint(mockReceiver.getEndpoint())
+                .transport(StreamingOptions.TransportType.GRPC)
                 .mode(StreamingOptions.StreamMode.SAMPLED)
                 .sampleFrequency(sampleFrequency)
                 .serviceName("line-test");
@@ -132,6 +133,7 @@ public class StreamingTest {
     private StreamingOptions createTimeWindowStreamingOptions(double windowSeconds) {
         return new StreamingOptions()
                 .endpoint(mockReceiver.getEndpoint())
+                .transport(StreamingOptions.TransportType.GRPC)
                 .mode(StreamingOptions.StreamMode.TIME_WINDOW)
                 .timeWindowSeconds(windowSeconds)
                 .serviceName("line-test");
@@ -332,6 +334,7 @@ public class StreamingTest {
         // Only queue length metrics
         StreamingOptions streamOpts = new StreamingOptions()
                 .endpoint(mockReceiver.getEndpoint())
+                .transport(StreamingOptions.TransportType.GRPC)
                 .mode(StreamingOptions.StreamMode.SAMPLED)
                 .sampleFrequency(50)
                 .serviceName("line-test")

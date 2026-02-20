@@ -24,9 +24,12 @@ import java.util.*
  */
 
 fun ctmc_simulate(Q: Matrix, pi0: DoubleArray?, n: Int): Ret.ctmcSimulation {
+    return ctmc_simulate(Q, pi0, n, Random())
+}
+
+fun ctmc_simulate(Q: Matrix, pi0: DoubleArray?, n: Int, random: Random): Ret.ctmcSimulation {
     var pi0 = pi0
     val numStates = Q.length()
-    val random = Random()
     if (pi0 == null || pi0.size == 0) {
         pi0 = DoubleArray(numStates)
         var sum = 0.0

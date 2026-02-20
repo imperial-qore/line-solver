@@ -2,11 +2,16 @@ import numpy as np
 from numpy import linalg as la
 import numpy.matlib as ml
 import math
-import butools
-from butools.dph import CheckMGRepresentation, CheckDPHRepresentation
-from butools.moments import MomsFromFactorialMoms
-from butools.mc import DTMCSolve
-from butools.utils import Diag
+from .check import CheckMGRepresentation, CheckDPHRepresentation
+from ..moments.conv import MomsFromFactorialMoms
+from ..mc.stst import DTMCSolve
+from ..utils.misc import Diag
+
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
+
 
 
 def MomentsFromMG (alpha, A, K=0):

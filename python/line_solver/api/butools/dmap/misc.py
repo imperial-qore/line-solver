@@ -5,13 +5,16 @@ Created on Sun Aug 31 17:33:24 2014
 @author: gabor
 """
 
-import butools
 import numpy as np
 import numpy.matlib as ml
-from butools.dmap import CheckDMAPRepresentation, CheckDMMAPRepresentation
 from numpy.random import rand
-from butools.mc import DTMCSolve
-from butools.utils import SumMatrixList
+from .check import CheckDMAPRepresentation, CheckDMMAPRepresentation
+from ..mc.stst import DTMCSolve
+from ..utils.misc import SumMatrixList
+from .. import checkInput
+class _butools_settings:
+    checkInput = checkInput
+butools = _butools_settings()
 
 
 def SamplesFromDMMAP (D, k, initial=None):
@@ -210,6 +213,8 @@ def ImageFromDMAP (D0, D1, outFileName="display", prec=1e-13):
         image is displayed on the screen, otherwise it is 
         written to the file. The file format is deduced 
         from the file name.
+
+
     prec : double, optional
         Transition probabilities less then prec are 
         considered to be zero and are left out from the 

@@ -183,9 +183,54 @@ private fun computeEquilibrium(
         Qk = ctmc_makeinfgen(Qk)
         Q.add(Qk)
 
-        val piK = ctmc_solve(Qk)
+        val piK = if (isTridiagonal(Qk)) birthDeathSolve(Qk) else ctmc_solve(Qk)
         pi.add(piK)
     }
 
     return Pair(pi, Q)
+}
+
+/**
+ * Check if a matrix is tridiagonal (only non-zero entries on main diagonal,
+ * super-diagonal, and sub-diagonal).
+ */
+private fun isTridiagonal(Q: Matrix): Boolean {
+    val n = Q.getNumRows()
+    for (i in 0 until n) {
+        for (j in 0 until n) {
+            if (abs(i - j) > 1 && abs(Q.get(i, j)) > 1e-14) {
+                return false
+            }
+        }
+    }
+    return true
+}
+
+/**
+ * Solve equilibrium distribution of a birth-death (tridiagonal) CTMC
+ * using stable forward recursion: pi(i) = pi(i-1) * birth_rate / death_rate.
+ */
+private fun birthDeathSolve(Q: Matrix): Matrix {
+    val n = Q.getNumRows()
+    if (n <= 1) {
+        val pi = Matrix(1, 1)
+        pi.set(0, 0, 1.0)
+        return pi
+    }
+    val piArr = DoubleArray(n)
+    piArr[0] = 1.0
+    for (i in 1 until n) {
+        val birthRate = Q.get(i - 1, i)
+        val deathRate = Q.get(i, i - 1)
+        piArr[i] = if (deathRate > 0) piArr[i - 1] * birthRate / deathRate else 0.0
+    }
+    var total = 0.0
+    for (v in piArr) total += v
+    val pi = Matrix(1, n)
+    if (total > 0) {
+        for (i in 0 until n) pi.set(0, i, piArr[i] / total)
+    } else {
+        for (i in 0 until n) pi.set(0, i, 1.0 / n)
+    }
+    return pi
 }

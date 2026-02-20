@@ -96,13 +96,15 @@ class PriorityFCFSScheduler(SchedulingStrategy):
     """
     Priority scheduling with FCFS tie-breaking (HOL/FCFSPRIO).
 
-    Higher priority jobs are served first. Within the same priority,
-    jobs are served in FCFS order.
+    Higher priority jobs are served first. In LINE, lower priority value =
+    higher priority (e.g., priority 0 is served before priority 1).
+    Within the same priority, jobs are served in FCFS order.
     """
 
     def __init__(self, num_classes: int, num_servers: int):
         super().__init__(num_classes, num_servers)
-        # Priority queue: (negative_priority, arrival_time, customer)
+        # Priority queue: (priority, arrival_time, customer)
+        # Using min-heap: lower priority value = higher priority = served first
         self.wait_queue: List[Tuple[int, float, Customer]] = []
         self.server_busy: List[bool] = [False] * num_servers
         self.in_service: List[Optional[Customer]] = [None] * num_servers
@@ -127,10 +129,12 @@ class PriorityFCFSScheduler(SchedulingStrategy):
             self._busy_servers[class_id] += 1
             return (True, (server_id, customer))
         else:
-            # Add to priority queue (negative priority for max-heap behavior)
+            # Add to priority queue
+            # In LINE, lower priority value = higher priority, so use priority directly
+            # (heapq is min-heap, so lower values are served first)
             heapq.heappush(
                 self.wait_queue,
-                (-customer.priority, customer.queue_arrival_time, customer)
+                (customer.priority, customer.queue_arrival_time, customer)
             )
             return (True, None)
 

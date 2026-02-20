@@ -17,6 +17,7 @@ import pandas as pd
 
 from ...api.sn import NetworkStruct, NodeType
 from .jmva_writer import write_jmva
+from ..base import NetworkSolver
 
 
 @dataclass
@@ -45,7 +46,7 @@ class QNSResult:
     iter: int = 0
 
 
-class SolverQNS:
+class SolverQNS(NetworkSolver):
     """
     Native Python QNS solver using external qnsolver tool.
 
@@ -100,7 +101,6 @@ class SolverQNS:
             self.options = QNSOptions(method=method, **qns_kwargs)
 
         self._result: Optional[QNSResult] = None
-        self._table_silent = False
 
         # Map method to multiserver config
         if self.options.method in ('conway', 'rolia', 'zhou', 'suri', 'reiser', 'schmidt'):
@@ -183,6 +183,45 @@ class SolverQNS:
 
         actual_method = self.options.method
 
+        # Determine which path to use (matches MATLAB runAnalyzer lines 46-97)
+        from ...api.sn.predicates import sn_has_product_form
+        has_pf = sn_has_product_form(self.sn)
+        has_open = self.model.has_open_classes() if self.model is not None and hasattr(self.model, 'has_open_classes') else False
+
+        if has_pf or has_open:
+            # Product-form or open: use qnsolver directly
+            QN, UN, RN, TN, AN, WN, CN, XN, actual_method = self._run_qnsolver_path(M, K, C)
+        else:
+            # Non-product-form closed: convert to LQN and solve via SolverLQNS
+            QN, UN, RN, TN, AN, WN, CN, XN, actual_method = self._run_lqns_path(M, K, C)
+
+        runtime = time.time() - start_time
+
+        # Handle default method naming (matches MATLAB lines 108-112)
+        method = self.options.method
+        if method == 'default':
+            method = f'default/{actual_method}'
+        else:
+            method = actual_method
+
+        self._result = QNSResult(
+            QN=QN, UN=UN, RN=RN, TN=TN, AN=AN, WN=WN,
+            CN=CN, XN=XN, runtime=runtime, method=method, iter=0
+        )
+
+        return self._result
+
+    def _run_qnsolver_path(self, M, K, C):
+        """Run the qnsolver (external tool) path for product-form/open networks."""
+        QN = np.zeros((M, K))
+        UN = np.zeros((M, K))
+        RN = np.zeros((M, K))
+        TN = np.zeros((M, K))
+        AN = np.zeros((M, K))
+        WN = np.zeros((M, K))
+        CN = np.zeros((1, C))
+        XN = np.zeros((1, C))
+
         # Create temporary directory
         temp_dir = tempfile.mkdtemp(prefix='qns_')
 
@@ -233,15 +272,15 @@ class SolverQNS:
             Uchain, Qchain, Wchain, Tchain = self._parse_results(result_file, C)
 
             # Get demands per chain
-            Dchain, STchain, Vchain, Nchain, alpha = self._get_demands_chain()
+            Lchain, STchain, Vchain, Nchain, alpha = self._get_demands_chain()
 
             # Calculate system throughput for each chain
             Xchain = np.zeros((1, C))
+            refstat = self.sn.refstat.flatten() if self.sn.refstat is not None else np.zeros(K, dtype=int)
             for c in range(C):
-                if self.sn.refstat is not None and len(self.sn.refstat) > 0:
-                    refstat = int(self.sn.refstat[0])  # Use first class's refstat
-                    if refstat < Tchain.shape[0]:
-                        Xchain[0, c] = Tchain[refstat, c]
+                ref_idx = int(refstat[c]) if c < len(refstat) else 0
+                if ref_idx < Tchain.shape[0]:
+                    Xchain[0, c] = Tchain[ref_idx, c]
 
             # Response times per chain
             Rchain = np.nan_to_num(Wchain, nan=0.0)
@@ -255,17 +294,19 @@ class SolverQNS:
                             Uchain[i, c] = Uchain[i, c] / servers
 
             # Deaggregate chain results to station-class results
-            Q, U, R, T, C_out, X = self._deaggregate_chain_results(
-                Dchain, STchain, Vchain, alpha, Qchain, Uchain, Rchain, Tchain, Xchain
+            from ...api.sn.deaggregate import sn_deaggregate_chain_results
+            deagg = sn_deaggregate_chain_results(
+                self.sn, Lchain, None, STchain, Vchain, alpha,
+                None, None, Rchain, Tchain, None, Xchain
             )
 
-            QN[:, :] = Q[:M, :K]
-            UN[:, :] = U[:M, :K]
-            RN[:, :] = R[:M, :K]
-            TN[:, :] = T[:M, :K]
-            WN[:, :] = R[:M, :K]  # WN same as RN for QNS
-            CN = C_out
-            XN = X
+            QN[:, :] = deagg.Q[:M, :K]
+            UN[:, :] = deagg.U[:M, :K]
+            RN[:, :] = deagg.R[:M, :K]
+            TN[:, :] = deagg.T[:M, :K]
+            WN[:, :] = deagg.R[:M, :K]
+            CN = deagg.C
+            XN = deagg.X
 
             # Calculate arrival rates from throughputs
             AN = self._get_arrival_rates(TN)
@@ -277,14 +318,61 @@ class SolverQNS:
             if not self.options.keep:
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
-        runtime = time.time() - start_time
+        return QN, UN, RN, TN, AN, WN, CN, XN, actual_method
 
-        self._result = QNSResult(
-            QN=QN, UN=UN, RN=RN, TN=TN, AN=AN, WN=WN,
-            CN=CN, XN=XN, runtime=runtime, method=actual_method, iter=0
-        )
+    def _run_lqns_path(self, M, K, C):
+        """Run the QN2LQN + SolverLQNS path for non-product-form closed networks."""
+        from ...api.io.converters import qn2lqn
+        from ..solver_lqns.solver_lqns import SolverLQNS, LQNSOptions
 
-        return self._result
+        # Convert QN to LQN
+        lqnmodel = qn2lqn(self.model)
+        lqn = lqnmodel.getStruct()
+
+        # Configure LQNS options (matches MATLAB runAnalyzer lines 57-78)
+        actual_method = self.options.method
+        multiserver = self.options.method  # method name IS the multiserver method
+        if multiserver == 'default':
+            multiserver = 'rolia'
+            actual_method = 'rolia'
+
+        lqns_options = LQNSOptions(method='default', multiserver=multiserver)
+
+        # Create and run SolverLQNS
+        solver = SolverLQNS(lqnmodel, lqns_options)
+        avg_table = solver.getAvgTable()
+
+        # Extract results using lqn.ashift indexing (matches MATLAB lines 81-93)
+        QN = np.zeros((M, K))
+        UN = np.zeros((M, K))
+        RN = np.zeros((M, K))
+        TN = np.zeros((M, K))
+        WN = np.zeros((M, K))
+
+        ashift = lqn.ashift if hasattr(lqn, 'ashift') else 0
+
+        # avg_table is a DataFrame with columns: Node, NodeType, QLen, Util, RespT, ResidT, ArvR, Tput
+        # Index by activity position: t = ashift + r + i * nclasses (0-based)
+        nrows = len(avg_table) if avg_table is not None else 0
+
+        for r in range(K):
+            for i in range(M):
+                t = ashift + r + i * K
+                if t < nrows:
+                    QN[i, r] = avg_table.iloc[t]['QLen']
+                    if not np.isinf(self.sn.nservers[i]):
+                        UN[i, r] = avg_table.iloc[t]['Util'] / self.sn.nservers[i]
+                    else:
+                        UN[i, r] = avg_table.iloc[t]['Util']
+                    RN[i, r] = avg_table.iloc[t]['RespT']
+                    WN[i, r] = avg_table.iloc[t]['ResidT'] if not np.isnan(avg_table.iloc[t]['ResidT']) else avg_table.iloc[t]['RespT']
+                    TN[i, r] = avg_table.iloc[t]['Tput']
+
+        AN = self._get_arrival_rates(TN)
+        CN = np.zeros((1, C))
+        XN = np.zeros((1, C))
+
+        return QN, UN, RN, TN, AN, WN, CN, XN, actual_method
 
     def _build_command(self, model_file: str, result_file: str, log_file: str) -> str:
         """Build the qnsolver command line."""
@@ -475,9 +563,10 @@ class SolverQNS:
         return stat_name, Q, W, U, T
 
     def _get_demands_chain(self):
-        """Calculate demands per chain."""
-        from .jmva_writer import _get_demands_chain
-        return _get_demands_chain(self.sn)
+        """Calculate demands per chain using proper chain aggregation."""
+        from ...api.sn.demands import sn_get_demands_chain
+        result = sn_get_demands_chain(self.sn)
+        return result.Lchain, result.STchain, result.Vchain, result.Nchain, result.alpha
 
     def _deaggregate_chain_results(self, Dchain, STchain, Vchain, alpha, Qchain, Uchain, Rchain, Tchain, Xchain):
         """
@@ -522,10 +611,9 @@ class SolverQNS:
                 for i in range(M):
                     AN[i, k] = TN[i, k]
             else:
-                # Closed class - arrival rate based on visits
+                # Closed class - arrival rate equals throughput
                 for i in range(M):
-                    if self.sn.visits is not None and i < self.sn.visits.shape[0] and k < self.sn.visits.shape[1]:
-                        AN[i, k] = TN[i, k]
+                    AN[i, k] = TN[i, k]
 
         return AN
 
@@ -551,15 +639,30 @@ class SolverQNS:
             for k in range(K):
                 class_name = self.sn.classnames[k] if k < len(self.sn.classnames) else f'Class{k+1}'
 
+                qlen = result.QN[i, k] if K > 1 else result.QN[i]
+                util = result.UN[i, k] if K > 1 else result.UN[i]
+                respt = result.RN[i, k] if K > 1 else result.RN[i]
+                residt = result.WN[i, k] if K > 1 else result.WN[i]
+                arvr = result.AN[i, k] if K > 1 else result.AN[i]
+                tput = result.TN[i, k] if K > 1 else result.TN[i]
+
+                # Filter out rows where all metrics are zero (matching MATLAB behavior)
+                metrics = [qlen, util, respt, residt, arvr, tput]
+                has_significant_value = any(
+                    (not np.isnan(v) and v > 0) for v in metrics
+                )
+                if not has_significant_value:
+                    continue
+
                 rows.append({
                     'Station': station_name,
                     'JobClass': class_name,
-                    'QLen': result.QN[i, k] if K > 1 else result.QN[i],
-                    'Util': result.UN[i, k] if K > 1 else result.UN[i],
-                    'RespT': result.RN[i, k] if K > 1 else result.RN[i],
-                    'ResidT': result.WN[i, k] if K > 1 else result.WN[i],
-                    'ArvR': result.AN[i, k] if K > 1 else result.AN[i],
-                    'Tput': result.TN[i, k] if K > 1 else result.TN[i],
+                    'QLen': qlen,
+                    'Util': util,
+                    'RespT': respt,
+                    'ResidT': residt,
+                    'ArvR': arvr,
+                    'Tput': tput,
                 })
 
         df = pd.DataFrame(rows)
@@ -571,6 +674,5 @@ class SolverQNS:
 
     # Aliases
     run_analyzer = runAnalyzer
-    get_avg_table = getAvgTable
     is_available = isAvailable
     list_valid_methods = listValidMethods

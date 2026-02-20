@@ -21,6 +21,7 @@ import kotlin.math.abs
  * @param prec Numerical precision, the default value is 1e-12
  * @return The result of the check
  */
+@JvmOverloads
 fun checkMAPRepresentation(D0: Matrix, D1: Matrix, prec: Double = 1e-12): Boolean {
     // Check if D0 is a transient generator
     if (!checkGenerator(D0, transient = true, prec = prec)) {
@@ -65,6 +66,7 @@ fun checkMAPRepresentation(D0: Matrix, D1: Matrix, prec: Double = 1e-12): Boolea
  * @param prec Numerical precision, the default value is 1e-12
  * @return The result of the check
  */
+@JvmOverloads
 fun checkRAPRepresentation(H0: Matrix, H1: Matrix, prec: Double = 1e-12): Boolean {
     // Check matrix sizes
     if (H0.numRows != H0.numCols || H1.numRows != H1.numCols) {

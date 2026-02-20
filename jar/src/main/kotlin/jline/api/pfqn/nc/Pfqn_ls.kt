@@ -14,6 +14,7 @@ import jline.GlobalConstants
 import jline.util.Maths
 import jline.util.matrix.Matrix
 import org.apache.commons.math3.distribution.MultivariateNormalDistribution
+import org.apache.commons.math3.random.MersenneTwister
 import org.apache.commons.math3.util.FastMath
 import kotlin.math.exp
 
@@ -80,8 +81,8 @@ fun pfqn_ls(L: Matrix, N: Matrix, Z: Matrix = Matrix(1, L.numCols), I: Long, see
             }
             iA_array[i] = tmp_row
         }
-        val mvd = MultivariateNormalDistribution(x0_array, iA_array)
-        mvd.reseedRandomGenerator(seed)
+        val mt = MersenneTwister(seed.toInt())
+        val mvd = MultivariateNormalDistribution(mt, x0_array, iA_array)
 
         if (sample == null) {
             sample = mvd.sample(I.toInt())
@@ -133,8 +134,8 @@ fun pfqn_ls(L: Matrix, N: Matrix, Z: Matrix = Matrix(1, L.numCols), I: Long, see
             }
             iA_array[i] = tmp_row
         }
-        val mvd = MultivariateNormalDistribution(x0_array, iA_array)
-        mvd.reseedRandomGenerator(seed)
+        val mt = MersenneTwister(seed.toInt())
+        val mvd = MultivariateNormalDistribution(mt, x0_array, iA_array)
 
         if (sample == null) {
             sample = mvd.sample(I.toInt())

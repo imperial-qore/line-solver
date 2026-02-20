@@ -101,6 +101,7 @@ public class SolverJMT extends NetworkSolver {
     private double maxSimulatedTime;
     private long maxSamples;
     private long maxEvents;
+    private long simulationTimeoutSeconds;  // Timeout in seconds for JMT subprocess (0 = no timeout)
     private long seed;
     private double simConfInt;
     private double simMaxRelErr;
@@ -115,6 +116,7 @@ public class SolverJMT extends NetworkSolver {
         this.simConfInt = 0.99;
         this.simMaxRelErr = 0.03;
         this.maxEvents = -1;
+        this.simulationTimeoutSeconds = 0;  // No timeout by default
         this.jmtPath = jmtGetPath();
         this.result = new JMTResult();
         // Initialize seed and maxSamples from options
@@ -127,6 +129,7 @@ public class SolverJMT extends NetworkSolver {
         this.simConfInt = 0.99;
         this.simMaxRelErr = 0.03;
         this.maxEvents = -1;
+        this.simulationTimeoutSeconds = 0;  // No timeout by default
         this.jmtPath = jmtGetPath(jmtPath);
         this.result = new JMTResult();
         // Initialize seed and maxSamples from options
@@ -474,11 +477,16 @@ public class SolverJMT extends NetworkSolver {
                         Element statSrvTimeElem = mvaDoc.createElement("servicetimes");
                         statSrvTimeElem.setAttribute("customerclass", String.format("Chain%02d", c + 1));
                         String ldSrvString = String.valueOf(snGetDemandsChainReturn.STchain.get(i, c));
+                        // For open models (Inf population), use nservers as cutoff
+                        // since service time is constant at S/c for n >= c
+                        int ldLimit;
                         if (anyElementIsInfinity(NK.toArray1D())) {
-                            throw new RuntimeException("JMVA does not support open classes in load-dependent models;");
+                            ldLimit = (int) sn.nservers.get(i);
+                        } else {
+                            ldLimit = (int) Arrays.stream(NK.toArray1D()).sum();
                         }
 
-                        for (int n = 1; n <= Arrays.stream(NK.toArray1D()).sum(); n++) {
+                        for (int n = 2; n <= ldLimit; n++) {
                             ldSrvString = String.format("%s;%s", ldSrvString, snGetDemandsChainReturn.STchain.get(i, c) / FastMath.min(n, sn.nservers.get(i)));
                         }
 
@@ -518,8 +526,21 @@ public class SolverJMT extends NetworkSolver {
             }
             for (int c = 0; c < sn.nchains; c++) {
                 Element classRefElem = mvaDoc.createElement("Class");
-                classRefElem.setAttribute("name", String.format("Chain%d", c + 1));
-                classRefElem.setAttribute("refStation", sn.nodenames.get((int) sn.stationToNode.get(refstatchain[c])));
+                classRefElem.setAttribute("name", String.format("Chain%02d", c + 1));
+                // For open chains, the refstat is Source which is excluded from JMVA output.
+                // Use the first non-Source station as the reference station instead.
+                int refIdx = refstatchain[c];
+                NodeType refNodeType = sn.nodetype.get((int) sn.stationToNode.get(refIdx));
+                if (refNodeType == NodeType.Source) {
+                    for (int i = 0; i < sn.nstations; i++) {
+                        NodeType nt = sn.nodetype.get((int) sn.stationToNode.get(i));
+                        if (nt != NodeType.Source && nt != NodeType.Sink) {
+                            refIdx = i;
+                            break;
+                        }
+                    }
+                }
+                classRefElem.setAttribute("refStation", sn.nodenames.get((int) sn.stationToNode.get(refIdx)));
                 refStationsElem.appendChild(classRefElem);
             }
 
@@ -626,7 +647,7 @@ public class SolverJMT extends NetworkSolver {
                     if (RH != null && RH.hasMetric(station, jobClass)) {
                         Metric metric = RH.get(station, jobClass);
                         if (metric != null && !metric.isDisabled) {
-                            String stationName = cdfmodel.getStationNames().get(i);
+                            String stationName = station.getName();
                             int ni = this.model.getNodeIndex(stationName);
                             isNodeClassLogged[ni][r] = true;
                         }
@@ -664,7 +685,7 @@ public class SolverJMT extends NetworkSolver {
                     Plinked.set(fromClass, toClass, routingMatrix);
                 }
             }
-            
+
             // Link and log (following dev version pattern)
             cdfmodel.linkAndLog(Plinked, isNodeLogged, logPath);
             
@@ -935,6 +956,14 @@ public class SolverJMT extends NetworkSolver {
         this.maxSimulatedTime = maxSimulatedTime;
     }
 
+    public long getSimulationTimeoutSeconds() {
+        return simulationTimeoutSeconds;
+    }
+
+    public void setSimulationTimeoutSeconds(long timeoutSeconds) {
+        this.simulationTimeoutSeconds = timeoutSeconds;
+    }
+
     public double getProbAggr(Node node, Matrix state_a) {
         double Pr = NaN;
         if (GlobalConstants.DummyMode) {
@@ -944,27 +973,57 @@ public class SolverJMT extends NetworkSolver {
         try {
             NetworkStruct sn = getStruct();
             SampleResult stationStateAggr = this.sampleAggr(node);
-            
+
+            // Validate sample result
+            if (stationStateAggr == null) {
+                line_warning(mfilename(new Object[]{}), "JMT getProbAggr: no sample result available, returning NaN.");
+                return Pr;
+            }
+
             // Get the state matrix from the sample result
             Matrix stateMatrix = stationStateAggr.getStateMatrix();
-            
+
+            // Validate state matrix
+            if (stateMatrix == null || stateMatrix.getNumRows() == 0) {
+                line_warning(mfilename(new Object[]{}), "JMT getProbAggr: empty state matrix, returning 0.");
+                return 0.0;
+            }
+
+            // Validate state_a
+            if (state_a == null || state_a.getNumRows() == 0) {
+                line_warning(mfilename(new Object[]{}), "JMT getProbAggr: target state not set, returning 0.");
+                return 0.0;
+            }
+
+            // Check dimension compatibility
+            if (state_a.getNumCols() != stateMatrix.getNumCols()) {
+                line_warning(mfilename(new Object[]{}), "JMT getProbAggr: state dimensions mismatch (target: " +
+                    state_a.getNumCols() + " cols, samples: " + stateMatrix.getNumCols() + " cols), returning 0.");
+                return 0.0;
+            }
+
             // Find rows that match the requested state
             List<Integer> rows = Matrix.findRows(stateMatrix, state_a);
-            
+
             // Get time points and calculate time differences
             Matrix t = stationStateAggr.t;
+            if (t == null || t.getNumRows() == 0) {
+                line_warning(mfilename(new Object[]{}), "JMT getProbAggr: no time data available, returning 0.");
+                return 0.0;
+            }
+
             Matrix dt = new Matrix(t.getNumRows(), 1);
-            
+
             // Calculate time differences: dt = diff(t) with last element as 0
             for (int i = 0; i < t.getNumRows() - 1; i++) {
                 dt.set(i, 0, t.get(i + 1, 0) - t.get(i, 0));
             }
             dt.set(t.getNumRows() - 1, 0, 0.0); // Last element is 0
-            
+
             // Calculate probability as sum of time spent in matching states divided by total time
             double numerator = 0.0;
             double denominator = 0.0;
-            
+
             for (int i = 0; i < dt.getNumRows(); i++) {
                 double timeSpent = dt.get(i, 0);
                 denominator += timeSpent;
@@ -972,15 +1031,17 @@ public class SolverJMT extends NetworkSolver {
                     numerator += timeSpent;
                 }
             }
-            
+
             if (denominator > 0) {
                 Pr = numerator / denominator;
             } else {
                 Pr = 0.0;
             }
-            
+
         } catch (IOException e) {
             line_error(mfilename(new Object[]{}), "IOException in getProbAggr(): " + e.getMessage());
+        } catch (Exception e) {
+            line_error(mfilename(new Object[]{}), "Exception in getProbAggr(): " + e.getMessage());
         }
         return Pr;
     }
@@ -1187,43 +1248,29 @@ public class SolverJMT extends NetworkSolver {
                 line_warning("SolverJMT", "rList is empty for metric class: %s", metricClass);
             }
 
+            // For closed classes, filter metrics with insufficient analyzed samples (matches MATLAB getResults.m)
+            // A class is considered recurrent only if analyzedSamples > total jobs in its chain
+            if (!open && metric.getAnalyzedSamples() <= sumJobs) {
+                continue;  // Leave as 0 (starved class)
+            }
+
             switch (metric.getMetricType()) {
                 case QLen:
-                    if (open) {
-                        solverResult.QN = setValues(solverResult.QN, istStations, rList, metric.getMeanValue());
-                    } else {    // closed
-                        solverResult.QN = metric.getAnalyzedSamples() > sumJobs ? setValues(solverResult.QN, istStations, rList, metric.getMeanValue()) : setValues(solverResult.QN, istStations, rList, 0);
-                    }
+                    solverResult.QN = setValues(solverResult.QN, istStations, rList, metric.getMeanValue());
                     break;
                 case Util:
-                    if (open) {
-                        solverResult.UN = setValues(solverResult.UN, istStations, rList, metric.getMeanValue());
-                    } else {    // closed
-                        solverResult.UN = metric.getAnalyzedSamples() > sumJobs ? setValues(solverResult.UN, istStations, rList, metric.getMeanValue()) : setValues(solverResult.UN, istStations, rList, 0);
-                    }
+                    solverResult.UN = setValues(solverResult.UN, istStations, rList, metric.getMeanValue());
                     break;
                 case RespT:
-                    if (open) {
-                        solverResult.RN = setValues(solverResult.RN, istStations, rList, metric.getMeanValue());
-                    } else {    // closed
-                        solverResult.RN = metric.getAnalyzedSamples() > sumJobs ? setValues(solverResult.RN, istStations, rList, metric.getMeanValue()) : setValues(solverResult.RN, istStations, rList, 0);
-                    }
+                    solverResult.RN = setValues(solverResult.RN, istStations, rList, metric.getMeanValue());
                     break;
                 case ResidT:
-                    if (open) {
-                        solverResult.WN = setValues(solverResult.WN, istStations, rList, metric.getMeanValue());
-                    } else {    // closed
-                        solverResult.WN = metric.getAnalyzedSamples() > sumJobs ? setValues(solverResult.WN, istStations, rList, metric.getMeanValue()) : setValues(solverResult.WN, istStations, rList, 0);
-                    }
+                    solverResult.WN = setValues(solverResult.WN, istStations, rList, metric.getMeanValue());
                     break;
                 case ArvR:
                     if (istStations.get(0) >= 0) {
                         // Regular station
-                        if (open) {
-                            solverResult.AN = setValues(solverResult.AN, istStations, rList, metric.getMeanValue());
-                        } else {    // closed
-                            solverResult.AN = metric.getAnalyzedSamples() > sumJobs ? setValues(solverResult.AN, istStations, rList, metric.getMeanValue()) : setValues(solverResult.AN, istStations, rList, 0);
-                        }
+                        solverResult.AN = setValues(solverResult.AN, istStations, rList, metric.getMeanValue());
                     } else {
                         // This is a cache node - store in nodeCacheAN using the actual node index
                         // Validate bounds before setting
@@ -1235,11 +1282,7 @@ public class SolverJMT extends NetworkSolver {
                 case Tput:
                     if (istStations.get(0) >= 0) {
                         // Regular station
-                        if (open) {
-                            solverResult.TN = setValues(solverResult.TN, istStations, rList, metric.getMeanValue());
-                        } else {    // closed
-                            solverResult.TN = metric.getAnalyzedSamples() > sumJobs ? setValues(solverResult.TN, istStations, rList, metric.getMeanValue()) : setValues(solverResult.TN, istStations, rList, 0);
-                        }
+                        solverResult.TN = setValues(solverResult.TN, istStations, rList, metric.getMeanValue());
                     } else {
                         // This is a cache node - store in both cacheTN and nodeCacheTN
                         // Validate bounds before setting
@@ -1260,20 +1303,12 @@ public class SolverJMT extends NetworkSolver {
                     }
                     break;
                 case Tard:
-                    if (open) {
-                        solverResult.TardN = setValues(solverResult.TardN, istStations, rList, metric.getMeanValue());
-                    } else {    // closed
-                        solverResult.TardN = metric.getAnalyzedSamples() > sumJobs ? setValues(solverResult.TardN, istStations, rList, metric.getMeanValue()) : setValues(solverResult.TardN, istStations, rList, 0);
-                    }
+                    solverResult.TardN = setValues(solverResult.TardN, istStations, rList, metric.getMeanValue());
                     break;
                 case SysTard:
                     // System tardiness is a 1 x classes metric (no station index)
                     for (int r : rList) {
-                        if (open) {
-                            solverResult.SysTardN.set(0, r, metric.getMeanValue());
-                        } else {    // closed
-                            solverResult.SysTardN.set(0, r, metric.getAnalyzedSamples() > sumJobs ? metric.getMeanValue() : 0);
-                        }
+                        solverResult.SysTardN.set(0, r, metric.getMeanValue());
                     }
                     break;
             }
@@ -1881,14 +1916,23 @@ public class SolverJMT extends NetworkSolver {
         NetworkStruct sn = model.getStruct(false);
         int nclasses = sn.nclasses;
         Matrix[][][] logData = new Matrix[sn.nnodes][nclasses][];
-        
+
+        String logPath = model.getLogPath();
+
         for (int ind = 0; ind < sn.nnodes; ind++) {
-            if (sn.isstateful.get(ind) == 1.0 && isNodeLogged[ind]) {
-                String logFileArv = model.getLogPath() + "/" + model.getNodeNames().get(ind) + "-Arv.csv";
-                String logFileDep = model.getLogPath() + "/" + model.getNodeNames().get(ind) + "-Dep.csv";
-                
+            boolean isStateful = sn.isstateful.get(ind) == 1.0;
+            boolean isLogged = ind < isNodeLogged.length && isNodeLogged[ind];
+
+            if (isStateful && isLogged) {
+                String nodeName = model.getNodeNames().get(ind);
+                String logFileArv = logPath + "/" + nodeName + "-Arv.csv";
+                String logFileDep = logPath + "/" + nodeName + "-Dep.csv";
+
+                boolean arvExists = new java.io.File(logFileArv).exists();
+                boolean depExists = new java.io.File(logFileDep).exists();
+
                 try {
-                    if (new java.io.File(logFileArv).exists() && new java.io.File(logFileDep).exists()) {
+                    if (arvExists && depExists) {
                         
                         // Parse arrival data
                         java.util.List<String[]> arvData = parseCSVLog(logFileArv);
@@ -1900,6 +1944,14 @@ public class SolverJMT extends NetworkSolver {
                             for (int r = 0; r < Math.min(nclasses, nodeRespTData.length); r++) {
                                 if (nodeRespTData[r] != null) {
                                     logData[ind][r] = nodeRespTData[r];
+                                }
+                            }
+                        } else if (metric == MetricType.QLen) {
+                            // Parse queue length data from arrival/departure logs
+                            Matrix[][] nodeQLenData = parseTranQLen(arvData, depData, model);
+                            for (int r = 0; r < Math.min(nclasses, nodeQLenData.length); r++) {
+                                if (nodeQLenData[r] != null) {
+                                    logData[ind][r] = nodeQLenData[r];
                                 }
                             }
                         }
@@ -2084,7 +2136,91 @@ public class SolverJMT extends NetworkSolver {
         }
         return 0; // Default to first class if not found
     }
-    
+
+    /**
+     * Parses transient queue length data from arrival and departure logs.
+     * Computes queue length over time by tracking arrivals (+1) and departures (-1).
+     *
+     * @param arvData Arrival log data
+     * @param depData Departure log data
+     * @param model The network model
+     * @return Array of matrices containing queue length data per class [time, qlen]
+     */
+    private Matrix[][] parseTranQLen(java.util.List<String[]> arvData, java.util.List<String[]> depData, Network model) {
+        int nclasses = model.getNumberOfClasses();
+
+        // Create lists to hold (timestamp, qlen_change) events per class
+        java.util.List<java.util.List<double[]>> classEvents = new java.util.ArrayList<>();
+        for (int r = 0; r < nclasses; r++) {
+            classEvents.add(new java.util.ArrayList<>());
+        }
+
+        // Parse arrival data (queue length change = +1)
+        for (String[] row : arvData) {
+            if (row.length >= 4) {
+                double timestamp = Double.parseDouble(row[1]);
+                String className = row[3];
+                int classId = getClassIndex(model, className);
+                if (classId >= 0 && classId < nclasses) {
+                    classEvents.get(classId).add(new double[]{timestamp, 1.0});
+                }
+            }
+        }
+
+        // Parse departure data (queue length change = -1)
+        for (String[] row : depData) {
+            if (row.length >= 4) {
+                double timestamp = Double.parseDouble(row[1]);
+                String className = row[3];
+                int classId = getClassIndex(model, className);
+                if (classId >= 0 && classId < nclasses) {
+                    classEvents.get(classId).add(new double[]{timestamp, -1.0});
+                }
+            }
+        }
+
+        // Build result matrices for each class
+        Matrix[][] classQLenData = new Matrix[nclasses][];
+
+        for (int r = 0; r < nclasses; r++) {
+            java.util.List<double[]> events = classEvents.get(r);
+
+            if (events.isEmpty()) {
+                continue;
+            }
+
+            // Sort events by timestamp
+            events.sort((a, b) -> Double.compare(a[0], b[0]));
+
+            // Compute cumulative queue length over time
+            java.util.List<double[]> timeQLenPairs = new java.util.ArrayList<>();
+            double currentQLen = 0.0;
+
+            for (double[] event : events) {
+                double timestamp = event[0];
+                double change = event[1];
+                currentQLen += change;
+                if (currentQLen < 0) currentQLen = 0; // Safety check
+                timeQLenPairs.add(new double[]{timestamp, currentQLen});
+            }
+
+            if (!timeQLenPairs.isEmpty()) {
+                // Create time matrix and qlen matrix
+                Matrix timeMatrix = new Matrix(timeQLenPairs.size(), 1);
+                Matrix qlenMatrix = new Matrix(timeQLenPairs.size(), 1);
+
+                for (int i = 0; i < timeQLenPairs.size(); i++) {
+                    timeMatrix.set(i, 0, timeQLenPairs.get(i)[0]);
+                    qlenMatrix.set(i, 0, timeQLenPairs.get(i)[1]);
+                }
+
+                classQLenData[r] = new Matrix[]{timeMatrix, qlenMatrix};
+            }
+        }
+
+        return classQLenData;
+    }
+
     /**
      * Parses transient metrics from JMT simulation logs for the specified metric type.
      * This method extracts time-series data for transient analysis.
@@ -2426,6 +2562,7 @@ public class SolverJMT extends NetworkSolver {
         String fileName = this.getFilePath() + File.separator + this.getFileName() + ".jsim";
         if (options.verbose!=VerboseLevel.SILENT){
         java.lang.System.out.println("JMT Model: " + fileName);
+        java.lang.System.out.flush();
     }
 
         viewModel(jmtPath, fileName, ViewMode.JSIMG, options.verbose);
@@ -2688,18 +2825,18 @@ public class SolverJMT extends NetworkSolver {
                     java.lang.System.out.println("JMT Command: " + cmd);
                 }
                 if (options.verbose == VerboseLevel.DEBUG) {
-                    cmdOutput = SysUtilsKt.system(cmd);
+                    cmdOutput = SysUtilsKt.system(cmd, simulationTimeoutSeconds);
                 } else {
                     // Suppress system command output unless in DEBUG mode
                     java.io.ByteArrayOutputStream devNull = new java.io.ByteArrayOutputStream();
                     java.io.PrintStream nullStream = new java.io.PrintStream(devNull);
                     java.io.PrintStream originalOut = System.out;
                     java.io.PrintStream originalErr = System.err;
-                    
+
                     try {
                         System.setOut(nullStream);
                         System.setErr(nullStream);
-                        cmdOutput = SysUtilsKt.system(cmd);
+                        cmdOutput = SysUtilsKt.system(cmd, simulationTimeoutSeconds);
                     } finally {
                         System.setOut(originalOut);
                         System.setErr(originalErr);
@@ -2708,6 +2845,10 @@ public class SolverJMT extends NetworkSolver {
                 }
 
                 this.lastCommandOutput = cmdOutput; // Store for error reporting
+                // Check for timeout and warn user
+                if (cmdOutput.startsWith("TIMEOUT:")) {
+                    line_warning(mfilename(new Object[]{}), "JMT simulation timed out. Consider reducing samples or using a different solver.");
+                }
                 if (options.verbose != VerboseLevel.SILENT && !cmdOutput.isEmpty()) {
                     java.lang.System.out.println("JMT Command output: " + cmdOutput);
                 }
@@ -2724,15 +2865,17 @@ public class SolverJMT extends NetworkSolver {
                 solverResult.runtime = runTime / 1000000000.0;
                 this.result = solverResult;
                 
-                //if (this.options.verbose != VerboseLevel.SILENT)
-                //    System.out.printf(
-                //            "%s [method: %s, lang: %s, env: %s] completed in %.6fs.\n",
-                //            this.name.replaceFirst("^Solver", ""),
-                //            this.result.method,
-                //            "java",
-                //            System.getProperty("java.version"),
-                //            this.result.runtime
-                //    );
+                if (this.options.verbose != VerboseLevel.SILENT) {
+                    System.out.printf(
+                            "%s analysis [method: %s, lang: %s, env: %s] completed in %fs.\n",
+                            this.name.replaceFirst("^Solver", ""),
+                            this.result.method,
+                            "java",
+                            System.getProperty("java.version"),
+                            this.result.runtime
+                    );
+                    System.out.flush();
+                }
                 break;
             case "closing":
                 // Closing simulation for transient analysis
@@ -2758,20 +2901,20 @@ public class SolverJMT extends NetworkSolver {
                         if (options.verbose != VerboseLevel.SILENT) {
                             java.lang.System.out.println("JMT Closing Simulation " + (it + 1) + "/" + options.iter_max);
                         }
-                        
+
                         if (options.verbose == VerboseLevel.DEBUG) {
-                            SysUtilsKt.system(cmd);
+                            SysUtilsKt.system(cmd, simulationTimeoutSeconds);
                         } else {
                             // Suppress system command output unless in DEBUG mode
                             java.io.ByteArrayOutputStream devNull = new java.io.ByteArrayOutputStream();
                             java.io.PrintStream nullStream = new java.io.PrintStream(devNull);
                             java.io.PrintStream originalOut = System.out;
                             java.io.PrintStream originalErr = System.err;
-                            
+
                             try {
                                 System.setOut(nullStream);
                                 System.setErr(nullStream);
-                                SysUtilsKt.system(cmd);
+                                SysUtilsKt.system(cmd, simulationTimeoutSeconds);
                             } finally {
                                 System.setOut(originalOut);
                                 System.setErr(originalErr);
@@ -2856,18 +2999,18 @@ public class SolverJMT extends NetworkSolver {
                     java.lang.System.out.println("JMT Command: " + cmd);
                 }
                 if (options.verbose == VerboseLevel.DEBUG) {
-                    cmdOutput = SysUtilsKt.system(cmd);
+                    cmdOutput = SysUtilsKt.system(cmd, simulationTimeoutSeconds);
                 } else {
                     // Suppress system command output unless in DEBUG mode
                     java.io.ByteArrayOutputStream devNull = new java.io.ByteArrayOutputStream();
                     java.io.PrintStream nullStream = new java.io.PrintStream(devNull);
                     java.io.PrintStream originalOut = System.out;
                     java.io.PrintStream originalErr = System.err;
-                    
+
                     try {
                         System.setOut(nullStream);
                         System.setErr(nullStream);
-                        cmdOutput = SysUtilsKt.system(cmd);
+                        cmdOutput = SysUtilsKt.system(cmd, simulationTimeoutSeconds);
                     } finally {
                         System.setOut(originalOut);
                         System.setErr(originalErr);
@@ -2876,25 +3019,31 @@ public class SolverJMT extends NetworkSolver {
                 }
 
                 this.lastCommandOutput = cmdOutput; // Store for error reporting
+                // Check for timeout and warn user
+                if (cmdOutput.startsWith("TIMEOUT:")) {
+                    line_warning(mfilename(new Object[]{}), "JMT MVA timed out. Consider using a different solver.");
+                }
                 if (options.verbose != VerboseLevel.SILENT && !cmdOutput.isEmpty()) {
                     java.lang.System.out.println("JMT Command output: " + cmdOutput);
                 }
                 runTime = java.lang.System.nanoTime() - startTime;
-                
+
                 solverResult = getResults();
                 if (solverResult != null) {
                     solverResult.runtime = runTime / 1000000000.0;
                 }
                 
-                //if (this.options.verbose != VerboseLevel.SILENT)
-                //    System.out.printf(
-                //            "%s [method: %s, lang: %s, env: %s] completed in %.6fs.\n",
-                //            this.name.replaceFirst("^Solver", ""),
-                //            this.result.method,
-                //            "java",
-                //            System.getProperty("java.version"),
-                //            this.result.runtime
-                //    );
+                if (this.options.verbose != VerboseLevel.SILENT && this.result != null) {
+                    System.out.printf(
+                            "%s analysis [method: %s, lang: %s, env: %s] completed in %fs.\n",
+                            this.name.replaceFirst("^Solver", ""),
+                            this.result.method,
+                            "java",
+                            System.getProperty("java.version"),
+                            this.result.runtime
+                    );
+                    System.out.flush();
+                }
                 if (!this.options.keep) {
 //                    try {
 //                        //JMT.removeDirectory(Paths.get(this.getFilePath()));
@@ -2975,11 +3124,15 @@ public class SolverJMT extends NetworkSolver {
             // Simulate the model copy and retrieve log data
             SolverJMT solverjmt = new SolverJMT(modelCopy, this.getOptions());
             if (numEvents > 0) {
-                solverjmt.setMaxEvents(numEvents * sn.nnodes * sn.nclasses);
+                // Use a more conservative multiplier to avoid excessive simulation time
+                long maxEvents = Math.min(numEvents * 2, numEvents + 10000);
+                solverjmt.setMaxEvents(maxEvents);
             } else {
                 solverjmt.setMaxEvents(-1);
                 numEvents = this.options.samples;
             }
+            // Set a timeout for the sampling simulation (60 seconds by default)
+            solverjmt.setSimulationTimeoutSeconds(60);
             solverjmt.getAvg(); // log data
             
             Matrix[][][] logData = parseLogs(modelCopy, isNodeLogged, MetricType.QLen);
@@ -3035,15 +3188,15 @@ public class SolverJMT extends NetworkSolver {
                 } else {
                     if (copyNodeInd < isNodeClassLogged.length && r < isNodeClassLogged[copyNodeInd].length && isNodeClassLogged[copyNodeInd][r]) {
                         Matrix logMatrix = logData[copyNodeInd][r][0]; // Get first matrix from array
-                        if (logMatrix != null && !logMatrix.isEmpty()) {
+                        if (logMatrix != null && !logMatrix.isEmpty() && logMatrix.getNumCols() >= 2) {
                             // Get unique timestamps (matching MATLAB's unique behavior)
                             // Assuming log matrix has columns: [time, qlen, ...]
                             int timeColIdx = 0;
                             int qlenColIdx = 1;
-                            
+
                             List<Double> timeValues = new ArrayList<Double>();
                             List<Double> qlenValues = new ArrayList<Double>();
-                            
+
                             // Extract time and qlen data
                             for (int i = 0; i < logMatrix.getNumRows(); i++) {
                                 timeValues.add(logMatrix.get(i, timeColIdx));
@@ -3186,18 +3339,18 @@ public class SolverJMT extends NetworkSolver {
         if (GlobalConstants.DummyMode) {
             return null;
         }
-        
+
         try {
             NetworkStruct sn = this.getStruct();
             numEvents = numEvents - 1; // Include initialization as an event
-            
+
             // Use the existing model for sampling
             Network modelCopy = this.model.copy();
             modelCopy.resetNetwork();
-            
+
             // Set up logging for all non-source stations
             boolean[][] isNodeClassLogged = new boolean[modelCopy.getNumberOfNodes()][modelCopy.getNumberOfClasses()];
-            
+
             for (int i = 0; i < modelCopy.getNumberOfStations(); i++) {
                 int nodeIndex = this.model.getNodeIndex(modelCopy.getStationNames().get(i));
                 if (sn.nodetype.get(nodeIndex) != NodeType.Source) {
@@ -3206,7 +3359,7 @@ public class SolverJMT extends NetworkSolver {
                     }
                 }
             }
-            
+
             // Set up routing and logging (use original routing matrix like MATLAB sn.rtorig)
             String logPath = SysUtilsKt.lineTempName("jmt_sys_sample_logs");
             RoutingMatrix P = new RoutingMatrix(modelCopy, modelCopy.getClasses(), modelCopy.getNodes());
@@ -3216,7 +3369,7 @@ public class SolverJMT extends NetworkSolver {
                     P.set(fromClass.getIndex() - 1, toClass.getIndex() - 1, sn.rtorig.get(fromClass).get(toClass));
                 }
             }
-            
+
             // Convert boolean[][] to boolean[] for isNodeLogged
             boolean[] isNodeLogged = new boolean[modelCopy.getNumberOfNodes()];
             for (int i = 0; i < modelCopy.getNumberOfNodes(); i++) {
@@ -3229,100 +3382,208 @@ public class SolverJMT extends NetworkSolver {
                 }
                 isNodeLogged[i] = nodeLogged;
             }
-            
+
             modelCopy.linkAndLog(P, isNodeLogged, logPath);
-            
+
             // Create solver options for the copy
             SolverOptions copyOptions = this.options.copy();
             copyOptions.samples = (int)numEvents;
-            
+
             // Create solver for the copy and run simulation
             SolverJMT sampleSolver = new SolverJMT(modelCopy, copyOptions);
-            sampleSolver.setMaxEvents(numEvents * sn.nnodes * sn.nclasses);
+            // Set max events proportional to samples but capped for performance
+            // Use a more conservative multiplier to avoid excessive simulation time
+            long maxEvents = Math.min(numEvents * 2, numEvents + 10000);
+            sampleSolver.setMaxEvents(maxEvents);
+            // Set a timeout for the sampling simulation (60 seconds by default)
+            // This prevents getProbAggr/getProbSysAggr from hanging indefinitely
+            sampleSolver.setSimulationTimeoutSeconds(60);
             sampleSolver.runAnalyzer(); // Generate log data
-            
-            // Parse the logs
-            Matrix[][][] logData = parseLogs(modelCopy, isNodeLogged, MetricType.QLen);
-            
-            // Process log data for each station
+
+            // Process log data with efficient approach - parse all events together
             NetworkStruct sampleSn = modelCopy.getStruct();
-            
-            // Collect time series from all stations
-            Matrix globalTimeData = null;
-            Matrix[][] stationStateData = new Matrix[sampleSn.nstations][];
-            
-            for (int ist = 0; ist < sampleSn.nstations; ist++) {
-                int nodeIndex = (int) sampleSn.stationToNode.get(ist);
-                
-                if (sampleSn.nodetype.get(nodeIndex) != NodeType.Source) {
-                    Matrix stationTime = null;
-                    Matrix stationState = null;
-                    
-                    for (int r = 0; r < sampleSn.nclasses; r++) {
-                        if (logData != null && logData[nodeIndex] != null && logData[nodeIndex][r] != null && logData[nodeIndex][r].length > 0) {
-                            if (stationTime == null) {
-                                stationTime = logData[nodeIndex][r][0]; // Time data
-                                stationState = new Matrix(stationTime.getNumRows(), sampleSn.nclasses);
-                            }
-                            
-                            if (logData[nodeIndex][r].length > 1) {
-                                Matrix classQLen = logData[nodeIndex][r][1]; // Queue length data for this class
-                                for (int i = 0; i < Math.min(stationState.getNumRows(), classQLen.getNumRows()); i++) {
-                                    stationState.set(i, r, classQLen.get(i, 0));
-                                }
-                            }
-                        }
-                    }
-                    
-                    stationStateData[ist] = new Matrix[]{stationTime, stationState};
-                    
-                    // Merge time data from all stations
-                    if (globalTimeData == null && stationTime != null) {
-                        globalTimeData = stationTime.copy();
-                    } else if (stationTime != null) {
-                        // Merge time series (simplified - just use the union of time points)
-                        globalTimeData = mergeTimeSeries(globalTimeData, stationTime);
-                    }
-                }
-            }
-            
-            // Create unified system state matrix
-            Matrix systemStateData = null;
-            if (globalTimeData != null) {
-                int totalStateDim = sampleSn.nstations * sampleSn.nclasses;
-                systemStateData = new Matrix(globalTimeData.getNumRows(), totalStateDim);
-                
-                int colOffset = 0;
-                for (int ist = 0; ist < sampleSn.nstations; ist++) {
-                    if (stationStateData[ist] != null && stationStateData[ist][1] != null) {
-                        Matrix stationState = stationStateData[ist][1];
-                        Matrix stationTime = stationStateData[ist][0];
-                        
-                        // Interpolate station state to global time grid
-                        for (int r = 0; r < sampleSn.nclasses; r++) {
-                            for (int t = 0; t < globalTimeData.getNumRows(); t++) {
-                                double targetTime = globalTimeData.get(t, 0);
-                                double interpolatedValue = interpolateState(stationTime, stationState, r, targetTime);
-                                systemStateData.set(t, colOffset + r, interpolatedValue);
-                            }
-                        }
-                    }
-                    colOffset += sampleSn.nclasses;
-                }
-            }
-            
-            // Create result
-            SampleResult result = new SampleResult();
-            result.t = globalTimeData;
-            result.state = systemStateData;
-            result.isAggregate = true;
-            result.event = new Matrix(0, 0); // Simplified - not implementing full event tracking
-            
+            // Get initial state aggregation like MATLAB's sn_get_state_aggr
+            java.util.Map<StatefulNode, Matrix> initialStateAggr = jline.api.sn.SnGetStateAggrKt.snGetStateAggr(sampleSn);
+            SampleResult result = parseSystemStateFromLogs(modelCopy, isNodeLogged, sampleSn, initialStateAggr);
             return result;
-            
+
         } catch (Exception e) {
             line_warning("SolverJMT.sampleSysAggr", "Error: %s", e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * Efficiently parses system state from logs by processing all events together.
+     * This approach avoids the expensive time series merging and interpolation.
+     *
+     * @param model The network model
+     * @param isNodeLogged Array indicating which nodes are logged
+     * @param sn Network structure
+     * @param initialStateAggr Map of stateful node to initial state (nir matrix)
+     */
+    private SampleResult parseSystemStateFromLogs(Network model, boolean[] isNodeLogged, NetworkStruct sn,
+                                                   java.util.Map<StatefulNode, Matrix> initialStateAggr) {
+        String logPath = model.getLogPath();
+        int nstations = sn.nstations;
+        int nclasses = sn.nclasses;
+
+        // Limit the number of events to read to avoid excessive memory and time consumption
+        // With 3 stations and 2 files per station (arv/dep), this allows up to 60000 total events
+        final int MAX_EVENTS_PER_FILE = 10000;
+
+        // Collect all events from all logged stations
+        java.util.List<SystemEvent> allEvents = new java.util.ArrayList<>();
+
+        for (int ist = 0; ist < nstations; ist++) {
+            int nodeIndex = (int) sn.stationToNode.get(ist);
+            if (nodeIndex >= isNodeLogged.length || !isNodeLogged[nodeIndex]) continue;
+            if (sn.nodetype.get(nodeIndex) == NodeType.Source) continue;
+
+            String nodeName = model.getNodeNames().get(nodeIndex);
+            String logFileArv = logPath + "/" + nodeName + "-Arv.csv";
+            String logFileDep = logPath + "/" + nodeName + "-Dep.csv";
+
+            try {
+                java.io.File arvFile = new java.io.File(logFileArv);
+                java.io.File depFile = new java.io.File(logFileDep);
+
+                if (arvFile.exists() && depFile.exists()) {
+                    int eventsRead = 0;
+                    // Parse arrivals
+                    try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.FileReader(arvFile))) {
+                        String line;
+                        br.readLine(); // Skip header
+                        while ((line = br.readLine()) != null && eventsRead < MAX_EVENTS_PER_FILE) {
+                            String[] parts = line.split(";");
+                            if (parts.length >= 4) {
+                                double timestamp = Double.parseDouble(parts[1]);
+                                String className = parts[3];
+                                int classId = getClassIndex(model, className);
+                                allEvents.add(new SystemEvent(timestamp, ist, classId, 1)); // +1 for arrival
+                                eventsRead++;
+                            }
+                        }
+                    }
+
+                    eventsRead = 0;
+                    // Parse departures
+                    try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.FileReader(depFile))) {
+                        String line;
+                        br.readLine(); // Skip header
+                        while ((line = br.readLine()) != null && eventsRead < MAX_EVENTS_PER_FILE) {
+                            String[] parts = line.split(";");
+                            if (parts.length >= 4) {
+                                double timestamp = Double.parseDouble(parts[1]);
+                                String className = parts[3];
+                                int classId = getClassIndex(model, className);
+                                allEvents.add(new SystemEvent(timestamp, ist, classId, -1)); // -1 for departure
+                                eventsRead++;
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                line_warning("SolverJMT.parseSystemStateFromLogs", "Error parsing logs for station %d: %s", ist, e.getMessage());
+            }
+        }
+
+        if (allEvents.isEmpty()) {
+            return null;
+        }
+
+        // Sort all events by timestamp
+        allEvents.sort((a, b) -> Double.compare(a.timestamp, b.timestamp));
+
+        // Track current state for all stations/classes - initialize from preload
+        int[][] currentState = new int[nstations][nclasses];
+        // Initialize from initial state aggregation (like MATLAB's nodePreload)
+        if (initialStateAggr != null) {
+            for (int ist = 0; ist < nstations; ist++) {
+                int isf = (int) sn.stationToStateful.get(ist);
+                StatefulNode statefulNode = sn.stateful.get(isf);
+                if (statefulNode != null && initialStateAggr.containsKey(statefulNode)) {
+                    Matrix nirMatrix = initialStateAggr.get(statefulNode);
+                    // nirMatrix is a row vector with nclasses columns
+                    for (int r = 0; r < nclasses && r < nirMatrix.length(); r++) {
+                        currentState[ist][r] = (int) nirMatrix.get(r);
+                    }
+                }
+            }
+        }
+
+        // Collect sampled states - group events by timestamp to avoid
+        // intermediate invalid states when multiple events happen at same time
+        java.util.List<double[]> sampledTimes = new java.util.ArrayList<>();
+        java.util.List<int[][]> sampledStates = new java.util.ArrayList<>();
+
+        // Group events by timestamp and process each group together
+        int eventIdx = 0;
+        while (eventIdx < allEvents.size()) {
+            double currentTimestamp = allEvents.get(eventIdx).timestamp;
+
+            // Process all events at this timestamp
+            while (eventIdx < allEvents.size() && allEvents.get(eventIdx).timestamp == currentTimestamp) {
+                SystemEvent event = allEvents.get(eventIdx);
+                if (event.classId >= 0 && event.classId < nclasses &&
+                    event.stationIndex >= 0 && event.stationIndex < nstations) {
+                    currentState[event.stationIndex][event.classId] += event.change;
+                    if (currentState[event.stationIndex][event.classId] < 0) {
+                        currentState[event.stationIndex][event.classId] = 0;
+                    }
+                }
+                eventIdx++;
+            }
+
+            // Sample state after processing all events at this timestamp
+            sampledTimes.add(new double[]{currentTimestamp});
+            int[][] stateCopy = new int[nstations][nclasses];
+            for (int i = 0; i < nstations; i++) {
+                stateCopy[i] = currentState[i].clone();
+            }
+            sampledStates.add(stateCopy);
+        }
+
+        // Convert to result matrices
+        int numSamples = sampledTimes.size();
+        if (numSamples == 0) {
+            return null;
+        }
+
+        Matrix timeMatrix = new Matrix(numSamples, 1);
+        Matrix stateMatrix = new Matrix(numSamples, nstations * nclasses);
+
+        for (int i = 0; i < numSamples; i++) {
+            timeMatrix.set(i, 0, sampledTimes.get(i)[0]);
+            int[][] state = sampledStates.get(i);
+            for (int ist = 0; ist < nstations; ist++) {
+                for (int r = 0; r < nclasses; r++) {
+                    stateMatrix.set(i, ist * nclasses + r, state[ist][r]);
+                }
+            }
+        }
+
+        SampleResult result = new SampleResult();
+        result.t = timeMatrix;
+        result.state = stateMatrix;
+        result.isAggregate = true;
+        result.event = new Matrix(0, 0);
+
+        return result;
+    }
+
+    // Helper class for system events
+    private static class SystemEvent {
+        double timestamp;
+        int stationIndex;
+        int classId;
+        int change; // +1 for arrival, -1 for departure
+
+        SystemEvent(double timestamp, int stationIndex, int classId, int change) {
+            this.timestamp = timestamp;
+            this.stationIndex = stationIndex;
+            this.classId = classId;
+            this.change = change;
         }
     }
 
@@ -3413,45 +3674,45 @@ public class SolverJMT extends NetworkSolver {
         if (GlobalConstants.DummyMode) {
             return new ProbabilityResult(Double.NaN);
         }
-        
+
         try {
             NetworkStruct sn = getStruct();
-            
+
             // Get system state samples
             SampleResult tranSysStateAggr = this.sampleSysAggr();
             if (tranSysStateAggr == null || tranSysStateAggr.state == null) {
+                line_warning("SolverJMT.getProbSysAggr", "Unable to extract state samples from JMT simulation. This feature requires simulation logging which may not be supported for all model types.");
                 return new ProbabilityResult(0.0);
             }
-            
+
             // Build time-state matrix similar to MATLAB's TSS
             int numSamples = tranSysStateAggr.t.length();
             int numStatefulNodes = (int) sn.nstateful;
             int numClasses = (int) sn.nclasses;
-            
+
             // Calculate current system state in aggregated form (nir format)
             Matrix currentNir = new Matrix(numStatefulNodes, numClasses);
             for (int isf = 0; isf < numStatefulNodes; isf++) {
-                int nodeIdx = (int) sn.statefulToNode.get(isf);
-                Matrix currentState = sn.state.get((int) sn.stationToStateful.get((int) sn.nodeToStation.get(nodeIdx)));
-                // Use simplified marginal calculation for current state
-                Matrix marginal = new Matrix(2, numClasses);
-                // Set job counts per class (simplified calculation)
-                for (int r = 0; r < numClasses; r++) {
-                    marginal.set(1, r, currentState.get(r, 0));
-                }
-                // Extract nir (job counts per class) from marginal
-                for (int r = 0; r < numClasses; r++) {
-                    currentNir.set(isf, r, marginal.get(1, r)); // nir is second row of marginal result
+                int ind = (int) sn.statefulToNode.get(isf);
+                StatefulNode statefulNode = sn.stateful.get(isf);
+                Matrix nodeState = sn.state.get(statefulNode);
+                if (nodeState != null) {
+                    State.StateMarginalStatistics stats = ToMarginal.toMarginal(sn, ind, nodeState, null, null, null, null, null);
+                    if (stats != null && stats.nir != null) {
+                        for (int r = 0; r < numClasses; r++) {
+                            currentNir.set(isf, r, stats.nir.get(0, r));
+                        }
+                    }
                 }
             }
-            
+
             // Calculate time differences (duration each state was observed)
             Matrix timeDiffs = new Matrix(numSamples, 1);
             for (int i = 0; i < numSamples - 1; i++) {
                 timeDiffs.set(i, 0, tranSysStateAggr.t.get(i + 1, 0) - tranSysStateAggr.t.get(i, 0));
             }
             timeDiffs.set(numSamples - 1, 0, 0.0); // Last sample has 0 duration
-            
+
             double totalTime = timeDiffs.elementSum();
             double matchingTime = 0.0;
 
@@ -3472,19 +3733,20 @@ public class SolverJMT extends NetworkSolver {
                         }
                     }
                 }
-                
+
                 if (matches) {
                     matchingTime += timeDiffs.get(sample, 0);
                 }
             }
-            
+
             if (totalTime > 0) {
-                return new ProbabilityResult(matchingTime / totalTime);
+                double prob = matchingTime / totalTime;
+                return new ProbabilityResult(prob);
             } else {
                 line_warning("SolverJMT", "The state was not seen during the simulation.");
                 return new ProbabilityResult(0.0);
             }
-            
+
         } catch (Exception e) {
             line_warning("SolverJMT.getProbSysAggr", "Error: %s", e.getMessage());
             return new ProbabilityResult(0.0);
