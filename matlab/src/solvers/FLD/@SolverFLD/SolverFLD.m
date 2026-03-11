@@ -43,7 +43,6 @@ classdef SolverFLD < NetworkSolver
         function [allMethods] = listValidMethods(self)
             % allMethods = LISTVALIDMETHODS()
             % List valid methods for this solver
-            sn = self.model.getStruct();
             allMethods = {'default','softmin','pnorm','statedep','closing','matrix','diffusion','mfq'};
         end
     end

@@ -48,7 +48,7 @@ Z = sum(Z,1);
 % Initialize
 Q = zeros(M,R,1+R);
 PB = zeros(M,1+R);
-P = zeros(M,max(nservers),1+R);
+P = zeros(M,max(nservers(:)),1+R);
 Delta = zeros(M,R,R);
 for i=1:M
     for r=1:R
@@ -122,6 +122,7 @@ end
 function [Q,W,T,P,PB,iter] = Core(L,M,R,N_1,Z,nservers,Q,P,PB,Delta,type,tol,maxiter)
 hasConverged = false;
 W = L;
+T = zeros(1,R);
 iter = 1;
 while ~hasConverged
     Qlast = Q;
@@ -137,7 +138,7 @@ end % it
 end
 
 function [Q_1,P_1,PB_1,T_1] = Estimate(M,R,N_1,nservers,Q,P,PB,Delta,W)
-P_1 = zeros(M,max(nservers),1+R);
+P_1 = zeros(M,max(nservers(:)),1+R);
 PB_1 = zeros(M,1+R);
 Q_1 = zeros(M,R,1+R);
 T_1 = zeros(R,1+R);
@@ -176,7 +177,7 @@ function [Q,W,T,P,PB] = ForwardMVA(L,M,R,N_1,Z,nservers,type,Q_1,P_1,PB_1,T_1)
 W = zeros(M,R);
 T = zeros(1,R);
 Q = zeros(M,R);
-P = zeros(M,max(nservers));
+P = zeros(M,max(nservers(:)));
 PB = zeros(M,1);
 XR = zeros(M,R);
 C = zeros(M,R+1);
@@ -184,7 +185,9 @@ XE = zeros(M,R,R);
 
 F = cell(1,R);
 for r=1:R
-    F{r} = zeros(M,R);    
+    F{r} = zeros(M,R);
+end
+for r=1:R
     for ist=1:M
         den = (L(ist,:)*T_1(:,1+r));
         for c=1:R

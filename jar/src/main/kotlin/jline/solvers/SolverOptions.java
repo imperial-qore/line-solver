@@ -125,7 +125,7 @@ public class SolverOptions {
      *
      * <p>Semantics by solver:
      * <ul>
-     *   <li><b>DES</b>: Maximum service completion events (default: 1,000,000)
+     *   <li><b>LDES</b>: Maximum service completion events (default: 1,000,000)
      *       - Simulation stops when this many completions are processed
      *       - 20% of events used for warmup (MSER-5 for automatic truncation)
      *   </li>
@@ -185,6 +185,13 @@ public class SolverOptions {
      * Default is 0 (disabled).
      */
     public double confint;
+
+    /**
+     * Load-dependent service rate scaling factors for QRF methods.
+     * Dimensions: alpha[i][n] where i is station index and n is population level.
+     * When null, defaults to ones(M, N) in the QRF solver.
+     */
+    public double[][] qrfAlpha;
 
     /**
      * Creates SolverOptions with default settings.
@@ -273,7 +280,7 @@ public class SolverOptions {
                 break;
             case FLUID:
                 this.config.highvar = "default";
-                this.config.hide_immediate = true; // Eliminate immediate transitions by default
+                this.config.hide_immediate = false; // Stiff ODE solver handles immediate rates accurately
                 this.config.put("immediate_tol", 1e7); // Threshold for detecting immediate transitions
                 this.iter_max = 200;
                 this.stiff = true;
@@ -289,11 +296,11 @@ public class SolverOptions {
                     new LSODA(this.odesolvers.odeminstep, this.odesolvers.odemaxstep, tol, tol, 12, 5);
                 break;
             case LN:
-                this.config.interlocking = false; // do not change, true unstable as of 2.0.38
+                this.config.interlocking = true;
                 this.config.multiserver = "default";
                 // Under-relaxation options for convergence improvement
-                this.config.relax = "auto"; // 'auto' | 'fixed' | 'adaptive' | 'none'
-                this.config.relax_factor = 0.1; // Relaxation factor when enabled (0 < omega <= 1)
+                this.config.relax = "fixed"; // 'auto' | 'fixed' | 'adaptive' | 'none'
+                this.config.relax_factor = 0.5; // Relaxation factor (0 < omega <= 1)
                 this.config.relax_min = 0.1; // Minimum relaxation factor for adaptive mode
                 this.config.relax_history = 5; // Error history window for adaptive mode
                 // MOL (Method of Layers) options for hierarchical iteration
@@ -423,6 +430,12 @@ public class SolverOptions {
         cloned.timestep = this.timestep;
         cloned.verbose = this.verbose;
         cloned.confint = this.confint;
+        if (this.qrfAlpha != null) {
+            cloned.qrfAlpha = new double[this.qrfAlpha.length][];
+            for (int i = 0; i < this.qrfAlpha.length; i++) {
+                cloned.qrfAlpha[i] = this.qrfAlpha[i].clone();
+            }
+        }
 
         return cloned;
     }
@@ -659,7 +672,7 @@ public class SolverOptions {
         public List<Double> pstar;
 
         /**
-         * Variance reduction technique for DES simulation.
+         * Variance reduction technique for LDES simulation.
          * <p>Available options:</p>
          * <ul>
          *   <li><b>"none"</b>: No variance reduction (standard simulation)</li>
@@ -821,6 +834,14 @@ public class SolverOptions {
          * <p>Default: 200 (100 for MAM solver)</p>
          */
         public int num_cdf_pts = 200;
+
+        /**
+         * AoI preemption/replacement probability override for Age of Information analysis.
+         * Set to a value between 0 and 1 to override automatic detection.
+         * NaN means auto-detect from scheduling strategy.
+         * <p>Default: NaN (auto-detect)</p>
+         */
+        public double aoi_preemption = Double.NaN;
 
         /**
          * Enable remote execution via REST API (LQNS-specific).

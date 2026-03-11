@@ -8,6 +8,7 @@ package jline.solvers.fluid;
 
 import jline.GlobalConstants;
 import jline.VerboseLevel;
+import jline.api.aoi.*;
 import jline.io.Ret;
 import jline.lang.FeatureSet;
 import jline.lang.JobClass;
@@ -99,7 +100,6 @@ public class SolverFluid extends NetworkSolver {
      */
     public SolverFluid(Network model, SolverOptions options) {
         super(model, "SolverFluid", options);
-        // TODO: self.setOptions(Solver.parseOptions(varargin, self.defaultOptions));
         this.result = new FluidResult();
     }
 
@@ -1040,13 +1040,13 @@ public class SolverFluid extends NetworkSolver {
 
         if (isInfinite(options.timespan[0])) {
             if (options.verbose == VerboseLevel.DEBUG) {
-                line_error(mfilename(new Object[]{}),
+                line_warning(mfilename(new Object[]{}),
                         "SolverFluid requires options.timespan[0] to be finite. Setting it to 0.");
             }
             options.timespan[0] = 0;
         }
         if (options.timespan[0] == options.timespan[1]) {
-            line_error(mfilename(new Object[]{}),
+            line_warning(mfilename(new Object[]{}),
                     "SolverFluid does not support a timespan that is a single point. Setting options.timespan[0] to 0.");
             options.timespan[0] = 0;
         }
@@ -1064,6 +1064,8 @@ public class SolverFluid extends NetworkSolver {
             ((FluidResult) this.result).odeStateVec = analyzer.getXVecIt();
             ((FluidResult) this.result).snFinal = this.sn;
             result.method = "mfq";
+            // Run AoI analysis if this is a valid AoI topology
+            runAoiAnalysis(sn);
             return;
         }
 
@@ -1359,7 +1361,8 @@ public class SolverFluid extends NetworkSolver {
             finalMethod = options.method;
         }
         result.method = finalMethod;
-        this.setAvgResults(result.QN, result.UN, result.RN, result.TN, AN, result.WN, result.CN, result.XN, result.runtime, finalMethod, result.iter);
+        // WN (waiting times) is not computed by the Fluid solver (matching MATLAB which passes [])
+        this.setAvgResults(result.QN, result.UN, result.RN, result.TN, AN, new Matrix(0, 0), result.CN, result.XN, result.runtime, finalMethod, result.iter);
     }
 
     private SolverResult runMethodSpecificAnalyzer(NetworkStruct sn) {
@@ -1647,15 +1650,15 @@ public class SolverFluid extends NetworkSolver {
         // The phases may have been expanded during fluid analysis
         ((FluidResult) this.result).snFinal = this.sn;
 
-        // Calculate arrival rates and set average results
-        // We need to use the full network struct from the model to get the routing matrix
+        // Calculate arrival rates from throughputs using the routing matrix
         AvgHandle TH = getAvgTputHandles();
         Matrix AN = snGetArvRFromTput(this.sn, result.TN, TH);
-        // TODO: BUG - snGetArvRFromTput returns zeros for arrival rates in open networks?
 
-        // Note: WN (waiting times) will be computed in setAvgResults if needed
-        Matrix WN = new Matrix(0, 0); // Empty matrix for waiting times
+        // WN (waiting times) is not computed by the Fluid solver (matching MATLAB which passes [])
+        Matrix WN = new Matrix(0, 0);
         this.setAvgResults(result.QN, result.UN, result.RN, result.TN, AN, WN, result.CN, result.XN, 0.0, options.method, 0);
+        // Run AoI analysis if this is a valid AoI topology
+        runAoiAnalysis(sn);
         return this.result;
     }
 
@@ -1703,6 +1706,10 @@ public class SolverFluid extends NetworkSolver {
      * @throws RuntimeException if model contains unsupported features or method is invalid
      */
     public void runAnalyzerChecks(SolverOptions options) {
+        // Propagate solver verbose level to global
+        if (options != null) {
+            GlobalConstants.Verbose = options.verbose;
+        }
         // Check if model is supported by this solver
         if (!supports(this.model)) {
             throw new RuntimeException("This model contains features not supported by the Fluid solver.");
@@ -2176,5 +2183,216 @@ public class SolverFluid extends NetworkSolver {
         setFluidDistribResults(CDc, runtime);
         
         return new DistributionResult(sn.nstations, sn.nclasses, "passage_time");
+    }
+
+    /**
+     * Run Age of Information analysis if the model is a valid AoI topology.
+     * Called during runAnalyzer() when method is "mfq" or after other methods.
+     * Uses the MFQ-based solvers (solveBufferless / solveSingleBuffer) to compute
+     * matrix exponential representations of AoI and Peak AoI distributions.
+     *
+     * @param sn Network structure
+     */
+    private void runAoiAnalysis(NetworkStruct sn) {
+        try {
+            AoiValidationResult aoiInfo = Aoi_is_aoiKt.aoi_is_aoi(sn);
+            if (!aoiInfo.isAoI()) {
+                return;  // Not an AoI topology, skip silently
+            }
+
+            // Determine preemption probability from solver options
+            double aoiPreemption = Double.NaN;
+            if (options.config != null && !Double.isNaN(options.config.aoi_preemption)) {
+                aoiPreemption = options.config.aoi_preemption;
+            }
+
+            AoiParams params = Aoi_extract_paramsKt.aoi_extract_params(sn, aoiInfo, aoiPreemption);
+
+            AoiMfqResult aoiResult;
+            if (params.getSystemType().equals("bufferless")) {
+                aoiResult = Aoi_solve_bufferlessKt.aoi_solve_bufferless(
+                    params.getTau(), params.getT(), params.getSigma(), params.getS(), params.getP());
+            } else {
+                aoiResult = Aoi_solve_singlebufferKt.aoi_solve_singlebuffer(
+                    params.getLambda(), params.getSigma(), params.getS(), params.getR());
+            }
+
+            ((FluidResult) this.result).aoiResults = aoiResult;
+
+            line_debug(options.verbose,
+                String.format("AoI analysis: Mean AoI=%.4f, Mean PAoI=%.4f, system=%s",
+                    aoiResult.getAoiMean(), aoiResult.getPaoiMean(), aoiResult.getSystemType()));
+        } catch (Exception e) {
+            line_warning("SolverFluid",
+                "AoI analysis failed: %s. Standard metrics still available.", e.getMessage());
+        }
+    }
+
+    /**
+     * Get average Age of Information metrics.
+     *
+     * <p>Returns AoI and Peak AoI statistics computed by the Fluid solver.
+     * Requires the model to have a valid AoI topology (single open class,
+     * Source-Queue-Sink, capacity 1 or 2, single server, FCFS/LCFS/LCFSPR).</p>
+     *
+     * @return Map with keys "AoI" and "PAoI", each mapping to a Map with
+     *         "mean", "var", "std" entries. Also includes "systemType" and
+     *         "preemption" at the top level.
+     *         Returns null if no AoI results are available.
+     */
+    public Map<String, Object> getAvgAoI() {
+        if (!this.hasAvgResults()) {
+            this.getAvg();
+        }
+
+        FluidResult fluidResult = (FluidResult) this.result;
+        if (fluidResult.aoiResults == null) {
+            // Try running AoI analysis now
+            if (this.sn == null) {
+                this.sn = this.model.getStruct(true);
+            }
+            runAoiAnalysis(this.sn);
+        }
+
+        if (fluidResult.aoiResults == null) {
+            line_warning("SolverFluid",
+                "No AoI results available. Ensure model has valid AoI topology and use method='mfq'.");
+            return null;
+        }
+
+        AoiMfqResult aoi = fluidResult.aoiResults;
+
+        Map<String, Object> aoiStats = new LinkedHashMap<String, Object>();
+        aoiStats.put("mean", aoi.getAoiMean());
+        aoiStats.put("var", aoi.getAoiVar());
+        aoiStats.put("std", Math.sqrt(Math.max(0, aoi.getAoiVar())));
+
+        Map<String, Object> paoiStats = new LinkedHashMap<String, Object>();
+        paoiStats.put("mean", aoi.getPaoiMean());
+        paoiStats.put("var", aoi.getPaoiVar());
+        paoiStats.put("std", Math.sqrt(Math.max(0, aoi.getPaoiVar())));
+
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("AoI", aoiStats);
+        result.put("PAoI", paoiStats);
+        result.put("systemType", aoi.getSystemType());
+        result.put("preemption", aoi.getPreemption());
+
+        return result;
+    }
+
+    /**
+     * Get CDF of Age of Information.
+     *
+     * <p>Computes the cumulative distribution function of AoI and Peak AoI
+     * using matrix exponential representations: F(t) = 1 - g * expm(A*t) * h</p>
+     *
+     * @param tValues Time values at which to evaluate CDF. If null, uses
+     *               automatic range based on mean AoI (0 to 5*mean, 200 points).
+     * @return Array of two Matrix objects: [AoI_cdf, PAoI_cdf].
+     *         Each is an n x 2 matrix with columns [CDF_values, t_values].
+     *         Returns null if no AoI results are available.
+     */
+    public Matrix[] getCdfAoI(Matrix tValues) {
+        if (!this.hasAvgResults()) {
+            this.getAvg();
+        }
+
+        FluidResult fluidResult = (FluidResult) this.result;
+        if (fluidResult.aoiResults == null) {
+            if (this.sn == null) {
+                this.sn = this.model.getStruct(true);
+            }
+            runAoiAnalysis(this.sn);
+        }
+
+        if (fluidResult.aoiResults == null) {
+            line_warning("SolverFluid",
+                "No AoI results available for CDF computation.");
+            return null;
+        }
+
+        AoiMfqResult aoi = fluidResult.aoiResults;
+
+        // Generate time values if not provided
+        if (tValues == null || tValues.isEmpty()) {
+            double meanAoI = aoi.getAoiMean();
+            if (Double.isNaN(meanAoI) || meanAoI <= 0) {
+                meanAoI = 1.0;
+            }
+            double tMax = 5.0 * meanAoI;
+            int nPoints = 200;
+            tValues = new Matrix(nPoints, 1);
+            for (int i = 0; i < nPoints; i++) {
+                tValues.set(i, 0, tMax * i / (nPoints - 1.0));
+            }
+        }
+
+        int n = tValues.getNumRows();
+
+        // Compute AoI CDF: F(t) = 1 - g * expm(A*t) * h
+        Matrix aoiCdf = new Matrix(n, 2);
+        Matrix aoiG = aoi.getAoiG();
+        Matrix aoiA = aoi.getAoiA();
+        Matrix aoiH = aoi.getAoiH();
+
+        for (int i = 0; i < n; i++) {
+            double t = tValues.get(i, 0);
+            aoiCdf.set(i, 1, t);
+            if (t <= 0) {
+                aoiCdf.set(i, 0, 0.0);
+            } else {
+                Matrix expAt = aoiA.scale(t).expm();
+                double ccdf = aoiG.mult(expAt).mult(aoiH).get(0, 0);
+                aoiCdf.set(i, 0, Math.max(0, Math.min(1, 1.0 - ccdf)));
+            }
+        }
+
+        // Compute Peak AoI CDF
+        Matrix paoiCdf = new Matrix(n, 2);
+        Matrix paoiG = aoi.getPaoiG();
+        Matrix paoiA = aoi.getPaoiA();
+        Matrix paoiH = aoi.getPaoiH();
+
+        for (int i = 0; i < n; i++) {
+            double t = tValues.get(i, 0);
+            paoiCdf.set(i, 1, t);
+            if (t <= 0) {
+                paoiCdf.set(i, 0, 0.0);
+            } else {
+                Matrix expAt = paoiA.scale(t).expm();
+                double ccdf = paoiG.mult(expAt).mult(paoiH).get(0, 0);
+                paoiCdf.set(i, 0, Math.max(0, Math.min(1, 1.0 - ccdf)));
+            }
+        }
+
+        return new Matrix[]{aoiCdf, paoiCdf};
+    }
+
+    /**
+     * Get CDF of Age of Information with automatic time range.
+     *
+     * @return Array of two Matrix objects: [AoI_cdf, PAoI_cdf]
+     */
+    public Matrix[] getCdfAoI() {
+        return getCdfAoI(null);
+    }
+
+    /**
+     * Get sojourn time CDF. Alias for getCdfRespT().
+     *
+     * @return DistributionResult containing response time CDFs
+     */
+    public DistributionResult getSjrnT() {
+        return this.getCdfRespT();
+    }
+
+    /**
+     * Get sojourn time CDF. Lowercase Kotlin-style alias for getSjrnT().
+     *
+     * @return DistributionResult containing response time CDFs
+     */
+    public DistributionResult sjrnT() {
+        return this.getSjrnT();
     }
 }

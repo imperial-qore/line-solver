@@ -42,6 +42,7 @@ from .continuous import (
     Normal,
     MultivariateNormal,
     Prior,
+    Expolynomial,
 )
 
 # Discrete distributions
@@ -69,6 +70,7 @@ from .markovian import (
     MAP,
     MMPP,
     MMPP2,
+    DMAP,
     ME,
     MarkedMAP,
     MarkedMMPP,
@@ -99,6 +101,7 @@ __all__ = [
     'Normal',
     'MultivariateNormal',
     'Prior',
+    'Expolynomial',
     # Discrete
     'Poisson',
     'Geometric',
@@ -120,6 +123,7 @@ __all__ = [
     'MAP',
     'MMPP',
     'MMPP2',
+    'DMAP',
     'ME',
     'MarkedMAP',
     'MarkedMMPP',

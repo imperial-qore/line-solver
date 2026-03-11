@@ -14,9 +14,9 @@ The package offers solution algorithms for queueing systems (e.g., M/M/1, M/M/k,
 | [MATLAB](matlab/) | matlab/                      | MATLAB                   | Stable       | [PDF](https://line-solver.sourceforge.net/doc/LINE-matlab.pdf) | [Doxygen](https://line-solver.sourceforge.net/doxygen/index.html) |
 | [Java/Kotlin](jar/) | jar/                         | Java SE 8+               | Beta       | [PDF](https://line-solver.sourceforge.net/doc/LINE-java.pdf) | [Javadoc](https://line-solver.sourceforge.net/javadoc/index.html) |
 | [Python Wrapper](python-wrapper/) | python-wrapper/                      | Python 3.11+, Java SE 8+ | Beta         | [PDF](https://line-solver.sourceforge.net/doc/LINE-python.pdf) | [Sphinx](https://line-solver.sourceforge.net/sphinx/index.html) |
-| [Python Native](python/) | python/ | Python 3.11+             | Beta                    | [PDF](https://line-solver.sourceforge.net/doc/LINE-python.pdf) | [Sphinx](https://line-solver.sourceforge.net/sphinx/index.html) |
+| [Python Native](python/) | python/ | Python 3.11+             | Alpha                    | [PDF](https://line-solver.sourceforge.net/doc/LINE-python.pdf) | [Sphinx](https://line-solver.sourceforge.net/sphinx/index.html) |
 
-The Python Wrapper interfaces with the Java/Kotlin JAR via JPype, allowing Python users to leverage the faster, more mature, JAR-based solvers while using familiar Python syntax. The JAR implementation offers better performance than the native Python version for large-scale and layered models.
+The Python Wrapper interfaces with the Java/Kotlin JAR via JPype, allowing Python users to leverage the faster, more mature, JAR-based solvers while using Python syntax. The JAR implementation offers better performance than the native Python version for large-scale and layered models.
 
 ## Command-Line Interface
 
@@ -33,6 +33,16 @@ to see available solvers, or
 python line-cli.py info
 ```
 for command line options and features. The script can also start WebSocket or REST API servers for integration with other tools.
+
+## MCP Integration (for LLM-based Analysis)
+
+LINE is available as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, enabling LLM tools such as [Claude Code](https://claude.ai/code) and [Claude Desktop](https://claude.ai/download) to build and solve queueing models through natural language. With MCP, users can analyze queues, sweep parameters, compare solvers, and visualize networks without writing any code.
+
+Install from PyPI:
+```
+pip install line-solver
+```
+Then configure your MCP client to use `line-solver` as a server. See the [MCP Getting Started Guide](https://line-solver.sourceforge.net/doc/LINE-mcp.pdf) for setup instructions and usage examples.
 
 ## License
 

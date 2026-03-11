@@ -9,12 +9,16 @@ function [QNclass,UNclass,RNclass,TNclass,ANclass,WNclass] = getAvg(self,Q,U,R,T
 
 sn = self.model.getStruct();
 
-if strcmp(self.options.lang,'java') && ~strcmp(self.name,'SolverDES')
+if strcmp(self.options.lang,'java') && ~strcmp(self.name,'SolverLDES')
     T0=tic;
     M = sn.nstations;
     R = sn.nclasses;
-    % object already created by NetworkSolver.setLang()
-    self.obj.model.reset();
+    % Force fresh Java model conversion each time to ensure current state
+    % Only re-create the Java model if the model is not already Java-native
+    if ~self.model.isJavaNative()
+        self.model.obj = [];
+        self.setLang();
+    end
     self.obj.getOptions.verbose = jline.VerboseLevel.STD;
     SolverResult = self.obj.getAvg();
     QN = JLINE.from_jline_matrix(SolverResult.QN);
@@ -25,6 +29,31 @@ if strcmp(self.options.lang,'java') && ~strcmp(self.name,'SolverDES')
     WN = JLINE.from_jline_matrix(SolverResult.WN);
     runtime=SolverResult.runtime;
     method=SolverResult.method;
+    % Extract cache hit/miss probabilities from Java model
+    for ind = 1:sn.nnodes
+        if sn.nodetype(ind) == NodeType.Cache
+            jnode = self.model.obj.getNodeByIndex(ind-1);
+            hitRatioVec = JLINE.from_jline_matrix(jnode.getHitRatio());
+            missRatioVec = JLINE.from_jline_matrix(jnode.getMissRatio());
+            % Store per-class hit/miss probabilities matching MATLAB format:
+            % only parent classes with hitClass>0 have non-zero entries
+            hitClass = self.model.nodes{ind}.getHitClass;
+            nk = length(hitClass);
+            hitprob = zeros(1, nk);
+            missprob = zeros(1, nk);
+            for k = 1:nk
+                if hitClass(k) > 0 && k <= length(hitRatioVec)
+                    hitprob(k) = hitRatioVec(k);
+                    missprob(k) = missRatioVec(k);
+                end
+            end
+            self.model.nodes{ind}.setResultHitProb(hitprob);
+            self.model.nodes{ind}.setResultMissProb(missprob);
+        end
+    end
+    if any(sn.nodetype == NodeType.Cache)
+        self.model.refreshStruct(true);
+    end
     self.setAvgResults(QN,UN,RN,TN,AN,WN,[],[],runtime,method,1);
     QNclass = reshape(QN,M,R);
     UNclass = reshape(UN,M,R);

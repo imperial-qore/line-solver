@@ -5,6 +5,7 @@
 
 package jline.solvers.ssa;
 
+import jline.GlobalConstants;
 import jline.lang.Event;
 import jline.lang.FeatureSet;
 import jline.lang.Network;
@@ -150,6 +151,8 @@ public class SolverSSA extends NetworkSolver {
         if (this.options == null) {
             this.options = new SolverOptions(SolverType.SSA);
         }
+        // Propagate solver verbose level to global
+        GlobalConstants.Verbose = options.verbose;
         if (this.enableChecks && !supports(this.model)) {
             throw new RuntimeException("This model is not supported by the SSA solver.");
         }
@@ -196,8 +199,12 @@ public class SolverSSA extends NetworkSolver {
         int M = sn.nstations;
         int R = sn.nclasses;
         AvgHandle T = getAvgTputHandles();
+        Matrix rtRefreshed = sn.rt;
         sn.rt = rtOrig;
         Matrix AN = snGetArvRFromTput(sn, TN, T);
+        if (rtRefreshed != null) {
+            sn.rt = rtRefreshed;
+        }
         Matrix WN = new Matrix(0, 0);
 
         // The analyzer already handles the "default/" convention, so just use the result
@@ -232,18 +239,18 @@ public class SolverSSA extends NetworkSolver {
      * Sample node state evolution using SSA simulation
      *
      * @param node The node to sample from
-     * @param numSamples Number of samples to generate (overrides solver options if provided)
+     * @param numEvents Number of samples to generate (overrides solver options if provided)
      * @param markActivePassive Whether to mark events as active/passive
      * @return SampleNodeState containing the sampling results
      * @throws Exception if sampling fails
      */
-    public SampleNodeState sample(jline.lang.nodes.Node node, Integer numSamples, boolean markActivePassive) throws Exception {
+    public SampleNodeState sample(jline.lang.nodes.Node node, Integer numEvents, boolean markActivePassive) throws Exception {
         SolverOptions originalOptions = (SolverOptions) this.options.copy();
         
         try {
             // Set number of samples if provided
-            if (numSamples != null) {
-                this.options.samples = numSamples;
+            if (numEvents != null) {
+                this.options.samples = numEvents;
             }
             
             // Only support serial method for sampling (as in MATLAB)
@@ -371,12 +378,12 @@ public class SolverSSA extends NetworkSolver {
      * Sample node state evolution using SSA simulation
      *
      * @param node The node to sample from
-     * @param numSamples Number of samples to generate
+     * @param numEvents Number of samples to generate
      * @return SampleNodeState containing the sampling results  
      * @throws Exception if sampling fails
      */
-    public SampleNodeState sample(jline.lang.nodes.Node node, int numSamples) throws Exception {
-        return sample(node, numSamples, false);
+    public SampleNodeState sample(jline.lang.nodes.Node node, int numEvents) throws Exception {
+        return sample(node, numEvents, false);
     }
 
     /**
@@ -394,18 +401,18 @@ public class SolverSSA extends NetworkSolver {
      * Sample aggregated node state evolution using SSA simulation
      *
      * @param node The node to sample from
-     * @param numSamples Number of samples to generate (overrides solver options if provided)
+     * @param numEvents Number of samples to generate (overrides solver options if provided)
      * @param markActivePassive Whether to mark events as active/passive
      * @return SampleNodeState containing the aggregated sampling results
      * @throws Exception if sampling fails
      */
-    public SampleNodeState sampleAggr(jline.lang.nodes.Node node, Integer numSamples, boolean markActivePassive) throws Exception {
+    public SampleNodeState sampleAggr(jline.lang.nodes.Node node, Integer numEvents, boolean markActivePassive) throws Exception {
         SolverOptions originalOptions = (SolverOptions) this.options.copy();
         
         try {
             // Set number of samples if provided
-            if (numSamples != null) {
-                this.options.samples = numSamples;
+            if (numEvents != null) {
+                this.options.samples = numEvents;
             }
             
             // Only support serial method for sampling (as in MATLAB)
@@ -534,12 +541,12 @@ public class SolverSSA extends NetworkSolver {
      * Sample aggregated node state evolution using SSA simulation
      *
      * @param node The node to sample from
-     * @param numSamples Number of samples to generate
+     * @param numEvents Number of samples to generate
      * @return SampleNodeState containing the aggregated sampling results  
      * @throws Exception if sampling fails
      */
-    public SampleNodeState sampleAggr(jline.lang.nodes.Node node, int numSamples) throws Exception {
-        return sampleAggr(node, numSamples, false);
+    public SampleNodeState sampleAggr(jline.lang.nodes.Node node, int numEvents) throws Exception {
+        return sampleAggr(node, numEvents, false);
     }
 
     /**
@@ -571,12 +578,12 @@ public class SolverSSA extends NetworkSolver {
      * Streams phase-detailed state information during simulation.
      *
      * @param node The node to sample from
-     * @param numSamples Number of samples to generate
+     * @param numEvents Number of samples to generate
      * @param streamingOptions Configuration for streaming (endpoint, mode, frequency)
      * @return SampleNodeState containing the sampling results
      * @throws Exception if sampling fails
      */
-    public SampleNodeState stream(jline.lang.nodes.Node node, Integer numSamples, StreamingOptions streamingOptions) throws Exception {
+    public SampleNodeState stream(jline.lang.nodes.Node node, Integer numEvents, StreamingOptions streamingOptions) throws Exception {
         // Try to create collector, but proceed without streaming if it fails (e.g., gRPC issues)
         try {
             this.streamingCollector = new Collector(streamingOptions, this.sn);
@@ -589,7 +596,7 @@ public class SolverSSA extends NetworkSolver {
         }
 
         try {
-            SampleNodeState result = sample(node, numSamples, false);
+            SampleNodeState result = sample(node, numEvents, false);
             if (this.streamingCollector != null && result.t != null && result.t.length() > 0) {
                 double finalTime = result.t.get(result.t.length() - 1);
                 this.streamingCollector.flush(finalTime);
@@ -621,12 +628,12 @@ public class SolverSSA extends NetworkSolver {
      * Streams state information aggregated by job class during simulation.
      *
      * @param node The node to sample from
-     * @param numSamples Number of samples to generate
+     * @param numEvents Number of samples to generate
      * @param streamingOptions Configuration for streaming (endpoint, mode, frequency)
      * @return SampleNodeState containing the aggregated sampling results
      * @throws Exception if sampling fails
      */
-    public SampleNodeState streamAggr(jline.lang.nodes.Node node, Integer numSamples, StreamingOptions streamingOptions) throws Exception {
+    public SampleNodeState streamAggr(jline.lang.nodes.Node node, Integer numEvents, StreamingOptions streamingOptions) throws Exception {
         // Try to create collector, but proceed without streaming if it fails (e.g., gRPC issues)
         try {
             this.streamingCollector = new Collector(streamingOptions, this.sn);
@@ -639,7 +646,7 @@ public class SolverSSA extends NetworkSolver {
         }
 
         try {
-            SampleNodeState result = sampleAggr(node, numSamples, false);
+            SampleNodeState result = sampleAggr(node, numEvents, false);
             if (this.streamingCollector != null && result.t != null && result.t.length() > 0) {
                 double finalTime = result.t.get(result.t.length() - 1);
                 this.streamingCollector.flush(finalTime);
@@ -666,20 +673,20 @@ public class SolverSSA extends NetworkSolver {
     /**
      * Sample system-wide state evolution using SSA simulation
      *
-     * @param numSamples Number of samples to generate (overrides solver options if provided)
+     * @param numEvents Number of samples to generate (overrides solver options if provided)
      * @param markActivePassive Whether to mark events as active/passive
      * @return SampleSysState containing the system-wide sampling results
      * @throws Exception if sampling fails
      */
-    private SampleSysState sampleSysInternal(Integer numSamples, boolean markActivePassive) throws Exception {
+    private SampleSysState sampleSysInternal(Integer numEvents, boolean markActivePassive) throws Exception {
         SolverOptions originalOptions = (SolverOptions) this.options.copy();
         
         try {
             // Set number of samples if provided
-            if (numSamples != null) {
-                this.options.samples = numSamples;
+            if (numEvents != null) {
+                this.options.samples = numEvents;
             } else {
-                numSamples = this.options.samples;
+                numEvents = this.options.samples;
             }
             
             // Only support serial method for sampling (as in MATLAB)
@@ -712,12 +719,12 @@ public class SolverSSA extends NetworkSolver {
             for (int i = 1; i <= sn.nstateful; i++) {
                 Matrix nodeState = result.tranSysState.get(i);
                 
-                // Truncate if needed to match numSamples
-                if (nodeState.getNumRows() > numSamples) {
-                    Matrix truncatedTime = new Matrix(numSamples, 1);
-                    Matrix truncatedState = new Matrix(numSamples, nodeState.getNumCols());
+                // Truncate if needed to match numEvents
+                if (nodeState.getNumRows() > numEvents) {
+                    Matrix truncatedTime = new Matrix(numEvents, 1);
+                    Matrix truncatedState = new Matrix(numEvents, nodeState.getNumCols());
                     
-                    for (int j = 0; j < numSamples; j++) {
+                    for (int j = 0; j < numEvents; j++) {
                         truncatedTime.set(j, 0, sampleResult.t.get(j, 0));
                         for (int k = 0; k < nodeState.getNumCols(); k++) {
                             truncatedState.set(j, k, nodeState.get(j, k));
@@ -818,21 +825,21 @@ public class SolverSSA extends NetworkSolver {
     /**
      * Sample system-wide state evolution using SSA simulation
      *
-     * @param numSamples Number of samples to generate
+     * @param numEvents Number of samples to generate
      * @return SampleSysState containing the system-wide sampling results  
      * @throws Exception if sampling fails
      */
-    public SampleResult sampleSys(int numSamples) {
+    public SampleResult sampleSys(int numEvents) {
         try {
-            SampleSysState sysState = sampleSysInternal(numSamples, false);
-            return convertToSampleResult(sysState, numSamples);
+            SampleSysState sysState = sampleSysInternal(numEvents, false);
+            return convertToSampleResult(sysState, numEvents);
         } catch (Exception e) {
             return new SampleResult();
         }
     }
     
-    private SampleSysState sampleSysInternal(int numSamples, boolean markActivePassive) throws Exception {
-        return sampleSysInternal((Integer) numSamples, markActivePassive);
+    private SampleSysState sampleSysInternal(int numEvents, boolean markActivePassive) throws Exception {
+        return sampleSysInternal((Integer) numEvents, markActivePassive);
     }
 
     /**
@@ -848,19 +855,19 @@ public class SolverSSA extends NetworkSolver {
     /**
      * Sample aggregated system-wide state evolution using SSA simulation
      *
-     * @param numSamples Number of samples to generate (overrides solver options if provided)
+     * @param numEvents Number of samples to generate (overrides solver options if provided)
      * @param markActivePassive Whether to mark events as active/passive
      * @return SampleSysState containing the aggregated system-wide sampling results
      * @throws Exception if sampling fails
      */
-    private SampleSysState sampleSysAggrInternal(Integer numSamples, boolean markActivePassive) throws Exception {
+    private SampleSysState sampleSysAggrInternal(Integer numEvents, boolean markActivePassive) throws Exception {
         SolverOptions originalOptions = (SolverOptions) this.options.copy();
         
         try {
-            if (numSamples == null) {
-                numSamples = this.options.samples;
+            if (numEvents == null) {
+                numEvents = this.options.samples;
             } else {
-                this.options.samples = numSamples;
+                this.options.samples = numEvents;
             }
             
             // Only support serial method for sampling (as in MATLAB)
@@ -893,12 +900,12 @@ public class SolverSSA extends NetworkSolver {
             for (int isf = 0; isf < sn.nstateful; isf++) {
                 Matrix nodeState = result.tranSysState.get(1 + isf);
                 
-                // Truncate if needed to match numSamples
-                if (nodeState.getNumRows() > numSamples) {
-                    Matrix truncatedTime = new Matrix(numSamples, 1);
-                    Matrix truncatedState = new Matrix(numSamples, nodeState.getNumCols());
+                // Truncate if needed to match numEvents
+                if (nodeState.getNumRows() > numEvents) {
+                    Matrix truncatedTime = new Matrix(numEvents, 1);
+                    Matrix truncatedState = new Matrix(numEvents, nodeState.getNumCols());
                     
-                    for (int j = 0; j < numSamples; j++) {
+                    for (int j = 0; j < numEvents; j++) {
                         truncatedTime.set(j, 0, sampleResult.t.get(j, 0));
                         for (int k = 0; k < nodeState.getNumCols(); k++) {
                             truncatedState.set(j, k, nodeState.get(j, k));
@@ -1010,14 +1017,14 @@ public class SolverSSA extends NetworkSolver {
     /**
      * Sample aggregated system-wide state evolution using SSA simulation
      *
-     * @param numSamples Number of samples to generate
+     * @param numEvents Number of samples to generate
      * @return SampleSysState containing the aggregated system-wide sampling results  
      * @throws Exception if sampling fails
      */
-    public SampleResult sampleSysAggr(int numSamples) {
+    public SampleResult sampleSysAggr(int numEvents) {
         try {
-            SampleSysState sysState = sampleSysAggrInternal(numSamples, false);
-            return convertToSampleResult(sysState, numSamples);
+            SampleSysState sysState = sampleSysAggrInternal(numEvents, false);
+            return convertToSampleResult(sysState, numEvents);
         } catch (Exception e) {
             return new SampleResult();
         }
@@ -1596,7 +1603,7 @@ public class SolverSSA extends NetworkSolver {
     /**
      * Convert SampleSysState to SampleResult for API compatibility
      */
-    private SampleResult convertToSampleResult(SampleSysState sysState, int numSamples) {
+    private SampleResult convertToSampleResult(SampleSysState sysState, int numEvents) {
         if (sysState == null) {
             return new SampleResult();
         }
@@ -1615,14 +1622,14 @@ public class SolverSSA extends NetworkSolver {
         
         return new SampleResult("ssa", sysState.t != null ? sysState.t : new Matrix(0, 0), 
                                sysState.state != null ? sysState.state : new ArrayList<>(), 
-                               eventMatrix, sysState.isaggregate, numSamples);
+                               eventMatrix, sysState.isaggregate, numEvents);
     }
     
     /**
      * Rename existing methods to avoid conflicts
      */
-    private SampleSysState sampleSysAggrInternal(int numSamples, boolean markActivePassive) throws Exception {
-        return sampleSysAggrInternal((Integer) numSamples, markActivePassive);
+    private SampleSysState sampleSysAggrInternal(int numEvents, boolean markActivePassive) throws Exception {
+        return sampleSysAggrInternal((Integer) numEvents, markActivePassive);
     }
 
     /**

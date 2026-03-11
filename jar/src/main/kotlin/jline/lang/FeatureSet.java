@@ -52,6 +52,7 @@ public class FeatureSet implements Serializable {
         set.put("Immediate", false);
         set.put("Lognormal", false);
         set.put("MAP", false);
+        set.put("DMAP", false);
         set.put("MMAP", false);
         set.put("BMAP", false);
         set.put("MMPP2", false);
@@ -129,6 +130,7 @@ public class FeatureSet implements Serializable {
         set.put("OpenClass", false);
         set.put("SelfLoopingClass", false);
         set.put("LoadDependence", false);
+        set.put("Retrial", false);
     }
 
     /**

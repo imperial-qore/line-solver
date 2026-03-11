@@ -140,7 +140,16 @@ switch options.method
                             end
                     end
 
-                    options.init_sol = xvec_iter{end}(:);
+                    % xvec_iter{end} may be shorter than expected due to
+                    % state space reduction (keep filter / immediate
+                    % elimination) in solver_fluid_matrix. Regenerate
+                    % init_sol from current sn to ensure correct size.
+                    expected_init_sol = solver_fluid_initsol(sn);
+                    if numel(xvec_iter{end}) == numel(expected_init_sol)
+                        options.init_sol = xvec_iter{end}(:);
+                    else
+                        options.init_sol = expected_init_sol;
+                    end
                     if any(phases_last-phases~=0) % If there is a change of phases reset
                         options.init_sol = solver_fluid_initsol(sn);
                     end

@@ -37,7 +37,8 @@ public class Forker extends OutputSection {
         for (OutputStrategy outputStrategy : this.outputStrategies) {
             if ((outputStrategy.getJobClass().getIndex() == jobClass.getIndex()) &&
                 (outputStrategy.getRoutingStrategy() != RoutingStrategy.PROB ||
-                 (outputStrategy.getDestination() != null && outputStrategy.getDestination().getNodeIndex() == destination.getNodeIndex()))) {
+                 outputStrategy.getDestination() == null ||
+                 outputStrategy.getDestination().getNodeIndex() == destination.getNodeIndex())) {
                 outputStrategy.setRoutingStrategy(routingStrategy);
                 outputStrategy.setDestination(destination);
                 outputStrategy.setProbability(probability);

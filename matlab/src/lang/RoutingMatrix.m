@@ -97,6 +97,9 @@ classdef RoutingMatrix < Copyable
                         else
                             self.rt = builtin('subsasgn',self.rt,s,varargin{1});
                         end
+                    elseif length(s) == 2 && strcmp(s(2).type,'()')
+                        % Implement obj{indices}(indices) = varargin{:}
+                        self.rt = builtin('subsasgn',self.rt,s,varargin{:});
                     elseif length(s) == 2 && strcmp(s(2).type,'.')
                         % Implement obj{indices}.PropertyName = varargin{:}
                         self = builtin('subsasgn',self.rt,s,varargin{:});

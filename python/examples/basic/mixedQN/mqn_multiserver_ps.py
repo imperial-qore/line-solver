@@ -56,7 +56,7 @@ if __name__ == "__main__":
     solver = np.append(solver, CTMC(model, keep=False, verbose=True, cutoff=3, seed=23000))
     solver = np.append(solver, JMT(model, samples=100000, seed=23000))
     solver = np.append(solver, MVA(model, method='exact'))
-    solver = np.append(solver, DES(model, samples=100000, seed=23000))
+    solver = np.append(solver, LDES(model, samples=100000, seed=23000))
 
     avg_table = np.empty(len(solver), dtype=object)
     for s in range(len(solver)):

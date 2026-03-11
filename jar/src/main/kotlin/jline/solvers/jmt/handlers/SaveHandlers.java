@@ -927,7 +927,7 @@ public class SaveHandlers {
 
         Element cachePopularityParamNode = simDoc.createElement("parameter");
         cachePopularityParamNode.setAttribute("array", "true");
-        cachePopularityParamNode.setAttribute("classPath", "jmt.engine.random.discrete.DiscreteDistribution");   //TODO
+        cachePopularityParamNode.setAttribute("classPath", "jmt.engine.random.discrete.DiscreteDistribution");
         cachePopularityParamNode.setAttribute("name", "popularity");
 
 
@@ -1151,7 +1151,7 @@ public class SaveHandlers {
             int refStatIndex = (int) sn.refstat.get(r);
             MatrixCell integerMatrixMap = sn.proc.get(sn.stations.get(refStatIndex)).get(sn.jobclasses.get(r));
 
-            if (!integerMatrixMap.isEmpty()) {  //TODO: check if this is correct
+            if (!integerMatrixMap.isEmpty()) {
                 if (cacheNode != null) {
                     userClass.setAttribute("customers", String.valueOf((int) sn.njobs.get(r)));
                     userClass.setAttribute("referenceSource", (simModel.getClasses().get(r)).getReferenceStation().getName());

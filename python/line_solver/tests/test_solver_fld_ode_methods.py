@@ -15,12 +15,16 @@ from line_solver.solvers.solver_fld.ode.softmin import (
     softmin_smooth,
     softmin_smooth_vectorized,
     fluid_ode_softmin,
+)
+from line_solver.solvers.solver_fld.ode.softmin import (
     SoftminODESystem,
 )
 from line_solver.solvers.solver_fld.ode.statedep import (
     statedep_constraint,
     statedep_constraint_vectorized,
     fluid_ode_statedep,
+)
+from line_solver.solvers.solver_fld.ode.statedep import (
     StateDepODESystem,
 )
 

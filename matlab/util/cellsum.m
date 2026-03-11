@@ -5,6 +5,7 @@ function S=cellsum(C)
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 S = [];
+coder.varsize('S');
 for i=1:length(C)
     if ~isempty(C{i})
         if isempty(S)

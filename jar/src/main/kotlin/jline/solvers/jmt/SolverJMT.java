@@ -2744,8 +2744,13 @@ public class SolverJMT extends NetworkSolver {
         if (options.verbose == null) {
             options.verbose = VerboseLevel.values()[0];
         }
+        // Propagate solver verbose level to global
+        GlobalConstants.Verbose = options.verbose;
+        line_debug(options.verbose, String.format("JMT solver starting: method=%s, samples=%d, seed=%d",
+            options.method, options.samples, options.seed));
         if (options.samples == 0) {
             options.samples = 10000;
+            line_debug(options.verbose, "JMT: samples not set, defaulting to 10000");
         } else if (options.samples < 5000) {
             //if (!options.method.equalsIgnoreCase("jmva.ls")) {
             line_warning(mfilename(new Object() {
@@ -2812,6 +2817,7 @@ public class SolverJMT extends NetworkSolver {
         switch (options.method) {
             case "jsim":
             case "default":
+                line_debug(options.verbose, "JMT: using JSIM discrete-event simulation engine");
                 fname = this.writeJSIM(sn);
                 cmd = String.format(
                         "java -cp %s jmt.commandline.Jmt sim %s -seed %s --illegal-access=permit",
@@ -2986,6 +2992,7 @@ public class SolverJMT extends NetworkSolver {
             case "jmt.jmva.lin":
             case "jmt.jmva.dmlin":
             case "jmt.jmva.ls":
+                line_debug(options.verbose, String.format("JMT: using JMVA analytical engine, method=%s", options.method));
                 fname = writeJMVA(sn, getJMVATempPath(), this.options);
                 cmd = String.format(
                         "java -cp %s jmt.commandline.Jmt mva %s -seed %s --illegal-access=permit",
@@ -3315,7 +3322,7 @@ public class SolverJMT extends NetworkSolver {
                 stationStateAggr.state = new Matrix(1, sn.nclasses);
             }
             
-            // TODO: Process events properly - for now return empty
+            // Event processing is not available from JMT simulation output — JMT is an external simulator that does not expose event-level data through its results interface.
             stationStateAggr.event = new Matrix(0, 0);
             
             return stationStateAggr;
@@ -3387,7 +3394,6 @@ public class SolverJMT extends NetworkSolver {
 
             // Create solver options for the copy
             SolverOptions copyOptions = this.options.copy();
-            copyOptions.samples = (int)numEvents;
 
             // Create solver for the copy and run simulation
             SolverJMT sampleSolver = new SolverJMT(modelCopy, copyOptions);
@@ -3660,8 +3666,8 @@ public class SolverJMT extends NetworkSolver {
             throw new RuntimeException("getTranProbAggr in SolverJMT requires to specify a finite timespan T, e.g., SolverJMT(model, \"timespan\", new double[]{0, T}).");
         }
         
-        // Currently not implemented in MATLAB either - throws "Method not implemented yet"
-        throw new RuntimeException("Method not implemented yet.");
+        // Not implemented in MATLAB either (SolverJMT.getTranProbAggr)
+        throw new RuntimeException("Transient probability aggregation is not available for SolverJMT. This limitation also applies to the MATLAB implementation.");
     }
 
     /**

@@ -15,6 +15,7 @@ import jline.lang.nodes.Queue;
 import jline.lang.nodes.Sink;
 import jline.lang.nodes.Source;
 import jline.lang.processes.Exp;
+import jline.util.matrix.Matrix;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -368,6 +369,70 @@ public class FCRegionModel {
         fcr.setClassMaxJobs(class2, 3);    // Class2: max 3 jobs
         fcr.setDropRule(class1, true);     // true = drop
         fcr.setDropRule(class2, true);
+
+        return model;
+    }
+
+    /**
+     * Open loss network with general linear admission constraints.
+     * <p>
+     * Features:
+     * - Single Delay node inside an FCR with DROP policy
+     * - Linear constraints An &lt;= b control admission
+     * - High per-class/global limits so only linear constraints are active
+     *
+     * @param A constraint matrix (C x K)
+     * @param b capacity vector (C x 1)
+     * @return configured loss network model
+     */
+    public static Network fcr_lincon(double[][] A, double[] b) {
+        Network model = new Network("FCR LinCon");
+
+        Source source = new Source(model, "Source");
+        Delay delay = new Delay(model, "Delay");
+        Sink sink = new Sink(model, "Sink");
+
+        OpenClass class1 = new OpenClass(model, "Class1", 0);
+        OpenClass class2 = new OpenClass(model, "Class2", 1);
+
+        double lambda1 = 0.3, lambda2 = 0.2;
+        double mu1 = 1.0, mu2 = 0.8;
+
+        source.setArrival(class1, Exp.fitRate(lambda1));
+        source.setArrival(class2, Exp.fitRate(lambda2));
+        delay.setService(class1, Exp.fitRate(mu1));
+        delay.setService(class2, Exp.fitRate(mu2));
+
+        RoutingMatrix P = model.initRoutingMatrix();
+        P.set(class1, class1, source, delay, 1.0);
+        P.set(class1, class1, delay, sink, 1.0);
+        P.set(class2, class2, source, delay, 1.0);
+        P.set(class2, class2, delay, sink, 1.0);
+        model.link(P);
+
+        // Add FCR with DROP policy — high per-class/global limits
+        model.addRegion(Collections.singletonList(delay));
+        Region fcr = model.getRegions().get(0);
+        fcr.setGlobalMaxJobs(1000);
+        fcr.setClassMaxJobs(class1, 1000);
+        fcr.setClassMaxJobs(class2, 1000);
+        fcr.setDropRule(class1, true);
+        fcr.setDropRule(class2, true);
+
+        // Set linear constraints: An <= b
+        int C = A.length;
+        int K = A[0].length;
+        Matrix matA = new Matrix(C, K);
+        for (int i = 0; i < C; i++) {
+            for (int j = 0; j < K; j++) {
+                matA.set(i, j, A[i][j]);
+            }
+        }
+        Matrix matB = new Matrix(C, 1);
+        for (int i = 0; i < C; i++) {
+            matB.set(i, 0, b[i]);
+        }
+        fcr.setLinearConstraints(matA, matB);
 
         return model;
     }

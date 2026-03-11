@@ -108,6 +108,12 @@ class SolverMAM(NetworkSolver):
         self.result = None
         self.runtime = 0.0
 
+    def reset(self):
+        """Reset the solver to force recomputation on next getAvg call."""
+        self.result = None
+        # Re-read network struct since model may have been updated by LN iteration
+        self.sn = self._get_network_struct(self.network)
+
     def getName(self) -> str:
         """Get the name of this solver."""
         return "MAM"
@@ -188,12 +194,21 @@ class SolverMAM(NetworkSolver):
 
         start_time = time.time()
 
+        # Check for FunctionTask stations (matches MATLAB solver_mam_basic.m lines 265-299)
+        has_function = (hasattr(self.sn, 'isfunction') and self.sn.isfunction is not None
+                        and np.any(np.asarray(self.sn.isfunction) == 1))
+
         # Special handling for ldqbd
-        if method == 'ldqbd':
+        if has_function:
+            self.result = self._solve_function_task()
+        elif method == 'ldqbd':
             self.result = self._solve_ldqbd()
         elif method == 'fj':
             # Special handling for Fork-Join
             self.result = self._solve_fork_join()
+        elif method in ('retrial', 'reneging'):
+            # Retrial or reneging solver dispatch
+            self.result = self._solve_retrial_reneging(method)
         else:
             # Standard algorithm dispatch
             algo_class = self.ALGORITHMS.get(method)
@@ -227,18 +242,26 @@ class SolverMAM(NetworkSolver):
 
         self.runtime = time.time() - start_time
 
-        # Print completion message (matches MATLAB verbose=STD default)
-        py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-        iter_count = self.result.totiter if hasattr(self.result, 'totiter') else 1
-        if iter_count <= 1:
-            print(f"MAM analysis [method: {method}, lang: python, env: {py_version}] completed in {self.runtime:.6f}s.")
-        else:
-            print(f"MAM analysis [method: {method}, lang: python, env: {py_version}] completed in {self.runtime:.6f}s. Iterations: {iter_count}.")
+        # Print completion message (matches MATLAB verbose guard)
+        if self.options.verbose:
+            py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+            iter_count = self.result.totiter if hasattr(self.result, 'totiter') else 1
+            if iter_count <= 1:
+                print(f"MAM analysis [method: {method}, lang: python, env: {py_version}] completed in {self.runtime:.6f}s.")
+            else:
+                print(f"MAM analysis [method: {method}, lang: python, env: {py_version}] completed in {self.runtime:.6f}s. Iterations: {iter_count}.")
 
         return self
 
     def _select_method(self) -> str:
         """Select method based on network type if method='default'.
+
+        Matches MATLAB solver_mam_analyzer.m routing logic:
+        1. Fork-Join topology -> 'fj'
+        2. BMAP/PH/N/N retrial topology -> 'retrial'
+        3. MAP/M/s+G reneging topology -> 'reneging'
+        4. Single-station closed -> 'ldqbd'
+        5. Default -> 'dec.source'
 
         Returns:
             Selected method name
@@ -257,6 +280,21 @@ class SolverMAM(NetworkSolver):
                 # LDQBD for single-station closed
                 return 'ldqbd'
             else:
+                # Check for retrial/reneging topologies before defaulting
+                from ...api.qsys.retrial import qsys_is_retrial, has_reneging_patience
+                try:
+                    is_retrial, _ = qsys_is_retrial(self.sn)
+                    if is_retrial:
+                        return 'retrial'
+                except Exception:
+                    pass
+
+                try:
+                    if has_reneging_patience(self.sn):
+                        return 'reneging'
+                except Exception:
+                    pass
+
                 # Default to dec.source
                 return 'dec.source'
         elif method == 'mna':
@@ -287,7 +325,7 @@ class SolverMAM(NetworkSolver):
         QN = np.zeros((self.sn.nstations, self.sn.nclasses))
         UN = np.zeros((self.sn.nstations, self.sn.nclasses))
         RN = np.zeros((self.sn.nstations, self.sn.nclasses))
-        TN = np.zeros((1, self.sn.nclasses))
+        TN = np.zeros((self.sn.nstations, self.sn.nclasses))
 
         return MAMResult(
             QN=QN,
@@ -335,6 +373,315 @@ class SolverMAM(NetworkSolver):
         result.method = 'fj'
         return result
 
+    def _solve_retrial_reneging(self, method: str) -> MAMResult:
+        """Solve retrial or reneging queue using dedicated solvers.
+
+        Dispatches to solver_mam_retrial which handles both:
+        1. BMAP/PH/N/N bufferless retrial queues
+        2. MAP/M/s+G queues with reneging (MAPMsG)
+
+        Matches MATLAB solver_mam_analyzer.m lines 72-93.
+
+        Args:
+            method: 'retrial' or 'reneging'
+
+        Returns:
+            MAMResult with performance metrics
+        """
+        from ...api.qsys.retrial import solver_mam_retrial
+
+        # Build options dict from SolverMAMOptions
+        opts = {
+            'iter_max': self.options.max_iter,
+            'tol': self.options.tol,
+            'verbose': self.options.verbose,
+        }
+
+        QN, UN, RN, TN, CN, XN, totiter = solver_mam_retrial(self.sn, opts)
+
+        # TN from retrial solver is (M, K), MAMResult expects (M, K) for TN
+        # but standard MAM uses (1, K) for system throughputs
+        # Keep the full station-level TN for consistency with other MAM methods
+
+        return MAMResult(
+            QN=QN,
+            UN=UN,
+            RN=RN,
+            TN=TN,
+            CN=CN,
+            XN=XN,
+            totiter=totiter,
+            method=method,
+            runtime=0.0,
+        )
+
+    def _solve_function_task(self) -> MAMResult:
+        """Solve network with FunctionTask using QBD setup/delayoff.
+
+        Matches MATLAB solver_mam_basic.m iteration for FunctionTask stations.
+        Uses visit ratios and chain throughputs (not per-class populations) to
+        compute arrival rates, handling class switching correctly.
+
+        Returns:
+            MAMResult
+        """
+        from ...api.mam.qbd import qbd_setupdelayoff
+        from ...api.sn.demands import sn_get_demands_chain
+
+        sn = self.sn
+        K = sn.nclasses
+        M = sn.nstations
+        C = sn.nchains
+
+        QN = np.zeros((M, K))
+        UN = np.zeros((M, K))
+        RN = np.zeros((M, K))
+        TN = np.zeros((M, K))
+
+        # Find FunctionTask station
+        isfunction = np.asarray(sn.isfunction).flatten()
+        func_stations = [i for i in range(M) if i < len(isfunction) and isfunction[i] == 1]
+
+        if not func_stations:
+            algo = DecPoissonAlgorithm()
+            return algo.solve(sn, self.options)
+
+        func_ist = func_stations[0]
+
+        # Get setup/delayoff parameters from nodeparam
+        func_params = sn.nodeparam.get(func_ist, None) if isinstance(sn.nodeparam, dict) else None
+        if func_params is None:
+            algo = DecPoissonAlgorithm()
+            return algo.solve(sn, self.options)
+
+        setup_dist = func_params.get('setupTime', None) if isinstance(func_params, dict) else getattr(func_params, 'setupTime', None)
+        delayoff_dist = func_params.get('delayoffTime', None) if isinstance(func_params, dict) else getattr(func_params, 'delayoffTime', None)
+
+        if setup_dist is None:
+            algo = DecPoissonAlgorithm()
+            return algo.solve(sn, self.options)
+
+        # Extract setup/delayoff rate and SCV
+        setup_mean = setup_dist.getMean() if hasattr(setup_dist, 'getMean') else float(setup_dist)
+        setup_scv = setup_dist.getSCV() if hasattr(setup_dist, 'getSCV') else 1.0
+        alpharate = 1.0 / setup_mean if setup_mean > 0 else 1e8
+
+        if delayoff_dist is not None:
+            delayoff_mean = delayoff_dist.getMean() if hasattr(delayoff_dist, 'getMean') else float(delayoff_dist)
+            delayoff_scv = delayoff_dist.getSCV() if hasattr(delayoff_dist, 'getSCV') else 1.0
+            betarate = 1.0 / delayoff_mean if delayoff_mean > 0 else 1e8
+        else:
+            betarate = 1e8
+            delayoff_scv = 1.0
+
+        # Build visit ratio matrix V(station, class) = sum over chains
+        # sn.visits is Dict[chain_idx, ndarray(nstateful, K)]
+        V = np.zeros((M, K))
+        if hasattr(sn, 'visits') and sn.visits:
+            stationToStateful = np.asarray(sn.stationToStateful).flatten() if hasattr(sn, 'stationToStateful') else np.arange(M)
+            for c_idx, v_chain in sn.visits.items():
+                v_arr = np.asarray(v_chain)
+                for ist in range(M):
+                    isf = int(stationToStateful[ist]) if ist < len(stationToStateful) else ist
+                    for k in range(K):
+                        if isf < v_arr.shape[0] and k < v_arr.shape[1]:
+                            val = v_arr[isf, k]
+                            if np.isfinite(val):
+                                V[ist, k] += val
+
+        # Service times S = 1/rates
+        rates_arr = np.asarray(sn.rates)
+        S = np.zeros((M, K))
+        for i in range(M):
+            for k in range(K):
+                r = rates_arr[i, k]
+                if np.isfinite(r) and r > 0:
+                    S[i, k] = 1.0 / r
+
+        # Per-class service rates at FunctionTask
+        mu_k = np.zeros(K)
+        active_k = np.zeros(K, dtype=bool)
+        for k in range(K):
+            r = rates_arr[func_ist, k]
+            if np.isfinite(r) and r > 0:
+                mu_k[k] = r
+                active_k[k] = True
+
+        if not np.any(active_k):
+            algo = DecPoissonAlgorithm()
+            return algo.solve(sn, self.options)
+
+        # Chain demands
+        demands_result = sn_get_demands_chain(sn)
+        Lchain = demands_result.Lchain
+
+        # Population and chain info
+        N = np.asarray(sn.njobs).flatten()
+        nservers = np.asarray(sn.nservers).flatten() if hasattr(sn, 'nservers') else np.ones(M)
+
+        # Scale mu_k by nservers at FunctionTask station
+        # MATLAB solver_mam_basic.m line 59 scales PH by S/nservers before
+        # computing mu_k, so the effective rate = nservers/S = nservers * rates
+        nserv_func = nservers[func_ist] if func_ist < len(nservers) else 1
+        if np.isfinite(nserv_func) and nserv_func > 0:
+            mu_k = mu_k * nserv_func
+
+        inchain_map = {}
+        for c in range(C):
+            if hasattr(sn, 'inchain') and sn.inchain:
+                inchain_map[c] = list(sn.inchain[c]) if c in sn.inchain else list(range(K))
+            else:
+                inchain_map[c] = list(range(K))
+
+        # Initialize chain throughputs lambda_c
+        lambda_c = np.zeros(C)
+        tol = self.options.tol if hasattr(self.options, 'tol') else 1e-8
+        iter_max = self.options.iter_max if hasattr(self.options, 'iter_max') else 100
+
+        TN_prev = TN + np.inf
+        totiter = 0
+
+        # Main iteration (matches MATLAB solver_mam_basic.m lines 112-356)
+        for it in range(iter_max):
+            TN_prev = TN.copy()
+
+            # Update lambda_c for closed chains
+            sd = np.isfinite(nservers)
+            Umax = np.max(np.sum(UN[sd, :], axis=1)) if np.any(sd) and np.any(UN[sd, :] > 0) else 0
+
+            if Umax >= 1:
+                lambda_c = lambda_c * (1.0 / Umax)
+            else:
+                for c in range(C):
+                    inchain = inchain_map[c]
+                    Nc = sum(N[k] for k in inchain if np.isfinite(N[k]))
+                    if np.isfinite(Nc) and Nc > 0:
+                        total_demand = np.sum(Lchain[:, c])
+                        if it == 0:
+                            lambda_c[c] = Nc / total_demand if total_demand > 0 else 0
+                        else:
+                            QNc = max(tol, np.nansum(np.nansum(QN[:, inchain])))
+                            lambda_c[c] = (lambda_c[c] * (it + 1) / iter_max
+                                           + (Nc / QNc) * lambda_c[c] * (iter_max - it - 1) / iter_max)
+
+            # Update TN for all stations using visit ratios
+            for c in range(C):
+                inchain = inchain_map[c]
+                for ist in range(M):
+                    for k in inchain:
+                        TN[ist, k] = V[ist, k] * lambda_c[c]
+
+            # Process each station
+            for ist in range(M):
+                sched_i = sn.sched.get(ist, None) if isinstance(sn.sched, dict) else (sn.sched[ist] if ist < len(sn.sched) else None)
+                sched_name = sched_i.name if hasattr(sched_i, 'name') else str(sched_i)
+                nserv = nservers[ist] if ist < len(nservers) else 1
+
+                if sched_name == 'INF':
+                    # Delay station (MATLAB lines 159-168)
+                    for c in range(C):
+                        inchain = inchain_map[c]
+                        for k in inchain:
+                            UN[ist, k] = S[ist, k] * TN[ist, k]
+                            QN[ist, k] = TN[ist, k] * S[ist, k] * V[ist, k]
+                            RN[ist, k] = QN[ist, k] / TN[ist, k] if TN[ist, k] > 0 else 0
+
+                elif isfunction[ist] == 1:
+                    # FunctionTask FCFS station (MATLAB lines 265-344)
+                    # Per-class arrival rates from visit ratios
+                    lambda_k = np.zeros(K)
+                    for c in range(C):
+                        inchain = inchain_map[c]
+                        for k in inchain:
+                            lambda_k[k] = V[ist, k] * lambda_c[c]
+
+                    aggrLambda = np.sum(lambda_k)
+
+                    if aggrLambda > 1e-14 and np.any(active_k):
+                        rho_k = np.zeros(K)
+                        for k in range(K):
+                            if active_k[k] and mu_k[k] > 0:
+                                rho_k[k] = lambda_k[k] / mu_k[k]
+                        rho_total = np.sum(rho_k)
+
+                        if rho_total > 0:
+                            aggrRate = aggrLambda / rho_total
+                            try:
+                                Q_total = qbd_setupdelayoff(aggrLambda, aggrRate,
+                                                            alpharate, setup_scv,
+                                                            betarate, delayoff_scv)
+                            except Exception:
+                                Q_total = 0.0
+                            for k in range(K):
+                                if active_k[k]:
+                                    QN[ist, k] = Q_total * rho_k[k] / rho_total
+                                else:
+                                    QN[ist, k] = np.nan
+
+                    # Compute TN, UN, surrogate delay correction, RN
+                    # (MATLAB lines 330-344)
+                    for k in range(K):
+                        TN[ist, k] = lambda_k[k]
+                        UN[ist, k] = TN[ist, k] * S[ist, k] / nserv if nserv > 0 and S[ist, k] > 0 else 0
+                        # Surrogate delay: QN += TN * S * (nservers-1)/nservers
+                        if nserv > 1 and S[ist, k] > 0:
+                            QN[ist, k] += TN[ist, k] * S[ist, k] * (nserv - 1) / nserv
+                        RN[ist, k] = QN[ist, k] / TN[ist, k] if TN[ist, k] > 0 else 0
+
+            # Check convergence
+            maxdiff = np.max(np.abs(TN - TN_prev))
+            if maxdiff <= tol:
+                break
+
+        totiter = it + 2
+
+        # Post-processing: rescale QN so population is preserved (MATLAB lines 360-399)
+        # NaN propagation is critical: inactive classes have QN=NaN, which makes
+        # QNc=NaN → all QN become NaN → max(S, NaN) falls back to S
+        QN = np.abs(QN)
+        for _ in range(2):
+            for c in range(C):
+                inchain = inchain_map[c]
+                Nc = sum(N[k] for k in inchain if np.isfinite(N[k]))
+                if np.isfinite(Nc) and Nc > 0:
+                    # Use np.sum which propagates NaN (matching MATLAB sum behavior)
+                    QNc = np.sum(QN[:, inchain])
+                    if np.isnan(QNc):
+                        # NaN propagation: set all finite QN values to NaN
+                        for k in inchain:
+                            for ist_idx in range(M):
+                                if np.isfinite(QN[ist_idx, k]):
+                                    QN[ist_idx, k] = np.nan
+                    elif QNc > 0:
+                        QN[:, inchain] *= Nc / QNc
+
+                for ist in range(M):
+                    nserv = nservers[ist] if ist < len(nservers) else 1
+                    for k in inchain:
+                        if V[ist, k] > 0:
+                            if np.isinf(nserv):
+                                RN[ist, k] = S[ist, k]
+                            else:
+                                # NaN-aware max: max(S, NaN) = S (matching MATLAB behavior)
+                                qn_tn = QN[ist, k] / TN[ist, k] if TN[ist, k] > 0 else np.nan
+                                if np.isnan(qn_tn):
+                                    RN[ist, k] = S[ist, k]
+                                else:
+                                    RN[ist, k] = max(S[ist, k], qn_tn)
+                        else:
+                            RN[ist, k] = 0
+                        QN[ist, k] = RN[ist, k] * TN[ist, k]
+
+        return MAMResult(
+            QN=QN,
+            UN=UN,
+            RN=RN,
+            TN=TN,
+            totiter=totiter,
+            method='dec.poisson',
+            runtime=0.0
+        )
+
     # =====================================================================
     # RESULT ACCESS METHODS (following SolverMVA pattern)
     # =====================================================================
@@ -370,10 +717,6 @@ class SolverMAM(NetworkSolver):
         else:
             station_names = [f'Station{i}' for i in range(M)]
 
-        # Get class names
-        classnames = list(self.sn.classnames) if hasattr(self.sn, 'classnames') and self.sn.classnames else \
-                     [f'Class{k}' for k in range(K)]
-
         # Identify Source stations
         source_stations = set()
         if hasattr(self.sn, 'sched') and self.sn.sched is not None:
@@ -388,44 +731,43 @@ class SolverMAM(NetworkSolver):
         rows = []
         for i in range(M):
             is_source = i in source_stations
-            for r in range(K):
-                qlen = self.result.QN[i, r]
-                util = self.result.UN[i, r]
-                respt = self.result.RN[i, r]
-                residt = self.result.WN[i, r] if hasattr(self.result, 'WN') and self.result.WN is not None else respt
+            qlen = float(np.mean(self.result.QN[i, :]))
+            util = float(np.mean(self.result.UN[i, :]))
+            respt = float(np.mean(self.result.RN[i, :]))
+            residt = float(np.mean(self.result.WN[i, :])) if hasattr(self.result, 'WN') and self.result.WN is not None else respt
 
-                # Get throughput and arrival rate
-                if self.result.TN.ndim > 1:
-                    tput = self.result.TN[0, r] if self.result.TN.shape[0] == 1 else self.result.TN[i, r]
+            if self.result.TN.ndim > 1:
+                if self.result.TN.shape[0] == 1:
+                    tput = float(np.mean(self.result.TN[0, :]))
                 else:
-                    tput = self.result.TN[r]
+                    tput = float(np.mean(self.result.TN[i, :]))
+            else:
+                tput = float(np.mean(self.result.TN))
 
-                # Use computed arrival rates (AN) if available, otherwise fallback to tput
-                if hasattr(self.result, 'AN') and self.result.AN is not None and i < self.result.AN.shape[0] and r < self.result.AN.shape[1]:
-                    arvr = self.result.AN[i, r]
-                elif is_source:
-                    arvr = 0.0
-                else:
-                    arvr = tput
+            if hasattr(self.result, 'AN') and self.result.AN is not None and i < self.result.AN.shape[0]:
+                arvr = float(np.mean(self.result.AN[i, :]))
+            elif is_source:
+                arvr = 0.0
+            else:
+                arvr = tput
 
-                # Filter out rows where all metrics are zero (matching MATLAB behavior)
-                metrics = [qlen, util, respt, residt, arvr, tput]
-                has_significant_value = any(
-                    (not np.isnan(v) and v > 0) for v in metrics
-                )
-                if not has_significant_value:
-                    continue
+            metrics = [qlen, util, respt, residt, arvr, tput]
+            has_significant_value = any(
+                (not np.isnan(v) and v > 0) for v in metrics
+            )
+            if not has_significant_value:
+                continue
 
-                rows.append({
-                    'Station': station_names[i],
-                    'JobClass': classnames[r],
-                    'QLen': qlen,
-                    'Util': util,
-                    'RespT': respt,
-                    'ResidT': residt,
-                    'ArvR': arvr,
-                    'Tput': tput,
-                })
+            rows.append({
+                'Station': station_names[i],
+                'JobClass': 'All',
+                'QLen': qlen,
+                'Util': util,
+                'RespT': respt,
+                'ResidT': residt,
+                'ArvR': arvr,
+                'Tput': tput,
+            })
 
         df = pd.DataFrame(rows)
 

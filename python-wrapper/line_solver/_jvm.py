@@ -63,6 +63,41 @@ def get_jar_path() -> str:
     )
 
 
+def get_ldes_jar_path() -> Optional[str]:
+    """
+    Get the path to the ldes.jar file, downloading it if necessary.
+
+    Returns:
+        Path to ldes.jar, or None if unavailable
+    """
+    package_dir = Path(__file__).parent
+    common_dir = (package_dir / '..' / '..' / 'common').resolve()
+    ldes_jar = common_dir / 'ldes.jar'
+
+    if ldes_jar.exists():
+        return str(ldes_jar)
+
+    # Try alternative path
+    ldes_jar_alt = package_dir.parent.parent / 'common' / 'ldes.jar'
+    if ldes_jar_alt.exists():
+        return str(ldes_jar_alt.resolve())
+
+    # Auto-download from SourceForge
+    print("ldes.jar not found in", str(common_dir))
+    print("Attempting to download ldes.jar...")
+    try:
+        from urllib.request import urlretrieve
+        ldes_url = 'https://line-solver.sourceforge.net/latest/ldes.jar'
+        common_dir.mkdir(parents=True, exist_ok=True)
+        urlretrieve(ldes_url, str(ldes_jar))
+        print("Successfully downloaded ldes.jar to", str(common_dir))
+        return str(ldes_jar)
+    except Exception as e:
+        print(f"Warning: Failed to download ldes.jar: {e}")
+        print("LDES solver will use the version bundled in jline.jar")
+        return None
+
+
 def ensure_jvm(jar_path: Optional[str] = None, jvm_args: Optional[list] = None):
     """
     Ensure the JVM is started with the LINE JAR.
@@ -95,11 +130,19 @@ def ensure_jvm(jar_path: Optional[str] = None, jvm_args: Optional[list] = None):
     if not any(arg.startswith('-Xmx') for arg in jvm_args):
         jvm_args.append('-Xmx4g')
 
+    # Build classpath: ldes.jar first (overrides bundled LDES in jline.jar)
+    classpath = []
+    ldes_jar = get_ldes_jar_path()
+    if ldes_jar:
+        classpath.append(ldes_jar)
+    classpath.append(jar_path)
+
     if not jpype.isJVMStarted():
-        jpype.startJVM(*jvm_args, classpath=[jar_path])
+        jpype.startJVM(*jvm_args, classpath=classpath)
     else:
         # JVM already started, just add our classpath
-        jpype.addClassPath(jar_path)
+        for cp in classpath:
+            jpype.addClassPath(cp)
 
     # Import the jline package
     _jline_package = jpype.JPackage('jline')

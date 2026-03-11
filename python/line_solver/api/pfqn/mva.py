@@ -18,24 +18,6 @@ from math import log, ceil
 
 from .replicas import pfqn_unique, pfqn_expand, pfqn_combine_mi
 
-# Import JIT-compiled kernels
-try:
-    from .mva_jit import (
-        HAS_NUMBA as MVA_HAS_NUMBA,
-        mva_single_class_jit,
-        mva_population_recursion_jit,
-        schweitzer_iteration_jit,
-    )
-except ImportError:
-    # Fallback if JIT import fails
-    MVA_HAS_NUMBA = False
-    mva_single_class_jit = None
-    mva_population_recursion_jit = None
-    schweitzer_iteration_jit = None
-
-# Threshold for using JIT (population space size)
-JIT_THRESHOLD = 100
-
 
 def _population_lattice_pprod(n: np.ndarray, N: np.ndarray = None) -> np.ndarray:
     """
@@ -128,11 +110,6 @@ def pfqn_mva_single_class(N: int, L: np.ndarray, Z: float = 0.0,
             'lG': 0.0
         }
 
-    # Use JIT version for larger populations
-    if MVA_HAS_NUMBA and mva_single_class_jit is not None and N > JIT_THRESHOLD:
-        X, Q, R, U, lG = mva_single_class_jit(N, L, Z, mi)
-        return {'X': X, 'Q': Q, 'R': R, 'U': U, 'lG': lG}
-
     # Pure Python MVA recursion
     Q = np.zeros(M)
     lG = 0.0
@@ -218,14 +195,13 @@ def pfqn_mva(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         if len(mi) != M_original:
             raise ValueError(f"Multiplicity vector length ({len(mi)}) must match number of stations ({M_original})")
 
-    # Detect and consolidate replicated stations
-    unique_result = pfqn_unique(L)
-    L_reduced = unique_result.L_unique
-    mapping = unique_result.mapping
-    M = L_reduced.shape[0]
-
-    # Combine user-provided mi with detected multiplicity
-    mi = pfqn_combine_mi(mi, mapping, M).flatten()
+    # Station consolidation disabled: pfqn_unique merges stations with identical
+    # demand rows, but this is incorrect for tandem (serial) networks where distinct
+    # stations happen to have the same service demand. The consolidation treats them
+    # as replicated (parallel) copies, producing wrong queue lengths and response times.
+    L_reduced = L
+    mapping = np.arange(M_original)
+    M = M_original
 
     # Empty population check
     if not np.any(N > 0):
@@ -250,53 +226,7 @@ def pfqn_mva(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
         return XN, CN, QN, UN, RN, TN, AN
 
     # Multi-class MVA using population recursion
-    # Total population combinations for JIT threshold check
     totpop = int(np.prod(N + 1))
-
-    # Use JIT version for larger population spaces
-    if MVA_HAS_NUMBA and mva_population_recursion_jit is not None and totpop > JIT_THRESHOLD:
-        N_int = N.astype(np.int64)
-        XN_jit, QN_jit, CN_jit, lGN = mva_population_recursion_jit(
-            L_reduced, N_int, Z, mi
-        )
-        XN = XN_jit.reshape(1, -1)
-        QN = QN_jit
-        CN = CN_jit
-
-        # Compute utilizations
-        UN = np.zeros((M, R))
-        for m in range(M):
-            for r in range(R):
-                UN[m, r] = XN[0, r] * L_reduced[m, r]
-
-        # Compute residence times
-        RN = np.zeros((M, R))
-        for m in range(M):
-            for r in range(R):
-                if XN[0, r] > 0:
-                    RN[m, r] = QN[m, r] / XN[0, r]
-                else:
-                    RN[m, r] = L_reduced[m, r]
-
-        # Expand results back to original dimensions if stations were consolidated
-        if M < M_original:
-            QN, UN, RN = pfqn_expand(QN, UN, RN, mapping)
-            CN, _, _ = pfqn_expand(CN, CN, CN, mapping)
-
-        # Node throughputs and arrival rates
-        TN = np.zeros((M_original, R))
-        AN = np.zeros((M_original, R))
-        for m in range(M_original):
-            for r in range(R):
-                TN[m, r] = XN[0, r]
-                AN[m, r] = XN[0, r]
-
-        # Response time per class
-        CN_total = np.zeros((1, R))
-        for r in range(R):
-            CN_total[0, r] = RN[:, r].sum() + Z[r]
-
-        return XN, CN_total, QN, UN, RN, TN, AN
 
     # Pure Python: Compute product of (N[i]+1) for indexing
     prods = np.zeros(R - 1)
@@ -581,26 +511,6 @@ def pfqn_aql(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     # Compute TN and AN (node throughputs and arrival rates)
     TN = np.tile(XN, (M, 1)) if XN.ndim == 1 else np.tile(XN, (M, 1))
     AN = TN.copy()
-
-    # Use JIT version for iterative refinement
-    if MVA_HAS_NUMBA and schweitzer_iteration_jit is not None and M * R > 10:
-        XN_jit, QN, UN, RN, iterations = schweitzer_iteration_jit(
-            L, N.astype(np.float64), Z, QN, max_iter, tol
-        )
-        XN = XN_jit.reshape(1, -1)
-
-        # Node throughputs and arrival rates
-        for m in range(M):
-            for r in range(R):
-                TN[m, r] = XN[0, r]
-                AN[m, r] = XN[0, r]
-
-        # Response times
-        CN = np.zeros((1, R))
-        for r in range(R):
-            CN[0, r] = RN[:, r].sum() + Z[r]
-
-        return XN, CN, QN, UN, RN, TN, AN
 
     # Pure Python iterative refinement (Schweitzer approximation)
     for iteration in range(max_iter):

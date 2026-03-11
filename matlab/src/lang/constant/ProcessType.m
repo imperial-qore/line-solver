@@ -35,6 +35,7 @@ classdef (Sealed) ProcessType
         RAP = 26;
         DISCRETESAMPLER = 27;
         ZIPF = 28;
+        DMAP = 29;
     end
     
     methods (Static)        
@@ -109,6 +110,8 @@ classdef (Sealed) ProcessType
                     t = ProcessType.DISCRETESAMPLER;
                 case 'Zipf'
                     t = ProcessType.ZIPF;
+                case 'DMAP'
+                    t = ProcessType.DMAP;
             end
         end
         
@@ -173,6 +176,8 @@ classdef (Sealed) ProcessType
                     text = 'DiscreteSampler';
                 case ProcessType.ZIPF
                     text = 'Zipf';
+                case ProcessType.DMAP
+                    text = 'DMAP';
                 otherwise
                     if isnan(t)
                         text = 'Unknown';

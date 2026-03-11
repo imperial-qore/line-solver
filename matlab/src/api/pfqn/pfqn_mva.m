@@ -42,17 +42,12 @@ if nargin<3 || isempty(Z)
     Z = zeros(1,R);
 end
 
-% Detect and consolidate replicated stations
-[L, ~, ~, mi_unique, mapping] = pfqn_unique(L);
-[M,~] = size(L);
-
-% Combine user-provided mi with detected multiplicity
-% For each unique station j, sum the mi values of all original stations mapping to it
-mi_combined = zeros(1, M);
-for i = 1:M_original
-    mi_combined(mapping(i)) = mi_combined(mapping(i)) + mi(i);
-end
-mi = mi_combined;
+% Station consolidation disabled: pfqn_unique merges stations with identical
+% demand rows, but this is incorrect for tandem (serial) networks where distinct
+% stations happen to have the same service demand. The consolidation treats them
+% as replicated (parallel) copies, producing wrong queue lengths and response times.
+M = M_original;
+mapping = 1:M_original;
 if (~any(N>0))
     %line_warning(mfilename,'closed populations are empty');
     return

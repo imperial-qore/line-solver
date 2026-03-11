@@ -92,9 +92,10 @@ def sn_deaggregate_chain_results(
         else:
             ST = np.zeros((sn.nstations, sn.nclasses))
 
-    # Cchain is not yet supported
-    if Cchain is not None and (hasattr(Cchain, 'size') and Cchain.size > 0):
-        raise RuntimeError("Cchain input to sn_deaggregate_chain_results not yet supported")
+    # If Cchain is provided, disaggregate chain-level system response times to class level
+    has_Cchain = Cchain is not None and (hasattr(Cchain, 'size') and Cchain.size > 0)
+    if has_Cchain:
+        Cchain = np.atleast_2d(Cchain)
 
     M = sn.nstations
     K = sn.nclasses
@@ -247,8 +248,14 @@ def sn_deaggregate_chain_results(
                     R[i, k] = 0.0
                     Q[i, k] = 0.0
 
-            # Calculate system response time C = N / X (Little's law)
-            if X[0, k] != 0:
+            # Calculate system response time C
+            if has_Cchain:
+                # Disaggregate chain-level C to class level using alpha at reference station
+                ref_station = refstat[k] if k < len(refstat) else 0
+                alpha_at_ref = alpha[ref_station, k] if ref_station < alpha.shape[0] and k < alpha.shape[1] else 0.0
+                C[0, k] = Cchain[0, c] * alpha_at_ref if alpha_at_ref > 0 else 0.0
+            elif X[0, k] != 0:
+                # Little's law: C = N / X
                 C[0, k] = N[k] / X[0, k]
             else:
                 C[0, k] = 0.0

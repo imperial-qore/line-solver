@@ -1500,3 +1500,67 @@ class Prior(ContinuousDistribution):
     is_prior = isPrior
     is_prior_distribution = isPriorDistribution
 
+
+class Expolynomial(ContinuousDistribution):
+    """
+    Expolynomial distribution with density f(x) = sum ci * x^ai * exp(-li*x).
+
+    Represents an expolynomial density over a bounded domain [eft, lft],
+    matching the Sirio/ORIS GEN expolynomial format.
+
+    Args:
+        density: Density expression string in Sirio format.
+        eft: Earliest firing time (lower bound of support).
+        lft: Latest firing time (upper bound of support, use math.inf for unbounded).
+    """
+
+    def __init__(self, density: str, eft: float, lft: float):
+        super().__init__()
+        self._name = 'Expolynomial'
+        self._density = density
+        self._eft = float(eft)
+        self._lft = float(lft)
+
+    @property
+    def density(self) -> str:
+        """Get the density expression string."""
+        return self._density
+
+    @property
+    def eft(self) -> float:
+        """Get the earliest firing time."""
+        return self._eft
+
+    @property
+    def lft(self) -> float:
+        """Get the latest firing time."""
+        return self._lft
+
+    def getMean(self) -> float:
+        """Get the mean (returns NaN - numerical integration not supported in Python)."""
+        return float('nan')
+
+    def getVar(self) -> float:
+        """Get the variance (returns NaN)."""
+        return float('nan')
+
+    def getSCV(self) -> float:
+        """Get the squared coefficient of variation (returns NaN)."""
+        return float('nan')
+
+    def getRate(self) -> float:
+        """Get the rate 1/mean (returns NaN)."""
+        return float('nan')
+
+    def getSupport(self):
+        """Get the support [eft, lft]."""
+        return (self._eft, self._lft)
+
+    def evalCDF(self, x: float) -> float:
+        """Evaluate the CDF at point x (returns NaN - not supported)."""
+        return float('nan')
+
+    def sample(self, n: int = 1, rng=None) -> np.ndarray:
+        """Generate random samples (returns NaN - not supported)."""
+        return np.full(n, float('nan'))
+

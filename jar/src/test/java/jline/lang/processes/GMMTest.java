@@ -14,11 +14,11 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Random;
 
+import static jline.TestTools.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class GMMTest {
     
-    private static final double TOLERANCE = 1e-6;
     
     @BeforeAll
     public static void setUp() {
@@ -39,7 +39,7 @@ public class GMMTest {
         
         // Test mean calculation
         double expectedMean = 0.3 * 0.0 + 0.7 * 5.0; // 3.5
-        assertEquals(expectedMean, gmm.getMean(), TOLERANCE);
+        assertEquals(expectedMean, gmm.getMean(), LOOSE_FINE_TOL);
     }
     
     @Test
@@ -55,7 +55,7 @@ public class GMMTest {
         double e2 = 0.3 * (1.0 + 0.0) + 0.7 * (4.0 + 25.0); // E[X^2]
         double expectedVar = e2 - mean * mean;
         
-        assertEquals(expectedVar, gmm.getVar(), TOLERANCE);
+        assertEquals(expectedVar, gmm.getVar(), LOOSE_FINE_TOL);
     }
     
     @Test
@@ -73,10 +73,10 @@ public class GMMTest {
         GMM result = gmm1.convolve(gmm2);
         
         // Mean of sum should be sum of means
-        assertEquals(5.0, result.getMean(), TOLERANCE);
+        assertEquals(5.0, result.getMean(), LOOSE_FINE_TOL);
         
         // Variance of sum should be sum of variances
-        assertEquals(5.0, result.getVar(), TOLERANCE); // 1^2 + 2^2 = 5
+        assertEquals(5.0, result.getVar(), LOOSE_FINE_TOL); // 1^2 + 2^2 = 5
     }
     
     @Test
@@ -94,7 +94,7 @@ public class GMMTest {
         GMM mixture = GMM.mixture(gmm1, gmm2, 0.5, 0.5);
         
         assertEquals(2, mixture.getNumberOfComponents());
-        assertEquals(5.0, mixture.getMean(), TOLERANCE); // 0.5 * 0 + 0.5 * 10
+        assertEquals(5.0, mixture.getMean(), LOOSE_FINE_TOL); // 0.5 * 0 + 0.5 * 10
     }
     
     @Test
@@ -110,8 +110,8 @@ public class GMMTest {
         
         // The merged component should have weight 0.6
         double[] mergedWeights = merged.getWeights();
-        assertEquals(0.6, mergedWeights[0], TOLERANCE);
-        assertEquals(0.4, mergedWeights[1], TOLERANCE);
+        assertEquals(0.6, mergedWeights[0], LOOSE_FINE_TOL);
+        assertEquals(0.4, mergedWeights[1], LOOSE_FINE_TOL);
     }
     
     @Test
@@ -139,13 +139,13 @@ public class GMMTest {
         GMM gmm = GMM.fromMatrix(sgmm);
         
         assertEquals(2, gmm.getNumberOfComponents());
-        assertEquals(3.5, gmm.getMean(), TOLERANCE);
+        assertEquals(3.5, gmm.getMean(), LOOSE_FINE_TOL);
         
         // Convert back to matrix
         Matrix sgmm2 = gmm.toMatrix();
         for (int i = 0; i < 2; i++) {
             for (int j = 0; j < 3; j++) {
-                assertEquals(sgmm.get(i, j), sgmm2.get(i, j), TOLERANCE);
+                assertEquals(sgmm.get(i, j), sgmm2.get(i, j), LOOSE_FINE_TOL);
             }
         }
     }
@@ -160,7 +160,7 @@ public class GMMTest {
         
         // Test median (should be close to 0 for symmetric mixture)
         double median = GMMUtils.gmmMedian(gmm);
-        assertEquals(0.0, median, 0.1);
+        assertEquals(0.0, median, VERY_COARSE_TOL);
         
         // Test that min < mean < max
         double min = GMMUtils.gmmMin(gmm);
@@ -189,6 +189,6 @@ public class GMMTest {
         }
         sampleMean /= n;
         
-        assertEquals(gmm.getMean(), sampleMean, 0.1);
+        assertEquals(gmm.getMean(), sampleMean, VERY_COARSE_TOL);
     }
 }

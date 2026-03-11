@@ -35,9 +35,7 @@ public class ClassSwitchExamplesTest {
 
     // ===== cs_implicit tests =====
 
-    //@Disabled
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testCsImplicitMVA() {
         // Test the cs_implicit example with MVA solver
         Network model = ClassSwitchingModel.cs_implicit();

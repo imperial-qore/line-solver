@@ -478,7 +478,8 @@ class Coxian(PH):
         """
         Create a Coxian distribution from mean and SCV.
 
-        Uses a 2-phase Coxian (Cox2) representation for moment matching.
+        Uses moment matching to construct a Coxian distribution.
+        Matches MATLAB Coxian.fitMeanAndSCV.
 
         Args:
             mean: Target mean.
@@ -487,30 +488,31 @@ class Coxian(PH):
         Returns:
             Coxian distribution with given mean and SCV.
         """
-        # Use Cox2 algorithm for 2-moment matching
-        if scv < 0.5:
-            # For very low SCV, use Erlang-like approximation
+        tol = 1e-3  # CoarseTol
+        if scv >= 1.0 - tol and scv <= 1.0 + tol:
+            # Exponential
+            mu = [1.0 / mean]
+            phi = [1.0]
+            return cls(mu, phi)
+        elif scv > 0.5 + tol and scv < 1.0 - tol:
+            # 2-phase Coxian with phi1=0 (all jobs pass through both phases)
+            sq = np.sqrt(1.0 + 2.0 * (scv - 1.0))
+            mu1 = 2.0 / mean / (1.0 + sq)
+            mu2 = 2.0 / mean / (1.0 - sq)
+            return cls([mu1, mu2], [0.0, 1.0])
+        elif scv <= 0.5 + tol:
+            # Erlang-like
             k = max(2, int(np.ceil(1.0 / scv)))
             rate = k / mean
             rates = [rate] * k
-            probs = [0.0] * (k - 1)  # All continuation, no early absorption
-            return cls(rates, probs)
-
-        # Standard Cox2 matching for SCV >= 0.5
-        # Mean = mu1^-1 + p1 * mu2^-1
-        # SCV = (2/mu1^2 + 2*p1/mu2^2 + 2*p1/(mu1*mu2)) / mean^2 - 1
-        if scv >= 1.0:
-            # High variability: use HyperExp-like structure
-            p = 1.0 / (1.0 + scv)
-            mu1 = 2.0 * p / mean
-            mu2 = 2.0 * (1.0 - p) / mean
-            return cls([mu1, mu2], [1.0 - p])
+            phi = [0.0] * (k - 1) + [1.0]
+            return cls(rates, phi)
         else:
-            # SCV in [0.5, 1): use 2-phase Coxian
-            # Simplified matching
-            mu = 2.0 / mean
-            p = 2.0 * (1.0 - scv)
-            return cls([mu, mu], [1.0 - p])
+            # SCV > 1+tol: HyperExp-like structure
+            mu1 = 2.0 / mean
+            mu2 = mu1 / (2.0 * scv)
+            phi1 = 1.0 - mu2 / mu1
+            return cls([mu1, mu2], [phi1, 1.0])
 
     @classmethod
     def fit_central(cls, mean: float, scv: float, skew: float = None) -> 'Coxian':
@@ -905,6 +907,166 @@ class MMPP2(MAP):
         sigma = rate * (1 - acf_decay) / 2 if acf_decay < 1 else rate
         return MMPP2(lambda0, lambda1, sigma, sigma)
 
+
+class DMAP(ContinuousDistribution, Markovian):
+    """
+    Discrete-time Markovian Arrival Process.
+
+    A DMAP models discrete-time arrival streams with correlation.
+    D0 + D1 is a stochastic matrix (row sums = 1).
+
+    Args:
+        D0: Sub-stochastic transition matrix (no arrivals).
+        D1: Transition matrix with arrivals.
+    """
+
+    def __init__(self, D0: Union[list, np.ndarray], D1: Union[list, np.ndarray]):
+        super().__init__()
+        self._name = 'DMAP'
+        self._D0 = np.atleast_2d(np.array(D0, dtype=float))
+        self._D1 = np.atleast_2d(np.array(D1, dtype=float))
+
+        n = self._D0.shape[0]
+        if self._D0.shape != (n, n) or self._D1.shape != (n, n):
+            raise ValueError("D0 and D1 must be square matrices of the same size")
+
+        P = self._D0 + self._D1
+        if not np.allclose(P.sum(axis=1), 1.0):
+            raise ValueError("D0 + D1 must have row sums equal to 1 (stochastic matrix)")
+
+        self._pi = self._compute_stationary()
+
+    def _compute_stationary(self) -> np.ndarray:
+        """Compute stationary distribution of the embedded DTMC."""
+        n = self._D0.shape[0]
+        I = np.eye(n)
+        D0inv = linalg.inv(I - self._D0)
+        P = D0inv @ self._D1
+
+        A = np.vstack([(P.T - np.eye(n)), np.ones(n)])
+        b = np.zeros(n + 1)
+        b[-1] = 1.0
+
+        try:
+            pi, _, _, _ = linalg.lstsq(A, b)
+            pi = np.maximum(pi, 0)
+            pi /= pi.sum()
+            return pi
+        except linalg.LinAlgError:
+            return np.ones(n) / n
+
+    @property
+    def D0(self) -> np.ndarray:
+        return self._D0.copy()
+
+    @property
+    def D1(self) -> np.ndarray:
+        return self._D1.copy()
+
+    @property
+    def pi(self) -> np.ndarray:
+        return self._pi.copy()
+
+    def getD0(self) -> np.ndarray:
+        return self._D0.copy()
+
+    def getD1(self) -> np.ndarray:
+        return self._D1.copy()
+
+    def getMean(self) -> float:
+        """Mean inter-arrival time: pi * (I-D0)^{-1} * e"""
+        n = self._D0.shape[0]
+        D0inv = linalg.inv(np.eye(n) - self._D0)
+        e = np.ones(n)
+        return float(self._pi @ D0inv @ e)
+
+    def getVar(self) -> float:
+        """Variance of inter-arrival times."""
+        n = self._D0.shape[0]
+        D0inv = linalg.inv(np.eye(n) - self._D0)
+        e = np.ones(n)
+        mean = float(self._pi @ D0inv @ e)
+        second_moment = float(2 * self._pi @ D0inv @ D0inv @ e) - mean
+        return second_moment - mean ** 2
+
+    def getNumberOfPhases(self) -> int:
+        return self._D0.shape[0]
+
+    def getMu(self) -> np.ndarray:
+        return (np.eye(self._D0.shape[0]) - self._D0).sum(axis=1)
+
+    def getPhi(self) -> np.ndarray:
+        return np.ones(self.getNumberOfPhases())
+
+    def getInitProb(self) -> np.ndarray:
+        return self._pi.copy()
+
+    def getRate(self) -> float:
+        mean = self.getMean()
+        if mean == 0 or np.isnan(mean):
+            return float('inf')
+        return 1.0 / mean
+
+    def set_mean(self, target_mean: float) -> 'DMAP':
+        """Scale DMAP to match target mean."""
+        n = self._D0.shape[0]
+        I = np.eye(n)
+        current_mean = self.getMean()
+        if current_mean <= 0 or np.isnan(current_mean):
+            raise ValueError("Cannot scale DMAP with invalid mean")
+        scale = current_mean / target_mean
+        new_ImD0 = (I - self._D0) * scale
+        new_D0 = I - new_ImD0
+        new_D1 = self._D1 * scale
+        P = new_D0 + new_D1
+        rs = P.sum(axis=1, keepdims=True)
+        new_D0 = new_D0 / rs
+        new_D1 = new_D1 / rs
+        return DMAP(new_D0, new_D1)
+
+    setMean = set_mean
+
+    def sample(self, n: int = 1, rng: Optional[np.random.Generator] = None) -> np.ndarray:
+        """Generate random inter-arrival times (integer-valued)."""
+        if rng is None:
+            rng = np.random.default_rng()
+
+        num_phases = len(self._pi)
+        samples = np.zeros(n)
+        phase = rng.choice(num_phases, p=self._pi)
+
+        for i in range(n):
+            t = 0
+            while True:
+                t += 1
+                probs = np.concatenate([self._D0[phase, :], self._D1[phase, :]])
+                probs = np.maximum(probs, 0)
+                total = probs.sum()
+                if total <= 0:
+                    break
+                probs /= total
+                next_state = rng.choice(2 * num_phases, p=probs)
+                if next_state >= num_phases:
+                    samples[i] = t
+                    phase = next_state - num_phases
+                    break
+                else:
+                    phase = next_state
+
+        return samples
+
+    @classmethod
+    def rand(cls, n: int = 2, seed: int = None) -> 'DMAP':
+        """Create a random DMAP with n phases."""
+        rng = np.random.default_rng(seed)
+        D0 = rng.random((n, n))
+        for i in range(n):
+            D0[i, :] /= (D0[i, :].sum() + 0.5 + rng.random())
+        remaining = 1.0 - D0.sum(axis=1)
+        D1 = rng.random((n, n))
+        for i in range(n):
+            D1[i, :] = D1[i, :] / D1[i, :].sum() * remaining[i]
+        return cls(D0, D1)
 
 
 class ME(ContinuousDistribution, Markovian):

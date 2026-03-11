@@ -10,8 +10,8 @@ This example demonstrates:
 
 from line_solver import *
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
+
+def prio_identical():
 
     model = Network('model')
 
@@ -45,6 +45,13 @@ if __name__ == "__main__":
     for r in range(4):
         P[jobclass[r], jobclass[r]] = Network.serial_routing(node)
     model.link(P)
+
+    return model
+
+
+if __name__ == '__main__':
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+    model = prio_identical()
 
     # Run solvers
     solver = np.array([], dtype=object)

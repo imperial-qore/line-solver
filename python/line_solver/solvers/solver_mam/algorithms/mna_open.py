@@ -23,6 +23,7 @@ from . import MAMAlgorithm, MAMResult
 from ..utils.network_adapter import extract_mam_params, extract_visit_counts, build_routing_matrix
 
 
+
 class MNAOpenAlgorithm(MAMAlgorithm):
     """Matrix-Normalizing Approximation for open networks."""
 

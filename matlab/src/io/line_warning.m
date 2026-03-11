@@ -4,6 +4,10 @@ function line_warning(caller, MSG, varargin)
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.
 
+if ~coder.target('MATLAB')
+    return;  % No-op in codegen mode
+end
+
 %global GlobalConstants.Verbose
 persistent lastWarning;
 persistent suppressedWarnings;

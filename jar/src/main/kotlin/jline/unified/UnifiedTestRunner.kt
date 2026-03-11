@@ -13,7 +13,7 @@ import jline.lang.Network
 import jline.solvers.NetworkSolver
 import jline.solvers.SolverOptions
 import jline.solvers.ctmc.CTMC
-import jline.solvers.des.DES
+import jline.solvers.ldes.LDES
 import jline.solvers.fluid.FLD
 import jline.solvers.jmt.JMT
 import jline.solvers.mam.MAM
@@ -63,7 +63,7 @@ class UnifiedTestRunner {
         const val SIMULATION_TOL = 0.05
 
         // Simulation-based solvers
-        val SIMULATION_SOLVERS = setOf("SolverJMT", "SolverSSA", "SolverDES")
+        val SIMULATION_SOLVERS = setOf("SolverJMT", "SolverSSA", "SolverLDES")
     }
 
     private val gson = Gson()
@@ -452,7 +452,7 @@ class UnifiedTestRunner {
                     options.samples = 10000
                     SSA(model, options)
                 }
-                "SolverDES" -> DES(model, options)
+                "SolverLDES" -> LDES(model, options)
                 "SolverFluid" -> FLD(model, options)
                 "SolverNC" -> NC(model, options)
                 "SolverMAM" -> MAM(model, options)

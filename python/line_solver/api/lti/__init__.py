@@ -19,7 +19,6 @@ from typing import Callable, Optional, Tuple, List
 from scipy.special import comb
 from math import factorial, log, tan, pi, exp, floor
 
-
 def euler_get_alpha(n: int) -> np.ndarray:
     """
     Get alpha coefficients for Euler method.
@@ -34,7 +33,6 @@ def euler_get_alpha(n: int) -> np.ndarray:
     for i in range(n):
         result[i] = complex((n - 1) * log(10.0) / 6, pi * i)
     return result
-
 
 def euler_get_eta(n: int) -> np.ndarray:
     """
@@ -60,7 +58,6 @@ def euler_get_eta(n: int) -> np.ndarray:
 
     return res
 
-
 def euler_get_omega(n: int) -> np.ndarray:
     """
     Get omega coefficients for Euler method.
@@ -72,13 +69,13 @@ def euler_get_omega(n: int) -> np.ndarray:
         Complex array of omega values
     """
     eta = euler_get_eta(n)
+
     res = np.zeros(n, dtype=complex)
 
     for i in range(1, n + 1):
         res[i - 1] = (10.0 ** ((n - 1) / 6.0)) * ((-1.0) ** (i - 1)) * eta[i - 1]
 
     return res
-
 
 def talbot_get_alpha(n: int) -> np.ndarray:
     """
@@ -103,7 +100,6 @@ def talbot_get_alpha(n: int) -> np.ndarray:
         arr[i - 1] = complex(real_part, imag_part)
 
     return arr
-
 
 def talbot_get_omega(n: int, alpha: np.ndarray) -> np.ndarray:
     """
@@ -131,7 +127,6 @@ def talbot_get_omega(n: int, alpha: np.ndarray) -> np.ndarray:
         arr[i - 1] = 2 * current_alpha_exp / 5.0 * multiplier
 
     return arr
-
 
 def gaver_stehfest_get_omega(n: int) -> np.ndarray:
     """
@@ -168,7 +163,6 @@ def gaver_stehfest_get_omega(n: int) -> np.ndarray:
 
     return res
 
-
 def gaver_stehfest_get_alpha(n: int) -> np.ndarray:
     """
     Get alpha coefficients for Gaver-Stehfest method.
@@ -187,7 +181,6 @@ def gaver_stehfest_get_alpha(n: int) -> np.ndarray:
         res[k - 1] = k * log(2.0)
 
     return res
-
 
 def laplace_invert_euler(F: Callable[[complex], complex], t: float,
                          n: int = 99) -> float:
@@ -208,13 +201,13 @@ def laplace_invert_euler(F: Callable[[complex], complex], t: float,
     alpha = euler_get_alpha(n)
     omega = euler_get_omega(n)
 
+    # Evaluate F at all s points
     result = 0.0
     for i in range(n):
         s = alpha[i] / t
         result += (omega[i] * F(s)).real
 
     return result / t
-
 
 def laplace_invert_talbot(F: Callable[[complex], complex], t: float,
                           n: int = 32) -> float:
@@ -238,7 +231,6 @@ def laplace_invert_talbot(F: Callable[[complex], complex], t: float,
         result += (omega[i] * F(s)).real
 
     return result / t
-
 
 def laplace_invert_gaver_stehfest(F: Callable[[float], float], t: float,
                                    n: int = 12) -> float:
@@ -268,7 +260,6 @@ def laplace_invert_gaver_stehfest(F: Callable[[float], float], t: float,
 
     return result / t
 
-
 def laplace_invert(F: Callable, t: float, method: str = 'euler',
                    n: Optional[int] = None) -> float:
     """
@@ -297,7 +288,6 @@ def laplace_invert(F: Callable, t: float, method: str = 'euler',
         return laplace_invert_cme(F, t, n)
     else:
         raise ValueError(f"Unknown method: {method}")
-
 
 def laplace_invert_cdf(F: Callable[[complex], complex], t_values: np.ndarray,
                        method: str = 'euler', n: Optional[int] = None
@@ -335,7 +325,6 @@ def laplace_invert_cdf(F: Callable[[complex], complex], t_values: np.ndarray,
 
     return result
 
-
 def laplace_invert_pdf(F: Callable[[complex], complex], t_values: np.ndarray,
                        method: str = 'euler', n: Optional[int] = None
                       ) -> np.ndarray:
@@ -365,10 +354,8 @@ def laplace_invert_pdf(F: Callable[[complex], complex], t_values: np.ndarray,
 
     return result
 
-
 # CME parameter cache (lazy-loaded singleton)
 _cme_params_cache = None
-
 
 def iltcme_load_params():
     """
@@ -383,7 +370,6 @@ def iltcme_load_params():
         with open(json_path) as f:
             _cme_params_cache = json.load(f)
     return _cme_params_cache
-
 
 def laplace_invert_cme(F: Callable[[complex], complex], t: float,
                         maxFnEvals: int = 25) -> float:
@@ -426,7 +412,6 @@ def laplace_invert_cme(F: Callable[[complex], complex], t: float,
         s = beta[j] / t
         result += (eta[j] * F(s)).real
     return result / t
-
 
 def ilt(F: Callable, T, maxFnEvals: int, method: str = 'cme'):
     """
@@ -504,7 +489,6 @@ def ilt(F: Callable, T, maxFnEvals: int, method: str = 'cme'):
         result[i] = np.dot(eta, f_vals).real / t_val
 
     return result
-
 
 __all__ = [
     'euler_get_alpha',

@@ -768,6 +768,36 @@ class PollingType(Enum):
         else:
             raise ValueError(f"Unsupported PollingType: {obj}")
 
+class BalkingStrategy(Enum):
+    """
+    Balking strategies for customers deciding whether to join a queue.
+
+    Attributes:
+        QUEUE_LENGTH: Balk based on current queue length ranges
+        EXPECTED_WAIT: Balk based on expected waiting time
+        COMBINED: Both conditions (OR logic)
+    """
+    def __repr__(self):
+        return str(self.value)
+    QUEUE_LENGTH = jpype.JPackage('jline').lang.constant.BalkingStrategy.QUEUE_LENGTH
+    EXPECTED_WAIT = jpype.JPackage('jline').lang.constant.BalkingStrategy.EXPECTED_WAIT
+    COMBINED = jpype.JPackage('jline').lang.constant.BalkingStrategy.COMBINED
+
+class ImpatienceType(Enum):
+    """
+    Types of customer impatience behavior.
+
+    Attributes:
+        RENEGING: Customer abandons after joining (timer-based)
+        BALKING: Customer refuses to join based on queue state
+        RETRIAL: Customer moves to orbit and retries after delay
+    """
+    def __repr__(self):
+        return str(self.value)
+    RENEGING = jpype.JPackage('jline').lang.constant.ImpatienceType.RENEGING
+    BALKING = jpype.JPackage('jline').lang.constant.ImpatienceType.BALKING
+    RETRIAL = jpype.JPackage('jline').lang.constant.ImpatienceType.RETRIAL
+
 class HeteroSchedPolicy(Enum):
     """
     Scheduling policies for heterogeneous multiserver queues.

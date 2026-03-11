@@ -77,25 +77,38 @@ exact = 0;
 
 if (form == 1 && (r1 < degentol || r2 > 1-degentol || abs(h2-h1*r2) < degentol )) || ...
         (form == 2 && (r2 > 1-degentol || abs(h1 - h2 - h1*r1 + h1*r1*r2) < degentol ))
-    
-    % TODO: transform into a valid second-order Poisson process
-    
-    % DEGENERATE PHASE_TYPE
-    fprintf('Fitting MAMAP(2,2) B+S: detected Poisson process\n');
-    
-    % return marked poisson process
-    h = map_mean(mmap);
-    mmap = cell(1,2+k);
-    mmap{1} = -1/h;
-    mmap{2} =  1/h;
-    for c = 1:k
-        mmap{2+c} = mmap{2} * p(c);
+
+    % Transform into a valid second-order Poisson process by perturbing
+    % degenerate parameters to maintain 2-state structure
+    fprintf('Fitting MAMAP(2,2) B+S: perturbing degenerate Poisson to second-order\n');
+    if r1 < degentol
+        r1 = degentol;
     end
-    
-    fB = mmap_backward_moment(mmap,1);
-    fS = mmap_sigma(mmap);
-    
-    return;
+    if r2 > 1-degentol
+        r2 = 1 - degentol;
+    end
+    if form == 1 && abs(h2-h1*r2) < degentol
+        h2 = h1 * r2 + degentol;
+    end
+    if form == 2 && abs(h1 - h2 - h1*r1 + h1*r1*r2) < degentol
+        h1 = (h2 + degentol) / (1 - r1 + r1*r2);
+    end
+    % Reconstruct MAP with perturbed parameters
+    if form == 1
+        map{1} = [-1/h1, r1/h1; 0, -1/h2];
+        map{2} = [(1-r1)/h1, 0; r2/h2, (1-r2)/h2];
+        map = map_normalize(map);
+        mmap{1} = map{1}; mmap{2} = map{2};
+        [G,U,Y] = mamap2m_can1_coefficients(h1,h2,r1,r2);
+        fit = @fit_can1;
+    else
+        map{1} = [-1/h1, r1/h1; 0, -1/h2];
+        map{2} = [0, (1-r1)/h1; r2/h2, (1-r2)/h2];
+        map = map_normalize(map);
+        mmap{1} = map{1}; mmap{2} = map{2};
+        [E,V,Z] = mamap2m_can2_coefficients(h1,h2,r1,r2);
+        fit = @fit_can2;
+    end
     
 elseif form == 2 && r2 < degentol && abs(1-r1) < degentol
     

@@ -8,10 +8,16 @@ and are primarily intended for advanced users and researchers.
 
 The API is organized into several domains:
 
+- **aoi**: Age of Information analysis (mean, variance, peak AoI)
 - **cache**: Cache modeling algorithms (miss ratios, replacement policies)
-- **ctmc/dtmc**: Continuous and discrete-time Markov chain analysis  
+- **ctmc/dtmc**: Continuous and discrete-time Markov chain analysis
+- **fes**: Flow-Equivalent Server aggregation for closed queueing networks
+- **fj**: Fork-Join queueing system analysis (bounds, response time, order statistics)
+- **map_respt**: MAP/M/1-PS sojourn time distribution (Masuyama-Takine algorithm)
+- **nc**: Normalizing constant algorithms (Maximum Entropy for open networks)
 - **pfqn**: Product-form queueing network algorithms (MVA, NC, etc.)
 - **mam**: Matrix-analytic methods for MAP/PH distributions
+- **mapqn**: MAP queueing network bounds and approximations (LP/NLP)
 - **npfqn**: Non-product-form queueing network approximations
 - **qsys**: Single queueing system analysis (M/M/1, M/G/1, etc.)
 - **sn**: Stochastic network utilities and analysis
@@ -119,10 +125,6 @@ from .mam import (
     map_block, map_feasblock, map_kpc, map_pntiter, map_pntquad,
     mmap_embedded, mmap_pie, mmap_issym, mmap_modulate, mmap_mixture_order2, mmap_sum,
     mmpp2_fitc, mmpp2_fitc_approx, mmpp_rand,
-    # MAPQN functions
-    mapqn_bnd_lr, mapqn_bnd_lr_mva, mapqn_bnd_lr_pf, mapqn_bnd_qr, mapqn_bnd_qr_delay,
-    mapqn_bnd_qr_ld, mapqn_lpmodel, mapqn_parameters, mapqn_parameters_factory,
-    mapqn_qr_bounds_bas, mapqn_qr_bounds_rsrd,
     # M3PP functions
     m3pp22_fitc_approx_cov, m3pp22_fitc_approx_cov_multiclass, m3pp22_interleave_fitc,
     m3pp2m_fitc, m3pp2m_fitc_approx, m3pp2m_fitc_approx_ag, m3pp2m_fitc_approx_ag_multiclass,
@@ -204,6 +206,69 @@ from .wf import (
     wf_analyzer, wf_auto_integration, wf_branch_detector,
     wf_loop_detector, wf_parallel_detector, wf_pattern_updater,
     wf_sequence_detector
+)
+
+from .aoi import (
+    aoi_is_aoi, aoi_extract_params, aoi_dist2ph,
+    aoi_lst_exp, aoi_lst_det, aoi_lst_erlang, aoi_lst_ph,
+    aoi_fcfs_mm1, aoi_fcfs_md1, aoi_fcfs_dm1, aoi_fcfs_gim1, aoi_fcfs_mgi1,
+    aoi_lcfspr_mm1, aoi_lcfspr_md1, aoi_lcfspr_dm1, aoi_lcfspr_gim1, aoi_lcfspr_mgi1,
+    aoi_lcfsd_gim1, aoi_lcfsd_mgi1,
+    aoi_lcfss_gim1, aoi_lcfss_mgi1,
+    solve_bufferless, solve_singlebuffer
+)
+
+from .fj import (
+    fj_harmonic, fj_bounds,
+    fj_respt_2way, fj_respt_nt, fj_respt_vm, fj_respt_varki,
+    fj_rmax, fj_rmax_erlang, fj_rmax_evd,
+    fj_xmax_exp, fj_xmax_2, fj_xmax_erlang, fj_xmax_hyperexp,
+    fj_xmax_normal, fj_xmax_pareto, fj_xmax_pareto_char_max,
+    fj_xmax_approx, fj_xmax_emma,
+    fj_char_max_exp, fj_char_max_erlang,
+    fj_gk_bound, fj_gk_bound_all, fj_order_stat_cdf,
+    fj_quantile,
+    fj_sm_tput, fj_synch_delay,
+    fj_is_fj
+)
+
+from .rl import (
+    RlEnv, RlEnvGeneral, RlTdAgent, RlTdAgentGeneral
+)
+
+from .mapqn import (
+    # Result container and parameter classes
+    MapqnSolution, MapqnLpmodel,
+    LinearReductionParameters, MVAVersionParameters, PFParameters,
+    QuadraticDelayParameters, QuadraticLDParameters,
+    Mapqn_qr_bounds_bas_parameters, Mapqn_qr_bounds_rsrd_parameters,
+    # Parameter factory
+    mapqn_parameters, mapqn_parameters_factory,
+    # Linear reduction bounds
+    mapqn_bnd_lr, mapqn_bnd_lr_mva, mapqn_bnd_lr_pf,
+    # Quadratic reduction bounds
+    mapqn_bnd_qr, mapqn_bnd_qr_delay, mapqn_bnd_qr_ld,
+    # QR bounds with blocking
+    mapqn_qr_bounds_bas, mapqn_qr_bounds_rsrd,
+    # QRF no-blocking NLP approximations
+    mapqn_qrf_noblo_mem, mapqn_qrf_noblo_mmi,
+    mapqn_qrf_noblo_mmi_ld, mapqn_qrf_noblo_mmi_linear,
+    # LP model builder
+    mapqn_lpmodel,
+    # NLP solver
+    mapqn_nlp_solver,
+)
+
+from .fes import (
+    fes_aggregate, fes_aggregate_with_options
+)
+
+from .map_respt import (
+    mapm1ps_cdf_respt
+)
+
+from .nc import (
+    me_oqn
 )
 
 from .ms import (
@@ -299,9 +364,17 @@ __all__ = [
     'mmap_embedded', 'mmap_pie', 'mmap_issym', 'mmap_modulate', 'mmap_mixture_order2', 'mmap_sum',
     'mmpp2_fitc', 'mmpp2_fitc_approx', 'mmpp_rand',
     # MAPQN functions
-    'mapqn_bnd_lr', 'mapqn_bnd_lr_mva', 'mapqn_bnd_lr_pf', 'mapqn_bnd_qr', 'mapqn_bnd_qr_delay',
-    'mapqn_bnd_qr_ld', 'mapqn_lpmodel', 'mapqn_parameters', 'mapqn_parameters_factory',
+    'MapqnSolution', 'MapqnLpmodel',
+    'LinearReductionParameters', 'MVAVersionParameters', 'PFParameters',
+    'QuadraticDelayParameters', 'QuadraticLDParameters',
+    'Mapqn_qr_bounds_bas_parameters', 'Mapqn_qr_bounds_rsrd_parameters',
+    'mapqn_bnd_lr', 'mapqn_bnd_lr_mva', 'mapqn_bnd_lr_pf',
+    'mapqn_bnd_qr', 'mapqn_bnd_qr_delay', 'mapqn_bnd_qr_ld',
     'mapqn_qr_bounds_bas', 'mapqn_qr_bounds_rsrd',
+    'mapqn_qrf_noblo_mem', 'mapqn_qrf_noblo_mmi',
+    'mapqn_qrf_noblo_mmi_ld', 'mapqn_qrf_noblo_mmi_linear',
+    'mapqn_lpmodel', 'mapqn_nlp_solver',
+    'mapqn_parameters', 'mapqn_parameters_factory',
     # M3PP functions
     'm3pp22_fitc_approx_cov', 'm3pp22_fitc_approx_cov_multiclass', 'm3pp22_interleave_fitc',
     'm3pp2m_fitc', 'm3pp2m_fitc_approx', 'm3pp2m_fitc_approx_ag', 'm3pp2m_fitc_approx_ag_multiclass',
@@ -365,5 +438,33 @@ __all__ = [
     'ms_nmi', 'ms_nvi', 'ms_pearsonchisquared', 'ms_probsymmchisquared', 'ms_product',
     'ms_relatentropy', 'ms_ruzicka', 'ms_soergel', 'ms_sorensen', 'ms_squaredchord',
     'ms_squaredeuclidean', 'ms_taneja', 'ms_tanimoto', 'ms_topsoe', 'ms_wasserstein',
-    'ms_wavehegdes'
+    'ms_wavehegdes',
+    # AoI (Age of Information) functions
+    'aoi_is_aoi', 'aoi_extract_params', 'aoi_dist2ph',
+    'aoi_lst_exp', 'aoi_lst_det', 'aoi_lst_erlang', 'aoi_lst_ph',
+    'aoi_fcfs_mm1', 'aoi_fcfs_md1', 'aoi_fcfs_dm1', 'aoi_fcfs_gim1', 'aoi_fcfs_mgi1',
+    'aoi_lcfspr_mm1', 'aoi_lcfspr_md1', 'aoi_lcfspr_dm1', 'aoi_lcfspr_gim1', 'aoi_lcfspr_mgi1',
+    'aoi_lcfsd_gim1', 'aoi_lcfsd_mgi1',
+    'aoi_lcfss_gim1', 'aoi_lcfss_mgi1',
+    'solve_bufferless', 'solve_singlebuffer',
+    # FJ (Fork-Join) functions
+    'fj_harmonic', 'fj_bounds',
+    'fj_respt_2way', 'fj_respt_nt', 'fj_respt_vm', 'fj_respt_varki',
+    'fj_rmax', 'fj_rmax_erlang', 'fj_rmax_evd',
+    'fj_xmax_exp', 'fj_xmax_2', 'fj_xmax_erlang', 'fj_xmax_hyperexp',
+    'fj_xmax_normal', 'fj_xmax_pareto', 'fj_xmax_pareto_char_max',
+    'fj_xmax_approx', 'fj_xmax_emma',
+    'fj_char_max_exp', 'fj_char_max_erlang',
+    'fj_gk_bound', 'fj_gk_bound_all', 'fj_order_stat_cdf',
+    'fj_quantile',
+    'fj_sm_tput', 'fj_synch_delay',
+    'fj_is_fj',
+    # RL (Reinforcement Learning) classes
+    'RlEnv', 'RlEnvGeneral', 'RlTdAgent', 'RlTdAgentGeneral',
+    # FES (Flow-Equivalent Server) functions
+    'fes_aggregate', 'fes_aggregate_with_options',
+    # MAP response time distribution functions
+    'mapm1ps_cdf_respt',
+    # NC (Normalizing Constant) functions
+    'me_oqn',
 ]

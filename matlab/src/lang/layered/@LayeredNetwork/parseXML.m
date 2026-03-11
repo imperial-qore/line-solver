@@ -144,6 +144,20 @@ for i = 0:procList.getLength()-1
             end
         end
 
+        % Parse fan-out elements if present (used for replication load distribution)
+        fanOutList = taskElement.getElementsByTagName('fan-out');
+        for fo = 0:fanOutList.getLength()-1
+            fanOutElement = fanOutList.item(fo);
+            dest = char(fanOutElement.getAttribute('dest'));
+            valueStr = char(fanOutElement.getAttribute('value'));
+            if ~isempty(dest) && ~isempty(valueStr)
+                value = str2double(valueStr);
+                if ~isnan(value)
+                    newTask.setFanOut(dest, value);
+                end
+            end
+        end
+
         taskObj{end+1,1} = newTask;
 
         entryList = taskElement.getElementsByTagName('entry');

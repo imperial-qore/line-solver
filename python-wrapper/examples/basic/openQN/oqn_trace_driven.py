@@ -34,6 +34,6 @@ if __name__ == "__main__":
     print('JMT Result:')
     print(avg_table_1)
 
-    avg_table_2 = DES(model, seed=23000).avg_table()
+    avg_table_2 = LDES(model, seed=23000).avg_table()
     print('\nDES Result:')
     print(avg_table_2)

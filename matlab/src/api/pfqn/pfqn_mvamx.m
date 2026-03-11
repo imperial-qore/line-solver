@@ -38,7 +38,8 @@ XN = zeros(1,R);
 UN = zeros(M,R);
 CN = zeros(M,R);
 QN = zeros(M,R);
-for r=openClasses
+for ridx=1:length(openClasses)
+    r = openClasses(ridx);
     for ist=1:M
         UN(ist,r) = lambda(r)*D(ist,r);
     end
@@ -56,12 +57,14 @@ XN(closedClasses) = XNc;
 QN(:,closedClasses) = QNc;
 CN(:,closedClasses) = CNc;
 for ist = 1:M
-    for r=closedClasses
+    for ridx=1:length(closedClasses)
+        r = closedClasses(ridx);
         UN(ist,r) = XN(r)*D(ist,r);
     end
 end
 for ist = 1:M
-    for r=openClasses
+    for ridx=1:length(openClasses)
+        r = openClasses(ridx);
         if isempty(QNc)
             CN(ist,r) = D(ist,r) / (1-UNt(ist));
         else

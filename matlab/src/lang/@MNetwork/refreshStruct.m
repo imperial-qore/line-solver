@@ -259,7 +259,7 @@ else
 end
 refreshProcesses(self);
 
-% Export patience/impatience fields for abandonment-aware solvers (MAPMSG, JMT, etc.)
+% Export patience/impatience fields for abandonment-aware solvers (MAPMsG, JMT, etc.)
 sn = self.sn;
 sn.patienceProc = cell(sn.nstations, sn.nclasses);
 sn.impatienceClass = zeros(sn.nstations, sn.nclasses);  % ImpatienceType (RENEGING, BALKING)
@@ -376,9 +376,12 @@ if ~all(sn.classprio == sn.classprio(1))
     % Priority classes exist, check if any station uses priority-aware scheduling
     prioScheds = [SchedStrategy.PSPRIO, SchedStrategy.DPSPRIO, SchedStrategy.GPSPRIO, ...
                   SchedStrategy.HOL, SchedStrategy.FCFSPRIO, SchedStrategy.LCFSPRIO, ...
-                  SchedStrategy.LCFSPRPRIO, SchedStrategy.LCFSPIPRIO];
+                  SchedStrategy.LCFSPRPRIO, SchedStrategy.LCFSPIPRIO, ...
+                  SchedStrategy.FCFSPRPRIO, SchedStrategy.FCFSPIPRIO, ...
+                  SchedStrategy.LCFS, SchedStrategy.LCFSPR, ...
+                  SchedStrategy.FCFSPR];
     if ~any(ismember(sn.sched, prioScheds))
-        line_warning(mfilename, 'Priority classes are specified but no priority-aware scheduling policy (PSPRIO, DPSPRIO, GPSPRIO, HOL, FCFSPRIO, LCFSPRIO, LCFSPRPRIO, LCFSPIPRIO) is used in the model. Priorities will be ignored.');
+        line_warning(mfilename, 'Priority classes are specified but no priority-aware scheduling policy is used in the model. Priorities will be ignored.');
     else
         % Display priority info unless silent
         global LINEVerbose;

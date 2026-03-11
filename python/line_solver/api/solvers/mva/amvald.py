@@ -20,24 +20,7 @@ from ...pfqn.ljd import ljd_linearize
 # Import SchedStrategy from the canonical source
 from ....lang.base import SchedStrategy
 
-# Try to import JIT-compiled kernels
-try:
-    from .amvald_jit import (
-        HAS_NUMBA as AMVALD_HAS_NUMBA,
-        compute_arrival_queue_lengths_jit,
-        update_metrics_jit,
-        cap_utilizations_jit,
-        SCHED_INF, SCHED_FCFS, SCHED_SIRO, SCHED_PS, SCHED_HOL, SCHED_LCFSPR, SCHED_EXT,
-    )
-except ImportError:
-    AMVALD_HAS_NUMBA = False
-    compute_arrival_queue_lengths_jit = None
-    update_metrics_jit = None
-    cap_utilizations_jit = None
-    SCHED_INF, SCHED_FCFS, SCHED_SIRO, SCHED_PS, SCHED_HOL, SCHED_LCFSPR, SCHED_EXT = 0, 1, 2, 3, 4, 5, 6
-
-# Threshold for using JIT (M * K iterations)
-AMVALD_JIT_THRESHOLD = 50
+SCHED_INF, SCHED_FCFS, SCHED_SIRO, SCHED_PS, SCHED_HOL, SCHED_LCFSPR, SCHED_EXT = 0, 1, 2, 3, 4, 5, 6
 
 
 def _normalize_sched_strategy(sched_value):
@@ -149,7 +132,9 @@ def solver_amvald_forward(
     STchain_in: np.ndarray,
     Vchain_in: np.ndarray,
     Nchain_in: np.ndarray,
-    options: AmvaldOptions
+    options: AmvaldOptions,
+    ljcdscaling: Optional[list] = None,
+    ljcdcutoffs: Optional[np.ndarray] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Forward step of AMVA-LD: compute waiting times from current estimates.
@@ -309,20 +294,30 @@ def solver_amvald_forward(
     # Compute joint-dependence correction term (ljdterm)
     # MATLAB: solver_amvald_forward.m lines 106-172
     ljdterm = np.ones((M, K))
+    has_ljcd = ljcdscaling is not None and any(x is not None for x in ljcdscaling)
     has_ljd = ljdscaling is not None and any(x is not None for x in ljdscaling)
 
-    if has_ljd:
-        for k in range(M):
-            if ljdscaling[k] is not None and ljdcutoffs is not None:
-                # Get population vector from queue lengths at station k
-                nvec = Qchain_in[k, :]
-                cutoffs_k = ljdcutoffs[k, :]
-                # Ceil and clamp to cutoffs (matching MATLAB behavior)
-                n_clamped = np.maximum(0, np.minimum(np.ceil(nvec), cutoffs_k)).astype(int)
-                idx = ljd_linearize(n_clamped, cutoffs_k.astype(int))
-                table = ljdscaling[k]
-                if idx <= len(table):
-                    ljdterm[k, :] = table[idx - 1]  # ljd_linearize returns 1-based
+    for k in range(M):
+        # Get population vector from queue lengths at station k
+        nvec = Qchain_in[k, :]
+
+        # Check LJCD first (per-class scaling, overrides LJD)
+        if has_ljcd and ljcdscaling[k] is not None and ljcdcutoffs is not None:
+            cutoffs_k = ljcdcutoffs[k, :]
+            n_clamped = np.maximum(0, np.minimum(np.ceil(nvec), cutoffs_k)).astype(int)
+            idx = ljd_linearize(n_clamped, cutoffs_k.astype(int))
+            for r in range(K):
+                class_table = ljcdscaling[k][r]
+                if class_table is not None and idx <= len(class_table):
+                    ljdterm[k, r] = class_table[idx - 1]
+        elif has_ljd and ljdscaling[k] is not None and ljdcutoffs is not None:
+            # LJD: single scaling applied to all classes
+            cutoffs_k = ljdcutoffs[k, :]
+            n_clamped = np.maximum(0, np.minimum(np.ceil(nvec), cutoffs_k)).astype(int)
+            idx = ljd_linearize(n_clamped, cutoffs_k.astype(int))
+            table = ljdscaling[k]
+            if idx <= len(table):
+                ljdterm[k, :] = table[idx - 1]  # ljd_linearize returns 1-based
 
     # Compute effective service times
     # MATLAB: STeff(k,r) = STchain_in(k,r) * lldterm(k,r) * msterm(k) * cdterm(k,r) * ljdterm(k,r)
@@ -458,7 +453,8 @@ def solver_amvald_forward(
                     has_lld = lldscaling is not None and np.any(lldscaling != 0) if lldscaling is not None else False
                     has_cd = cdscaling is not None and len(cdscaling) > 0
                     has_ljd = ljdscaling is not None and any(ljdscaling[i] is not None and len(ljdscaling[i]) > 0 for i in range(len(ljdscaling))) if ljdscaling is not None and hasattr(ljdscaling, '__len__') else False
-                    if ns == 1 and (has_lld or has_cd or has_ljd):
+                    has_ljcd_local = ljcdscaling is not None and any(x is not None for x in ljcdscaling)
+                    if ns == 1 and (has_lld or has_cd or has_ljd or has_ljcd_local):
                         # Single-server LD: simple formula (MATLAB lines 390-404)
                         Wchain[k, r] = STeff[k, r]
                         if r in ocl:
@@ -632,6 +628,8 @@ def solver_amvald(
     cdscaling = sn.cdscaling if hasattr(sn, 'cdscaling') and sn.cdscaling is not None else None
     ljdscaling = sn.ljdscaling if hasattr(sn, 'ljdscaling') and sn.ljdscaling is not None else None
     ljdcutoffs = sn.ljdcutoffs if hasattr(sn, 'ljdcutoffs') and sn.ljdcutoffs is not None else None
+    ljcdscaling = sn.ljcdscaling if hasattr(sn, 'ljcdscaling') and sn.ljcdscaling is not None else None
+    ljcdcutoffs = sn.ljcdcutoffs if hasattr(sn, 'ljcdcutoffs') and sn.ljcdcutoffs is not None else None
 
     # Convert sched to dict if it's an array
     # sn.sched can be: dict, numpy array of strings, or None
@@ -760,7 +758,8 @@ def solver_amvald(
                         # Forward step at N-1_s
                         Wchain_s, STeff_s = solver_amvald_forward(
                             M, K, nservers, schedparam, lldscaling, cdscaling, ljdscaling, ljdcutoffs, sched, classprio, gamma, tau,
-                            Qchain_s_1, Xchain_s_1, Uchain_s_1, STchain, Vchain, Nchain_s, options
+                            Qchain_s_1, Xchain_s_1, Uchain_s_1, STchain, Vchain, Nchain_s, options,
+                            ljcdscaling=ljcdscaling, ljcdcutoffs=ljcdcutoffs
                         )
 
                         totiter += 1
@@ -833,7 +832,8 @@ def solver_amvald(
             # Forward step
             Wchain, STeff = solver_amvald_forward(
                 M, K, nservers, schedparam, lldscaling, cdscaling, ljdscaling, ljdcutoffs, sched, classprio, gamma, tau,
-                Qchain_1, Xchain_1, Uchain_1, STchain, Vchain, Nchain, options
+                Qchain_1, Xchain_1, Uchain_1, STchain, Vchain, Nchain, options,
+                ljcdscaling=ljcdscaling, ljcdcutoffs=ljcdcutoffs
             )
 
             totiter += 1

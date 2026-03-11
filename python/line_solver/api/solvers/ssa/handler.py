@@ -30,6 +30,7 @@ from ...sn import (
 from ....lang.base import ReplacementStrategy
 
 
+
 # =============================================================================
 # Cache State Management
 # =============================================================================
@@ -2280,6 +2281,12 @@ def _run_ssa_replica(args: Tuple) -> Dict:
     current_time = timespan[0] if timespan else 0.0
     max_time = timespan[1] if timespan and len(timespan) > 1 else float('inf')
     last_event_time = current_time
+
+    # Get number of servers for JIT busy state computation
+    if hasattr(sn, 'nservers') and sn.nservers is not None:
+        nservers_arr = np.asarray(sn.nservers).flatten()
+    else:
+        nservers_arr = np.ones(M)
 
     # Get rates
     rates = _compute_rates(sn, state)

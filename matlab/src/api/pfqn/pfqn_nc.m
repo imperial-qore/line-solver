@@ -30,6 +30,7 @@ X=[]; Q=[];
 % compute open class contributions
 Qopen = [];
 lGopen = 0;
+Ut = zeros(1, size(L,1));
 for i=1:size(L,1)
     Ut(i) = (1-lambda*L(i,:)');
     if isnan(Ut(i))

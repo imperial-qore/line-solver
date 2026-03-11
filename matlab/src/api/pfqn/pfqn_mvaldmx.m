@@ -45,7 +45,7 @@ UN = zeros(M,R);
 CN = zeros(M,R);
 QN = zeros(M,R);
 lGN = 0;
-mu(:,end+1) = mu(:,end); % we need up to sum(N)+1, but there is limited load dep
+mu = [mu, mu(:,size(mu,2))]; % we need up to sum(N)+1, but there is limited load dep
 [EC,E,Eprime] = pfqn_mvaldmx_ec(lambda,D,mu);
 C = length(closedClasses); % number of closed classes
 Dc = D(:,closedClasses);
@@ -97,11 +97,14 @@ while nvec>=0
     end
     
     % now compute the normalizing constant
-    last_nnz = find(nvec>0, 1, 'last' );
-    if sum(nvec(1:last_nnz-1)) == sum(Nc(1:last_nnz-1)) && sum(nvec((last_nnz+1):C))==0
-        logX = log(XN(last_nnz));
-        if ~isempty(logX)
-            lGN = lGN - logX;
+    last_nnz_vec = find(nvec>0, 1, 'last' );
+    if ~isempty(last_nnz_vec)
+        last_nnz = last_nnz_vec(1);
+        if sum(nvec(1:last_nnz-1)) == sum(Nc(1:last_nnz-1)) && sum(nvec((last_nnz+1):C))==0
+            logX = log(XN(last_nnz));
+            if ~isempty(logX)
+                lGN = lGN - logX;
+            end
         end
     end
     
@@ -130,7 +133,8 @@ CN(1:M,closedClasses) = w(1:M,1:C,hnvec);
 QN(1:M,closedClasses) = repmat(XN(closedClasses),M,1) .* CN(1:M,closedClasses);
 
 % Compute performance indexes at Nc for open classes
-for r=openClasses
+for ridx=1:length(openClasses)
+    r = openClasses(ridx);
     % Throughput
     XN(r) = lambda(r);
     for ist=1:M

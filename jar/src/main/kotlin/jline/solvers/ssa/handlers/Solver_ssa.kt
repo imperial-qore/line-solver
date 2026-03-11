@@ -634,9 +634,6 @@ fun print_progress(options: SolverOptions, samples_collected: Int) {
         if (samples_collected == 2) {
             System.out.printf("SSA samples: %6d ", samples_collected)
             System.out.flush()
-        } else if (options.verbose == VerboseLevel.DEBUG) {
-            System.out.printf("\b\b\b\b\b\b\b %6d", samples_collected)
-            System.out.flush()
         } else if (samples_collected % 100 == 0) {
             System.out.printf("\b\b\b\b\b\b\b %6d", samples_collected)
             System.out.flush()

@@ -45,7 +45,7 @@ solver{end+1} = CTMC(model,options);
 solver{end+1} = JMT(model,options);
 solver{end+1} = FLD(model,options);
 solver{end+1} = MVA(model,options);
-solver{end+1} = DES(model,options);
+solver{end+1} = LDES(model,options);
 for s=1:length(solver)
     fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgTable();

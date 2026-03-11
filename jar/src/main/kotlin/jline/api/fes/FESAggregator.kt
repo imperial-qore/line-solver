@@ -168,29 +168,31 @@ object FESAggregator {
         }
 
         // Set FES service distribution with LJCD (per-class scaling)
-        // For multi-class FES, use Limited Joint Class Dependence (LJCD) which allows
-        // each class to have its own state-dependent scaling factor.
-        // The FES service rate for class c in state (n1,...,nK) equals throughput_c(n).
+        // LJCD scaling multiplies the base service TIME (STeff = STchain * ljdterm).
+        // For FES, the effective service rate should be throughput_c(n), so the
+        // effective service time = 1/throughput_c(n). With base ST = 1.0:
+        //   ljdterm = 1/throughput_c(n)  =>  STeff = 1/throughput_c(n)
+        //   effective_rate = 1/STeff = throughput_c(n)
 
-        // Set base service rate Exp(1.0) for all classes; LJCD scaling provides actual rate
+        // Set base service rate Exp(1.0) for all classes; LJCD scaling provides 1/rate = ST
         for (k in 0 until K) {
             fesStation.setService(newClasses[k], Exp(1.0))
         }
 
-        // Handle zeros in scaling tables
+        // Convert throughputs to service time scaling factors (1/throughput)
         val tableSize = computeTableSize(cutoffs)
-        for (k in 0 until K) {
-            for (idx in 0 until tableSize) {
-                if (throughputTable[k].get(0, idx) < 1e-10) {
-                    throughputTable[k].set(0, idx, 1e-10)
-                }
-            }
-        }
-
-        // Build per-class scaling map for LJCD
         val scalingMap = HashMap<jline.lang.JobClass, Matrix>()
         for (k in 0 until K) {
-            scalingMap[newClasses[k]] = throughputTable[k]
+            val stTable = Matrix(1, tableSize)
+            for (idx in 0 until tableSize) {
+                val tput = throughputTable[k].get(0, idx)
+                if (tput > 1e-10) {
+                    stTable.set(0, idx, 1.0 / tput)
+                } else {
+                    stTable.set(0, idx, 1e10) // Very large service time for zero throughput
+                }
+            }
+            scalingMap[newClasses[k]] = stTable
         }
 
         // Set per-class joint dependence (LJCD)

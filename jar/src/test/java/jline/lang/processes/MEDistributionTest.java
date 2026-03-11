@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Random;
 
 import static jline.lib.butools.ph.CheckMERepresentationKt.checkMERepresentation;
+import static jline.TestTools.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -21,9 +22,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class MEDistributionTest {
 
-    private static final double TOLERANCE = 1e-6;
-    private static final double LOOSE_TOLERANCE = 1e-3;
-    private static final double SAMPLING_TOLERANCE = 0.1; // 10% tolerance for empirical samples
 
     @BeforeAll
     public static void setUp() {
@@ -45,7 +43,7 @@ public class MEDistributionTest {
 
         assertNotNull(me);
         assertEquals(2, me.getNumberOfPhases());
-        assertArrayEquals(new double[]{0.4, 0.6}, me.getAlpha().toArray1D(), TOLERANCE);
+        assertArrayEquals(new double[]{0.4, 0.6}, me.getAlpha().toArray1D(), LOOSE_FINE_TOL);
     }
 
     @Test
@@ -70,11 +68,11 @@ public class MEDistributionTest {
 
         // Mean should be 1/rate
         double mean = me.getMean();
-        assertEquals(1.0 / rate, mean, TOLERANCE);
+        assertEquals(1.0 / rate, mean, LOOSE_FINE_TOL);
 
         // SCV should be 1 (for exponential)
         double scv = me.getSCV();
-        assertEquals(1.0, scv, TOLERANCE);
+        assertEquals(1.0, scv, LOOSE_FINE_TOL);
     }
 
     @Test
@@ -89,11 +87,11 @@ public class MEDistributionTest {
 
         // Mean should be k/rate
         double mean = me.getMean();
-        assertEquals((double) k / rate, mean, TOLERANCE);
+        assertEquals((double) k / rate, mean, LOOSE_FINE_TOL);
 
         // SCV should be 1/k (for Erlang)
         double scv = me.getSCV();
-        assertEquals(1.0 / k, scv, TOLERANCE);
+        assertEquals(1.0 / k, scv, LOOSE_FINE_TOL);
     }
 
     @Test
@@ -112,7 +110,7 @@ public class MEDistributionTest {
         // Mean = p[0]/rates[0] + p[1]/rates[1]
         double expectedMean = p[0] / rates[0] + p[1] / rates[1];
         double mean = me.getMean();
-        assertEquals(expectedMean, mean, TOLERANCE);
+        assertEquals(expectedMean, mean, LOOSE_FINE_TOL);
     }
 
     @Test
@@ -125,7 +123,7 @@ public class MEDistributionTest {
 
         // Mean = -alpha * A^(-1) * e = -1 * (-1/2) * 1 = 0.5
         double mean = me.getMean();
-        assertEquals(0.5, mean, TOLERANCE);
+        assertEquals(0.5, mean, LOOSE_FINE_TOL);
     }
 
     @Test
@@ -135,7 +133,7 @@ public class MEDistributionTest {
 
         // For Exp(lambda): variance = 1/lambda^2 = 1/4 = 0.25
         double variance = me.getVar();
-        assertEquals(0.25, variance, TOLERANCE);
+        assertEquals(0.25, variance, LOOSE_FINE_TOL);
     }
 
     @Test
@@ -145,7 +143,7 @@ public class MEDistributionTest {
 
         // For Erlang-k: SCV = 1/k = 1/2 = 0.5
         double scv = me.getSCV();
-        assertEquals(0.5, scv, TOLERANCE);
+        assertEquals(0.5, scv, LOOSE_FINE_TOL);
     }
 
     @Test
@@ -155,13 +153,13 @@ public class MEDistributionTest {
 
         // For Exp(1): CDF(t) = 1 - exp(-t)
         double cdf0 = me.evalCDF(0.0);
-        assertEquals(0.0, cdf0, TOLERANCE);
+        assertEquals(0.0, cdf0, LOOSE_FINE_TOL);
 
         double cdf1 = me.evalCDF(1.0);
-        assertEquals(1.0 - Math.exp(-1.0), cdf1, TOLERANCE);
+        assertEquals(1.0 - Math.exp(-1.0), cdf1, LOOSE_FINE_TOL);
 
         double cdf2 = me.evalCDF(2.0);
-        assertEquals(1.0 - Math.exp(-2.0), cdf2, TOLERANCE);
+        assertEquals(1.0 - Math.exp(-2.0), cdf2, LOOSE_FINE_TOL);
     }
 
     @Test
@@ -186,7 +184,7 @@ public class MEDistributionTest {
 
         // Expected mean = 1/2 = 0.5
         double expectedMean = 0.5;
-        assertEquals(expectedMean, empiricalMean, SAMPLING_TOLERANCE * expectedMean);
+        assertEquals(expectedMean, empiricalMean, VERY_COARSE_TOL * expectedMean);
     }
 
     @Test
@@ -241,7 +239,7 @@ public class MEDistributionTest {
         Matrix D0 = me.D(0);
         for (int i = 0; i < A.getNumRows(); i++) {
             for (int j = 0; j < A.getNumCols(); j++) {
-                assertEquals(A.get(i, j), D0.get(i, j), TOLERANCE);
+                assertEquals(A.get(i, j), D0.get(i, j), LOOSE_FINE_TOL);
             }
         }
 
@@ -287,13 +285,13 @@ public class MEDistributionTest {
 
         // Test getAlpha()
         Matrix retrievedAlpha = me.getAlpha();
-        assertArrayEquals(alpha.toArray1D(), retrievedAlpha.toArray1D(), TOLERANCE);
+        assertArrayEquals(alpha.toArray1D(), retrievedAlpha.toArray1D(), LOOSE_FINE_TOL);
 
         // Test getA()
         Matrix retrievedA = me.getA();
         for (int i = 0; i < A.getNumRows(); i++) {
             for (int j = 0; j < A.getNumCols(); j++) {
-                assertEquals(A.get(i, j), retrievedA.get(i, j), TOLERANCE);
+                assertEquals(A.get(i, j), retrievedA.get(i, j), LOOSE_FINE_TOL);
             }
         }
 

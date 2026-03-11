@@ -1187,3 +1187,42 @@ class ModelAdapter:
                 branches.append(to_node)
 
         return branches
+
+    @staticmethod
+    def aggregate_fes(model, station_subset, options=None):
+        """
+        Replace a station subset with a Flow-Equivalent Server (FES).
+
+        Replaces a subset of stations in a closed product-form queueing network
+        with a single FES station. The FES has Limited Joint Class Dependence (LJCD)
+        service rates where the rate for class-c in state (n1,...,nK) equals the
+        throughput of class-c in an isolated subnetwork consisting only of the
+        subset stations.
+
+        Args:
+            model: Closed product-form Network model.
+            station_subset: List of Station objects to aggregate.
+            options (dict, optional): Options dict with keys:
+                - solver (str): Solver for throughput computation (default: 'mva')
+                - cutoffs (numpy.ndarray): Per-class population cutoffs
+                - verbose (bool): Enable verbose output
+
+        Returns:
+            dict with keys:
+                - fes_model: New Network with the FES station replacing the subset.
+                - fes_station: Reference to the FES Queue station in the new model.
+                - deagg_info (dict): Deaggregation information.
+        """
+        from ..api.fes import fes_aggregate, fes_aggregate_with_options
+
+        if options is not None:
+            solver = options.get('solver', 'mva')
+            cutoffs = options.get('cutoffs', None)
+            verbose = options.get('verbose', False)
+            return fes_aggregate_with_options(model, station_subset, solver=solver,
+                                              cutoffs=cutoffs, verbose=verbose)
+        else:
+            return fes_aggregate(model, station_subset)
+
+    # Alias for Java camelCase compatibility
+    aggregateFES = aggregate_fes

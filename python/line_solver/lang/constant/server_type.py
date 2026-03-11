@@ -145,8 +145,15 @@ class ServerType(Element):
             print(f"    - {c.name}")
 
     def to_java(self):
-        """Convert to Java object (not implemented)."""
-        raise NotImplementedError("ServerType.to_java() not yet implemented")
+        """Convert to Java object for JVM interoperability.
+
+        Not available in the native Python implementation. The native Python
+        solver operates independently of the JVM.
+        """
+        raise NotImplementedError(
+            "to_java() is not available in the native Python implementation. "
+            "The native Python solver operates independently of the JVM."
+        )
 
     # Aliases for API compatibility
     add_compatible_class = add_compatible

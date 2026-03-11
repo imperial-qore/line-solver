@@ -33,48 +33,20 @@ for r=1:size(thinkt_classes_updmap,1)
         end
     end
     node = ensemble{idxhash(idx)}.nodes{nodeidx};
-    switch nodeidx
-        case  ensemble{idxhash(idx)}.attribute.clientIdx
-            if lqn.type(aidx) == LayeredNetworkElement.TASK
-                if lqn.sched(aidx) ~= SchedStrategy.REF
-                    if ~isempty(thinktproc{aidx}) % this is empty for isolated components, which can be ignored
-                        %                        if it==1
-                        node.setService(class, thinktproc{aidx});
-                        %                         else
-                        %                             if ~node.serviceProcess{class.index}.isImmediate()
-                        %                                 node.serviceProcess{class.index}.setMean(thinktproc{aidx}.getMean);
-                        %                                 node.server.serviceProcess{class.index}{end}.setMean(thinktproc{aidx}.getMean);
-                        %                             else
-                        %                                 node.setService(class, thinktproc{aidx});
-                        %                             end
-                        %                         end
-                    end
-                else
-                    %                    if it==1
-                    node.setService(class, servtproc{aidx});
-                    %                     else
-                    %                         if ~node.serviceProcess{class.index}.isImmediate()
-                    %                             node.serviceProcess{class.index}.setMean(servtproc{aidx}.getMean);
-                    %                             node.server.serviceProcess{class.index}{end}.setMean(servtproc{aidx}.getMean);
-                    %                         else
-                    %                             node.setService(class, servtproc{aidx});
-                    %                         end
-                    %                     end
+    if nodeidx == ensemble{idxhash(idx)}.attribute.clientIdx
+        if lqn.type(aidx) == LayeredNetworkElement.TASK
+            if lqn.sched(aidx) ~= SchedStrategy.REF
+                if ~isempty(thinktproc{aidx}) % this is empty for isolated components, which can be ignored
+                    node.setService(class, thinktproc{aidx});
                 end
             else
-                %                if it==1
                 node.setService(class, servtproc{aidx});
-                %                 else
-                %                     if ~node.serviceProcess{class.index}.isImmediate()
-                %                         node.serviceProcess{class.index}.setMean(servtproc{aidx}.getMean);
-                %                         node.server.serviceProcess{class.index}{end}.setMean(servtproc{aidx}.getMean);
-                %                     else
-                %                         node.setService(class, servtproc{aidx});
-                %                     end
-                %                 end
             end
-        case ensemble{idxhash(idx)}.attribute.serverIdx
+        else
             node.setService(class, servtproc{aidx});
+        end
+    else % server replica (any of them)
+        node.setService(class, servtproc{aidx});
     end
 end
 
@@ -114,30 +86,11 @@ for c=1:size(call_classes_updmap,1)
     nodeidx = call_classes_updmap(ci,3);
     class = ensemble{idxhash(call_classes_updmap(ci,1))}.classes{call_classes_updmap(ci,4)};
     node = ensemble{idxhash(idx)}.nodes{nodeidx};
-    switch nodeidx
-        case ensemble{idxhash(idx)}.attribute.clientIdx % client
-            node.setService(class, callservtproc{cidx});
-        case ensemble{idxhash(idx)}.attribute.serverIdx % the call is processed by the server, then replace with the svc time
-            eidx = lqn.callpair(cidx,2);
-            %tidx = lqn.parent(eidx);
-            %eidxclass = self.ensemble{self.idxhash(tidx)}.attribute.calls(find(self.ensemble{self.idxhash(tidx)}.attribute.calls(:,4) == eidx),1);
-            %eidxchain = find(self.ensemble{self.idxhash(tidx)}.getStruct.chains(:,eidxclass)>0);
-            %qn = self.ensemble{self.idxhash(tidx)}.getStruct;
-            %servtproc{eidx}.setMean(servtproc{eidx}.getMean * qn.visits{eidxchain}(1,qn.refclass(eidxchain)) / qn.visits{eidxchain}(2,eidxclass))
-            %%task_tput = sum(self.results{end,self.idxhash(tidx)}.TN(self.ensemble{self.idxhash(tidx)}.attribute.serverIdx,eidxclass))
-            %%entry_tput = sum(self.results{end,self.idxhash(tidx)}.TN(self.ensemble{self.idxhash(tidx)}.attribute.serverIdx,eidxclass))
-            %            if it==1
-
-            node.setService(class, servtproc{eidx});
-            %             else
-            %                 if ~node.serviceProcess{class.index}.isImmediate()
-            %                     node.serviceProcess{class.index}.setMean(servtproc{eidx}.getMean);
-            %                     node.server.serviceProcess{class.index}{end}.setMean(servtproc{eidx}.getMean);
-            %                 else
-            %                     node.setService(class, servtproc{eidx});
-            %                 end
-            %             end
-
+    if nodeidx == ensemble{idxhash(idx)}.attribute.clientIdx % client
+        node.setService(class, callservtproc{cidx});
+    else % server replica (any of them)
+        eidx = lqn.callpair(cidx,2);
+        node.setService(class, servtproc{eidx});
     end
 end
 

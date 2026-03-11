@@ -25,6 +25,7 @@ origmethod = options.method;
 
 switch options.lang
     case 'java'
+        line_debug(options, 'NC: using lang=java, delegating to JLINE');
         sn = self.getStruct;
         jmodel = LINE2JLINE(self.model);
         %M = jmodel.getNumberOfStatefulNodes;
@@ -55,12 +56,14 @@ switch options.lang
         self.result.Prob.logNormConstAggr = lG;
         return
     case 'matlab'
+        line_debug(options, 'NC: using lang=matlab');
         sn = getStruct(self); % doesn't need initial state
 
         switch options.method
             case 'default'
                 if sn.nstations == 2 && ~any(sn.nodetype == NodeType.Cache) && any(sn.nodetype == NodeType.Delay) && any(sn.nservers(isfinite(sn.nservers))>1)
                     options.method = 'comomld'; % default for multi-server models
+                    line_debug(options, 'Default method: 2-station Delay+multiserver network, using comomld');
                 end
             case 'exact'
                 if ~self.model.hasProductFormSolution
@@ -78,6 +81,7 @@ switch options.lang
                             end
                         end
                     end
+                    line_debug(options, 'Exact method: converted multiserver stations to load-dependent (Nt=%d)', Nt);
                 end
         end
 
@@ -88,6 +92,7 @@ switch options.lang
         Solver.resetRandomGeneratorSeed(options.seed);
 
         if sn.nclosedjobs == 0 && length(sn.nodetype)==3 && all(sort(sn.nodetype)' == sort([NodeType.Source,NodeType.Cache,NodeType.Sink])) % is a non-rentrant cache
+            line_debug(options, 'Non-reentrant cache (Source-Cache-Sink), routing to nc_cache_analyzer');
             % random initialization
             for ind = 1:sn.nnodes
                 if sn.nodetype(ind) == NodeType.Cache
@@ -125,6 +130,7 @@ switch options.lang
             self.model.refreshChains;
         else % queueing network
             if any(sn.nodetype == NodeType.Cache) % if integrated caching-queueing
+                line_debug(options, 'Integrated caching-queueing network, routing to nc_cacheqn_analyzer');
                 [QN,UN,RN,TN,CN,XN,lG,hitprob,missprob,runtime,iter,actualmethod] = solver_nc_cacheqn_analyzer(self, options);
                 for ind = 1:sn.nnodes
                     if sn.nodetype(ind) == NodeType.Cache
@@ -144,6 +150,7 @@ switch options.lang
                         % Single delay node in FCR - check drop rule
                         if all(sn.regionrule(1,:) == DropStrategy.DROP)
                             % Use loss network solver
+                            line_debug(options, 'Open model with single FCR + Delay node (DROP), routing to nc_lossn_analyzer');
                             [QN,UN,RN,TN,CN,XN,lG,runtime,iter,actualmethod] = solver_nc_lossn_analyzer(sn, options);
                             AN = sn_get_arvr_from_tput(sn, TN, self.getAvgTputHandles());
                             if strcmp(origmethod,'default') && exist('actualmethod','var') && ~strcmp(actualmethod,'default')
@@ -160,19 +167,24 @@ switch options.lang
                     end
                 end
                 if ~isempty(sn.lldscaling) || ~isempty(sn.cdscaling)
+                    line_debug(options, 'Load-dependent scaling detected, routing to ncld_analyzer');
                     [QN,UN,RN,TN,CN,XN,lG,runtime,iter,actualmethod] = solver_ncld_analyzer(sn, options);
                 else
                     switch options.method
                         case 'exact'
                             if ~sn_has_open_classes(sn)
                                 % multi-servers have already been transformed before
+                                line_debug(options, 'NC method=exact, closed model, routing to ncld_analyzer');
                                 [QN,UN,RN,TN,CN,XN,lG,runtime,iter,actualmethod] = solver_ncld_analyzer(sn, options);
                             else%if ~snHasClosedClasses(sn)
+                                line_debug(options, 'NC method=exact, open model, routing to nc_analyzer');
                                 [QN,UN,RN,TN,CN,XN,lG,runtime,iter,actualmethod] = solver_nc_analyzer(sn, options);
                             end
                         case {'rd','nrp','nrl','comomld'}
+                            line_debug(options, 'NC method=%s, routing to ncld_analyzer', options.method);
                             [QN,UN,RN,TN,CN,XN,lG,runtime,iter,actualmethod] = solver_ncld_analyzer(sn, options);
                         otherwise
+                            line_debug(options, 'NC method=%s, routing to nc_analyzer', options.method);
                             [QN,UN,RN,TN,CN,XN,lG,runtime,iter,actualmethod] = solver_nc_analyzer(sn, options);
                     end
                 end

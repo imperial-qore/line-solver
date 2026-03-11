@@ -187,7 +187,12 @@ classdef Prior < Distribution
             if nargin < 2
                 n = 1;
             end
-            X = zeros(n, 1);
+
+            % Determine dimensionality from first distribution
+            testSample = self.distributions{1}.sample(1);
+            d = numel(testSample);
+
+            X = zeros(n, d);
 
             % Generate samples
             cumprob = cumsum(self.probabilities);
@@ -195,7 +200,8 @@ classdef Prior < Distribution
                 % Select alternative based on probabilities
                 r = rand();
                 idx = find(r <= cumprob, 1, 'first');
-                X(i) = self.distributions{idx}.sample(1);
+                s = self.distributions{idx}.sample(1);
+                X(i,:) = s(:)';
             end
         end
 

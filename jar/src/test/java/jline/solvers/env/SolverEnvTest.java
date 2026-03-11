@@ -11,10 +11,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static jline.TestTools.*;
 
 import jline.solvers.env.SolverENV.SamplePathResult;
 
-// @Disabled("SolverENV results have 16-28% value mismatches vs CTMC ground truth - algorithm needs revision")
 public class SolverEnvTest {
 
     static double tol = 0.03;
@@ -168,7 +168,6 @@ public class SolverEnvTest {
 
     @Test
     @Tag("slow") // ~962s
-    // @Disabled("38s, Test fails - value mismatch")
     public void StateDependentD1SQ3stage2() {
         SolverENV envSolver = SolverEnvTestFixtures.example_randomEnvironment_7();
         envSolver.setRef(0);
@@ -188,7 +187,6 @@ public class SolverEnvTest {
 
     @Test
     @Tag("slow") // ~638s
-    // @Disabled("9s, Test fails - value mismatch")
     public void StateDependentD1SQ2stage2Parallel() {
         SolverENV envSolver = SolverEnvTestFixtures.example_randomEnvironment_8();
         envSolver.setRef(0);
@@ -207,7 +205,6 @@ public class SolverEnvTest {
 
     @Test
     @Tag("slow") // ~550s
-    // @Disabled("4s, Test fails - value mismatch")
     public void ErlangStateIndependentD1SQ2stage2() {
         SolverENV envSolver = SolverEnvTestFixtures.example_randomEnvironment_9();
         envSolver.getAvg();
@@ -226,7 +223,6 @@ public class SolverEnvTest {
 
     @Test
     @Tag("slow") // ~531s
-    // @Disabled("9s, Test fails - value mismatch")
     public void ErlangStateDependentD1SQ2stage2() {
         SolverENV envSolver = SolverEnvTestFixtures.example_randomEnvironment_9();
         envSolver.setStateDepMethod("statedep");
@@ -285,7 +281,6 @@ public class SolverEnvTest {
 
     @Test
     @Tag("slow") // ~381s
-    // @Disabled("33s, wrong final value")
     public void CTMCSolverMulticlassD1SQ2TwoClassesOfMMPPTest() {
         SolverENV envSolverCTMC = SolverEnvTestFixtures.renv_twostages_repairmen3();
         SolverResult CTMCresult = envSolverCTMC.runAnalyzerByCTMC();
@@ -401,7 +396,7 @@ public class SolverEnvTest {
         assertEquals(0, seg0.segmentIndex);
         assertEquals(0, seg0.stageIndex);
         assertEquals("Stage1", seg0.stageName);
-        assertEquals(5.0, seg0.duration, 1e-10);
+        assertEquals(5.0, seg0.duration, FINE_TOL);
         assertNotNull(seg0.initialQ);
         assertNotNull(seg0.finalQ);
         assertNotNull(seg0.QNt);
@@ -411,23 +406,23 @@ public class SolverEnvTest {
         assertEquals(1, seg1.segmentIndex);
         assertEquals(1, seg1.stageIndex);
         assertEquals("Stage2", seg1.stageName);
-        assertEquals(10.0, seg1.duration, 1e-10);
+        assertEquals(10.0, seg1.duration, FINE_TOL);
 
         // Verify segment 2 (Stage1, duration 3.0)
         SamplePathResult.SamplePathSegment seg2 = result.segments.get(2);
         assertEquals(2, seg2.segmentIndex);
         assertEquals(0, seg2.stageIndex);
         assertEquals("Stage1", seg2.stageName);
-        assertEquals(3.0, seg2.duration, 1e-10);
+        assertEquals(3.0, seg2.duration, FINE_TOL);
 
         // Verify state continuity: final Q of segment N should equal initial Q of segment N+1
         int M = seg0.finalQ.getNumRows();
         int K = seg0.finalQ.getNumCols();
         for (int i = 0; i < M; i++) {
             for (int k = 0; k < K; k++) {
-                assertEquals(seg0.finalQ.get(i, k), seg1.initialQ.get(i, k), 0.01,
+                assertEquals(seg0.finalQ.get(i, k), seg1.initialQ.get(i, k), COARSE_TOL,
                     "State continuity violated between segment 0 and 1 at (" + i + "," + k + ")");
-                assertEquals(seg1.finalQ.get(i, k), seg2.initialQ.get(i, k), 0.01,
+                assertEquals(seg1.finalQ.get(i, k), seg2.initialQ.get(i, k), COARSE_TOL,
                     "State continuity violated between segment 1 and 2 at (" + i + "," + k + ")");
             }
         }

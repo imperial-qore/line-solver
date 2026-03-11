@@ -281,22 +281,16 @@ internal fun egflinearizer_forwardMVA(L: Matrix,
     val Q = Matrix(M, R)
 
     // Compute residence time
+    // For exponential FCFS the per-visit response time equals the PS formula,
+    // this is the correct approach for the chain-level linearizer since only
+    // demands D (=V*S) are available, not per-visit service times S.
     for (i in 0..<M) {
         for (r in 0..<R) {
-            if (type[i] == SchedStrategy.FCFS) {
-                W[i, r] = L[i, r]
-                if (L[i, r] != 0.0) {
-                    for (s in 0..<R) {
-                        W[i, r] = W[i, r] + L[i, s] * Q_1[i][s, 1 + r]
-                    }
-                }
-            } else {
-                var sumQ = 0.0
-                for (k in 0..<Q_1[i].numRows) {
-                    sumQ += Q_1[i][k, 1 + r]
-                }
-                W[i, r] = L[i, r] * (1 + sumQ)
+            var sumQ = 0.0
+            for (k in 0..<Q_1[i].numRows) {
+                sumQ += Q_1[i][k, 1 + r]
             }
+            W[i, r] = L[i, r] * (1 + sumQ)
         }
     }
 

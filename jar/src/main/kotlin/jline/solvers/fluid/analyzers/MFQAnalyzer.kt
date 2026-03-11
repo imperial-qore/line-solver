@@ -42,8 +42,8 @@ class MFQAnalyzer : FluidAnalyzer {
         result.UN = Matrix.zeros(M, K)
         result.RN = Matrix.zeros(M, K)
         result.TN = Matrix.zeros(M, K)
-        result.WN = Matrix.zeros(M, K)
-        result.AN = Matrix.zeros(M, K)
+        result.WN = Matrix(0, 0) // WN/AN computed at solver level
+        result.AN = Matrix(0, 0)
 
         // Validate topology
         val topologyInfo = validateTopology(sn)

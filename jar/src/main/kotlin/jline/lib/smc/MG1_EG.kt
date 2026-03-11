@@ -79,13 +79,13 @@ fun mg1_eg(A: Matrix, verbose: Boolean = false): Matrix? {
             }
 
             // Compute etahat using GIM1_Caudal
-            val etahat = gim1_caudal(Atransformed)
+            val etahat = gim1_caudal_scalar(Atransformed)
 
             if (etahat != null) {
                 // temp = A_max
                 var temp = Atransformed.extractCols(dega * m, (dega + 1) * m)
                 for (i in dega - 1 downTo 1) {
-                    temp = temp.mult(etahat).add(Atransformed.extractCols(i * m, (i + 1) * m))
+                    temp = temp.scale(etahat).add(Atransformed.extractCols(i * m, (i + 1) * m))
                 }
 
                 // G = diag(theta^-1) * (A0 * (I - temp)^-1)^T * diag(theta)
@@ -121,11 +121,19 @@ private fun matrixRank(A: Matrix): Int {
 }
 
 /**
- * Placeholder for GIM1_Caudal function
- * TODO: Implement full GIM1_Caudal
+ * Wrapper for GIM1_Caudal function.
+ * Delegates to the public gim1_caudal() in GIM1_Caudal.kt and returns
+ * the scalar eta value, or null on failure.
  */
-private fun gim1_caudal(A: Matrix): Matrix? {
-    // This requires full GIM1 implementation
-    // For now, return null to fall back to iterative methods
-    return null
+private fun gim1_caudal_scalar(A: Matrix): Double? {
+    return try {
+        val result = jline.lib.smc.gim1_caudal(A, dual = false, computeEigenvector = false)
+        if (result.eta.isNaN() || result.eta <= 0.0 || result.eta >= 1.0) {
+            null
+        } else {
+            result.eta
+        }
+    } catch (e: Exception) {
+        null
+    }
 }

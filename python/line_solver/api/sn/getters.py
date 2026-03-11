@@ -125,14 +125,14 @@ def sn_get_arvr_from_tput(sn: NetworkStruct, TN: np.ndarray,
                         totalTput = np.sum(TN[refstat, list(inchain)]) if len(inchain) > 0 else 0
 
                         # Set throughput for hit/miss classes
-                        # Note: hitclass/missclass contain 0-indexed class indices
-                        # Values > 0 are valid class indices; 0 or negative means no class
+                        # Note: hitclass/missclass contain 0-indexed class indices.
+                        # `-1` means "no class"; class `0` is valid.
                         for origClass in range(len(hitclass)):
                             hc = int(hitclass[origClass])
                             mc = int(missclass[origClass])
-                            if hc > 0 and hc < R:
+                            if hc >= 0 and hc < R:
                                 TN_stateful[sf, hc] = totalTput * actualhitprob[origClass]
-                            if mc > 0 and mc < R:
+                            if mc >= 0 and mc < R:
                                 TN_stateful[sf, mc] = totalTput * actualmissprob[origClass]
         elif ist >= 0 and ist < TN.shape[0]:
             # This stateful node is a station - use station throughput

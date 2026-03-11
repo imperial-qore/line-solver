@@ -116,10 +116,14 @@ switch event
                     else
                         % if all busy, expand output states for all possible choices of job class to preempt
                         psentry = ones(size(space_buf_k_reord,1),1); % probability scaling due to preemption
+                        hasDiffPrio = ~all(sn.classprio == sn.classprio(1));
                         for classpreempt = 1:R
-                            % For priority variants, only higher-priority (lower class number) jobs can preempt
-                            if (sn.sched(ist) == SchedStrategy.FCFSPRPRIO || sn.sched(ist) == SchedStrategy.FCFSPIPRIO || sn.sched(ist) == SchedStrategy.LCFSPRPRIO || sn.sched(ist) == SchedStrategy.LCFSPIPRIO)
-                                if class >= classpreempt % arriving job has same or lower priority, cannot preempt
+                            % For priority variants (or LCFSPR/FCFSPR when priorities differ),
+                            % only higher-priority jobs can preempt
+                            isPrioSched = (sn.sched(ist) == SchedStrategy.FCFSPRPRIO || sn.sched(ist) == SchedStrategy.FCFSPIPRIO || sn.sched(ist) == SchedStrategy.LCFSPRPRIO || sn.sched(ist) == SchedStrategy.LCFSPIPRIO);
+                            isPrioAware = isPrioSched || (hasDiffPrio && (sn.sched(ist) == SchedStrategy.LCFSPR || sn.sched(ist) == SchedStrategy.FCFSPR));
+                            if isPrioAware
+                                if sn.classprio(class) >= sn.classprio(classpreempt) % arriving job has same or lower priority, cannot preempt
                                     continue;
                                 end
                             end
@@ -574,7 +578,17 @@ switch event
                                 space_srv(en,Ks(class)+k) = space_srv(en,Ks(class)+k) - 1; % record departure
                                 rate(en) = mu{ist}{class}(k)*(phi{ist}{class}(k)).*kir(:,class,k); % assume active
                                 en_wbuf = en & ni>S(ist); %states with jobs in buffer
-                                [~, colfirstnnz] = max( space_buf(en_wbuf,:) ~=0, [], 2 ); % find first nnz column
+                                hasDiffPrio_dep = ~all(sn.classprio == sn.classprio(1));
+                                if hasDiffPrio_dep && any(en_wbuf)
+                                    % Priority-aware: find leftmost (most recent) among highest-priority class
+                                    priogroup = [Inf, sn.classprio]; % Inf for empty (0) positions
+                                    space_buf_groupg = arrayfun(@(x) priogroup(1+x), space_buf);
+                                    start_classprio = min(space_buf_groupg(en_wbuf,:),[],2);
+                                    isrowmax = space_buf_groupg(en_wbuf,:) == repmat(start_classprio, 1, size(space_buf_groupg,2));
+                                    [~,colfirstnnz] = max(isrowmax,[],2); % leftmost = most recent in LCFS buffer
+                                else
+                                    [~, colfirstnnz] = max( space_buf(en_wbuf,:) ~=0, [], 2 ); % find first nnz column
+                                end
                                 start_svc_class = space_buf(en_wbuf,colfirstnnz); % job entering service
                                 space_buf(en_wbuf,colfirstnnz)=0;
                                 if isempty(start_svc_class)
@@ -609,7 +623,20 @@ switch event
                                 space_srv(en,Ks(class)+k) = space_srv(en,Ks(class)+k) - 1; % record departure
                                 rate(en) = mu{ist}{class}(k)*(phi{ist}{class}(k)).*kir(:,class,k); % assume active
                                 en_wbuf = en & ni>S(ist); %states with jobs in buffer
-                                [~, colfirstnnz] = max( space_buf(en_wbuf,:) ~=0, [], 2 ); % find first nnz column
+                                hasDiffPrio_dep = ~all(sn.classprio == sn.classprio(1));
+                                if hasDiffPrio_dep && any(en_wbuf)
+                                    % Priority-aware: find leftmost among highest-priority class in buffer
+                                    priogroup = [Inf, sn.classprio];
+                                    class_cols = 1:2:size(space_buf,2);
+                                    space_buf_class = space_buf(:, class_cols);
+                                    space_buf_class_groupg = arrayfun(@(x) priogroup(1+x), space_buf_class);
+                                    start_classprio = min(space_buf_class_groupg(en_wbuf,:),[],2);
+                                    isrowmax = space_buf_class_groupg(en_wbuf,:) == repmat(start_classprio, 1, size(space_buf_class_groupg,2));
+                                    [~,leftmostClassPos] = max(isrowmax,[],2);
+                                    colfirstnnz = 2*leftmostClassPos - 1;
+                                else
+                                    [~, colfirstnnz] = max( space_buf(en_wbuf,:) ~=0, [], 2 ); % find first nnz column
+                                end
                                 start_svc_class = space_buf(en_wbuf,colfirstnnz); % job entering service
                                 kentry = space_buf(en_wbuf,colfirstnnz+1); % entry phase of job resuming service
                                 space_buf(en_wbuf,colfirstnnz)=0;% zero popped job
@@ -749,12 +776,17 @@ switch event
                                 en_wbuf = en & ni>S(ist); %states with jobs in buffer
                                 en_wobuf = ~en_wbuf;
                                 priogroup = [Inf,sn.classprio]; % Inf for empty positions (lower value = higher priority)
-                                space_buf_groupg = arrayfun(@(x) priogroup(1+x), space_buf);
-                                start_classprio = min(space_buf_groupg(en_wbuf,:),[],2); % min finds highest priority
-                                isrowmax = space_buf_groupg == repmat(start_classprio, 1, size(space_buf_groupg,2));
-                                % FCFS: Find rightmost (last) position for highest priority class (longest waiting)
-                                [~,rightmostMaxPos]=max(fliplr(isrowmax),[],2);
-                                rightmostMaxPos = size(space_buf_groupg,2) - rightmostMaxPos + 1;
+                                % Buffer stores [class,phase,class,phase,...] pairs;
+                                % only inspect class columns (odd: 1,3,5,...) for priority
+                                class_cols = 1:2:size(space_buf,2);
+                                space_buf_class = space_buf(:, class_cols);
+                                space_buf_class_groupg = arrayfun(@(x) priogroup(1+x), space_buf_class);
+                                start_classprio = min(space_buf_class_groupg(en_wbuf,:),[],2); % min finds highest priority
+                                isrowmax = space_buf_class_groupg == repmat(start_classprio, 1, size(space_buf_class_groupg,2));
+                                % FCFS: Find rightmost (last) class position for highest priority class (longest waiting)
+                                [~,rightmostClassPos]=max(fliplr(isrowmax),[],2);
+                                rightmostClassPos = size(space_buf_class_groupg,2) - rightmostClassPos + 1;
+                                rightmostMaxPos = 2*rightmostClassPos - 1; % convert to buffer column index
                                 start_svc_class = space_buf(en_wbuf, rightmostMaxPos); % job entering service
                                 kentry = space_buf(en_wbuf, rightmostMaxPos+1); % entry phase of job resuming service (preempt-resume)
 
@@ -790,11 +822,16 @@ switch event
                                 en_wbuf = en & ni>S(ist); %states with jobs in buffer
                                 en_wobuf = ~en_wbuf;
                                 priogroup = [Inf,sn.classprio]; % Inf for empty positions (lower value = higher priority)
-                                space_buf_groupg = arrayfun(@(x) priogroup(1+x), space_buf);
-                                start_classprio = min(space_buf_groupg(en_wbuf,:),[],2); % min finds highest priority
-                                isrowmax = space_buf_groupg == repmat(start_classprio, 1, size(space_buf_groupg,2));
-                                % LCFS: Find leftmost (first) position for highest priority class (most recently preempted)
-                                [~,leftmostMaxPos]=max(isrowmax,[],2);
+                                % Buffer stores [class,phase,class,phase,...] pairs;
+                                % only inspect class columns (odd: 1,3,5,...) for priority
+                                class_cols = 1:2:size(space_buf,2);
+                                space_buf_class = space_buf(:, class_cols);
+                                space_buf_class_groupg = arrayfun(@(x) priogroup(1+x), space_buf_class);
+                                start_classprio = min(space_buf_class_groupg(en_wbuf,:),[],2); % min finds highest priority
+                                isrowmax = space_buf_class_groupg == repmat(start_classprio, 1, size(space_buf_class_groupg,2));
+                                % LCFS: Find leftmost (first) class position for highest priority class (most recently preempted)
+                                [~,leftmostClassPos]=max(isrowmax,[],2);
+                                leftmostMaxPos = 2*leftmostClassPos - 1; % convert to buffer column index
                                 start_svc_class = space_buf(en_wbuf, leftmostMaxPos); % job entering service
                                 kentry = space_buf(en_wbuf, leftmostMaxPos+1); % entry phase of job resuming service (preempt-resume)
                                 

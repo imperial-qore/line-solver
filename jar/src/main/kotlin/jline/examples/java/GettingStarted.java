@@ -459,7 +459,7 @@ public class GettingStarted {
         
         System.out.println("M/E/1 departure process analysis:");
         System.out.println("Queue index: " + queueIndex);
-        System.out.println("Number of samples: " + sa.numSamples);
+        System.out.println("Number of samples: " + sa.numEvents);
         System.out.println("Sampling completed using: " + sa.handle);
         
         // Get basic performance metrics for context

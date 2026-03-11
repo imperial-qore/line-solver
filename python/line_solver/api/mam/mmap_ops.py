@@ -568,18 +568,14 @@ def mmap_issym(mmap: List[np.ndarray]) -> bool:
     """
     Check if an MMAP contains symbolic elements.
 
-    In Python/NumPy, we don't have built-in symbolic support like MATLAB,
-    so this always returns False for numpy arrays.
-
     Args:
         mmap: List of matrices [D0, D1, D2, ..., Dm]
 
     Returns:
-        False (symbolic computation not supported in numpy)
+        True if any matrix in the MMAP contains sympy symbolic expressions
     """
-    # NumPy doesn't support symbolic computation natively
-    # This is provided for API compatibility
-    return False
+    from ..mc.ctmc import issym
+    return any(issym(D) for D in mmap)
 
 
 def mmap_isfeasible(mmap: List[np.ndarray], tol: float = None) -> bool:

@@ -1,7 +1,9 @@
 package jline.solvers.auto;
 
+import static jline.io.InputOutputKt.line_debug;
 import static jline.io.InputOutputKt.line_warning;
 
+import jline.GlobalConstants;
 import jline.lang.Network;
 import jline.lang.NetworkStruct;
 import jline.VerboseLevel;
@@ -14,7 +16,7 @@ import jline.solvers.NetworkSolver;
 import jline.solvers.SolverOptions;
 import jline.solvers.SolverResult;
 import jline.solvers.ctmc.SolverCTMC;
-import jline.solvers.des.SolverDES;
+import jline.solvers.ldes.SolverLDES;
 import jline.solvers.env.SolverENV;
 import jline.solvers.fluid.SolverFluid;
 import jline.solvers.jmt.SolverJMT;
@@ -42,7 +44,7 @@ import java.util.Map;
 public class SolverAUTO extends NetworkSolver {
 
     public static final int CANDIDATE_CTMC = 6;
-    public static final int CANDIDATE_DES = 7;
+    public static final int CANDIDATE_LDES = 7;
     public static final int CANDIDATE_FLUID = 3;
     public static final int CANDIDATE_JMT = 4;
     public static final int CANDIDATE_MAM = 2;
@@ -229,9 +231,9 @@ public class SolverAUTO extends NetworkSolver {
         candidates.add(new SolverCTMC(model));
         solverNameToId.put("ctmc", CANDIDATE_CTMC);
 
-        // DES solver integration
-        candidates.add(new SolverDES(model));
-        solverNameToId.put("des", CANDIDATE_DES);
+        // LDES solver integration
+        candidates.add(new SolverLDES(model));
+        solverNameToId.put("ldes", CANDIDATE_LDES);
 
         // Filter candidates by those that support the model
         List<NetworkSolver> supportedCandidates = new ArrayList<NetworkSolver>();
@@ -252,7 +254,13 @@ public class SolverAUTO extends NetworkSolver {
      */
     @Override
     public void runAnalyzer() {
+        // Propagate solver verbose level to global
+        if (this.options != null) {
+            GlobalConstants.Verbose = options.verbose;
+        }
+        line_debug(options.verbose, String.format("AUTO solver starting: selectionMethod=%s", selectionMethod));
         ensureSolverSelected();
+        line_debug(options.verbose, String.format("AUTO: selected solver=%s", selectedSolver.getName()));
 
         // Try the selected solver first by using getAvg() which will trigger runAnalyzer()
         try {
@@ -274,6 +282,7 @@ public class SolverAUTO extends NetworkSolver {
         for (NetworkSolver candidate : candidates) {
             if (candidate != selectedSolver) {
                 try {
+                    line_debug(options.verbose, String.format("AUTO: trying fallback solver=%s", candidate.getName()));
                     if (options.verbose != VerboseLevel.SILENT) {
                         System.out.println("SolverAuto: Trying " + candidate.getName());
                     }
@@ -316,9 +325,11 @@ public class SolverAUTO extends NetworkSolver {
     private void selectSolver() {
         if (autoOptions.forceSolver != null && !autoOptions.forceSolver.isEmpty()) {
             // Force specific solver
+            line_debug(options.verbose, String.format("AUTO: forcing solver=%s", autoOptions.forceSolver));
             selectForcedSolver(autoOptions.forceSolver);
         } else {
             // Automatic selection based on method
+            line_debug(options.verbose, String.format("AUTO: selecting solver using method=%s", selectionMethod));
             switch (selectionMethod) {
                 case METHOD_HEURISTIC:
                 case METHOD_DEFAULT:
@@ -923,23 +934,23 @@ public class SolverAUTO extends NetworkSolver {
 
     // ========== Sampling Methods ==========
 
-    public SampleResult sample(Node node, int numSamples) {
-        Object[] results = delegate("sample", 1, node, numSamples);
+    public SampleResult sample(Node node, int numEvents) {
+        Object[] results = delegate("sample", 1, node, numEvents);
         return (SampleResult) results[0];
     }
 
-    public SampleResult sampleAggr(Node node, int numSamples) {
-        Object[] results = delegate("sampleAggr", 1, node, numSamples);
+    public SampleResult sampleAggr(Node node, int numEvents) {
+        Object[] results = delegate("sampleAggr", 1, node, numEvents);
         return (SampleResult) results[0];
     }
 
-    public SampleResult sampleSys(int numSamples) {
-        Object[] results = delegate("sampleSys", 1, numSamples);
+    public SampleResult sampleSys(int numEvents) {
+        Object[] results = delegate("sampleSys", 1, numEvents);
         return (SampleResult) results[0];
     }
 
-    public SampleResult sampleSysAggr(int numSamples) {
-        Object[] results = delegate("sampleSysAggr", 1, numSamples);
+    public SampleResult sampleSysAggr(int numEvents) {
+        Object[] results = delegate("sampleSysAggr", 1, numEvents);
         return (SampleResult) results[0];
     }
 

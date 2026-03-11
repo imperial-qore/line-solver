@@ -18,13 +18,13 @@ function model = LQN2QN(lqn)
 % - Correctly models BLOCKING semantics (server waits for reply)
 % - Provides per-task queue metrics (queue length, utilization)
 % - Supports multi-tier call chains (A -> B -> C)
-% - Uses DES solver with REPLY signal support (via JAR)
+% - Uses LDES solver with REPLY signal support (via JAR)
 %
 % Example:
 %   lqn = LayeredNetwork('MyLQN');
 %   % ... define LQN model ...
 %   model = LQN2QN(lqn);
-%   SolverJMT(model).getAvgTable()  % or SolverDES via JAR
+%   SolverJMT(model).getAvgTable()  % or SolverLDES via JAR
 %
 % Copyright (c) 2012-2026, Imperial College London
 % All rights reserved.

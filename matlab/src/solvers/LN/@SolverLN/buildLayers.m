@@ -8,6 +8,7 @@ self.arvproc_classes_updmap = cell(lqn.nhosts+lqn.ntasks,1);
 self.thinkt_classes_updmap = cell(lqn.nhosts+lqn.ntasks,1);
 self.actthinkt_classes_updmap = cell(lqn.nhosts+lqn.ntasks,1);
 self.route_prob_updmap = cell(lqn.nhosts+lqn.ntasks,1);
+self.singleReplicaTasks = [];
 
 %% build one subnetwork for every processor
 for hidx = 1:lqn.nhosts

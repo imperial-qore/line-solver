@@ -8,6 +8,7 @@ package jline.examples.java.advanced;
 import jline.VerboseLevel;
 import jline.lang.Network;
 import jline.solvers.NetworkAvgTable;
+import jline.solvers.ldes.SolverLDES;
 import jline.solvers.jmt.JMT;
 import jline.solvers.nc.SolverNC;
 
@@ -197,6 +198,54 @@ public class FCRegionExamples {
         System.out.println("JMT uses discrete-event simulation.");
     }
 
+    /**
+     * Demonstrate linear admission constraints with LDES solver.
+     * Tests three cases: per-class only, global+per-class, and
+     * general weighted cross-class coupling.
+     */
+    public static void fcr_lincon() {
+        System.out.println("=== FCR Linear Admission Constraints (LDES) ===\n");
+
+        double[][] cases_A = {
+            // Case 1: Per-class only (A = I)
+            {1.0, 0.0, 0.0, 1.0},
+            // Case 2: Global + per-class
+            {1.0, 0.0, 0.0, 1.0, 1.0, 1.0},
+            // Case 3: General weighted
+            {2.0, 1.0, 1.0, 3.0}
+        };
+        int[] cases_C = {2, 3, 2};
+        double[][] cases_b = {
+            {3.0, 3.0},
+            {3.0, 3.0, 5.0},
+            {5.0, 7.0}
+        };
+        String[] caseNames = {
+            "Case 1: Per-class only (A=I)",
+            "Case 2: Global + per-class",
+            "Case 3: General weighted"
+        };
+
+        for (int c = 0; c < 3; c++) {
+            System.out.println("\n--- " + caseNames[c] + " ---");
+            int C = cases_C[c];
+            int K = 2;
+            double[][] A = new double[C][K];
+            for (int i = 0; i < C; i++) {
+                for (int j = 0; j < K; j++) {
+                    A[i][j] = cases_A[c][i * K + j];
+                }
+            }
+            double[] b = cases_b[c];
+
+            Network model = FCRegionModel.fcr_lincon(A, b);
+
+            SolverLDES solver = new SolverLDES(model, "seed", 23000, "samples", 500000, "verbose", VerboseLevel.SILENT);
+            NetworkAvgTable avgTable = solver.getAvgTable();
+            System.out.println(avgTable);
+        }
+    }
+
     public static void main(String[] args) {
         fcr_oqnwaitq();
         System.out.println();
@@ -209,5 +258,7 @@ public class FCRegionExamples {
         fcr_constraints();
         System.out.println();
         fcr_lossn();
+        System.out.println();
+        fcr_lincon();
     }
 }

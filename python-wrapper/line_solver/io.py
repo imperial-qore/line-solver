@@ -136,7 +136,7 @@ def LQN2QN(lqn):
         >>> lqn = LayeredNetwork('MyLQN')
         >>> # ... define 2-tier LQN model ...
         >>> model = lqn2qn(lqn)  # Use snake_case alias
-        >>> solver = SolverDES(model)
+        >>> solver = SolverLDES(model)
         >>> results = solver.getAvgTable()
 
         >>> # For 3-tier application
@@ -148,7 +148,7 @@ def LQN2QN(lqn):
 
     Note:
         The converter validates LQN synchronous call chains and automatically
-        aggregates service times. For complex models, use SolverDES or SolverJMT
+        aggregates service times. For complex models, use SolverLDES or SolverJMT
         with the converted model for better accuracy.
 
         See also: example_lqn2qn_basic.py for complete working examples.
@@ -167,3 +167,62 @@ def LQN2QN(lqn):
 
 # Alias for snake_case
 lqn2qn = LQN2QN
+
+
+def QN2LQN(model):
+    """
+    Convert a Queueing Network model to a Layered Queueing Network model.
+
+    This conversion creates an LQN representation of a closed queueing network,
+    mapping stations to processors/tasks/entries/activities and routing to
+    activity precedences (OR-forks). The resulting LQN can be solved by SolverLQNS.
+
+    Mapping:
+    - Each Queue/Delay station becomes a Processor + Task + Entry + Activity
+    - A pseudo host with INF scheduling is created for reference tasks
+    - Reference tasks correspond to chains (closed classes)
+    - Routing probabilities become OR-fork precedences on the reference task
+    - ClassSwitch nodes are mapped to immediate activities
+
+    Supported Features:
+    - Closed queueing networks with multiple chains
+    - Queue and Delay stations with various scheduling disciplines
+    - Class switching via routing matrix
+    - Multiple servers per station
+
+    Limitations:
+    - Open classes are not supported
+    - Fork/Join nodes are not supported in conversion
+    - Only Queue, Delay, and ClassSwitch node types are handled
+
+    Args:
+        model: Network model (queueing network) to convert.
+
+    Returns:
+        LayeredNetwork: Equivalent layered queueing network.
+
+    Examples:
+        >>> from line_solver import *
+        >>> model = Network('CQN')
+        >>> # ... define closed queueing network ...
+        >>> lqn = qn2lqn(model)  # Use snake_case alias
+        >>> solver = SolverLN(lqn)
+        >>> results = solver.getAvgTable()
+
+    Note:
+        Port of MATLAB: matlab/src/io/QN2LQN.m
+    """
+    from .layered import LayeredNetwork
+
+    # Get the underlying Java model object
+    java_model = model.obj if hasattr(model, 'obj') else model
+
+    # Call Java QN2LQN converter
+    java_lqn = jpype.JPackage('jline').io.QN2LQN.convert(java_model)
+
+    # Wrap the result in a Python LayeredNetwork
+    return LayeredNetwork(java_lqn)
+
+
+# Alias for snake_case
+qn2lqn = QN2LQN

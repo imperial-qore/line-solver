@@ -18,8 +18,8 @@ if _native_path not in sys.path:
 
 from line_solver import *
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
+
+def cache_replc_rr():
 
     model = Network('model')
 
@@ -51,6 +51,12 @@ if __name__ == "__main__":
     model.link(P)
 
     # Run multiple solvers
+    return model
+
+
+if __name__ == "__main__":
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+    model = cache_replc_rr()
     solver = np.array([], dtype=object)
     solver = np.append(solver, CTMC(model, keep=False, cutoff=1))
 

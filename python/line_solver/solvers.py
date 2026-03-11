@@ -1101,12 +1101,12 @@ class SolverCTMC(NetworkSolver):
 
         return result
 
-    def sample_sys_aggr(self, num_samples: int = 1000):
+    def sample_sys_aggr(self, num_events: int = 1000):
         """
         Sample system aggregate states (simulation-based).
 
         Args:
-            num_samples: Number of events to sample
+            num_events: Number of events to sample
 
         Returns:
             SampleResult containing event trace
@@ -1144,7 +1144,7 @@ class SolverCTMC(NetworkSolver):
         t = 0.0
         np.random.seed(self.solveropt.seed if hasattr(self.solveropt, 'seed') else 23000)
 
-        for _ in range(num_samples):
+        for _ in range(num_events):
             # Get transition rates from current state
             rates = infGen[current_state, :].copy()
             rates[current_state] = 0  # No self-transitions
@@ -1568,19 +1568,19 @@ class SolverJMT(NetworkSolver):
     default_options = defaultOptions
 
 
-class SolverDES(NetworkSolver):
+class SolverLDES(NetworkSolver):
     """Discrete Event Simulation solver."""
 
     def __init__(self, model, *args, **kwargs):
-        options = SolverOptions(SolverType.DES)
+        options = SolverOptions(SolverType.LDES)
         super().__init__(model, options, *args, **kwargs)
 
-        from .solvers.solver_des import SolverDES
-        self._native_solver = SolverDES(model, **kwargs)
+        from .solvers.solver_ldes import SolverLDES
+        self._native_solver = SolverLDES(model, **kwargs)
 
     @staticmethod
     def defaultOptions():
-        """Get default DES options."""
+        """Get default LDES options."""
         return OptionsDict({
             'samples': 10000,
             'seed': 23000,
@@ -2102,7 +2102,7 @@ FLD = SolverFluid
 Fluid = SolverFluid
 MAM = SolverMAM
 JMT = SolverJMT
-DES = SolverDES
+LDES = SolverLDES
 AUTO = SolverAuto
 QNS = SolverQNS
 LQNS = SolverLQNS
@@ -2121,7 +2121,7 @@ __all__ = [
     'SolverFluid',
     'SolverMAM',
     'SolverJMT',
-    'SolverDES',
+    'SolverLDES',
     'SolverAuto',
     'SolverENV',
     'SolverQNS',
@@ -2157,7 +2157,7 @@ __all__ = [
     'Fluid',
     'MAM',
     'JMT',
-    'DES',
+    'LDES',
     'AUTO',
     'QNS',
     'LQNS',

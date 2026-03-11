@@ -134,18 +134,17 @@ def _poisson_arrivals(lambda_val: float, n: int,
     return result
 
 
-def qsys_mg1k_loss_mgs(lambda_val: float, mu: float, cs: float,
+def qsys_mg1k_loss_mgs(lambda_val: float, mu: float, mu_scv: float,
                        K: int) -> Tuple[float, float]:
     """
     Compute loss probability for M/G/1/K using MacGregor Smith approximation.
 
-    Uses the MacGregor Smith approximation which provides good accuracy
-    for moderate coefficient of variation.
+    Matches MATLAB qsys_mg1k_loss_mgs.m exactly.
 
     Args:
         lambda_val: Arrival rate
         mu: Service rate
-        cs: Coefficient of variation of service time
+        mu_scv: Squared coefficient of variation of service time
         K: Buffer capacity
 
     Returns:
@@ -155,91 +154,91 @@ def qsys_mg1k_loss_mgs(lambda_val: float, mu: float, cs: float,
 
     References:
         Original MATLAB: matlab/src/api/qsys/qsys_mg1k_loss_mgs.m
-        MacGregor Smith, "Queueing with capacity and performance"
+        J. MacGregor Smith, "Optimal Design and Performance Modelling of M/G/1/K Queueing Systems"
     """
     rho = lambda_val / mu
+    s = np.sqrt(mu_scv)
+    sqrt_rho = np.sqrt(rho)
 
-    if rho >= 1:
-        # For rho >= 1, use limiting approximation
-        lossprob = 1.0 - 1.0 / K
-        return lossprob, rho
-
-    # M/M/1/K loss as base
-    lossprob_mm1k, _ = qsys_mm1k_loss(lambda_val, mu, K)
-
-    # Correction factor based on coefficient of variation
-    if abs(cs - 1.0) < 1e-10:
-        lossprob = lossprob_mm1k
-    else:
-        # MacGregor Smith correction
-        # For cs < 1 (more regular), loss decreases
-        # For cs > 1 (more bursty), loss increases
-        correction = 1 + (cs ** 2 - 1) / 2 * (rho / (1 - rho + rho ** K))
-        correction = max(0.1, min(10.0, correction))  # Bound correction
-        lossprob = lossprob_mm1k * correction
-
-    lossprob = min(1.0, max(0.0, lossprob))
+    lossprob_num = rho**((sqrt_rho * s**2 - sqrt_rho + 2 * K) / (2 + sqrt_rho * s**2 - sqrt_rho)) * (rho - 1)
+    lossprob_den = rho**(2 * (1 + sqrt_rho * s**2 - sqrt_rho + K) / (2 + sqrt_rho * s**2 - sqrt_rho)) - 1
+    lossprob = lossprob_num / lossprob_den
 
     return lossprob, rho
 
 
-def qsys_mxm1(lambda_vec: np.ndarray, mu: float,
-              batch_sizes: Optional[np.ndarray] = None
-              ) -> Tuple[float, float, float]:
+def qsys_mxm1(lambda_batch: float, mu: float,
+              E_X_or_batch_sizes, E_X2_or_pmf,
+              mode: Optional[str] = None) -> Tuple[float, float, float, float]:
     """
-    Analyze M^X/M/1 queue (batch arrivals).
+    Analyze MX/M/1 queue with batch arrivals.
 
-    Computes performance metrics for a queue with batch Poisson arrivals
-    and exponential service.
+    Matches MATLAB qsys_mxm1.m exactly.
+
+    Three input formats:
+        1. Moment-based: qsys_mxm1(lambda_batch, mu, E_X, E_X2)
+        2. PMF-based:    qsys_mxm1(lambda_batch, mu, batch_sizes, pmf)
+        3. Variance:     qsys_mxm1(lambda_batch, mu, E_X, Var_X, 'variance')
 
     Args:
-        lambda_vec: Vector of arrival rates for each batch size
-                   (lambda_vec[k] = rate of batches of size k+1)
+        lambda_batch: Batch arrival rate
         mu: Service rate
-        batch_sizes: Optional array of batch sizes (default: 1, 2, 3, ...)
+        E_X_or_batch_sizes: Mean batch size (scalar) or array of batch sizes
+        E_X2_or_pmf: Second moment of batch size, PMF, or variance
+        mode: Optional 'variance' flag for variance-based input
 
     Returns:
-        Tuple of (L, W, rho):
-            L: Mean number in system
-            W: Mean response time
-            rho: Utilization
+        Tuple of (W, Wq, U, Q):
+            W: Mean time in system
+            Wq: Mean waiting time in queue
+            U: Server utilization
+            Q: Mean queue length (including service)
 
     References:
         Original MATLAB: matlab/src/api/qsys/qsys_mxm1.m
     """
-    lambda_vec = np.asarray(lambda_vec, dtype=float).flatten()
-
-    if batch_sizes is None:
-        batch_sizes = np.arange(1, len(lambda_vec) + 1)
-
-    # Total arrival rate of batches
-    lambda_total = np.sum(lambda_vec)
-
-    # Mean batch size
-    if lambda_total > 0:
-        E_X = np.sum(batch_sizes * lambda_vec) / lambda_total
-        E_X2 = np.sum(batch_sizes ** 2 * lambda_vec) / lambda_total
+    if mode is not None and mode.lower() == 'variance':
+        # Format 3: Variance-based
+        E_X = float(E_X_or_batch_sizes)
+        Var_X = float(E_X2_or_pmf)
+        E_X2 = Var_X + E_X**2
+    elif hasattr(E_X_or_batch_sizes, '__len__') and len(np.asarray(E_X_or_batch_sizes).flatten()) > 1:
+        # Format 2: PMF-based
+        batch_sizes = np.asarray(E_X_or_batch_sizes, dtype=float).flatten()
+        pmf = np.asarray(E_X2_or_pmf, dtype=float).flatten()
+        if len(batch_sizes) != len(pmf):
+            raise ValueError("Batch sizes and PMF must have the same length")
+        pmf = pmf / np.sum(pmf)
+        E_X = np.sum(batch_sizes * pmf)
+        E_X2 = np.sum(batch_sizes**2 * pmf)
     else:
-        E_X = 1.0
-        E_X2 = 1.0
+        # Format 1: Moment-based (default)
+        E_X = float(E_X_or_batch_sizes)
+        E_X2 = float(E_X2_or_pmf)
 
-    # Effective arrival rate of customers
-    lambda_eff = lambda_total * E_X
+    # Compute effective job arrival rate
+    lambda_eff = lambda_batch * E_X
 
-    # Utilization
+    # Compute utilization
     rho = lambda_eff / mu
 
     if rho >= 1:
-        raise ValueError(f"System is unstable: utilization rho = {rho:.4g} >= 1")
+        raise ValueError(f"System is unstable: rho = {rho:.6f} >= 1")
 
-    # Mean number in system (batch M/M/1 formula)
-    # L = rho + (lambda * E[X^2]) / (2 * mu * (1 - rho))
-    L = rho + (lambda_total * E_X2) / (2 * mu * (1 - rho))
+    # Mean waiting time in queue (MATLAB formula):
+    # Wq = rho/(mu*(1-rho)) + (E[X^2] - E[X])/(2*mu*E[X]*(1-rho))
+    Wq = rho / (mu * (1 - rho)) + (E_X2 - E_X) / (2 * mu * E_X * (1 - rho))
 
-    # Mean response time (Little's law)
-    W = L / lambda_eff
+    # Mean time in system
+    W = Wq + 1 / mu
 
-    return L, W, rho
+    # Server utilization
+    U = rho
+
+    # Mean queue length (Little's Law)
+    Q = lambda_eff * W
+
+    return W, Wq, U, Q
 
 
 __all__ = [

@@ -36,7 +36,11 @@ classdef Join < Station
                     self.dropRule = [];
                     self.numberOfServers = Inf;
                     self.setModel(model);
-                    self.joinOf = fork;
+                    if nargin >= 3 && ~isempty(fork)
+                        self.joinOf = fork;
+                    else
+                        self.joinOf = [];
+                    end
                     model.addNode(self);
                 end
             elseif model.isJavaNative()

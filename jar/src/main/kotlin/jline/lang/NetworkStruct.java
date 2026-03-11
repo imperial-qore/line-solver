@@ -119,6 +119,8 @@ public class NetworkStruct implements Copyable, Cloneable {
     public Matrix regionrule;  // Matrix(F, R) where entry (f,r) is DropStrategy id for class r in region f
     public Matrix regionweight;  // Matrix(F, R) where entry (f,r) is class weight for class r in region f (default 1.0)
     public Matrix regionsz;  // Matrix(F, R) where entry (f,r) is class size/memory for class r in region f (default 1)
+    public MatrixCell regionLinConA;  // CellMatrix(F); get(f) is Matrix(C_f, K) — linear constraint matrix for region f
+    public MatrixCell regionLinConb;  // CellMatrix(F); get(f) is Matrix(C_f, 1) — linear constraint capacity for region f
     public Matrix refclass;
     public Matrix lldscaling;
     public Map<Station, Matrix> ljdscaling;  // Linearized joint-dependent scaling per station

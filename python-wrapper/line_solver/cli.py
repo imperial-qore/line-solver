@@ -36,7 +36,7 @@ from line_solver.layered import LayeredNetwork
 # Valid solver prefixes (for help text)
 VALID_SOLVERS = ['auto', 'line', 'sim', 'exact', 'fast', 'accurate',
                  'mva', 'ctmc', 'fluid', 'jmt', 'nc', 'ssa', 'ln', 'lqns',
-                 'mam', 'des', 'env', 'qns', 'posterior']
+                 'mam', 'ldes', 'env', 'qns', 'posterior']
 
 # Example solver.method combinations
 SOLVER_METHOD_EXAMPLES = [
@@ -49,7 +49,7 @@ SOLVER_METHOD_EXAMPLES = [
 ]
 
 # Solver compatibility with input formats
-JSIM_COMPATIBLE_SOLVERS = ['ctmc', 'fluid', 'jmt', 'mva', 'nc', 'ssa', 'mam', 'des', 'auto']
+JSIM_COMPATIBLE_SOLVERS = ['ctmc', 'fluid', 'jmt', 'mva', 'nc', 'ssa', 'mam', 'ldes', 'auto']
 LQN_COMPATIBLE_SOLVERS = ['ln', 'lqns', 'mva', 'nc', 'env']
 JSIM_FORMATS = ['jsim', 'jsimg', 'jsimw']
 LQN_FORMATS = ['lqnx', 'xml']
@@ -266,7 +266,7 @@ Reward: reward, reward-steady, reward-value (default: all)'''
         type=int,
         default=None,
         metavar='SEED',
-        help='Random seed for stochastic solvers (JMT, SSA, DES)'
+        help='Random seed for stochastic solvers (JMT, SSA, LDES)'
     )
 
     # Verbosity
@@ -299,9 +299,9 @@ Reward: reward, reward-steady, reward-value (default: all)'''
     # Version
     try:
         import line_solver
-        version = getattr(line_solver, '__version__', '3.0.3')
+        version = getattr(line_solver, '__version__', '3.0.4')
     except:
-        version = '3.0.3'
+        version = '3.0.4'
 
     parser.add_argument(
         '-V', '--version',

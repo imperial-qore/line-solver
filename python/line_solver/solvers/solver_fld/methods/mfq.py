@@ -239,14 +239,28 @@ class MFQMethod:
         Returns:
             True if network has exactly one service queue (excluding Source/Sink)
         """
-        if not hasattr(self.sn, 'nstations') or not hasattr(self.sn, 'nodetype'):
+        if not hasattr(self.sn, 'nstations'):
             return False
 
-        # Count only Queue/Delay nodes, not Source/Sink nodes
-        # NodeType: 0=Source, 1=Sink, 2=Queue, 3=Delay, etc.
-        service_stations = sum(1 for nt in self.sn.nodetype if nt in [2, 3])
+        nodetype = getattr(self.sn, 'nodetype', None)
+        if nodetype is None:
+            return int(self.sn.nstations) == 1
 
-        # Must have exactly 1 service station
+        nodetype = np.asarray(nodetype).flatten()
+        if nodetype.size == 0:
+            return int(self.sn.nstations) == 1
+
+        # Some lightweight test doubles only model service stations and omit
+        # Source/Sink nodes entirely. In that case, nstations is the reliable
+        # topology signal.
+        if nodetype.size == int(self.sn.nstations):
+            return int(self.sn.nstations) == 1
+
+        # Count only Queue/Delay nodes, not Source/Sink nodes.
+        service_stations = sum(1 for nt in nodetype if nt in [2, 3])
+        if service_stations == 0:
+            return int(self.sn.nstations) == 1
+
         return service_stations == 1
 
     def solve(self) -> FLDResult:

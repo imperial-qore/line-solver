@@ -293,6 +293,23 @@ for r=1:K
 end
 self.nodes = nodes;
 
+% Refresh sn.routing from outputStrategy for non-station nodes.
+% The initDispatcherJobClasses call above set sn.routing to DISABLED,
+% but setProbRouting has since repopulated outputStrategy for routed classes.
+if ~isempty(self.sn) && isfield(self.sn, 'routing')
+    for ind=1:Ip
+        if ~isa(nodes{ind}, 'Station') && ind <= size(self.sn.routing, 1)
+            for k=1:K
+                if isempty(nodes{ind}.output.outputStrategy{k})
+                    self.sn.routing(ind,k) = RoutingStrategy.DISABLED;
+                else
+                    self.sn.routing(ind,k) = RoutingStrategy.fromText(nodes{ind}.output.outputStrategy{k}{2});
+                end
+            end
+        end
+    end
+end
+
 % check if the probability out of any node sums to >1.0
 pSum = cellsum(P);
 isAboveOne = pSum > 1.0 + GlobalConstants.FineTol;

@@ -19,6 +19,7 @@ end
 Solver.resetRandomGeneratorSeed(options.seed);
 
 sn = getStruct(self); % doesn't need initial state
+line_debug(options, 'QNS: starting (method=%s, multiserver=%s)', options.method, options.config.multiserver);
 
 if (strcmp(options.method,'exact')||strcmp(options.method,'mva')) && ~self.model.hasProductFormSolution
     line_error(mfilename,'The exact method requires the model to have a product-form solution. This model does not have one. You can use Network.hasProductFormSolution() to check before running the solver.');
@@ -46,8 +47,10 @@ end
 if self.model.hasProductFormSolution() || self.model.hasOpenClasses()
     % Use qnsolver directly for product-form networks or open networks
     % (QN2LQN does not support Source/Sink nodes for open networks)
+    line_debug(options, 'QNS: product-form or open model, routing to qns_analyzer');
     [QN,UN,RN,TN,CN,XN,runtime,actualMethod] = solver_qns_analyzer(sn, options);
 else
+    line_debug(options, 'QNS: non-product-form closed model, converting to LQN and using SolverLQNS');
     lqnmodel=QN2LQN(self.model);
     lqn = lqnmodel.getStruct;
     tic;

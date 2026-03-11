@@ -960,12 +960,30 @@ class Processor:
         """Get the speed factor."""
         return self.obj.getSpeedFactor()
 
+    def setQuantum(self, quantum):
+        """Set the time quantum for PS scheduling."""
+        self.obj.setQuantum(float(quantum))
+        return self
+
+    def setReplication(self, replication):
+        """Set the replication factor."""
+        self.obj.setReplication(int(replication))
+        return self
+
+    def setSpeedFactor(self, speedFactor):
+        """Set the speed factor."""
+        self.obj.setSpeedFactor(float(speedFactor))
+        return self
+
     # Snake case aliases
     get_multiplicity = getMultiplicity
     get_replication = getReplication
     get_scheduling = getScheduling
     get_quantum = getQuantum
     get_speed_factor = getSpeedFactor
+    set_quantum = setQuantum
+    set_replication = setReplication
+    set_speed_factor = setSpeedFactor
 
 
 class Task:
@@ -1008,7 +1026,25 @@ class Task:
         """Snake case alias for addPrecedence"""
         return self.addPrecedence(prec)
 
+    def setReplication(self, replication):
+        """Set the replication factor."""
+        self.obj.setReplication(int(replication))
+        return self
+
+    def setFanIn(self, source, value):
+        """Set fan-in from a source task."""
+        self.obj.setFanIn(str(source), int(value))
+        return self
+
+    def setFanOut(self, dest, value):
+        """Set fan-out to a destination task."""
+        self.obj.setFanOut(str(dest), int(value))
+        return self
+
     set_think_time = setThinkTime
+    set_replication = setReplication
+    set_fan_in = setFanIn
+    set_fan_out = setFanOut
 
     # Property getters delegating to Java
     def getMultiplicity(self):

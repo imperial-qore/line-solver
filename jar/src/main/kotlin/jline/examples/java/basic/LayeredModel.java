@@ -567,6 +567,177 @@ public class LayeredModel {
     }
 
     /**
+     * Sock Shop microservice layered network model.
+     * <p>
+     * Features:
+     * - 7 processors: P1 (INF), P2_1 (PS, replication=2), P2_2-P2_3, P3_1-P3_3 (PS)
+     * - 7 tasks: T0 (1000 users, REF), T1-T5 and T6 (FCFS with various thread pools)
+     * - 12 entries, 24 activities with serial precedence
+     * - Processor replication on P2_1 (edge router)
+     * - Fan-in/fan-out for replicated task communication
+     * - Synchronous calls across a multi-tier microservice architecture
+     * - Based on the Sock Shop benchmark (atom2021)
+     *
+     * @return configured Sock Shop layered network model
+     * @throws Exception if model creation fails
+     */
+    public static LayeredNetwork lqn_sockshop() throws Exception {
+        LayeredNetwork model = new LayeredNetwork("sockshop");
+
+        // Processors
+        Processor P1 = new Processor(model, "P1", 1, SchedStrategy.INF);
+        Processor P2_1 = new Processor(model, "P2_1", 1, SchedStrategy.PS);
+        P2_1.setQuantum(0.1);
+        P2_1.setReplication(2);
+        Processor P2_2 = new Processor(model, "P2_2", 1, SchedStrategy.PS);
+        P2_2.setQuantum(0.1);
+        Processor P2_3 = new Processor(model, "P2_3", 1, SchedStrategy.PS);
+        P2_3.setQuantum(0.1);
+        Processor P3_1 = new Processor(model, "P3_1", 1, SchedStrategy.PS);
+        P3_1.setQuantum(0.1);
+        Processor P3_2 = new Processor(model, "P3_2", 1, SchedStrategy.PS);
+        P3_2.setQuantum(0.1);
+        Processor P3_3 = new Processor(model, "P3_3", 1, SchedStrategy.PS);
+        P3_3.setQuantum(0.1);
+
+        // Tasks
+        Task T0 = new Task(model, "T0", 1000, SchedStrategy.REF).on(P1);
+        T0.setThinkTime(Exp.fitMean(7.0));
+        Task T1 = new Task(model, "T1", 24, SchedStrategy.FCFS).on(P2_1);  // edge router
+        T1.setThinkTime(Immediate.getInstance());
+        Task T2 = new Task(model, "T2", 21, SchedStrategy.FCFS).on(P2_2);  // front end
+        T2.setThinkTime(Immediate.getInstance());
+        T2.setFanIn("T1", 1);
+        Task T6 = new Task(model, "T6", 100, SchedStrategy.FCFS).on(P2_3); // cartdb
+        T6.setThinkTime(Immediate.getInstance());
+        T6.setFanIn("T3", 1);
+        Task T3 = new Task(model, "T3", 139, SchedStrategy.FCFS).on(P3_1); // cart
+        T3.setThinkTime(Immediate.getInstance());
+        T3.setFanIn("T2", 1);
+        Task T4 = new Task(model, "T4", 16, SchedStrategy.FCFS).on(P3_2);  // catalog
+        T4.setThinkTime(Immediate.getInstance());
+        T4.setFanIn("T2", 1);
+        Task T5 = new Task(model, "T5", 151, SchedStrategy.FCFS).on(P3_3); // catalogdb
+        T5.setThinkTime(Immediate.getInstance());
+        T5.setFanIn("T4", 1);
+
+        // Entries
+        Entry E0 = new Entry(model, "E0").on(T0);
+        Entry E1 = new Entry(model, "E1").on(T1);
+        Entry E2 = new Entry(model, "E2").on(T2);
+        Entry E3 = new Entry(model, "E3").on(T2);
+        Entry E4 = new Entry(model, "E4").on(T2);
+        Entry E11 = new Entry(model, "E11").on(T6);
+        Entry E5 = new Entry(model, "E5").on(T3);
+        Entry E6 = new Entry(model, "E6").on(T3);
+        Entry E7 = new Entry(model, "E7").on(T3);
+        Entry E8 = new Entry(model, "E8").on(T4);
+        Entry E9 = new Entry(model, "E9").on(T4);
+        Entry E10 = new Entry(model, "E10").on(T5);
+
+        // Activities - T0: reference task
+        Activity AS = new Activity(model, "AS", Exp.fitMean(0.00000005)).on(T0);
+        AS.boundTo(E0);
+        Activity AS0 = new Activity(model, "AS0", Exp.fitMean(0.00000005)).on(T0);
+        AS0.synchCall(E1, 1.0);
+
+        // Activities - T1: edge router
+        Activity AS1 = new Activity(model, "AS1", Exp.fitMean(0.00000005)).on(T1);
+        AS1.boundTo(E1);
+        Activity AS2 = new Activity(model, "AS2", Exp.fitMean(0.0022216)).on(T1);
+        AS2.synchCall(E2, 0.33);
+        AS2.synchCall(E3, 0.17);
+        AS2.synchCall(E4, 0.50);
+        AS2.repliesTo(E1);
+
+        // Activities - T2: front end, Entry E2
+        Activity AH1 = new Activity(model, "AH1", Exp.fitMean(0.00000005)).on(T2);
+        AH1.boundTo(E2);
+        Activity AH2 = new Activity(model, "AH2", Exp.fitMean(0.0021319)).on(T2);
+        AH2.repliesTo(E2);
+
+        // Activities - T2: front end, Entry E3
+        Activity AH3 = new Activity(model, "AH3", Exp.fitMean(0.00000005)).on(T2);
+        AH3.boundTo(E3);
+        Activity AH4 = new Activity(model, "AH4", Exp.fitMean(0.0037561)).on(T2);
+        AH4.synchCall(E8, 0.5);
+        AH4.synchCall(E9, 0.5);
+        AH4.repliesTo(E3);
+
+        // Activities - T2: front end, Entry E4
+        Activity AH5 = new Activity(model, "AH5", Exp.fitMean(0.00000005)).on(T2);
+        AH5.boundTo(E4);
+        Activity AH6 = new Activity(model, "AH6", Exp.fitMean(0.0051774)).on(T2);
+        AH6.synchCall(E5, 0.33);
+        AH6.synchCall(E6, 0.33);
+        AH6.synchCall(E7, 0.33);
+        AH6.repliesTo(E4);
+
+        // Activities - T6: cartdb
+        Activity AH15 = new Activity(model, "AH15", Exp.fitMean(0.0000000005)).on(T6);
+        AH15.boundTo(E11);
+        Activity AH16 = new Activity(model, "AH16", Exp.fitMean(0.0040355)).on(T6);
+        AH16.repliesTo(E11);
+
+        // Activities - T3: cart, Entry E5
+        Activity AH7 = new Activity(model, "AH7", Exp.fitMean(0.0000000005)).on(T3);
+        AH7.boundTo(E5);
+        Activity AH8 = new Activity(model, "AH8", Exp.fitMean(0.0029469)).on(T3);
+        AH8.synchCall(E11, 1);
+        AH8.repliesTo(E5);
+
+        // Activities - T3: cart, Entry E6
+        Activity AH9 = new Activity(model, "AH9", Exp.fitMean(0.0000000005)).on(T3);
+        AH9.boundTo(E6);
+        Activity AH10 = new Activity(model, "AH10", Exp.fitMean(0.012323)).on(T3);
+        AH10.synchCall(E11, 1);
+        AH10.repliesTo(E6);
+
+        // Activities - T3: cart, Entry E7
+        Activity AH11 = new Activity(model, "AH11", Exp.fitMean(0.0000000005)).on(T3);
+        AH11.boundTo(E7);
+        Activity AH12 = new Activity(model, "AH12", Exp.fitMean(0.0033488)).on(T3);
+        AH12.synchCall(E11, 1);
+        AH12.repliesTo(E7);
+
+        // Activities - T4: catalog, Entry E8
+        Activity AS3 = new Activity(model, "AS3", Exp.fitMean(0.0000000005)).on(T4);
+        AS3.boundTo(E8);
+        Activity AS4 = new Activity(model, "AS4", Exp.fitMean(0.0034925)).on(T4);
+        AS4.synchCall(E10, 1);
+        AS4.repliesTo(E8);
+
+        // Activities - T4: catalog, Entry E9
+        Activity AS5 = new Activity(model, "AS5", Exp.fitMean(0.0000000005)).on(T4);
+        AS5.boundTo(E9);
+        Activity AS6 = new Activity(model, "AS6", Exp.fitMean(0.0030162)).on(T4);
+        AS6.synchCall(E10, 1);
+        AS6.repliesTo(E9);
+
+        // Activities - T5: catalogdb
+        Activity AH13 = new Activity(model, "AH13", Exp.fitMean(0.0000000005)).on(T5);
+        AH13.boundTo(E10);
+        Activity AH14 = new Activity(model, "AH14", Exp.fitMean(0.0032434)).on(T5);
+        AH14.repliesTo(E10);
+
+        // Serial precedence
+        T0.addPrecedence(ActivityPrecedence.Serial("AS", "AS0"));
+        T1.addPrecedence(ActivityPrecedence.Serial("AS1", "AS2"));
+        T2.addPrecedence(ActivityPrecedence.Serial("AH1", "AH2"));
+        T2.addPrecedence(ActivityPrecedence.Serial("AH3", "AH4"));
+        T2.addPrecedence(ActivityPrecedence.Serial("AH5", "AH6"));
+        T6.addPrecedence(ActivityPrecedence.Serial("AH15", "AH16"));
+        T3.addPrecedence(ActivityPrecedence.Serial("AH7", "AH8"));
+        T3.addPrecedence(ActivityPrecedence.Serial("AH9", "AH10"));
+        T3.addPrecedence(ActivityPrecedence.Serial("AH11", "AH12"));
+        T4.addPrecedence(ActivityPrecedence.Serial("AS3", "AS4"));
+        T4.addPrecedence(ActivityPrecedence.Serial("AS5", "AS6"));
+        T5.addPrecedence(ActivityPrecedence.Serial("AH13", "AH14"));
+
+        return model;
+    }
+
+    /**
      * Main method for testing and demonstrating layered model examples.
      *
      * <p>Currently contains commented code for various testing scenarios:

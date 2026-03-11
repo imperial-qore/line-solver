@@ -1233,6 +1233,49 @@ class BMAP(MarkedMAP):
         return BMAP(jpype.JPackage('jline').lang.processes.BMAP.rand(int(order), int(max_batch_size)))
 
 
+class DMAP(Markovian):
+    """Discrete-time Markovian Arrival Process (DMAP)."""
+
+    def __init__(self, *args):
+        super().__init__()
+        if len(args) == 1:
+            self.obj = args[0]
+        elif len(args) == 2:
+            D0, D1 = args
+            D0j = jlineMatrixFromArray(np.atleast_2d(np.array(D0, dtype=float)))
+            D1j = jlineMatrixFromArray(np.atleast_2d(np.array(D1, dtype=float)))
+            self.obj = jpype.JPackage('jline').lang.processes.DMAP(D0j, D1j)
+        else:
+            raise ValueError("DMAP requires D0 and D1 matrices or a Java object")
+
+    def getMean(self):
+        return float(self.obj.getMean())
+
+    def getVar(self):
+        return float(self.obj.getVar())
+
+    def getD0(self):
+        return np.array(self.obj.D(0).toArray2D())
+
+    def getD1(self):
+        return np.array(self.obj.D(1).toArray2D())
+
+    def getNumberOfPhases(self):
+        return int(self.obj.getNumberOfPhases())
+
+    def setMean(self, new_mean):
+        self.obj.setMean(float(new_mean))
+        return self
+
+    def sample(self, n=1):
+        return np.array(self.obj.sample(int(n)))
+
+    @staticmethod
+    def rand(order=2):
+        java_obj = jpype.JPackage('jline').lang.processes.DMAP.rand(int(order))
+        return DMAP(java_obj)
+
+
 class ME(Markovian):
     """
     Matrix Exponential (ME) distribution.
@@ -1812,11 +1855,8 @@ class MMDP2(MMDP):
             r1 = args[1]
             sigma0 = args[2]
             sigma1 = args[3]
-            # Build Q and R matrices for 2-state case
-            Q = [[-sigma0, sigma0], [sigma1, -sigma1]]
-            R = [[r0, 0], [0, r1]]
-            self.obj = jpype.JPackage('jline').lang.processes.MMDP(
-                jlineMatrixFromArray(Q), jlineMatrixFromArray(R))
+            self.obj = jpype.JPackage('jline').lang.processes.MMDP2(
+                float(r0), float(r1), float(sigma0), float(sigma1))
         else:
             raise ValueError("MMDP2 requires 1 argument (Java object) or 4 arguments (r0, r1, sigma0, sigma1)")
 
@@ -2104,6 +2144,304 @@ class Replayer(Distribution):
     fit_exp = fitExp
     fit_coxian = fitCoxian
     fit_aph = fitAPH
+
+
+class Trace(Replayer):
+    """
+    Empirical time series from a trace, alias for Replayer.
+
+    Trace extends Replayer with additional moment computation from
+    empirical CDF data. This class is the Python wrapper equivalent
+    of MATLAB's Trace class.
+
+    Args:
+        data: Either a filename (str) or a Java Trace/Replayer object
+
+    Example:
+        >>> trace = Trace('arrival_times.txt')
+        >>> mean = trace.getMean()
+        >>> m1, m2, m3, scv, skew = trace.getMoments()
+    """
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        # If the parent created a Replayer object, replace with Trace object
+        if len(args) == 1 and isinstance(args[0], str):
+            self.obj = jpype.JPackage('jline').lang.processes.Trace(args[0])
+
+    def getMoments(self):
+        """
+        Compute moments from the trace data.
+
+        For CDF-type trace data (two columns: CDF values and x values),
+        computes the first three moments, SCV, and skewness using
+        trapezoidal integration over the empirical CDF.
+
+        Returns:
+            tuple: (m1, m2, m3, scv, skew) where
+                - m1: first moment (mean)
+                - m2: second moment
+                - m3: third moment
+                - scv: squared coefficient of variation
+                - skew: skewness
+        """
+        if self._data is not None and len(self._data) > 0:
+            # If data is loaded as array with two columns
+            data = np.array(self._data)
+            if data.ndim == 2 and data.shape[1] >= 2:
+                m1 = 0.0
+                m2 = 0.0
+                m3 = 0.0
+                for i in range(len(data) - 1):
+                    x = (data[i + 1, 1] - data[i, 1]) / 2.0 + data[i, 1]
+                    dx = data[i + 1, 0] - data[i, 0]
+                    m1 += x * dx
+                    m2 += x * x * dx
+                    m3 += x * x * x * dx
+                scv = (m2 / (m1 * m1)) - 1.0 if m1 != 0 else float('inf')
+                variance = m2 - m1 * m1
+                if variance > 0:
+                    skew = (m3 - 3 * m1 * variance - m1 ** 3) / (variance ** 1.5)
+                else:
+                    skew = 0.0
+                return (m1, m2, m3, scv, skew)
+        # Fallback to Java implementation
+        mean = self.getMean()
+        scv = self.getSCV()
+        var = scv * mean * mean
+        m2 = var + mean * mean
+        return (mean, m2, 0.0, scv, 0.0)
+
+    get_moments = getMoments
+
+
+class MarkedMMPP(Markovian):
+    """
+    Marked Markov-Modulated Poisson Process (M3PP).
+
+    A point process where inter-arrival times are modulated by a
+    Markov chain and arrivals are marked/tagged with different types.
+    All D_k matrices (k >= 1) must be diagonal for MMPP.
+
+    Uses the M3A representation format:
+    D = {D0, D1, D11, D12, ..., D1K}
+
+    Args:
+        D: List of matrices or Java MatrixCell, or existing Java MarkedMMPP object
+        K: Number of marking types (optional if D is Java object)
+
+    Example:
+        >>> # Create a 2-type MarkedMMPP
+        >>> D0 = [[-3, 1], [1, -3]]
+        >>> D11 = [[1, 0], [0, 1]]
+        >>> D12 = [[1, 0], [0, 1]]
+        >>> mmpp = MarkedMMPP([D0, D11, D12], 2)
+    """
+
+    def __init__(self, *args):
+        super().__init__()
+        if len(args) == 1:
+            # Existing Java object
+            self.obj = args[0]
+        elif len(args) == 2:
+            D = args[0]
+            K = int(args[1])
+            # Convert Python list/arrays to Java MatrixCell
+            from jline.util.matrix import MatrixCell
+            mc = MatrixCell()
+            for i, mat in enumerate(D):
+                mc.set(i, jlineMatrixFromArray(mat))
+            self.obj = jpype.JPackage('jline').lang.processes.MarkedMMPP(mc)
+        else:
+            raise ValueError("MarkedMMPP requires either 1 or 2 arguments")
+
+    def getNumberOfPhases(self):
+        """Get the number of phases in the modulating CTMC."""
+        return int(self.obj.getNumberOfPhases())
+
+    def getNumberOfTypes(self):
+        """Get the number of marking types."""
+        return int(self.obj.getNumberOfTypes())
+
+    def getMean(self):
+        """Get mean inter-arrival time."""
+        return float(self.obj.getMean())
+
+    def getSCV(self):
+        """Get squared coefficient of variation."""
+        return float(self.obj.getSCV())
+
+    def getSkewness(self):
+        """Get skewness."""
+        return float(self.obj.getSkewness())
+
+    def getVar(self):
+        """Get variance."""
+        return float(self.obj.getVar())
+
+    def getRate(self):
+        """Get arrival rate (1/mean)."""
+        return float(self.obj.getRate())
+
+    def evalCDF(self, t):
+        """Evaluate CDF at time t."""
+        return float(self.obj.evalCDF(t))
+
+    def evalLST(self, s):
+        """Evaluate the Laplace-Stieltjes transform at s."""
+        return float(self.obj.evalLST(s))
+
+    def normalize(self):
+        """Normalize so D0+sum(Di) forms a proper generator."""
+        self.obj.normalize()
+        return self
+
+    def toTimeReversed(self):
+        """Get the time-reversed MarkedMMPP."""
+        return MarkedMMPP(self.obj.toTimeReversed())
+
+    def sample(self, n=1):
+        """
+        Generate random samples.
+
+        Args:
+            n (int): Number of samples
+
+        Returns:
+            numpy.ndarray: Array of inter-arrival times
+        """
+        return np.array(self.obj.sample(int(n)))
+
+    # Snake_case aliases
+    get_number_of_phases = getNumberOfPhases
+    get_number_of_types = getNumberOfTypes
+    get_mean = getMean
+    get_scv = getSCV
+    get_skewness = getSkewness
+    get_var = getVar
+    get_rate = getRate
+    eval_cdf = evalCDF
+    eval_lst = evalLST
+    to_time_reversed = toTimeReversed
+
+    @staticmethod
+    def rand(order=2, nclasses=2):
+        """
+        Create a random MarkedMMPP.
+
+        Args:
+            order (int): Number of phases. Default is 2.
+            nclasses (int): Number of marking types. Default is 2.
+
+        Returns:
+            MarkedMMPP: A randomly generated MarkedMMPP
+        """
+        return MarkedMMPP(jpype.JPackage('jline').lang.processes.MarkedMMPP.rand(
+            int(order), int(nclasses)))
+
+
+class EmpiricalCDF(Distribution):
+    """
+    Empirical CDF for a distribution.
+
+    Represents a distribution defined by its empirical cumulative distribution
+    function. Data is stored as a matrix with columns [CDF_values, x_values].
+
+    Args:
+        xdata: Either a data matrix (Nx2 with [CDF, x] columns), or x values
+        cdfdata: CDF values (optional, if xdata contains only x values)
+
+    Example:
+        >>> cdf_vals = [0.0, 0.25, 0.5, 0.75, 1.0]
+        >>> x_vals = [0.0, 1.0, 2.0, 3.0, 4.0]
+        >>> ecdf = EmpiricalCDF(cdf_vals, x_vals)
+        >>> mean = ecdf.getMean()
+    """
+
+    def __init__(self, *args):
+        super().__init__()
+        if len(args) == 1:
+            if hasattr(args[0], 'getMean'):
+                # Existing Java object
+                self.obj = args[0]
+            else:
+                # Data matrix
+                xdata = jlineMatrixFromArray(np.array(args[0]))
+                self.obj = jpype.JPackage('jline').lang.processes.EmpiricalCDF(xdata)
+        elif len(args) == 2:
+            cdfdata = jlineMatrixFromArray(np.array(args[0]).reshape(-1, 1))
+            xdata = jlineMatrixFromArray(np.array(args[1]).reshape(-1, 1))
+            self.obj = jpype.JPackage('jline').lang.processes.EmpiricalCDF(cdfdata, xdata)
+        else:
+            raise ValueError("EmpiricalCDF requires 1 or 2 arguments")
+
+    def getMean(self):
+        """Get distribution mean."""
+        return float(self.obj.getMean())
+
+    def getSCV(self):
+        """Get squared coefficient of variation."""
+        return float(self.obj.getSCV())
+
+    def getVar(self):
+        """Get distribution variance."""
+        mean = self.getMean()
+        scv = self.getSCV()
+        return scv * mean * mean
+
+    def getSkewness(self):
+        """Get distribution skewness."""
+        return float(self.obj.getSkewness())
+
+    def getMoments(self):
+        """
+        Get the first three moments, SCV, and skewness.
+
+        Returns:
+            tuple: (m1, m2, m3, scv, skewness)
+        """
+        moments = self.obj.getMoments()
+        return tuple(float(moments[i]) for i in range(5))
+
+    def evalCDF(self, t):
+        """Evaluate the cumulative distribution function at t."""
+        return float(self.obj.evalCDF(t))
+
+    def evalLST(self, s):
+        """Evaluate the Laplace-Stieltjes transform at s."""
+        return float(self.obj.evalLST(s))
+
+    def sample(self, n=1):
+        """
+        Generate random samples from the empirical distribution.
+
+        Args:
+            n (int): Number of samples
+
+        Returns:
+            numpy.ndarray: Array of samples
+        """
+        import jline.util.RandomManager as rm
+        return np.array(self.obj.sample(int(n), rm.getThreadRandomAsRandom()))
+
+    def getData(self):
+        """
+        Get the empirical data matrix.
+
+        Returns:
+            numpy.ndarray: Nx2 matrix with [CDF, x] columns
+        """
+        return jlineMatrixToArray(self.obj.getData())
+
+    # Snake_case aliases
+    get_mean = getMean
+    get_scv = getSCV
+    get_var = getVar
+    get_skewness = getSkewness
+    get_moments = getMoments
+    eval_cdf = evalCDF
+    eval_lst = evalLST
+    get_data = getData
 
 
 class Uniform(ContinuousDistribution):

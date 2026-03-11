@@ -3,6 +3,7 @@ package jline.util.matrix;
 import org.apache.commons.math3.complex.Complex;
 import org.junit.jupiter.api.Test;
 
+import static jline.TestTools.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -10,7 +11,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class MatrixUtilsCoverageTest {
 
-    private static final double TOL = 1e-6;
 
     // ========== ComplexMatrix ==========
 
@@ -26,29 +26,29 @@ public class MatrixUtilsCoverageTest {
         // Test set/get with Complex values
         cm.set(0, 0, new Complex(1.0, 2.0));
         Complex val = cm.get(0, 0);
-        assertEquals(1.0, val.getReal(), TOL);
-        assertEquals(2.0, val.getImaginary(), TOL);
+        assertEquals(1.0, val.getReal(), LOOSE_FINE_TOL);
+        assertEquals(2.0, val.getImaginary(), LOOSE_FINE_TOL);
 
         // Test set/get with double (real only)
         cm.set(1, 1, 5.0);
-        assertEquals(5.0, cm.get(1, 1).getReal(), TOL);
-        assertEquals(0.0, cm.get(1, 1).getImaginary(), TOL);
+        assertEquals(5.0, cm.get(1, 1).getReal(), LOOSE_FINE_TOL);
+        assertEquals(0.0, cm.get(1, 1).getImaginary(), LOOSE_FINE_TOL);
 
         // Test copy
         ComplexMatrix copy = cm.copy();
         assertNotNull(copy);
-        assertEquals(cm.get(0, 0).getReal(), copy.get(0, 0).getReal(), TOL);
+        assertEquals(cm.get(0, 0).getReal(), copy.get(0, 0).getReal(), LOOSE_FINE_TOL);
 
         // Test zero
         cm.zero();
-        assertEquals(0.0, cm.get(0, 0).getReal(), TOL);
+        assertEquals(0.0, cm.get(0, 0).getReal(), LOOSE_FINE_TOL);
 
         // Test scale
         ComplexMatrix cm2 = new ComplexMatrix(2, 2);
         cm2.set(0, 0, new Complex(2.0, 1.0));
         cm2.scale(2.0);
-        assertEquals(4.0, cm2.get(0, 0).getReal(), TOL);
-        assertEquals(2.0, cm2.get(0, 0).getImaginary(), TOL);
+        assertEquals(4.0, cm2.get(0, 0).getReal(), LOOSE_FINE_TOL);
+        assertEquals(2.0, cm2.get(0, 0).getImaginary(), LOOSE_FINE_TOL);
 
         // Test sumRows
         ComplexMatrix cm3 = new ComplexMatrix(2, 2);
@@ -62,8 +62,8 @@ public class MatrixUtilsCoverageTest {
         Matrix realMatrix = new Matrix(2, 2);
         realMatrix.set(0, 0, 3.0);
         ComplexMatrix fromReal = new ComplexMatrix(realMatrix);
-        assertEquals(3.0, fromReal.get(0, 0).getReal(), TOL);
-        assertEquals(0.0, fromReal.get(0, 0).getImaginary(), TOL);
+        assertEquals(3.0, fromReal.get(0, 0).getReal(), LOOSE_FINE_TOL);
+        assertEquals(0.0, fromReal.get(0, 0).getImaginary(), LOOSE_FINE_TOL);
 
         // Test determinant for simple 2x2 matrix
         ComplexMatrix det2x2 = new ComplexMatrix(2, 2);
@@ -73,7 +73,7 @@ public class MatrixUtilsCoverageTest {
         det2x2.set(1, 1, new Complex(4.0, 0.0));
         Complex det = det2x2.det();
         // det = 1*4 - 2*3 = -2
-        assertEquals(-2.0, det.getReal(), TOL);
+        assertEquals(-2.0, det.getReal(), LOOSE_FINE_TOL);
     }
 
     // ========== RowView ==========
@@ -96,13 +96,13 @@ public class MatrixUtilsCoverageTest {
         assertEquals(2, row0.getNonZeroCount());
 
         // Check non-zero values
-        assertEquals(1.0, row0.get(0), TOL);
-        assertEquals(0.0, row0.get(1), TOL);  // zero element
-        assertEquals(3.0, row0.get(2), TOL);
+        assertEquals(1.0, row0.get(0), LOOSE_FINE_TOL);
+        assertEquals(0.0, row0.get(1), LOOSE_FINE_TOL);  // zero element
+        assertEquals(3.0, row0.get(2), LOOSE_FINE_TOL);
 
         // Test getNonZeroCol and getNonZeroValue
         assertEquals(0, row0.getNonZeroCol(0));
-        assertEquals(1.0, row0.getNonZeroValue(0), TOL);
+        assertEquals(1.0, row0.getNonZeroValue(0), LOOSE_FINE_TOL);
 
         // Test dot product
         Matrix colVec = new Matrix(4, 1);
@@ -111,7 +111,7 @@ public class MatrixUtilsCoverageTest {
         colVec.set(2, 0, 1.0);
         colVec.set(3, 0, 1.0);
         double dotResult = row0.dotProduct(colVec);
-        assertEquals(4.0, dotResult, TOL);  // 1*1 + 0*1 + 3*1 + 0*1 = 4
+        assertEquals(4.0, dotResult, LOOSE_FINE_TOL);  // 1*1 + 0*1 + 3*1 + 0*1 = 4
 
         // Test empty row
         RowView emptyRow = m.getRowView(1);
@@ -139,13 +139,13 @@ public class MatrixUtilsCoverageTest {
         assertEquals(2, col0.getNonZeroCount());
 
         // Check values
-        assertEquals(1.0, col0.get(0), TOL);
-        assertEquals(0.0, col0.get(1), TOL);  // zero element
-        assertEquals(3.0, col0.get(2), TOL);
+        assertEquals(1.0, col0.get(0), LOOSE_FINE_TOL);
+        assertEquals(0.0, col0.get(1), LOOSE_FINE_TOL);  // zero element
+        assertEquals(3.0, col0.get(2), LOOSE_FINE_TOL);
 
         // Test getNonZeroRow and getNonZeroValue
         assertEquals(0, col0.getNonZeroRow(0));
-        assertEquals(1.0, col0.getNonZeroValue(0), TOL);
+        assertEquals(1.0, col0.getNonZeroValue(0), LOOSE_FINE_TOL);
 
         // Test column with single non-zero
         ColumnView col1 = m.getColumnView(1);
@@ -169,15 +169,15 @@ public class MatrixUtilsCoverageTest {
         dense.set(0, 0, 1.0);
         dense.set(1, 1, 2.0);
         dense.set(2, 2, 3.0);
-        assertEquals(1.0, dense.get(0, 0), TOL);
-        assertEquals(2.0, dense.get(1, 1), TOL);
-        assertEquals(3.0, dense.get(2, 2), TOL);
-        assertEquals(0.0, dense.get(0, 1), TOL);  // check zero
+        assertEquals(1.0, dense.get(0, 0), LOOSE_FINE_TOL);
+        assertEquals(2.0, dense.get(1, 1), LOOSE_FINE_TOL);
+        assertEquals(3.0, dense.get(2, 2), LOOSE_FINE_TOL);
+        assertEquals(0.0, dense.get(0, 1), LOOSE_FINE_TOL);  // check zero
 
         // Test copy functionality
         BaseMatrix denseCopy = dense.copy();
         assertNotNull(denseCopy);
-        assertEquals(dense.get(0, 0), denseCopy.get(0, 0), TOL);
+        assertEquals(dense.get(0, 0), denseCopy.get(0, 0), LOOSE_FINE_TOL);
 
         // Test toString
         String str = dense.toString();

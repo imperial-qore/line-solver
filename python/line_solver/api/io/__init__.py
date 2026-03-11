@@ -4,7 +4,6 @@ LINE I/O and Model Transformation Module.
 This module provides input/output operations and model transformation utilities
 for the LINE solver, including:
 - Logging and output utilities (line_warning, line_error, line_printf, line_debug)
-- XML import/export (NetworkXMLIO)
 - JMT import/export (jmt2line, jsim2line, jmva2line, qn2jsimg)
 - JMT viewers (jsimg_view, jsimw_view, jmva_view)
 - Code generation (qn2python, line2python, qn2java, lqn2java, line2java)
@@ -17,7 +16,7 @@ Port from:
 Example usage:
     from line_solver.api.io import (
         line_warning, line_printf, line_verbosity, VerboseLevel,
-        NetworkXMLIO, qn2python, qn2java,
+        qn2python, qn2java,
         ModelAdapter, aggregate_chains, mmt, ht,
         jmt2line, qn2jsimg, jsimg_view
     )
@@ -28,9 +27,6 @@ Example usage:
     # Print messages
     line_printf("Processing model...\\n")
     line_warning("my_function", "This is a warning: %s", "details")
-
-    # Export model to XML
-    NetworkXMLIO.export_to_xml(model, 'model.xml')
 
     # Generate Python code from model
     code = qn2python(model, 'my_model')
@@ -61,16 +57,6 @@ from .logging import (
     get_logger,
 )
 
-# XML I/O
-from .xml_io import (
-    NetworkXMLIO,
-    NetworkXMLInfo,
-    export_to_xml,
-    import_from_xml,
-    validate_xml,
-    get_xml_info,
-)
-
 # JMT I/O
 from .jmt_io import (
     JSIMGInfo,
@@ -86,6 +72,8 @@ from .viewers import (
     jsimg_view,
     jsimw_view,
     jmva_view,
+    get_line_viewer_path,
+    line_viewer_view,
 )
 
 # Code generation
@@ -161,6 +149,8 @@ __all__ = [
     'jsimg_view',
     'jsimw_view',
     'jmva_view',
+    'get_line_viewer_path',
+    'line_viewer_view',
     # Code generation
     'qn2python',
     'line2python',

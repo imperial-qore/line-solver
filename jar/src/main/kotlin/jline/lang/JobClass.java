@@ -308,9 +308,12 @@ public class JobClass extends NetworkElement implements Serializable {
             throw new IllegalArgumentException("Invalid impatience type. Use ImpatienceType.RENEGING or ImpatienceType.BALKING.");
         }
 
-        // Only RENEGING is currently supported
+        // BALKING through setPatience is not supported - use setBalking() with BalkingStrategy instead
         if (impatienceType == ImpatienceType.BALKING) {
-            throw new UnsupportedOperationException("BALKING impatience type is not yet supported. Use ImpatienceType.RENEGING.");
+            throw new UnsupportedOperationException(
+                "BALKING is not supported via setPatience (timer-based). " +
+                "Use setBalking(BalkingStrategy, thresholds) for state-based balking, " +
+                "or use ImpatienceType.RENEGING for timer-based abandonment.");
         }
 
         // Validate distribution type

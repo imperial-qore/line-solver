@@ -10,8 +10,8 @@ This example demonstrates:
 
 from line_solver import *
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
+
+def fj_threebranches():
 
     model = Network('model')
 
@@ -58,6 +58,12 @@ if __name__ == "__main__":
     P.set(jobclass2, jobclass2, join, delay, 1.0)
 
     model.link(P)
+    return model
+
+
+if __name__ == '__main__':
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+    model = fj_threebranches()
 
     solver = MVA(model)
     print(f'SOLVER: {solver.get_name()}')

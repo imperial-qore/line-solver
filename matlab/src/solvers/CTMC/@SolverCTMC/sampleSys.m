@@ -1,4 +1,4 @@
-function tranSysState = sampleSys(self, numSamples)
+function tranSysState = sampleSys(self, numEvents)
 % TRANSYSSTATE = SAMPLESYS(NUMSAMPLES)
 options = self.getOptions;
 options.force = true;
@@ -23,7 +23,7 @@ D0 = infGen-D1;
 MMAP = mmap_normalize([{D0},{D1},eventFilt(:)']);
 
 % now sampel the MMAP
-[sjt,event,~,~,sts] = mmap_sample(MMAP,numSamples, pi0);
+[sjt,event,~,~,sts] = mmap_sample(MMAP,numEvents, pi0);
 
 sn = self.getStruct;
 tranSysState = struct();

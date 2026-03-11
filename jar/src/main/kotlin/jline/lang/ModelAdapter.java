@@ -626,7 +626,8 @@ public class ModelAdapter {
             return null;
         }
         nonfjmodel.setAllowReplace(true);
-        Map<JobClass, Map<JobClass, Matrix>> P = nonfjmodel.getStruct(false).rtorig;
+        NetworkStruct copySn = nonfjmodel.getStruct(false);
+        Map<JobClass, Map<JobClass, Matrix>> P = copySn.rtorig;
         // Capture original nodes AFTER getStruct() (which may add ClassSwitch nodes) but BEFORE resetNetwork
         // This ensures originalNodes indices match the routing matrix P indices
         List<Node> originalNodes = new ArrayList<>(nonfjmodel.getNodes());
@@ -649,11 +650,13 @@ public class ModelAdapter {
 
         // Replace each fork with a router
         for (int f : forkIndexes) {
+            // Read output strategies from the original model's Fork (matching MATLAB: model.nodes{f}).
+            // Use index comparison for JobClass (not identity) to handle deserialized objects.
+            List<OutputStrategy> forkOutputStrategies = model.getNodes().get(f).getOutputStrategies();
             for (JobClass r : P.keySet()) {
-                List<OutputStrategy> outputStrategies = nonfjmodel.getNodes().get(f).getOutputStrategies();
                 int parallelBranches = 0;
-                for (OutputStrategy o : outputStrategies) {
-                    if (o.getJobClass() == r && o.getDestination() != null) {
+                for (OutputStrategy o : forkOutputStrategies) {
+                    if (o.getJobClass().getIndex() == r.getIndex() && o.getDestination() != null) {
                         parallelBranches++;
                     }
                 }
@@ -663,6 +666,17 @@ public class ModelAdapter {
                         Matrix Prs = P.get(r).get(s);
                         for (int j = 0; j < Prs.getNumCols(); j++) {
                             Prs.set(f, j, Prs.get(f, j) / parallelBranches);
+                        }
+                    }
+                } else {
+                    // Non-forked class: clear Fork row in P.
+                    // P comes from rtorig which includes Forker's default RAND routing
+                    // for all classes. MATLAB's P comes from getLinkedRoutingMatrix which
+                    // has 0 for classes without explicit routing at Fork. Clear to match.
+                    for (JobClass s : P.get(r).keySet()) {
+                        Matrix Prs = P.get(r).get(s);
+                        for (int j = 0; j < Prs.getNumCols(); j++) {
+                            Prs.set(f, j, 0.0);
                         }
                     }
                 }
@@ -966,12 +980,15 @@ public class ModelAdapter {
         // connections from original classes. CS nodes created by link() for
         // cross-class routing also get default RAND for aux classes. Override
         // all non-PROB routing for aux classes to DISABLED.
+        // NOTE: Must search by class index, not list position, because the
+        // outputStrategies list can have multiple entries per class (PROB routing
+        // to multiple destinations), which shifts positions for later classes.
         for (int nd = 0; nd < nonfjmodel.getNodes().size(); nd++) {
             List<OutputStrategy> os = nonfjmodel.getNodes().get(nd).getOutputStrategies();
             for (int ci : allAuxClassIndices) {
-                if (ci < os.size()) {
-                    if (os.get(ci).getRoutingStrategy() != RoutingStrategy.PROB) {
-                        os.get(ci).setRoutingStrategy(RoutingStrategy.DISABLED);
+                for (OutputStrategy o : os) {
+                    if (o.getJobClass().getIndex() - 1 == ci && o.getRoutingStrategy() != RoutingStrategy.PROB) {
+                        o.setRoutingStrategy(RoutingStrategy.DISABLED);
                     }
                 }
             }

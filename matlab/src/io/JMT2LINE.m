@@ -7,7 +7,6 @@ function model = JMT2LINE(filename,modelName)
 [~,~,fext] = fileparts(filename);
 switch fext
     case '.jmva'
-        line_error(mfilename,'JMVA files not yet supported.');
         if nargin<2
             model = JMVA2LINE(filename);
         else

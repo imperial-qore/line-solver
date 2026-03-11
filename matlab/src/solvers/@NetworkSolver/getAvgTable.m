@@ -16,7 +16,7 @@ end
 [confintEnabled, ~] = Solver.parseConfInt(self.options.confint);
 hasCI = confintEnabled && self.hasResults && isfield(self.result, 'Avg') && isfield(self.result.Avg, 'QCI');
 
-if strcmp(self.options.lang,'java') && ~strcmp(self.name,'SolverDES')
+if strcmp(self.options.lang,'java') && ~strcmp(self.name,'SolverLDES')
     sn = self.model.getStruct;
     M = sn.nstations;
     R = sn.nclasses;

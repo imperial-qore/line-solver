@@ -119,47 +119,13 @@ classdef JLINE
                             jReplacestrat = jline.lang.constant.ReplacementStrategy.FIFO;
                     end
                     T{t} = jline.lang.layered.CacheTask(model, sn.names{tidx}, sn.nitems(tidx), sn.itemcap{tidx}, jReplacestrat, sn_mult_tidx);
+                elseif sn.isfunction(tidx)
+                    % FunctionTask (has setupTime/delayOffTime)
+                    jSchedStrategy = JLINE.to_jline_sched_strategy(sn.sched(tidx));
+                    T{t} = jline.lang.layered.FunctionTask(model, sn.names{tidx}, sn_mult_tidx, jSchedStrategy);
                 else
-                    switch sn.sched(tidx)
-                        case SchedStrategy.REF
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.REF);
-                        case SchedStrategy.INF
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.INF);
-                        case SchedStrategy.FCFS
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.FCFS);
-                        case SchedStrategy.LCFS
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.LCFS);
-                        case SchedStrategy.SIRO
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.SIRO);
-                        case SchedStrategy.SJF
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.SJF);
-                        case SchedStrategy.LJF
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.LJF);
-                        case SchedStrategy.PS
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.PS);
-                        case SchedStrategy.DPS
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.DPS);
-                        case SchedStrategy.GPS
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.GPS);
-                        case SchedStrategy.SEPT
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.SEPT);
-                        case SchedStrategy.LEPT
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.LEPT);
-                        case {SchedStrategy.HOL, SchedStrategy.FCFSPRIO}
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.FCFSPRIO);
-                        case SchedStrategy.FORK
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.FORK);
-                        case SchedStrategy.EXT
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.EXT);
-                        case SchedStrategy.LCFSPR
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.LCFSPR);
-                        case SchedStrategy.PSPRIO % todo
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.PSPRIO);
-                        case SchedStrategy.DPSPRIO % todo
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.DPSPRIO);
-                        case SchedStrategy.GPSPRIO % todo
-                            T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jline.lang.constant.SchedStrategy.GPSPRIO);
-                    end
+                    jSchedStrategy = JLINE.to_jline_sched_strategy(sn.sched(tidx));
+                    T{t} = jline.lang.layered.Task(model, sn.names{tidx}, sn_mult_tidx, jSchedStrategy);
                 end
                 T{t}.on(P{sn.parent(tidx)});
                 if sn.repl(tidx)~=1
@@ -200,6 +166,14 @@ classdef JLINE
                         otherwise
                             line_error(mfilename,sprintf('JLINE conversion does not support the %s distribution for task think time yet.',char(sn.think_type(tidx))));
                     end
+                end
+                % Setup time
+                if sn.isfunction(tidx) && ~isnan(sn.setuptime_mean(tidx)) && sn.setuptime_mean(tidx) > 1e-8
+                    T{t}.setSetupTime(sn.setuptime_mean(tidx));
+                end
+                % Delay-off time
+                if sn.isfunction(tidx) && ~isnan(sn.delayofftime_mean(tidx)) && sn.delayofftime_mean(tidx) > 1e-8
+                    T{t}.setDelayOffTime(sn.delayofftime_mean(tidx));
                 end
             end
             %% entries
@@ -669,7 +643,7 @@ classdef JLINE
             elseif isa(line_dist, 'Weibull')
                 jdist = jline.lang.processes.Weibull(line_dist.getParam(1).paramValue, line_dist.getParam(2).paramValue);
             elseif isa(line_dist, 'Zipf')
-                jdist = jline.lang.processes.Zipf(line_dist.getParam(3).paramValue, line_dist.getParam(2).paramValue);
+                jdist = jline.lang.processes.Zipf(line_dist.getParam(3).paramValue, line_dist.getParam(4).paramValue);
             elseif isa(line_dist, 'Immediate')
                 jdist = jline.lang.processes.Immediate();
             elseif isempty(line_dist) || isa(line_dist, 'Disabled')
@@ -679,6 +653,15 @@ classdef JLINE
                 jdist = jline.lang.processes.Replayer(line_dist.params{1}.paramValue);
             elseif isa(line_dist, 'Trace')
                 jdist = jline.lang.processes.Trace(line_dist.params{1}.paramValue);
+            elseif isa(line_dist, 'Prior')
+                % Convert Prior: each alternative is a distribution
+                dists = line_dist.getParam(1).paramValue;
+                probs = line_dist.getParam(2).paramValue;
+                jdists = java.util.ArrayList();
+                for k = 1:length(dists)
+                    jdists.add(JLINE.from_line_distribution(dists{k}));
+                end
+                jdist = jline.lang.processes.Prior(jdists, probs);
             else
                 line_error(mfilename,'Distribution not supported by JLINE.');
             end
@@ -690,7 +673,7 @@ classdef JLINE
             elseif isa(jdist, 'jline.lang.processes.Det')
                 matlab_dist = Det(jdist.getParam(1).getValue);
             elseif isa(jdist, 'jline.lang.processes.Erlang')
-                matlab_dist = Erlang(jdist.getRate(),jdist.getNumberOfPhases());
+                matlab_dist = Erlang(jdist.getParam(1).getValue(),jdist.getNumberOfPhases());
             elseif isa(jdist, 'jline.lang.processes.Gamma')
                 matlab_dist = Gamma(jdist.getParam(1).getValue,jdist.getParam(2).getValue);
             elseif isa(jdist, 'jline.lang.processes.HyperExp')
@@ -703,20 +686,18 @@ classdef JLINE
                 matlab_dist = Uniform(jdist.getParam(1).getValue,jdist.getParam(2).getValue);
             elseif isa(jdist, 'jline.lang.processes.Weibull')
                 matlab_dist = Weibull(jdist.getParam(1).getValue,jdist.getParam(2).getValue);
+            elseif isa(jdist, 'jline.lang.processes.MAP')
+                D0 = JLINE.from_jline_matrix(jdist.D(0));
+                D1 = JLINE.from_jline_matrix(jdist.D(1));
+                matlab_dist = MAP({D0, D1});
             elseif isa(jdist, 'jline.lang.processes.APH')
-                jalpha = jdist.getParam(1).getValue;
-                alpha = zeros(1, jalpha.length);
-                for i = 1:jalpha.length
-                    alpha(i) = jalpha.get(i-1);
-                end
-                matlab_dist = APH(alpha, JLINE.from_jline_matrix(jdist.getParam(2).getValue));
+                alpha = JLINE.from_jline_matrix(jdist.getInitProb());
+                T = JLINE.from_jline_matrix(jdist.getSubgenerator());
+                matlab_dist = APH(alpha(:)', T);
             elseif isa(jdist, 'jline.lang.processes.PH')
-                jalpha = jdist.getParam(1).getValue;
-                alpha = zeros(1, jalpha.length);
-                for i = 1:jalpha.length
-                    alpha(i) = jalpha.get(i-1);
-                end
-                matlab_dist = PH(alpha, JLINE.from_jline_matrix(jdist.getParam(2).getValue));
+                alpha = JLINE.from_jline_matrix(jdist.getInitProb());
+                T = JLINE.from_jline_matrix(jdist.getSubgenerator());
+                matlab_dist = PH(alpha(:)', T);
             elseif isa(jdist, 'jline.lang.processes.Coxian')
                 if jdist.getNumberOfPhases == 2
                     matlab_dist = Coxian([jdist.getParam(1).getValue.get(0), jdist.getParam(1).getValue.get(1)], [jdist.getParam(2).getValue.get(0),1]);
@@ -733,10 +714,36 @@ classdef JLINE
                     end
                     matlab_dist = Coxian(mu, phi);
                 end
+            elseif isa(jdist, 'jline.lang.processes.Zipf')
+                matlab_dist = Zipf(jdist.getParam(3).getValue, jdist.getParam(4).getValue);
+            elseif isa(jdist, 'jline.lang.processes.DiscreteSampler')
+                jpMat = jdist.getParam(1).getValue;
+                jxMat = jdist.getParam(2).getValue;
+                p = zeros(1, jpMat.length);
+                x = zeros(1, jxMat.length);
+                for i = 1:jpMat.length
+                    p(i) = jpMat.get(i-1);
+                end
+                for i = 1:jxMat.length
+                    x(i) = jxMat.get(i-1);
+                end
+                matlab_dist = DiscreteSampler(p, x);
             elseif isa(jdist, 'jline.lang.processes.Immediate')
                 matlab_dist = Immediate();
             elseif isa(jdist, 'jline.lang.processes.Disabled')
                 matlab_dist = Disabled();
+            elseif isa(jdist, 'jline.lang.processes.MMPP2')
+                matlab_dist = MMPP2(jdist.getParam(1).getValue, jdist.getParam(2).getValue, jdist.getParam(3).getValue, jdist.getParam(4).getValue);
+            elseif isa(jdist, 'jline.lang.processes.Prior')
+                % Convert Prior from JAR to MATLAB
+                jdists = jdist.getDistributions();
+                nalt = jdists.size();
+                dists = cell(1, nalt);
+                for k = 1:nalt
+                    dists{k} = JLINE.from_jline_distribution(jdists.get(k-1));
+                end
+                probs = jdist.getProbabilities();
+                matlab_dist = Prior(dists, probs);
             else
                 line_error(mfilename,'Distribution not supported by JLINE.');
             end
@@ -802,14 +809,15 @@ classdef JLINE
         end
 
         function set_line_service(jline_node, line_node, job_classes, line_classes)
-            if (isa(line_node,'Sink')) || isa(line_node, 'ClassSwitch')
+            if (isa(line_node,'Sink')) || isa(line_node, 'ClassSwitch') || isa(line_node, 'Fork') || isa(line_node, 'Join') || isa(line_node, 'Place') || isa(line_node, 'Transition') || isa(line_node, 'Cache')
                 return;
             end
             for n = 1:job_classes.size()
                 if (isa(line_node, 'Queue') || isa(line_node, 'Delay'))
                     jdist = jline_node.getServiceProcess(job_classes.get(n-1));
                     matlab_dist = JLINE.from_jline_distribution(jdist);
-                    line_node.setService(line_classes{n}, matlab_dist);
+                    weight = jline_node.getSchedStrategyPar(job_classes.get(n-1));
+                    line_node.setService(line_classes{n}, matlab_dist, weight);
                 elseif (isa(line_node, 'Source'))
                     jdist = jline_node.getArrivalProcess(job_classes.get(n-1));
                     matlab_dist = JLINE.from_jline_distribution(jdist);
@@ -1015,8 +1023,36 @@ classdef JLINE
                         node_object = Queue(model, jline_node.getName.toCharArray', SchedStrategy.FB);
                     case 'LRPT'
                         node_object = Queue(model, jline_node.getName.toCharArray', SchedStrategy.LRPT);
+                    case 'PSPRIO'
+                        node_object = Queue(model, jline_node.getName.toCharArray', SchedStrategy.PSPRIO);
+                    case 'DPSPRIO'
+                        node_object = Queue(model, jline_node.getName.toCharArray', SchedStrategy.DPSPRIO);
+                    case 'GPSPRIO'
+                        node_object = Queue(model, jline_node.getName.toCharArray', SchedStrategy.GPSPRIO);
+                    case 'LCFSPI'
+                        node_object = Queue(model, jline_node.getName.toCharArray', SchedStrategy.LCFSPI);
+                    case 'LCFSPRIO'
+                        node_object = Queue(model, jline_node.getName.toCharArray', SchedStrategy.LCFSPRIO);
+                    case 'LCFSPRPRIO'
+                        node_object = Queue(model, jline_node.getName.toCharArray', SchedStrategy.LCFSPRPRIO);
+                    case 'LCFSPIPRIO'
+                        node_object = Queue(model, jline_node.getName.toCharArray', SchedStrategy.LCFSPIPRIO);
+                    case 'FCFSPR'
+                        node_object = Queue(model, jline_node.getName.toCharArray', SchedStrategy.FCFSPR);
+                    case 'FCFSPI'
+                        node_object = Queue(model, jline_node.getName.toCharArray', SchedStrategy.FCFSPI);
+                    case 'FCFSPRPRIO'
+                        node_object = Queue(model, jline_node.getName.toCharArray', SchedStrategy.FCFSPRPRIO);
+                    case 'FCFSPIPRIO'
+                        node_object = Queue(model, jline_node.getName.toCharArray', SchedStrategy.FCFSPIPRIO);
+                    case 'POLLING'
+                        node_object = Queue(model, jline_node.getName.toCharArray', SchedStrategy.POLLING);
                 end
                 node_object.setNumberOfServers(jline_node.getNumberOfServers);
+                cap = jline_node.getCap();
+                if cap < intmax && cap > 0
+                    node_object.setCapacity(cap);
+                end
                 if ~isempty(JLINE.from_jline_matrix(jline_node.getLimitedLoadDependence))
                     node_object.setLoadDependence(JLINE.from_jline_matrix(jline_node.getLimitedLoadDependence));
                 end
@@ -1035,6 +1071,31 @@ classdef JLINE
                     end
                 end
                 node_object = ClassSwitch(model, jline_node.getName.toCharArray', csMatrix);
+            elseif isa(jline_node, 'jline.lang.nodes.Cache')
+                numItems = jline_node.getNumberOfItems();
+                itemLevelCap = JLINE.from_jline_matrix(jline_node.getItemLevelCap());
+                replPolicy = jline_node.getReplacementStrategy();
+                switch char(replPolicy)
+                    case 'LRU'
+                        rp = ReplacementStrategy.LRU;
+                    case 'FIFO'
+                        rp = ReplacementStrategy.FIFO;
+                    case 'RR'
+                        rp = ReplacementStrategy.RR;
+                    otherwise
+                        rp = ReplacementStrategy.LRU;
+                end
+                node_object = Cache(model, jline_node.getName.toCharArray', numItems, itemLevelCap, rp);
+                % hitClass, missClass, and popularity set later in jline_to_line
+            elseif isa(jline_node, 'jline.lang.nodes.Fork')
+                node_object = Fork(model, jline_node.getName.toCharArray');
+                tpl = jline_node.getOutput().tasksPerLink;
+                if tpl > 1
+                    node_object.setTasksPerLink(tpl);
+                end
+            elseif isa(jline_node, 'jline.lang.nodes.Join')
+                node_object = Join(model, jline_node.getName.toCharArray');
+                % joinOf is set later in jline_to_line after all nodes are created
             elseif isa(jline_node, 'jline.lang.nodes.Place')
                 node_object = Place(model, jline_node.getName.toCharArray');
             elseif isa(jline_node, 'jline.lang.nodes.Transition')
@@ -1164,7 +1225,14 @@ classdef JLINE
                             case RoutingStrategy.RAND
                                 jnodes.get(jnode_idx).setRouting(jclasses.get(k-1),jline.lang.constant.RoutingStrategy.RAND);
                                 outlinks_i=find(connections(i,:));
-                                if ~useLinkMethod
+                                if useLinkMethod
+                                    % Do NOT add routing matrix entries for RAND routing.
+                                    % JAR's getRoutingMatrix computes RAND routing from
+                                    % the connection matrix (matching MATLAB behavior).
+                                    % Adding entries would cause link() to convert RAND
+                                    % to PROB, and for closed classes would incorrectly
+                                    % include Sink connections.
+                                else
                                     for j= outlinks_i(:)'
                                         jdest_idx = matlab2java_node_idx(j);
                                         if jdest_idx >= 0
@@ -1256,19 +1324,27 @@ classdef JLINE
         function model = from_jline_routing(model, jnetwork)
             jnodes = jnetwork.getNodes();
             jclasses = jnetwork.getClasses();
-            %n_classes = jclasses.size();
             n_nodes = jnodes.size();
             network_nodes = model.getNodes;
             network_classes = model.getClasses;
 
+            % Build name-to-MATLAB-node map (JAR and MATLAB may order nodes differently)
+            node_by_name = containers.Map();
+            for nn = 1:length(network_nodes)
+                node_by_name(network_nodes{nn}.name) = network_nodes{nn};
+            end
+
             connections = JLINE.from_jline_matrix(jnetwork.getConnectionMatrix());
             [row,col] = find(connections);
             for i=1:length(row)
-                model.addLink(network_nodes{row(i)},network_nodes{col(i)});
+                from_name = char(jnodes.get(row(i)-1).getName());
+                to_name = char(jnodes.get(col(i)-1).getName());
+                model.addLink(node_by_name(from_name), node_by_name(to_name));
             end
 
             for n = 1 : n_nodes
                 jnode = jnodes.get(n-1);
+                cur_node = node_by_name(char(jnode.getName()));
                 output_strategies = jnode.getOutputStrategies();
                 n_strategies = output_strategies.size();
                 for m = 1 : n_strategies
@@ -1277,11 +1353,20 @@ classdef JLINE
                     routing_strat_classidx = output_strat.getJobClass.getIndex();
                     switch char(routing_strat)
                         case 'RAND'
-                            network_nodes{n}.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.RAND);
+                            cur_node.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.RAND);
                         case 'RROBIN'
-                            network_nodes{n}.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.RROBIN);
+                            cur_node.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.RROBIN);
+                        case 'WRROBIN'
+                            dest = output_strat.getDestination();
+                            if ~isempty(dest)
+                                dest_name = char(dest.getName());
+                                if node_by_name.isKey(dest_name)
+                                    weight = output_strat.getProbability();
+                                    cur_node.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.WRROBIN, node_by_name(dest_name), weight);
+                                end
+                            end
                         case 'DISABLED'
-                            network_nodes{n}.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.RROBIN);
+                            cur_node.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.DISABLED);
                     end
                 end
             end
@@ -1293,7 +1378,21 @@ classdef JLINE
             jclasses = jnetwork.getClasses();
             n_classes = jclasses.size();
             n_nodes = jnodes.size();
+            network_nodes = model.getNodes;
 
+            % Build JAR-to-MATLAB node index mapping (node orders may differ)
+            jar2ml = zeros(1, n_nodes);
+            for jj = 1:n_nodes
+                jar_name = char(jnodes.get(jj-1).getName());
+                for mm = 1:length(network_nodes)
+                    if strcmp(network_nodes{mm}.name, jar_name)
+                        jar2ml(jj) = mm;
+                        break;
+                    end
+                end
+            end
+
+            hasDestinations = false;
             for n = 1 : n_nodes
                 jnode = jnodes.get(n-1);
                 output_strategies = jnode.getOutputStrategies();
@@ -1302,8 +1401,9 @@ classdef JLINE
                     output_strat = output_strategies.get(m-1);
                     dest = output_strat.getDestination();
                     if~isempty(dest) % disabled strategy
-                        in_idx = jnetwork.getNodeIndex(jnode)+1;
-                        out_idx = jnetwork.getNodeIndex(dest)+1;
+                        hasDestinations = true;
+                        in_idx = jar2ml(jnetwork.getNodeIndex(jnode)+1);
+                        out_idx = jar2ml(jnetwork.getNodeIndex(dest)+1);
                         if n_classes == 1
                             P{1}(in_idx,out_idx) = output_strat.getProbability();
                         else
@@ -1314,7 +1414,71 @@ classdef JLINE
                     end
                 end
             end
+
+            % If no OutputStrategy entries had destinations (e.g., model
+            % loaded from JSON via LineModelIO.load), fall back to rtorig
+            if ~hasDestinations
+                sn = jnetwork.getStruct;
+                if ~isempty(sn.rtorig)
+                    % rtorig is station-indexed (no permutation needed —
+                    % station ordering matches between JAR and MATLAB)
+                    for r = 1:n_classes
+                        for s = 1:n_classes
+                            rtMat = JLINE.from_jline_matrix(sn.rtorig.get(jclasses.get(r-1)).get(jclasses.get(s-1)));
+                            if ~isempty(rtMat)
+                                P{r,s} = rtMat;
+                            end
+                        end
+                    end
+                end
+            end
+
             model.link(P);
+
+            % Restore non-PROB routing strategies (RROBIN, WRROBIN, etc.)
+            % after link(), which sets all routing to PROB
+            network_nodes = model.getNodes;
+            network_classes = model.getClasses;
+            node_by_name = containers.Map();
+            for nn = 1:length(network_nodes)
+                node_by_name(network_nodes{nn}.name) = network_nodes{nn};
+            end
+            for n = 1 : n_nodes
+                jnode = jnodes.get(n-1);
+                cur_node = node_by_name(char(jnode.getName()));
+                output_strategies = jnode.getOutputStrategies();
+                n_strategies = output_strategies.size();
+                for m = 1 : n_strategies
+                    output_strat = output_strategies.get(m-1);
+                    routing_strat = output_strat.getRoutingStrategy;
+                    routing_strat_classidx = output_strat.getJobClass.getIndex();
+                    switch char(routing_strat)
+                        case 'RROBIN'
+                            cur_node.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.RROBIN);
+                        case 'WRROBIN'
+                            dest = output_strat.getDestination();
+                            if ~isempty(dest)
+                                dest_name = char(dest.getName());
+                                if node_by_name.isKey(dest_name)
+                                    % Clear stale PROB entries before first WRROBIN weight
+                                    classIdx = routing_strat_classidx;
+                                    if length(cur_node.output.outputStrategy) >= classIdx && ...
+                                            length(cur_node.output.outputStrategy{1, classIdx}) >= 3
+                                        curStrat = cur_node.output.outputStrategy{1, classIdx}{2};
+                                        if ~strcmp(curStrat, 'WeightedRoundRobin')
+                                            cur_node.output.outputStrategy{1, classIdx}{3} = {};
+                                        end
+                                    end
+                                    weight = output_strat.getProbability();
+                                    cur_node.setRouting(network_classes{routing_strat_classidx}, RoutingStrategy.WRROBIN, node_by_name(dest_name), weight);
+                                end
+                            end
+                    end
+                end
+            end
+
+            % Invalidate cached struct after modifying routing strategies
+            model.resetStruct();
 
             %Align the sn.rtorig be the same (Assume Java network is
             %created by calling Network.link)
@@ -1462,6 +1626,11 @@ classdef JLINE
                     JLINE.set_csMatrix(line_nodes{n}, jnodes{n}, jclasses);
                 elseif isa(line_nodes{n},"Join")
                     jnodes{n}.initJoinJobClasses();
+                    % Restore RAND routing for all classes, matching ClosedClass/OpenClass
+                    % constructor behavior (initJoinJobClasses sets DISABLED by default)
+                    for r = 1 : sn.nclasses
+                        jnodes{n}.setRouting(jclasses{r}, jline.lang.constant.RoutingStrategy.RAND);
+                    end
                 elseif isa(line_nodes{n},"Cache")
                     for r = 1 : sn.nclasses
                         if length(line_nodes{n}.server.hitClass) >= r && ~isempty(line_nodes{n}.server.hitClass(r))
@@ -1570,6 +1739,12 @@ classdef JLINE
                             jfcr.setDropRule(jclasses{r}, jDropStrategy);
                         end
                     end
+                    % Transfer linear constraints if set
+                    if fcr.hasLinearConstraints()
+                        jA = JLINE.from_line_matrix(fcr.constraintA);
+                        jb = JLINE.from_line_matrix(fcr.constraintB);
+                        jfcr.setLinearConstraints(jA, jb);
+                    end
                 end
             end
 
@@ -1622,11 +1797,79 @@ classdef JLINE
                 end
             end
 
+            % Deferred Fork/Join linking: set joinOf on Join nodes
+            for n = 1 : network_nodes.size
+                jnode = network_nodes.get(n-1);
+                if isa(jnode, 'jline.lang.nodes.Join') && ~isempty(jnode.joinOf)
+                    forkName = char(jnode.joinOf.getName);
+                    for m = 1 : network_nodes.size
+                        if ~isempty(line_nodes{m}) && isa(line_nodes{m}, 'Fork') && strcmp(line_nodes{m}.name, forkName)
+                            line_nodes{n}.joinOf = line_nodes{m};
+                            break;
+                        end
+                    end
+                end
+            end
+
+            % Deferred Cache setup: set hitClass, missClass, popularity
+            for n = 1 : network_nodes.size
+                jnode = network_nodes.get(n-1);
+                if isa(jnode, 'jline.lang.nodes.Cache') && isa(line_nodes{n}, 'Cache')
+                    cacheNode = line_nodes{n};
+                    % hitClass and missClass are stored as index vectors
+                    hitClassVec = JLINE.from_jline_matrix(jnode.getHitClass());
+                    missClassVec = JLINE.from_jline_matrix(jnode.getMissClass());
+                    for r = 1:job_classes.size
+                        hitIdx = hitClassVec(r);
+                        if hitIdx >= 0 && (hitIdx + 1) <= job_classes.size
+                            cacheNode.setHitClass(line_classes{r}, line_classes{hitIdx + 1});
+                        end
+                        missIdx = missClassVec(r);
+                        if missIdx >= 0 && (missIdx + 1) <= job_classes.size
+                            cacheNode.setMissClass(line_classes{r}, line_classes{missIdx + 1});
+                        end
+                    end
+                    % Popularity distributions
+                    for r = 1:job_classes.size
+                        try
+                            popDist = jnode.popularityGet(0, r-1);
+                            if ~isempty(popDist) && popDist.isDiscrete()
+                                matlabDist = JLINE.from_jline_distribution(popDist);
+                                if ~isempty(matlabDist)
+                                    cacheNode.setRead(line_classes{r}, matlabDist);
+                                end
+                            end
+                        catch
+                            % No popularity for this class
+                        end
+                    end
+                end
+            end
+
             for n = 1 : network_nodes.size
                 JLINE.set_line_service(network_nodes.get(n-1), line_nodes{n}, job_classes, line_classes);
             end
 
-            if ~isempty(jnetwork.getStruct.rtorig)
+            % Check for state-dependent routing (RROBIN, WRROBIN, JSQ)
+            % These cannot go through link(P) because it overrides routing strategies
+            hasSDRouting = false;
+            for n = 1 : network_nodes.size
+                jnode = network_nodes.get(n-1);
+                output_strategies = jnode.getOutputStrategies();
+                for m = 1 : output_strategies.size()
+                    rs = char(output_strategies.get(m-1).getRoutingStrategy);
+                    if any(strcmp(rs, {'RROBIN','WRROBIN','JSQ','KCHOICES'}))
+                        hasSDRouting = true;
+                        break;
+                    end
+                end
+                if hasSDRouting; break; end
+            end
+
+            if hasSDRouting
+                % State-dependent routing: use addLink + setRouting
+                model = JLINE.from_jline_routing(model, jnetwork);
+            elseif ~isempty(jnetwork.getStruct.rtorig)
                 % Use link() method
                 model = JLINE.from_jline_links(model, jnetwork);
             else
@@ -2611,9 +2854,21 @@ classdef JLINE
                                 end
                             case 'method'
                                 solverOptions.method = options.method;
-                            case 'config' % SSA specific
+                            case 'config'
                                 if isfield(options.config,'eventcache')
                                     solverOptions.config.eventcache = options.config.eventcache;
+                                end
+                                if isfield(options.config,'fork_join')
+                                    solverOptions.config.fork_join = options.config.fork_join;
+                                end
+                                if isfield(options.config,'highvar')
+                                    solverOptions.config.highvar = options.config.highvar;
+                                end
+                                if isfield(options.config,'multiserver')
+                                    solverOptions.config.multiserver = options.config.multiserver;
+                                end
+                                if isfield(options.config,'np_priority')
+                                    solverOptions.config.np_priority = options.config.np_priority;
                                 end
                             case 'verbose'
                                 switch options.(fn{f})
@@ -2769,65 +3024,68 @@ classdef JLINE
             xvec.sn = network;
         end
 
-        function [des] = SolverDES(network_object, options)
-            % Create DES-specific options object
-            desOptions = jline.solvers.des.DESOptions();
+        function [ldes] = SolverLDES(network_object, options)
+            % Create LDES-specific options object
+            ldesOptions = jline.solvers.ldes.LDESOptions();
             if nargin>1
                 % Copy standard options
-                desOptions.samples = options.samples;
-                desOptions.seed = options.seed;
+                ldesOptions.samples = options.samples;
+                ldesOptions.seed = options.seed;
                 % Parse confint
                 [confintEnabled, confintLevel] = Solver.parseConfInt(options.confint);
                 if confintEnabled
-                    desOptions.confint = confintLevel;
+                    ldesOptions.confint = confintLevel;
                 else
-                    desOptions.confint = 0;
+                    ldesOptions.confint = 0;
                 end
                 % Pass timespan for transient analysis
                 if isfield(options, 'timespan') && length(options.timespan) >= 2
-                    desOptions.timespan = options.timespan;
+                    ldesOptions.timespan = options.timespan;
                 end
-                % Pass DES-specific options if configured
+                % Pass LDES-specific options if configured
                 if isfield(options, 'config')
                     % Transient detection options
                     if isfield(options.config, 'tranfilter')
-                        desOptions.tranfilter = options.config.tranfilter;
+                        ldesOptions.tranfilter = options.config.tranfilter;
                     end
                     if isfield(options.config, 'mserbatch')
-                        desOptions.mserbatch = options.config.mserbatch;
+                        ldesOptions.mserbatch = options.config.mserbatch;
                     end
                     if isfield(options.config, 'warmupfrac')
-                        desOptions.warmupfrac = options.config.warmupfrac;
+                        ldesOptions.warmupfrac = options.config.warmupfrac;
                     end
                     % Confidence interval options
                     if isfield(options.config, 'cimethod')
-                        desOptions.cimethod = options.config.cimethod;
+                        ldesOptions.cimethod = options.config.cimethod;
                     end
                     if isfield(options.config, 'obmoverlap')
-                        desOptions.obmoverlap = options.config.obmoverlap;
+                        ldesOptions.obmoverlap = options.config.obmoverlap;
                     end
                     if isfield(options.config, 'ciminbatch')
-                        desOptions.ciminbatch = options.config.ciminbatch;
+                        ldesOptions.ciminbatch = options.config.ciminbatch;
                     end
                     if isfield(options.config, 'ciminobs')
-                        desOptions.ciminobs = options.config.ciminobs;
+                        ldesOptions.ciminobs = options.config.ciminobs;
+                    end
+                    if isfield(options.config, 'spectralLowFreqFrac')
+                        ldesOptions.spectralLowFreqFrac = options.config.spectralLowFreqFrac;
                     end
                     % Convergence options
                     if isfield(options.config, 'cnvgon')
-                        desOptions.cnvgon = options.config.cnvgon;
+                        ldesOptions.cnvgon = options.config.cnvgon;
                     end
                     if isfield(options.config, 'cnvgtol')
-                        desOptions.cnvgtol = options.config.cnvgtol;
+                        ldesOptions.cnvgtol = options.config.cnvgtol;
                     end
                     if isfield(options.config, 'cnvgbatch')
-                        desOptions.cnvgbatch = options.config.cnvgbatch;
+                        ldesOptions.cnvgbatch = options.config.cnvgbatch;
                     end
                     if isfield(options.config, 'cnvgchk')
-                        desOptions.cnvgchk = options.config.cnvgchk;
+                        ldesOptions.cnvgchk = options.config.cnvgchk;
                     end
                 end
             end
-            des = jline.solvers.des.SolverDES(network_object, desOptions);
+            ldes = jline.solvers.ldes.SolverLDES(network_object, ldesOptions);
         end
 
         function [mva] = SolverMVA(network_object, options)
@@ -2855,7 +3113,7 @@ classdef JLINE
         end
 
         function streamOpts = StreamingOptions(varargin)
-            % STREAMINGOPTIONS Create Java StreamingOptions for SSA/DES stream() method
+            % STREAMINGOPTIONS Create Java StreamingOptions for SSA/LDES stream() method
             %
             % @brief Creates StreamingOptions for streaming simulation metrics
             %
@@ -3061,6 +3319,52 @@ classdef JLINE
             % Call the Java function and convert result to MATLAB double
             jresult = jfun.apply(jmatrix);
             result = double(jresult);
+        end
+
+        function jSched = to_jline_sched_strategy(schedId)
+            % Convert MATLAB SchedStrategy id to jline SchedStrategy enum
+            switch schedId
+                case SchedStrategy.REF
+                    jSched = jline.lang.constant.SchedStrategy.REF;
+                case SchedStrategy.INF
+                    jSched = jline.lang.constant.SchedStrategy.INF;
+                case SchedStrategy.FCFS
+                    jSched = jline.lang.constant.SchedStrategy.FCFS;
+                case SchedStrategy.LCFS
+                    jSched = jline.lang.constant.SchedStrategy.LCFS;
+                case SchedStrategy.SIRO
+                    jSched = jline.lang.constant.SchedStrategy.SIRO;
+                case SchedStrategy.SJF
+                    jSched = jline.lang.constant.SchedStrategy.SJF;
+                case SchedStrategy.LJF
+                    jSched = jline.lang.constant.SchedStrategy.LJF;
+                case SchedStrategy.PS
+                    jSched = jline.lang.constant.SchedStrategy.PS;
+                case SchedStrategy.DPS
+                    jSched = jline.lang.constant.SchedStrategy.DPS;
+                case SchedStrategy.GPS
+                    jSched = jline.lang.constant.SchedStrategy.GPS;
+                case SchedStrategy.SEPT
+                    jSched = jline.lang.constant.SchedStrategy.SEPT;
+                case SchedStrategy.LEPT
+                    jSched = jline.lang.constant.SchedStrategy.LEPT;
+                case {SchedStrategy.HOL, SchedStrategy.FCFSPRIO}
+                    jSched = jline.lang.constant.SchedStrategy.FCFSPRIO;
+                case SchedStrategy.FORK
+                    jSched = jline.lang.constant.SchedStrategy.FORK;
+                case SchedStrategy.EXT
+                    jSched = jline.lang.constant.SchedStrategy.EXT;
+                case SchedStrategy.LCFSPR
+                    jSched = jline.lang.constant.SchedStrategy.LCFSPR;
+                case SchedStrategy.PSPRIO
+                    jSched = jline.lang.constant.SchedStrategy.PSPRIO;
+                case SchedStrategy.DPSPRIO
+                    jSched = jline.lang.constant.SchedStrategy.DPSPRIO;
+                case SchedStrategy.GPSPRIO
+                    jSched = jline.lang.constant.SchedStrategy.GPSPRIO;
+                otherwise
+                    jSched = jline.lang.constant.SchedStrategy.FCFS;
+            end
         end
 
     end

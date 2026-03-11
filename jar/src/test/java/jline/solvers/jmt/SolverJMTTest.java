@@ -106,7 +106,6 @@ public class SolverJMTTest extends SolverJMTTestFixtures {
 
 
     @Test
-    //@Disabled("getProbAggr()")
     public void testGetProbAggr_SimpleClosedModel() {
         // Create a simple closed network model
         Network model = new Network("TestModel");
@@ -604,7 +603,7 @@ public class SolverJMTTest extends SolverJMTTestFixtures {
                     if (lambdaParam.getAttribute("name").equals("lambda")) {
                         String lambdaValue = lambdaParam.getElementsByTagName("value").item(0).getTextContent();
                         double lambda = Double.parseDouble(lambdaValue);
-                        assertEquals(0.3, lambda, 1e-6, "Lambda should be 0.3");
+                        assertEquals(0.3, lambda, LOOSE_FINE_TOL, "Lambda should be 0.3");
                     }
                 }
             }
@@ -669,7 +668,7 @@ public class SolverJMTTest extends SolverJMTTestFixtures {
                     if (tParam.getAttribute("name").equals("t")) {
                         String tValue = tParam.getElementsByTagName("value").item(0).getTextContent();
                         double t = Double.parseDouble(tValue);
-                        assertEquals(5.0, t, 1e-6, "Timeout should be 5.0");
+                        assertEquals(5.0, t, LOOSE_FINE_TOL, "Timeout should be 5.0");
                     }
                 }
             }

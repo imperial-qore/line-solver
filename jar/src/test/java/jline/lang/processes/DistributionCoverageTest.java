@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import jline.util.matrix.Matrix;
 import java.util.Random;
 
+import static jline.TestTools.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -12,7 +13,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class DistributionCoverageTest {
 
-    private static final double TOL = 1e-6;
 
     // ========== EmpiricalCDF ==========
 
@@ -108,7 +108,7 @@ public class DistributionCoverageTest {
         assertNotNull(prior);
         assertTrue(prior.getMean() > 0);
         assertEquals(2, prior.getNumAlternatives());
-        assertEquals(0.6, prior.getProbability(0), TOL);
+        assertEquals(0.6, prior.getProbability(0), LOOSE_FINE_TOL);
     }
 
     // ========== Cox2 ==========
@@ -125,7 +125,7 @@ public class DistributionCoverageTest {
         // Test fitting
         Cox2 fitted = Cox2.fitMeanAndSCV(1.0, 2.0);
         assertNotNull(fitted);
-        assertEquals(1.0, fitted.getMean(), 0.1);
+        assertEquals(1.0, fitted.getMean(), VERY_COARSE_TOL);
     }
 
     // ========== Pareto ==========
@@ -136,7 +136,7 @@ public class DistributionCoverageTest {
         Pareto pareto = new Pareto(3.0, 1.0);
 
         assertNotNull(pareto);
-        assertEquals(1.5, pareto.getMean(), TOL); // mean = alpha*k/(alpha-1) = 3*1/2 = 1.5
+        assertEquals(1.5, pareto.getMean(), LOOSE_FINE_TOL); // mean = alpha*k/(alpha-1) = 3*1/2 = 1.5
         assertTrue(pareto.getSCV() > 0);
         assertTrue(pareto.getVar() > 0);
 
@@ -208,8 +208,8 @@ public class DistributionCoverageTest {
         Gamma gamma = new Gamma(2.0, 1.0);
 
         assertNotNull(gamma);
-        assertEquals(2.0, gamma.getMean(), TOL); // mean = shape * scale
-        assertEquals(0.5, gamma.getSCV(), TOL);  // SCV = 1/shape
+        assertEquals(2.0, gamma.getMean(), LOOSE_FINE_TOL); // mean = shape * scale
+        assertEquals(0.5, gamma.getSCV(), LOOSE_FINE_TOL);  // SCV = 1/shape
         assertTrue(gamma.getVar() > 0);
 
         // Test CDF
@@ -229,12 +229,12 @@ public class DistributionCoverageTest {
         Normal normal = new Normal(0.0, 1.0);
 
         assertNotNull(normal);
-        assertEquals(0.0, normal.getMean(), TOL);
-        assertEquals(1.0, normal.getVar(), TOL);
-        assertEquals(0.0, normal.getSkewness(), TOL);
+        assertEquals(0.0, normal.getMean(), LOOSE_FINE_TOL);
+        assertEquals(1.0, normal.getVar(), LOOSE_FINE_TOL);
+        assertEquals(0.0, normal.getSkewness(), LOOSE_FINE_TOL);
 
         // Test CDF at mean
-        assertEquals(0.5, normal.evalCDF(0.0), TOL);
+        assertEquals(0.5, normal.evalCDF(0.0), LOOSE_FINE_TOL);
 
         // Test sampling
         double[] samples = normal.sample(100, new Random(42));
@@ -249,7 +249,7 @@ public class DistributionCoverageTest {
         Binomial binomial = new Binomial(10, 0.5);
 
         assertNotNull(binomial);
-        assertEquals(5.0, binomial.getMean(), TOL); // mean = n*p
+        assertEquals(5.0, binomial.getMean(), LOOSE_FINE_TOL); // mean = n*p
         assertTrue(binomial.getVar() > 0);
 
         // Test PMF
@@ -265,13 +265,13 @@ public class DistributionCoverageTest {
         Uniform uniform = new Uniform(0.0, 10.0);
 
         assertNotNull(uniform);
-        assertEquals(5.0, uniform.getMean(), TOL);
-        assertEquals(0.0, uniform.getSkewness(), TOL);
+        assertEquals(5.0, uniform.getMean(), LOOSE_FINE_TOL);
+        assertEquals(0.0, uniform.getSkewness(), LOOSE_FINE_TOL);
 
         // Test CDF
-        assertEquals(0.5, uniform.evalCDF(5.0), TOL);
-        assertEquals(0.0, uniform.evalCDF(-1.0), TOL);
-        assertEquals(1.0, uniform.evalCDF(11.0), TOL);
+        assertEquals(0.5, uniform.evalCDF(5.0), LOOSE_FINE_TOL);
+        assertEquals(0.0, uniform.evalCDF(-1.0), LOOSE_FINE_TOL);
+        assertEquals(1.0, uniform.evalCDF(11.0), LOOSE_FINE_TOL);
 
         // Test sampling
         double[] samples = uniform.sample(10, new Random(42));
@@ -289,9 +289,9 @@ public class DistributionCoverageTest {
         DiscreteUniform dunif = new DiscreteUniform(1, 5);
 
         assertNotNull(dunif);
-        assertEquals(3.0, dunif.getMean(), TOL); // mean = (min + max) / 2
+        assertEquals(3.0, dunif.getMean(), LOOSE_FINE_TOL); // mean = (min + max) / 2
         assertTrue(dunif.getVar() > 0);
-        assertEquals(0.0, dunif.getSkewness(), TOL);
+        assertEquals(0.0, dunif.getSkewness(), LOOSE_FINE_TOL);
 
         // Test CDF
         double cdf = dunif.evalCDF(3);
@@ -310,11 +310,11 @@ public class DistributionCoverageTest {
         Bernoulli bernoulli = new Bernoulli(0.3);
 
         assertNotNull(bernoulli);
-        assertEquals(0.3, bernoulli.getMean(), TOL);
+        assertEquals(0.3, bernoulli.getMean(), LOOSE_FINE_TOL);
 
         // Test PMF
-        assertEquals(0.7, bernoulli.evalPMF(0), TOL);
-        assertEquals(0.3, bernoulli.evalPMF(1), TOL);
+        assertEquals(0.7, bernoulli.evalPMF(0), LOOSE_FINE_TOL);
+        assertEquals(0.3, bernoulli.evalPMF(1), LOOSE_FINE_TOL);
     }
 
     // ========== Poisson ==========
@@ -325,8 +325,8 @@ public class DistributionCoverageTest {
         Poisson poisson = new Poisson(5.0);
 
         assertNotNull(poisson);
-        assertEquals(5.0, poisson.getMean(), TOL);
-        assertEquals(5.0, poisson.getVar(), TOL);
+        assertEquals(5.0, poisson.getMean(), LOOSE_FINE_TOL);
+        assertEquals(5.0, poisson.getVar(), LOOSE_FINE_TOL);
 
         // Test PDF at mean
         double pdf = poisson.evalPDF(5);

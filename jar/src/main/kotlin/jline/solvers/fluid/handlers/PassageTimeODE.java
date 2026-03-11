@@ -449,7 +449,7 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
                     break;
 
                 case EXT:
-                    // TODO: open models for state-dep
+                    // MATLAB ode_statedep.m: state-dep/softmin ODE does not support open models
                     line_error(mfilename(new Object[]{}),
                             "State dependent ODE method does not support open models. Try with default method.");
                     break;
@@ -790,7 +790,7 @@ public class PassageTimeODE implements FirstOrderDifferentialEquations {
                     break;
 
                 case EXT:
-                    // TODO: open models for state-dep
+                    // MATLAB ode_statedep.m: state-dep/softmin ODE does not support open models
                     line_error(mfilename(new Object[]{}),
                             "Softmin ODE method does not support open models. Try with default method.");
                     break;

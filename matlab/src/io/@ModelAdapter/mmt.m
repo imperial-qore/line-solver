@@ -85,6 +85,37 @@ for f=forkIndexes
         % create a new open class for each class in forkedChains
         oclass = {};
         inchain = find(sn.chains(fc,:)); inchain = inchain(:)';
+
+        % BFS from (refNode, any chain class) through rtnodes to find all
+        % reachable (node, class) pairs within this chain. Used to determine
+        % which classes genuinely visit the fork (independent of DTMC solver
+        % numerics — JAR's dtmc_solve can give exact 0.0 where MATLAB gives
+        % ~1e-18 for barely-reachable states).
+        refStationIdx = sn.refstat(inchain(1));
+        refStatefulIdx = sn.stationToStateful(refStationIdx);
+        refNodeIdx = sn.statefulToNode(refStatefulIdx);
+        K = sn.nclasses;
+        reachableFromRef = false(sn.nnodes, K);
+        bfsQueue = zeros(0, 2); % [node, class] pairs
+        for ci = inchain
+            reachableFromRef(refNodeIdx, ci) = true;
+            bfsQueue(end+1,:) = [refNodeIdx, ci]; %#ok<AGROW>
+        end
+        while ~isempty(bfsQueue)
+            cn = bfsQueue(1,1); cc = bfsQueue(1,2);
+            bfsQueue(1,:) = [];
+            for destNode = 1:sn.nnodes
+                for dci = inchain
+                    srcIdx = (cn-1)*K + cc;
+                    dstIdx = (destNode-1)*K + dci;
+                    if ~reachableFromRef(destNode, dci) && sn.rtnodes(srcIdx, dstIdx) > 0
+                        reachableFromRef(destNode, dci) = true;
+                        bfsQueue(end+1,:) = [destNode, dci]; %#ok<AGROW>
+                    end
+                end
+            end
+        end
+
         for r=inchain
             oclass{end+1} = OpenClass(nonfjmodel,[nonfjmodel.classes{r}.name,'.',nonfjmodel.nodes{f}.name]); %#ok<AGROW>
             fjclassmap(oclass{end}.index) = nonfjmodel.classes{r}.index;
@@ -95,7 +126,8 @@ for f=forkIndexes
             end
             fanout(oclass{end}.index) = origfanout(f,r)*model.nodes{f}.output.tasksPerLink;
             all_aux_class_indices(end+1) = oclass{end}.index; %#ok<AGROW>
-            if origfanout(f,r) == 0 || sn.nodevisits{fc}(f,r) == 0
+            disableAux = origfanout(f,r) == 0 || ~reachableFromRef(f, r);
+            if disableAux
                 source.setArrival(oclass{end},Disabled.getInstance);
             else
                 source.setArrival(oclass{end},Exp(forkLambda(r)));

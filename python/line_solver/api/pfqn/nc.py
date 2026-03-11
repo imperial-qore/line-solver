@@ -15,19 +15,6 @@ from math import log, exp, factorial, lgamma
 from typing import Tuple, Dict, Any
 from functools import lru_cache
 
-# Try to import JIT-compiled kernels
-try:
-    from .nc_jit import (
-        HAS_NUMBA as NC_HAS_NUMBA,
-        convolution_recursion_jit,
-    )
-except ImportError:
-    NC_HAS_NUMBA = False
-    convolution_recursion_jit = None
-
-# Threshold for using JIT (number of population states)
-NC_JIT_THRESHOLD = 100
-
 
 def _factln(n: float) -> float:
     """Compute log(n!) using log-gamma function."""
@@ -171,11 +158,6 @@ def pfqn_ca(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None
 
     # Compute total number of population vectors
     product_N_plus_one = int(np.prod(N + 1))
-
-    # Use JIT kernel for large state spaces
-    if NC_HAS_NUMBA and product_N_plus_one > NC_JIT_THRESHOLD:
-        N_int = N.astype(np.int64)
-        return convolution_recursion_jit(L, N_int, Z, M, R)
 
     # G[m, idx] = G_m(n) where idx = hashpop(n, N)
     G = np.ones((M + 1, product_N_plus_one))

@@ -109,39 +109,6 @@ fun qsys_mapdc(arrival: MatrixCell, s: Double, c: Int): QsysMapDcResult {
 }
 
 /**
- * Analyzes a MAP/D/1 queue (single server convenience function).
- *
- * @param D0 MAP hidden transition matrix
- * @param D1 MAP arrival transition matrix
- * @param s Deterministic service time
- * @param maxNumComp Maximum number of queue length components (default 1000)
- * @param numSteps Number of waiting time distribution points per service interval (default 1)
- * @return QsysMapDcResult with performance metrics
- */
-@JvmOverloads
-fun qsys_mapd1(
-    D0: Matrix,
-    D1: Matrix,
-    s: Double,
-    maxNumComp: Int = 1000,
-    numSteps: Int = 1
-): QsysMapDcResult {
-    return qsys_mapdc(D0, D1, s, 1, maxNumComp, numSteps)
-}
-
-/**
- * Simplified MAP/D/1 analysis using MatrixCell input for arrival.
- *
- * @param arrival MAP arrival process as MatrixCell [D0, D1]
- * @param s Deterministic service time
- * @return QsysMapDcResult with performance metrics
- */
-fun qsys_mapd1(arrival: MatrixCell, s: Double): QsysMapDcResult {
-    require(arrival.size() >= 2) { "Arrival MAP must have at least 2 matrices [D0, D1]" }
-    return qsys_mapdc(arrival[0], arrival[1], s, 1)
-}
-
-/**
  * Analyzes a PH/D/c queue.
  *
  * Converts PH arrival process to equivalent MAP and uses Q-MAM.

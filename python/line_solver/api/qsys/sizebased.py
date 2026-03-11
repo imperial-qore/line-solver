@@ -17,17 +17,6 @@ Key algorithms:
 import numpy as np
 from typing import Tuple, Union, List
 
-try:
-    from numba import njit
-    NUMBA_AVAILABLE = True
-except ImportError:
-    NUMBA_AVAILABLE = False
-    def njit(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator
-
-
 def qsys_mg1_srpt(
     lambda_vals: Union[np.ndarray, List[float]],
     mu_vals: Union[np.ndarray, List[float]],
@@ -121,7 +110,6 @@ def qsys_mg1_srpt(
 
     return W, rho_out
 
-
 def _qsys_mg1_srpt_exp(lambda_arr: np.ndarray, mu_arr: np.ndarray) -> np.ndarray:
     """SRPT for exponential service - uses preemptive priority formula."""
     K = len(lambda_arr)
@@ -149,7 +137,6 @@ def _qsys_mg1_srpt_exp(lambda_arr: np.ndarray, mu_arr: np.ndarray) -> np.ndarray
         W[k] = W_q + 1.0 / mu_arr[k]
 
     return W
-
 
 def _qsys_mg1_srpt_general(
     lambda_arr: np.ndarray,
@@ -196,7 +183,6 @@ def _qsys_mg1_srpt_general(
         W[k] = numerator / (1 - rho_x) ** 2 + second_term
 
     return W
-
 
 def qsys_mg1_psjf(
     lambda_vals: Union[np.ndarray, List[float]],
@@ -304,7 +290,6 @@ def qsys_mg1_psjf(
     rho_out = Q / (1 + Q)
 
     return W, rho_out
-
 
 def qsys_mg1_fb(
     lambda_vals: Union[np.ndarray, List[float]],
@@ -416,7 +401,6 @@ def qsys_mg1_fb(
     rho_out = Q / (1 + Q)
 
     return W, rho_out
-
 
 def qsys_mg1_setf(
     lambda_vals: Union[np.ndarray, List[float]],
@@ -540,7 +524,6 @@ def qsys_mg1_setf(
     rho_out = Q / (1 + Q)
 
     return W, rho_out
-
 
 def qsys_mg1_lrpt(
     lambda_vals: Union[np.ndarray, List[float]],

@@ -180,6 +180,8 @@ public class Queue extends ServiceStation implements Serializable {
                 break;
             case LCFSPI:
             case LCFSPIPRIO:
+            case FCFSPI:
+            case FCFSPIPRIO:
                 this.schedPolicy = SchedStrategyType.PNR;
                 this.server = new PreemptiveServer(model.getClasses());
                 break;

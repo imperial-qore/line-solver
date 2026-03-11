@@ -244,6 +244,225 @@
             </build>
         </profile>
         <profile>
+            <!-->LDES standalone JAR profile: Bundle with LDES-relevant dependencies only<-->
+            <!-- Usage: mvn clean package -P ldes -->
+            <id>ldes</id>
+            <activation>
+                <activeByDefault>false</activeByDefault>
+            </activation>
+            <properties>
+                <excluded.files>IGNORE-EXCLUDED</excluded.files>
+                <finalName>ldes-bundle</finalName>
+            </properties>
+            <build>
+                <plugins>
+                    <!-- Override Kotlin plugin to exclude files -->
+                    <plugin>
+                        <groupId>org.jetbrains.kotlin</groupId>
+                        <artifactId>kotlin-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>compile</id>
+                                <phase>compile</phase>
+                                <goals>
+                                    <goal>compile</goal>
+                                </goals>
+                                <configuration>
+                                    <sourceDirs>
+                                        <source>src/main/kotlin</source>
+                                        <source>${buildDir}/generated-sources/annotations</source>
+                                    </sourceDirs>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>test-compile</id>
+                                <phase>test-compile</phase>
+                                <goals>
+                                    <goal>test-compile</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <jvmTarget>1.8</jvmTarget>
+                        </configuration>
+                    </plugin>
+                    <!-- Compiler plugin with excludes -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>default-compile</id>
+                                <phase>none</phase>
+                            </execution>
+                            <execution>
+                                <id>default-testCompile</id>
+                                <phase>none</phase>
+                            </execution>
+                            <execution>
+                                <id>compile</id>
+                                <phase>compile</phase>
+                                <goals>
+                                    <goal>compile</goal>
+                                </goals>
+                                <configuration>
+                                    <excludes>
+                                        <exclude>${excluded.files}</exclude>
+                                    </excludes>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>testCompile</id>
+                                <phase>test-compile</phase>
+                                <goals>
+                                    <goal>testCompile</goal>
+                                </goals>
+                                <configuration>
+                                    <skip>true</skip>
+                                </configuration>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <source>${maven.compiler.source}</source>
+                            <target>${maven.compiler.target}</target>
+                            <useIncrementalCompilation>true</useIncrementalCompilation>
+                            <compilerArgs>
+                                <arg>-Xlint:unchecked</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-shade-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>shade</goal>
+                                </goals>
+                                <configuration>
+                                    <createDependencyReducedPom>false</createDependencyReducedPom>
+                                    <!-- Exclude LDES-irrelevant dependencies from the shaded JAR -->
+                                    <artifactSet>
+                                        <excludes>
+                                            <!-- MATLAB I/O -->
+                                            <exclude>us.hebi.matlab.mat:mfl-core</exclude>
+                                            <exclude>us.hebi.matlab.mat:mfl-ejml</exclude>
+                                            <!-- Optimization -->
+                                            <exclude>de.xypron.jcobyla:jcobyla</exclude>
+                                            <exclude>com.quantego:josqp</exclude>
+                                            <!-- XML -->
+                                            <exclude>xerces:xercesImpl</exclude>
+                                            <exclude>xalan:xalan</exclude>
+                                            <exclude>xalan:serializer</exclude>
+                                            <exclude>xml-apis:xml-apis</exclude>
+                                            <!-- WebSocket / CLI -->
+                                            <exclude>org.java-websocket:Java-WebSocket</exclude>
+                                            <exclude>commons-cli:commons-cli</exclude>
+                                            <!-- gRPC and transitive deps -->
+                                            <exclude>io.grpc:*</exclude>
+                                            <exclude>io.opentelemetry.proto:opentelemetry-proto</exclude>
+                                            <exclude>io.perfmark:perfmark-api</exclude>
+                                            <exclude>com.google.protobuf:protobuf-java</exclude>
+                                            <exclude>com.google.api.grpc:proto-google-common-protos</exclude>
+                                            <exclude>com.google.guava:guava</exclude>
+                                            <exclude>com.google.guava:failureaccess</exclude>
+                                            <exclude>com.google.guava:listenablefuture</exclude>
+                                            <exclude>com.google.code.findbugs:jsr305</exclude>
+                                            <exclude>com.google.errorprone:error_prone_annotations</exclude>
+                                            <exclude>com.google.j2objc:j2objc-annotations</exclude>
+                                            <exclude>com.google.android:annotations</exclude>
+                                            <exclude>org.codehaus.mojo:animal-sniffer-annotations</exclude>
+                                            <exclude>org.checkerframework:checker-qual</exclude>
+                                            <!-- Logging -->
+                                            <exclude>org.slf4j:slf4j-nop</exclude>
+                                            <exclude>org.slf4j:slf4j-api</exclude>
+                                            <!-- Visualization -->
+                                            <exclude>net.sf.jung:jung-api</exclude>
+                                            <exclude>net.sf.jung:jung-graph-impl</exclude>
+                                            <exclude>net.sf.jung:jung-algorithms</exclude>
+                                            <exclude>net.sf.jung:jung-visualization</exclude>
+                                            <exclude>com.formdev:flatlaf</exclude>
+                                            <!-- JUNG transitive deps -->
+                                            <exclude>org.jfree:jfreechart</exclude>
+                                            <exclude>org.jfree:jcommon</exclude>
+                                            <exclude>net.sourceforge.colt:colt</exclude>
+                                            <exclude>net.sourceforge.colt:concurrent</exclude>
+                                        </excludes>
+                                    </artifactSet>
+                                    <filters>
+                                        <filter>
+                                            <artifact>*:*</artifact>
+                                            <excludes>
+                                                <exclude>org/junit/**</exclude>
+                                                <exclude>org/opentest4j/**</exclude>
+                                                <exclude>org/apiguardian/**</exclude>
+                                                <exclude>META-INF/services/org.junit.*</exclude>
+                                            </excludes>
+                                        </filter>
+                                    </filters>
+                                    <transformers>
+                                        <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                            <mainClass>jline.cli.LdesCLI</mainClass>
+                                        </transformer>
+                                    </transformers>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>
+                            com.googlecode.addjars-maven-plugin
+                        </groupId>
+                        <artifactId>addjars-maven-plugin</artifactId>
+                        <version>1.0.5</version>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>add-jars</goal>
+                                </goals>
+                                <configuration>
+                                    <resources>
+                                        <resource>
+                                            <directory>${basedir}/lib</directory>
+                                        </resource>
+                                    </resources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <!-- Copy LDES JAR to common folder -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>copy-artifact</id>
+                                <phase>package</phase>
+                                <configuration>
+                                    <target>
+                                        <copy file="${buildDir}/ldes-bundle.jar"
+                                              tofile="${project.basedir}/../common/ldes.jar"/>
+                                    </target>
+                                </configuration>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <!-- Configure Surefire to skip all tests for ldes profile -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <skipTests>true</skipTests>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
             <!-->Maven artifact profile<-->
             <id>jar-mvn</id>
             <activation>
@@ -340,6 +559,30 @@
                                 internal.repo::default::file://${project.basedir}/../common/maven/mvn-artifact
                             </altDeploymentRepository>
                         </configuration>
+                    </plugin>
+                    <!-- Build standalone LDES JAR (replaces ldes-dev.git external build) -->
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>build-ldes</id>
+                                <phase>integration-test</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>mvn</executable>
+                                    <workingDirectory>${project.basedir}</workingDirectory>
+                                    <arguments>
+                                        <argument>package</argument>
+                                        <argument>-P</argument>
+                                        <argument>ldes</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                        </executions>
                     </plugin>
                 </plugins>
             </build>

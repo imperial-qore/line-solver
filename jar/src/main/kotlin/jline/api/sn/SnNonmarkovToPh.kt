@@ -43,6 +43,7 @@ private val SKIP_BERNSTEIN_CONVERSION = setOf(
     ProcessType.PH,
     ProcessType.APH,
     ProcessType.MAP,
+    ProcessType.DMAP,
     ProcessType.MMAP,    // Marked MAP - already Markovian
     ProcessType.BMAP,    // Batch MAP - already Markovian
     ProcessType.ME,      // Matrix Exponential - skip conversion, use ME-specific solvers

@@ -9,8 +9,10 @@ All rights reserved.
 
 from .indexed_table import IndexedTable
 from .model_adapter import ModelAdapter
+from .linemodel_io import save_model, load_model
 
-__all__ = ['IndexedTable', 'ModelAdapter', 'M2M', 'QN2JSIMG', 'qn2jsimg', 'LQN2QN', 'lqn2qn']
+__all__ = ['IndexedTable', 'ModelAdapter', 'M2M', 'QN2JSIMG', 'qn2jsimg', 'LQN2QN', 'lqn2qn',
+           'save_model', 'load_model']
 
 
 class M2M:
@@ -164,6 +166,11 @@ class M2M:
         """
         Load a MATLAB .mat file and convert to LINE Network.
 
+        Loads a .mat file containing a saved LINE NetworkStruct (from
+        model.getStruct() in MATLAB) and reconstructs the Network model.
+        Supports common fields: nodenames, classnames, nodetype, nservers,
+        sched, rates, routing, njobs, connmatrix.
+
         Args:
             filename: Path to the .mat file
 
@@ -171,12 +178,147 @@ class M2M:
             Network: LINE network model
 
         Raises:
-            NotImplementedError: MAT loading not yet implemented
+            FileNotFoundError: If file does not exist
+            ValueError: If .mat file does not contain a valid LINE struct
         """
-        raise NotImplementedError(
-            "MAT2LINE requires scipy.io.loadmat and model parsing implementation. "
-            "Currently not available in pure Python mode."
-        )
+        import os
+        try:
+            from scipy.io import loadmat
+        except ImportError:
+            raise ImportError("MAT2LINE requires scipy: pip install scipy")
+
+        if not os.path.exists(filename):
+            raise FileNotFoundError(f"MAT file not found: {filename}")
+
+        mat = loadmat(filename, squeeze_me=True, struct_as_record=True)
+
+        # Find the struct variable (skip MATLAB metadata keys)
+        sn_data = None
+        for key in mat:
+            if not key.startswith('__'):
+                val = mat[key]
+                if hasattr(val, 'dtype') and val.dtype.names:
+                    sn_data = val.flat[0] if val.ndim > 0 else val
+                    break
+        if sn_data is None:
+            raise ValueError("No struct variable found in .mat file")
+
+        from ..lang import Network, Queue, Delay, Source, Sink
+        from ..lang import OpenClass, ClosedClass
+        from ..distributions import Exp
+        from ..scheduling import SchedStrategy
+        from ..lang.base import NodeType
+        import numpy as np
+
+        def _get(field, default=None):
+            try:
+                return sn_data[field]
+            except (ValueError, KeyError, IndexError):
+                return default
+
+        nstations = int(_get('nstations', 0))
+        nnodes = int(_get('nnodes', nstations))
+        nclasses = int(_get('nclasses', 0))
+
+        nodenames = _get('nodenames', [])
+        classnames = _get('classnames', [])
+        nodetypes = _get('nodetype', [])
+        nservers_arr = _get('nservers', [])
+        sched_arr = _get('sched', [])
+        rates = _get('rates', None)
+        njobs = _get('njobs', [])
+        connmatrix = _get('connmatrix', None)
+
+        # Flatten MATLAB arrays
+        if hasattr(nodenames, 'flat'):
+            nodenames = [str(n).strip() for n in np.atleast_1d(nodenames)]
+        if hasattr(classnames, 'flat'):
+            classnames = [str(n).strip() for n in np.atleast_1d(classnames)]
+        nodetypes = np.atleast_1d(nodetypes).flatten() if nodetypes is not None else []
+        njobs = np.atleast_1d(njobs).flatten() if njobs is not None else []
+
+        # Create Network
+        model_name = os.path.splitext(os.path.basename(filename))[0]
+        model = Network(model_name)
+
+        # Create nodes
+        nodes = []
+        station_idx = 0
+        for i in range(nnodes):
+            name = nodenames[i] if i < len(nodenames) else f'Node{i}'
+            nt = int(nodetypes[i]) if i < len(nodetypes) else 0
+
+            if nt == NodeType.SOURCE.value:
+                nodes.append(Source(model, name))
+            elif nt == NodeType.SINK.value:
+                nodes.append(Sink(model, name))
+            elif nt == NodeType.DELAY.value:
+                nodes.append(Delay(model, name))
+            elif nt == NodeType.QUEUE.value:
+                sched = SchedStrategy.FCFS
+                if sched_arr is not None:
+                    s_arr = np.atleast_1d(sched_arr).flatten()
+                    if station_idx < len(s_arr):
+                        sched_val = int(s_arr[station_idx])
+                        for ss in SchedStrategy:
+                            if ss.value == sched_val:
+                                sched = ss
+                                break
+                q = Queue(model, name, sched)
+                if nservers_arr is not None:
+                    ns_arr = np.atleast_1d(nservers_arr).flatten()
+                    if station_idx < len(ns_arr) and np.isfinite(ns_arr[station_idx]):
+                        q.set_number_of_servers(int(ns_arr[station_idx]))
+                nodes.append(q)
+                station_idx += 1
+            else:
+                # Default to Queue
+                nodes.append(Queue(model, name, SchedStrategy.FCFS))
+                station_idx += 1
+
+        # Create classes
+        classes = []
+        source_node = None
+        delay_node = None
+        for n in nodes:
+            if isinstance(n, Source):
+                source_node = n
+            elif isinstance(n, Delay):
+                delay_node = n
+
+        for r in range(nclasses):
+            cname = classnames[r] if r < len(classnames) else f'Class{r}'
+            nj = float(njobs[r]) if r < len(njobs) else float('inf')
+            if np.isinf(nj):
+                # Open class
+                classes.append(OpenClass(model, cname))
+            else:
+                # Closed class
+                ref = delay_node if delay_node else (nodes[0] if nodes else None)
+                classes.append(ClosedClass(model, cname, int(nj), ref))
+
+        # Set service rates from rates matrix
+        if rates is not None:
+            rates = np.atleast_2d(rates)
+            stations = model.get_stations()
+            for ist in range(min(rates.shape[0], len(stations))):
+                for r in range(min(rates.shape[1], len(classes))):
+                    rate_val = float(rates[ist, r])
+                    if rate_val > 0 and np.isfinite(rate_val):
+                        stations[ist].set_service(classes[r], Exp(rate_val))
+
+        # Set routing from connection matrix
+        if connmatrix is not None:
+            conn = np.atleast_2d(connmatrix)
+            routing_nodes = []
+            for i in range(min(conn.shape[0], len(nodes))):
+                for j in range(min(conn.shape[1], len(nodes))):
+                    if conn[i, j] > 0:
+                        routing_nodes.append((nodes[i], nodes[j]))
+            if routing_nodes:
+                model.link(Network.serialRouting(*[n for pair in routing_nodes for n in pair]))
+
+        return model
 
 
 def QN2JSIMG(model, outputFileName=None, options=None):
@@ -229,7 +371,7 @@ def LQN2QN(lqn):
     - Correctly models BLOCKING semantics (server waits for reply)
     - Provides per-task queue metrics (queue length, utilization)
     - Supports multi-tier call chains (A -> B -> C)
-    - Uses DES solver with REPLY signal support
+    - Uses LDES solver with REPLY signal support
 
     Args:
         lqn: LayeredNetwork model to convert.

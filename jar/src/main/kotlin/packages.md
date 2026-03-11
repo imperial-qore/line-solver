@@ -204,18 +204,18 @@ Handlers for SolverCTMC.
 This package contains handler classes for processing CTMC solver requests
 and managing solver state.
 
-# Package jline.solvers.des.analyzers
+# Package jline.solvers.ldes.analyzers
 
-Analyzers for SolverDES.
+Analyzers for SolverLDES.
 
 This package contains analyzer classes that implement specific analysis
 methods for the Discrete Event Simulation solver.
 
-# Package jline.solvers.des.handlers
+# Package jline.solvers.ldes.handlers
 
-Handlers for SolverDES.
+Handlers for SolverLDES.
 
-This package contains handler classes for processing DES solver requests
+This package contains handler classes for processing LDES solver requests
 and managing simulation state.
 
 # Package jline.solvers.mam.analyzers

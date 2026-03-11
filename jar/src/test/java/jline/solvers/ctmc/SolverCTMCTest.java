@@ -11,6 +11,7 @@ import jline.lang.processes.Exp;
 import jline.lang.nodes.Delay;
 import jline.lang.nodes.Queue;
 import jline.solvers.SolverOptions;
+import jline.solvers.ssa.SolverSSA;
 import jline.util.matrix.Matrix;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
@@ -22,6 +23,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static jline.TestTools.MID_TOL;
+import static jline.TestTools.FINE_TOL;
 import static jline.TestTools.relativeTolerance;
 import static jline.TestTools.assertTableMetrics;
 
@@ -228,8 +230,8 @@ public class SolverCTMCTest {
             "Utilization should be finite and non-negative, got " + utilization);
 
     // Test getAvgReward(name) method
-    assertEquals(queueLength, solver.getAvgReward("QueueLength"), 1e-10);
-    assertEquals(utilization, solver.getAvgReward("Utilization"), 1e-10);
+    assertEquals(queueLength, solver.getAvgReward("QueueLength"), FINE_TOL);
+    assertEquals(utilization, solver.getAvgReward("Utilization"), FINE_TOL);
 
     // Test getRewardNames
     assertEquals(2, solver.getRewardNames().size());
@@ -246,7 +248,39 @@ public class SolverCTMCTest {
     double[] t = solver.getRewardTimeVector();
     assertNotNull(t);
     assertTrue(t.length > 0);
-    assertEquals(0.0, t[0], 1e-10);  // Time starts at 0
+    assertEquals(0.0, t[0], FINE_TOL);  // Time starts at 0
+  }
+
+  @Test
+  public void tut06_cache_lru_zipf_ctmc() {
+    Network model = SolverCTMCTestFixtures.test_tut06_cache_lru_zipf();
+    SolverCTMC solver = new SolverCTMC(model, "verbose", VerboseLevel.SILENT);
+    NetworkAvgTable table = solver.getAvgTable();
+
+    double[] expectedQLen = {0.0, 0.43337595752684316, 0.5666239604680446};
+    double[] expectedUtil = {0.0, 0.43337595752684316, 0.5666239604680446};
+    double[] expectedRespT = {1e-8, 0.2, 1.0};
+    double[] expectedResidT = {0.0, 0.1585422949676638, 0.20728852516168095};
+    double[] expectedArvR = {2.73350374810226, 2.1668797876342154, 0.5666239604680443};
+    double[] expectedTput = {2.73350374810226, 2.1668797876342154, 0.5666239604680446};
+
+    assertTableMetrics(table, expectedQLen, expectedUtil, expectedRespT, expectedResidT, expectedArvR, expectedTput);
+  }
+
+  @Test
+  public void tut06_cache_lru_zipf_ssa() {
+    Network model = SolverCTMCTestFixtures.test_tut06_cache_lru_zipf();
+    SolverSSA solver = new SolverSSA(model, "samples", 2e4, "seed", 1, "verbose", VerboseLevel.SILENT, "method", "serial");
+    NetworkAvgTable table = solver.getAvgTable();
+
+    double[] expectedQLen = {0.0, 0.43790923334741466, 0.5620906824628674};
+    double[] expectedUtil = {0.0, 0.43790923334741466, 0.5620906824628674};
+    double[] expectedRespT = {1e-8, 0.2, 1.0};
+    double[] expectedResidT = {0.0, 0.15639485518962562, 0.21802572405187115};
+    double[] expectedArvR = {2.751636849199943, 2.218007395317449, 0.6184125017797503};
+    double[] expectedTput = {2.8364198970971994, 2.1895461667370753, 0.5620906824628674};
+
+    assertTableMetrics(table, expectedQLen, expectedUtil, expectedRespT, expectedResidT, expectedArvR, expectedTput);
   }
 
   /**

@@ -115,6 +115,10 @@ class EventType(Enum):
     PHASE = auto()
     READ = auto()
     STAGE = auto()
+    ENABLE = auto()
+    FIRE = auto()
+    PRE = auto()
+    POST = auto()
 
 
 class JobClassType(Enum):
@@ -379,7 +383,7 @@ class SolverType(Enum):
     """
     AUTO = auto()
     CTMC = auto()
-    DES = auto()
+    LDES = auto()
     ENV = auto()
     FLUID = auto()
     JMT = auto()
@@ -449,7 +453,7 @@ class GlobalConstants:
     FineTol = 1e-8  # Match MATLAB's default
     Immediate = 1e8  # 1/FineTol - large but finite rate for immediate service (matches MATLAB)
     MaxInt = 2**31 - 1
-    Version = "3.0.3"
+    Version = "3.0.4"
     DummyMode = False
 
     _instance = None

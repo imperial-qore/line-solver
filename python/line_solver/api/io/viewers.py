@@ -257,9 +257,108 @@ def _launch_jmt_viewer(filename: str, viewer_type: str,
         return False
 
 
+def get_line_viewer_path() -> Optional[str]:
+    """
+    Get the path to line-viewer.jar.
+
+    Searches for line-viewer.jar in common locations:
+    - LINE common/ directory
+    - Current directory
+
+    Returns:
+        Path to line-viewer.jar, or None if not found
+    """
+    # Check LINE common directory (relative to this module)
+    module_dir = os.path.dirname(os.path.abspath(__file__))
+    line_root = os.path.abspath(os.path.join(module_dir, '..', '..', '..', '..'))
+    common_jar = os.path.join(line_root, 'common', 'line-viewer.jar')
+    if os.path.exists(common_jar):
+        return common_jar
+
+    # Check current directory
+    cwd_jar = os.path.join(os.getcwd(), 'common', 'line-viewer.jar')
+    if os.path.exists(cwd_jar):
+        return cwd_jar
+
+    return None
+
+
+def line_viewer_view(filename: str, viewer_path: Optional[str] = None,
+                     suppress_output: bool = True) -> bool:
+    """
+    Open a JSIMG model file in the LINE Compose Desktop viewer.
+
+    Args:
+        filename: Path to the JSIM/JSIMG file to open
+        viewer_path: Optional path to line-viewer.jar. If None, searches
+                     common locations.
+        suppress_output: Whether to suppress viewer output (default True)
+
+    Returns:
+        True if the viewer was launched successfully, False otherwise
+
+    References:
+        MATLAB: matlab/src/lang/@MNetwork/modelView.m
+    """
+    logger = get_logger()
+
+    # Resolve absolute path for filename
+    if not os.path.isabs(filename):
+        filename = os.path.abspath(filename)
+
+    # Check if file exists
+    if not os.path.exists(filename):
+        line_error('line_viewer', f'File not found: {filename}')
+        return False
+
+    # Find line-viewer.jar
+    if viewer_path is None:
+        viewer_path = get_line_viewer_path()
+
+    if viewer_path is None:
+        line_error('line_viewer', 'line-viewer.jar not found. Place it in the common/ directory.')
+        return False
+
+    if not os.path.exists(viewer_path):
+        line_error('line_viewer', f'line-viewer.jar not found at: {viewer_path}')
+        return False
+
+    # Check verbosity level
+    if hasattr(logger, 'level'):
+        suppress_output = logger.level != VerboseLevel.DEBUG
+
+    # Build command
+    cmd = ['java', '-jar', viewer_path, filename]
+
+    # Determine output redirection
+    if suppress_output:
+        stdout = subprocess.DEVNULL
+        stderr = subprocess.DEVNULL
+    else:
+        stdout = None
+        stderr = None
+
+    try:
+        subprocess.Popen(
+            cmd,
+            stdout=stdout,
+            stderr=stderr,
+            start_new_session=True,
+        )
+        return True
+    except FileNotFoundError:
+        line_error('line_viewer', 'Java not found. Please ensure Java is installed and on the PATH.')
+        return False
+    except Exception as e:
+        line_error('line_viewer', f'Failed to launch line-viewer: {e}')
+        return False
+
+
 __all__ = [
     'get_jmt_path',
     'jsimg_view',
     'jsimw_view',
     'jmva_view',
+    'get_line_viewer_path',
+    'line_viewer_view',
 ]

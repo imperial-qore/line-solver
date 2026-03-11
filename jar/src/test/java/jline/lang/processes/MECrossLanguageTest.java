@@ -8,6 +8,7 @@ package jline.lang.processes;
 import jline.util.matrix.Matrix;
 import org.junit.jupiter.api.Test;
 
+import static jline.TestTools.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -24,8 +25,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class MECrossLanguageTest {
 
-    private static final double FINE_TOL = 1e-8;
-    private static final double TOLERANCE = 1e-6;
 
     @Test
     public void testMEMomentsConsistency() {
@@ -65,9 +64,9 @@ public class MECrossLanguageTest {
         double expectedVar = 1.0 / (rate * rate);
         double expectedScv = 1.0;
 
-        assertEquals(expectedMean, meJava.getMean(), TOLERANCE);
-        assertEquals(expectedVar, meJava.getVar(), TOLERANCE);
-        assertEquals(expectedScv, meJava.getSCV(), TOLERANCE);
+        assertEquals(expectedMean, meJava.getMean(), LOOSE_FINE_TOL);
+        assertEquals(expectedVar, meJava.getVar(), LOOSE_FINE_TOL);
+        assertEquals(expectedScv, meJava.getSCV(), LOOSE_FINE_TOL);
     }
 
     @Test
@@ -82,9 +81,9 @@ public class MECrossLanguageTest {
         double expectedVar = (double) k / (rate * rate);
         double expectedScv = 1.0 / k;
 
-        assertEquals(expectedMean, meJava.getMean(), TOLERANCE);
-        assertEquals(expectedVar, meJava.getVar(), TOLERANCE);
-        assertEquals(expectedScv, meJava.getSCV(), TOLERANCE);
+        assertEquals(expectedMean, meJava.getMean(), LOOSE_FINE_TOL);
+        assertEquals(expectedVar, meJava.getVar(), LOOSE_FINE_TOL);
+        assertEquals(expectedScv, meJava.getSCV(), LOOSE_FINE_TOL);
     }
 
     @Test
@@ -103,9 +102,9 @@ public class MECrossLanguageTest {
         double expectedVar = secondMoment - expectedMean * expectedMean;
         double expectedScv = expectedVar / (expectedMean * expectedMean);
 
-        assertEquals(expectedMean, meJava.getMean(), TOLERANCE);
-        assertEquals(expectedVar, meJava.getVar(), TOLERANCE);
-        assertEquals(expectedScv, meJava.getSCV(), TOLERANCE);
+        assertEquals(expectedMean, meJava.getMean(), LOOSE_FINE_TOL);
+        assertEquals(expectedVar, meJava.getVar(), LOOSE_FINE_TOL);
+        assertEquals(expectedScv, meJava.getSCV(), LOOSE_FINE_TOL);
     }
 
     @Test
@@ -119,7 +118,7 @@ public class MECrossLanguageTest {
             double cdfJava = meJava.evalCDF(t);
             double expectedCdf = 1.0 - Math.exp(-t);
 
-            assertEquals(expectedCdf, cdfJava, TOLERANCE,
+            assertEquals(expectedCdf, cdfJava, LOOSE_FINE_TOL,
                     String.format("CDF(%f) mismatch", t));
         }
     }
@@ -163,9 +162,9 @@ public class MECrossLanguageTest {
         double expectedVar = 1.0 / (rate * rate);
         double expectedScv = 1.0;
 
-        assertEquals(expectedMean, rapJava.getMean(), TOLERANCE);
-        assertEquals(expectedVar, rapJava.getVar(), TOLERANCE);
-        assertEquals(expectedScv, rapJava.getSCV(), TOLERANCE);
+        assertEquals(expectedMean, rapJava.getMean(), LOOSE_FINE_TOL);
+        assertEquals(expectedVar, rapJava.getVar(), LOOSE_FINE_TOL);
+        assertEquals(expectedScv, rapJava.getSCV(), LOOSE_FINE_TOL);
     }
 
     @Test
@@ -180,9 +179,9 @@ public class MECrossLanguageTest {
         double expectedVar = (double) k / (rate * rate);
         double expectedScv = 1.0 / k;
 
-        assertEquals(expectedMean, rapJava.getMean(), TOLERANCE);
-        assertEquals(expectedVar, rapJava.getVar(), TOLERANCE);
-        assertEquals(expectedScv, rapJava.getSCV(), TOLERANCE);
+        assertEquals(expectedMean, rapJava.getMean(), LOOSE_FINE_TOL);
+        assertEquals(expectedVar, rapJava.getVar(), LOOSE_FINE_TOL);
+        assertEquals(expectedScv, rapJava.getSCV(), LOOSE_FINE_TOL);
     }
 
     @Test
@@ -202,9 +201,9 @@ public class MECrossLanguageTest {
         RAP rapJava = RAP.fromMAP(map);
 
         // Verify moments match
-        assertEquals(map.getMean(), rapJava.getMean(), TOLERANCE);
-        assertEquals(map.getVar(), rapJava.getVar(), TOLERANCE);
-        assertEquals(map.getSCV(), rapJava.getSCV(), TOLERANCE);
+        assertEquals(map.getMean(), rapJava.getMean(), LOOSE_FINE_TOL);
+        assertEquals(map.getVar(), rapJava.getVar(), LOOSE_FINE_TOL);
+        assertEquals(map.getSCV(), rapJava.getSCV(), LOOSE_FINE_TOL);
     }
 
     @Test
@@ -241,7 +240,7 @@ public class MECrossLanguageTest {
 
         for (int i = 0; i < D1.getNumRows(); i++) {
             for (int j = 0; j < D1.getNumCols(); j++) {
-                assertEquals(expectedD1.get(i, j), D1.get(i, j), TOLERANCE,
+                assertEquals(expectedD1.get(i, j), D1.get(i, j), LOOSE_FINE_TOL,
                         String.format("D1[%d,%d] mismatch", i, j));
             }
         }

@@ -288,14 +288,32 @@ public class LINE extends SolverAUTO {
                 throw new RuntimeException("Failed to load LQN model from: " + filename, e);
             }
         } else if (lowerFilename.endsWith(".jsim") || lowerFilename.endsWith(".jsimg") || lowerFilename.endsWith(".jsimw")) {
-            // JSIM/JMT format - would need JSIM2LINE implementation
-            throw new UnsupportedOperationException("JSIM/JMT format loading not yet implemented in Java. Use MATLAB LINE.load() for JSIM files.");
+            // JSIM/JMT format - delegate to M2M.JSIM2LINE
+            try {
+                jline.io.M2M m2m = new jline.io.M2M();
+                Network jsimModel = m2m.JSIM2LINE(filename);
+                if (verbose) {
+                    System.out.println("Loaded JSIM model from: " + filename);
+                }
+                return jsimModel;
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to load JSIM model from: " + filename, e);
+            }
         } else if (lowerFilename.endsWith(".jmva")) {
-            // JMVA format - would need JMVA2LINE implementation
-            throw new UnsupportedOperationException("JMVA format loading not yet implemented in Java. Use MATLAB LINE.load() for JMVA files.");
+            // JMVA format - delegate to M2M.JMVA2LINE
+            try {
+                jline.io.M2M m2m = new jline.io.M2M();
+                Network jmvaModel = m2m.JMVA2LINE(filename);
+                if (verbose) {
+                    System.out.println("Loaded JMVA model from: " + filename);
+                }
+                return jmvaModel;
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to load JMVA model from: " + filename, e);
+            }
         } else {
             throw new IllegalArgumentException("Unsupported file format: " + filename +
-                ". Supported formats: .xml, .lqn, .lqnx (LQN models)");
+                ". Supported formats: .xml, .lqn, .lqnx (LQN), .jsim, .jsimg, .jsimw (JMT), .jmva (JMVA)");
         }
     }
 }

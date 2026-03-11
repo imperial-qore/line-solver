@@ -54,7 +54,6 @@ solver{end+1} = JMT(model,'samples',1e5,'seed', 23000);
 solver{end+1} = SSA(model,'seed',23000);
 %solver{end+1} = FLD(model,options);
 solver{end+1} = MVA(model);
-solver{end+1} = DES(model,'samples',1e5,'seed', 23000);
 %solver{end+1} = NC(model,options);
 %solver{end+1} = MAM(model,options);
 for s=1:length(solver)

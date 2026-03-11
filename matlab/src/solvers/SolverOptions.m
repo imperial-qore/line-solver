@@ -48,8 +48,12 @@ options.config.np_priority = 'default';
 options.config.fork_join = 'default';
 options.config.nonmkv = 'bernstein'; % Method for non-Markovian distribution conversion: 'none', 'bernstein'
 options.config.nonmkvorder = 20; % Order (number of phases) for non-Markovian distribution approximation
-options.lang = 'matlab';
-%options.lang = 'java';
+global LINEDefaultLang
+if ~isempty(LINEDefaultLang)
+    options.lang = LINEDefaultLang;
+else
+    options.lang = 'matlab';
+end
 options.force = false;
 options.init_sol = [];
 options.iter_max = 1000;
@@ -67,6 +71,12 @@ odesfun.fastStiffOdeSolver = @ode23s;
 odesfun.accurateStiffOdeSolver = @ode15s;
 options.odesolvers = odesfun;
 
+% options.samples - Simulation length (solver-dependent semantics):
+%   JMT:  Samples per metric for confidence interval estimation (min 5000, default 10000)
+%   LDES:  Service completion events to simulate (default 200000)
+%   SSA:  RNG operations in Gillespie algorithm (~2 per event) (default 10000)
+%   NC:   Monte Carlo samples for normalization constant (default 100000)
+%   Analytical solvers (MVA, MAM, CTMC, Fluid): Not used
 options.samples = 1e4;
 options.seed = randi([1,1e6]);
 options.stiff = true;
@@ -86,6 +96,8 @@ switch solverName
         %options.config.state_space_gen = 'reachable'; % still buggy
         options.config.state_space_gen = 'full';
         options.rewardIterations = 1000; % number of value iterations for reward computation
+        options.config.qrf_params = [];   % blocking config struct (f, MR, BB, F, MM, MM1, ZZ, ZM)
+        options.config.qrf_alpha = [];    % load-dependent rates M x N matrix
     case 'Env'
         options.method = 'default';
         options.init_sol = [];
@@ -98,7 +110,7 @@ switch solverName
     case 'Fluid'
         options = Solver.defaultOptions();
         options.config.highvar = 'default';
-        options.config.hide_immediate = true; % eliminate immediate transitions by default
+        options.config.hide_immediate = false; % stiff ODE solver handles immediate rates accurately
         options.iter_max = 200;
         options.stiff = true;
         options.timespan = [0,Inf];
@@ -106,11 +118,11 @@ switch solverName
         % use default
     case 'LN'
         options = Solver.defaultOptions();
-        options.config.interlocking = false; % do not change, true unstable as of 2.0.38
+        options.config.interlocking = true;
         options.config.multiserver = 'default';
         % Under-relaxation options for convergence improvement
-        options.config.relax = 'auto';       % 'auto' | 'fixed' | 'adaptive' | 'none'
-        options.config.relax_factor = 0.1;   % Relaxation factor when enabled (0 < omega <= 1)
+        options.config.relax = 'fixed';      % 'auto' | 'fixed' | 'adaptive' | 'none'
+        options.config.relax_factor = 0.5;   % Relaxation factor (0 < omega <= 1)
         options.config.relax_min = 0.1;      % Minimum relaxation factor for adaptive mode
         options.config.relax_history = 5;    % Error history window for adaptive mode
         options.timespan = [Inf,Inf];
@@ -161,7 +173,7 @@ switch solverName
             otherwise
                 options.config.eventcache = false;
         end
-    case 'DES'
+    case 'LDES'
         options.samples = 1e5;
         options.lang = 'java';
         % Transient detection options

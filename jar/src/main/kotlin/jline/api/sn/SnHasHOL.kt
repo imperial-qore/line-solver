@@ -4,7 +4,7 @@ import jline.lang.NetworkStruct
 import jline.lang.constant.SchedStrategy
 
 fun snHasHOL(sn: NetworkStruct): Boolean {
-    return sn.sched.containsValue(SchedStrategy.HOL)
+    return sn.sched.containsValue(SchedStrategy.HOL) || sn.sched.containsValue(SchedStrategy.FCFSPRIO)
 }
 /**
  * Stochastic network HasHOL algorithms

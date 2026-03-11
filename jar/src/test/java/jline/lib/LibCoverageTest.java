@@ -13,13 +13,13 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static jline.TestTools.*;
 
 /**
  * Coverage tests for library classes with 0% coverage.
  */
 public class LibCoverageTest {
 
-    private static final double TOL = 1e-6;
 
     // ========== lib.lti.euler ==========
 
@@ -38,7 +38,7 @@ public class LibCoverageTest {
         double[] eta = euler.INSTANCE.geteta(5);
         assertNotNull(eta);
         assertEquals(5, eta.length);
-        assertEquals(0.5, eta[0], TOL);  // First element should be 0.5
+        assertEquals(0.5, eta[0], LOOSE_FINE_TOL);  // First element should be 0.5
 
         // Test getomega
         ArrayList<Complex> omega = euler.INSTANCE.getomega(5);
@@ -56,7 +56,7 @@ public class LibCoverageTest {
         assertEquals(5, alpha.size());
 
         // First element has 0 imaginary part
-        assertEquals(0.0, alpha.get(0).getImaginary(), TOL);
+        assertEquals(0.0, alpha.get(0).getImaginary(), LOOSE_FINE_TOL);
 
         // Test getomega
         ArrayList<Complex> omega = talbot.INSTANCE.getomega(5, alpha);
@@ -74,7 +74,7 @@ public class LibCoverageTest {
         assertEquals(6, coeffs.length);  // n+1 coefficients
 
         // First coefficient should be 1 (divided by 0! = 1)
-        assertEquals(1.0, coeffs[0], TOL);
+        assertEquals(1.0, coeffs[0], LOOSE_FINE_TOL);
 
         // Test getLaguerreRoots
         double[] roots = laguerre.INSTANCE.getLaguerreRoots(coeffs);
@@ -137,13 +137,13 @@ public class LibCoverageTest {
         ArrayList<Double> copy = jline.lib.lti.cme.INSTANCE.deepcopy(original);
         assertNotNull(copy);
         assertEquals(3, copy.size());
-        assertEquals(1.0, copy.get(0), TOL);
-        assertEquals(2.0, copy.get(1), TOL);
-        assertEquals(3.0, copy.get(2), TOL);
+        assertEquals(1.0, copy.get(0), LOOSE_FINE_TOL);
+        assertEquals(2.0, copy.get(1), LOOSE_FINE_TOL);
+        assertEquals(3.0, copy.get(2), LOOSE_FINE_TOL);
 
         // Verify it's a deep copy
         original.set(0, 99.0);
-        assertEquals(1.0, copy.get(0), TOL);  // copy unchanged
+        assertEquals(1.0, copy.get(0), LOOSE_FINE_TOL);  // copy unchanged
 
         // Test getnormalrandom
         ArrayList<Double> randoms = jline.lib.lti.cme.INSTANCE.getnormalrandom(10);

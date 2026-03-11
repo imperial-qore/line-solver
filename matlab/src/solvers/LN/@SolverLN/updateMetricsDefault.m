@@ -30,7 +30,7 @@ for r=1:size(self.servt_classes_updmap,1)
         self.servt(aidx) = 0;
         self.residt(aidx) = 0;
         self.tput(aidx) = 0;
-        for w=1:(wnd_size-1)
+        for w=0:(wnd_size-1)
             self.servt(aidx) = self.servt(aidx) + self.results{end-w,layerIdx}.RN(nodeidx,classidx) / wnd_size;
             TN_ref = self.results{end-w,layerIdx}.TN(refstat_k, refclass_c);
             if TN_ref > GlobalConstants.FineTol
@@ -43,8 +43,9 @@ for r=1:size(self.servt_classes_updmap,1)
     else
         self.servt(aidx) = self.results{end,layerIdx}.RN(nodeidx,classidx);
         TN_ref = self.results{end,layerIdx}.TN(refstat_k, refclass_c);
+        QN_val = self.results{end,layerIdx}.QN(nodeidx,classidx);
         if TN_ref > GlobalConstants.FineTol
-            self.residt(aidx) = self.results{end,layerIdx}.QN(nodeidx,classidx) / TN_ref;
+            self.residt(aidx) = QN_val / TN_ref;
         else
             self.residt(aidx) = self.results{end,layerIdx}.WN(nodeidx,classidx);
         end
@@ -74,6 +75,19 @@ for r=1:size(self.servt_classes_updmap,1)
         end
     end
 
+    % Recover from Inf/NaN: snap back to previous iteration's value
+    if it > 1
+        if (isinf(self.servt(aidx)) || isnan(self.servt(aidx))) && ~isnan(self.servt_prev(aidx))
+            self.servt(aidx) = self.servt_prev(aidx);
+        end
+        if (isinf(self.residt(aidx)) || isnan(self.residt(aidx))) && ~isnan(self.residt_prev(aidx))
+            self.residt(aidx) = self.residt_prev(aidx);
+        end
+        if (isinf(self.tput(aidx)) || isnan(self.tput(aidx))) && ~isnan(self.tput_prev(aidx))
+            self.tput(aidx) = self.tput_prev(aidx);
+        end
+    end
+
     % Apply under-relaxation if enabled and not first iteration
     omega = self.relax_omega;
     if omega < 1.0 && it > 1
@@ -92,7 +106,12 @@ for r=1:size(self.servt_classes_updmap,1)
     self.residt_prev(aidx) = self.residt(aidx);
     self.tput_prev(aidx) = self.tput(aidx);
 
-    self.servtproc{aidx} = Exp.fitMean(self.servt(aidx));
+    % Safeguard against MVA numerical instability producing extreme values
+    % (matches Python _update_metrics_default max_servt guard)
+    max_servt = 1e10;
+    if self.servt(aidx) > 0 && self.servt(aidx) <= max_servt
+        self.servtproc{aidx} = Exp.fitMean(self.servt(aidx));
+    end
     self.tputproc{aidx} = Exp.fitRate(self.tput(aidx));
 end
 
@@ -144,7 +163,7 @@ for r=1:size(self.thinkt_classes_updmap,1)
         wnd_size = (it-self.averagingstart+1);
         if ~isempty(self.averagingstart) && it>=iter_min % assume steady-state
             self.tput(aidx) = 0;
-            for w=1:(wnd_size-1)
+            for w=0:(wnd_size-1)
                 self.tput(aidx) = self.tput(aidx) + self.results{end-w,self.idxhash(idx)}.TN(nodeidx,classidx) / wnd_size;
             end
         else
@@ -154,9 +173,47 @@ for r=1:size(self.thinkt_classes_updmap,1)
     end
 end
 
-% TODO: obtain the join times
-%self.joint = zeros(lqn.nidx,1);
-%joinedacts = find(lqn.actpretype == ActivityPrecedenceType.PRE_AND)';
+% Obtain the join times for AND-Join activities
+% For each AND-join activity, compute the synchronization delay as
+% the maximum of predecessor branch service times.
+self.joint = zeros(lqn.nidx,1);
+joinedacts = find(lqn.actpretype == ActivityPrecedenceType.PRE_AND)';
+for aidx = joinedacts
+    % Find predecessor activities in the activity graph
+    preds = find(lqn.graph(:, aidx) > 0)';
+    pred_servts = [];
+    for pidx = preds
+        if pidx > lqn.ashift && pidx <= lqn.ashift + lqn.nacts
+            pred_servts(end+1) = self.servt(pidx); %#ok<AGROW>
+        end
+    end
+    if ~isempty(pred_servts)
+        % Join time = maximum of predecessor branch service times
+        % This represents the synchronization delay at the AND-join point.
+        % For exponentially distributed branch times with means t_1,...,t_k,
+        % approximate E[max] using the Clark (1961) two-moment method
+        % recursively for k branches.
+        if length(pred_servts) == 1
+            self.joint(aidx) = pred_servts(1);
+        else
+            % Recursive two-moment approximation for max of exponentials
+            % Start with first two branches, then fold in remaining
+            mu_max = pred_servts(1);
+            for bi = 2:length(pred_servts)
+                t1 = mu_max;
+                t2 = pred_servts(bi);
+                if t1 > 0 && t2 > 0
+                    % For exponentials: E[max(X1,X2)] = E[X1] + E[X2] - E[min(X1,X2)]
+                    % E[min(X1,X2)] = 1/(1/t1 + 1/t2) = t1*t2/(t1+t2)
+                    mu_max = t1 + t2 - t1*t2/(t1+t2);
+                else
+                    mu_max = max(t1, t2);
+                end
+            end
+            self.joint(aidx) = mu_max;
+        end
+    end
+end
 
 % obtain the call residence time
 self.callservt = zeros(lqn.ncalls,1);
@@ -173,20 +230,21 @@ for r=1:size(self.call_classes_updmap,1)
             self.callservt(cidx) = self.results{end, self.idxhash(idx)}.RN(nodeidx,classidx) * self.lqn.callproc{cidx}.getMean;
             self.callresidt(cidx) = self.results{end, self.idxhash(idx)}.WN(nodeidx,classidx);
         end
+        % Growth rate capping removed - it prevents callservt from converging
+        % to the correct value when initial values are near-zero (Immediate)
         % Apply under-relaxation to call service times
         omega = self.relax_omega;
         if omega < 1.0 && it > 1 && ~isnan(self.callservt_prev(cidx))
             self.callservt(cidx) = omega * self.callservt(cidx) + (1 - omega) * self.callservt_prev(cidx);
         end
         self.callservt_prev(cidx) = self.callservt(cidx);
+        self.callresidt_prev(cidx) = self.callresidt(cidx);
     end
 end
 
 % then resolve the entry servt summing up these contributions
-%entry_servt = zeros(lqn.nidx,1);
-entry_servt = self.servtmatrix*[self.residt;self.callresidt(:)]; % Sum the residT of all the activities connected to this entry
+entry_servt = self.servtmatrix*[self.residt;self.callresidt(:)];
 entry_servt(1:lqn.eshift) = 0;
-
 
 % Propagate forwarding calls: add target entry's service time to source entry
 % When e0 forwards to e1 with probability p, callers of e0 see:
@@ -233,11 +291,13 @@ for eidx=(lqn.eshift+1):(lqn.eshift+lqn.nentries)
             eidxclass = ensemble{self.idxhash(hidx)}.attribute.entries(find(ensemble{self.idxhash(hidx)}.attribute.entries(:,2) == eidx),1);
             task_tput  = sum(self.results{end,self.idxhash(hidx)}.TN(ensemble{self.idxhash(hidx)}.attribute.clientIdx,tidxclass));
             entry_tput = sum(self.results{end,self.idxhash(hidx)}.TN(ensemble{self.idxhash(hidx)}.attribute.clientIdx,eidxclass));
-            %entry_servt_refstat = self.ensemble{self.idxhash(hidx)}.classes{tidxclass}.refstat;
-            %entry_servt_z = entry_servt_refstat.serviceProcess{self.ensemble{self.idxhash(hidx)}.classes{tidxclass}.index}.getMean();
-            %entry_servt(eidx) = self.ensemble{self.idxhash(hidx)}.classes{tidxclass}.population / entry_tput - entry_servt_z;
-            self.servt(eidx) = entry_servt(eidx) * task_tput / max(GlobalConstants.Zero, entry_tput);
-            self.residt(eidx) = entry_servt(eidx) * task_tput / max(GlobalConstants.Zero, entry_tput);
+            if entry_tput > GlobalConstants.Zero
+                self.servt(eidx) = entry_servt(eidx) * task_tput / entry_tput;
+                self.residt(eidx) = entry_servt(eidx) * task_tput / entry_tput;
+            else
+                self.servt(eidx) = entry_servt(eidx);
+                self.residt(eidx) = entry_servt(eidx);
+            end
         else
             % For async-only targets, use entry_servt directly
             % No throughput ratio scaling needed since there are no closed classes
@@ -288,7 +348,9 @@ for r=1:size(self.call_classes_updmap,1)
     cidx = self.call_classes_updmap(r,2);
     eidx = lqn.callpair(cidx,2);
     if self.call_classes_updmap(r,3) > 1
-        self.servtproc{eidx} = Exp.fitMean(self.servt(eidx));
+        if self.servt(eidx) > 0
+            self.servtproc{eidx} = Exp.fitMean(self.servt(eidx));
+        end
     end
 end
 
@@ -303,72 +365,12 @@ for r=1:size(self.call_classes_updmap,1)
             self.callservtproc{cidx} = self.servtproc{eidx};
         else
             % note that respt is per visit, so number of calls is 1
-            self.callservtproc{cidx} = Exp.fitMean(self.callservt(cidx));
-        end
-    end
-end
-
-self.ptaskcallers = zeros(size(self.ptaskcallers));
-% determine ptaskcallers for direct callers to tasks
-for t = 1:lqn.ntasks
-    tidx = lqn.tshift + t;
-    if ~lqn.isref(tidx)
-        [calling_idx, ~] = find(lqn.iscaller(:, lqn.entriesof{tidx})); %#ok<ASGLU>
-        callers = intersect(lqn.tshift+(1:lqn.ntasks), unique(calling_idx)');
-        caller_tput = zeros(1,lqn.ntasks);
-        for caller_idx=callers(:)'
-            caller_idxclass = self.ensemble{self.idxhash(tidx)}.attribute.tasks(1+find(self.ensemble{self.idxhash(tidx)}.attribute.tasks(2:end,2) == caller_idx),1);
-            caller_tput(caller_idx-lqn.tshift)  = sum(self.results{end,self.idxhash(tidx)}.TN(self.ensemble{self.idxhash(tidx)}.attribute.clientIdx,caller_idxclass));
-        end
-        self.ptaskcallers(tidx,(lqn.tshift+1):(lqn.tshift+lqn.ntasks))= caller_tput / max(GlobalConstants.Zero, sum(caller_tput));
-    end
-end
-
-% determine ptaskcallers for direct callers to hosts
-for hidx = 1:lqn.nhosts
-    if ~self.ignore(tidx) && ~self.ignore(hidx)
-        caller_tput = zeros(1,lqn.ntasks);
-        callers = lqn.tasksof{hidx};
-        for caller_idx=callers
-            caller_idxclass = self.ensemble{self.idxhash(hidx)}.attribute.tasks(find(self.ensemble{self.idxhash(hidx)}.attribute.tasks(:,2) == caller_idx),1);
-            caller_tput(caller_idx-lqn.tshift)  = caller_tput(caller_idx-lqn.tshift) + sum(self.results{end,self.idxhash(hidx)}.TN(self.ensemble{self.idxhash(hidx)}.attribute.clientIdx,caller_idxclass));
-        end
-        self.ptaskcallers(hidx,(lqn.tshift+1):(lqn.tshift+lqn.ntasks)) = caller_tput / max(GlobalConstants.Zero, sum(caller_tput));
-    end
-end
-
-% impute call probability using a DTMC random walk on the taskcaller graph
-P = self.ptaskcallers;
-P = dtmc_makestochastic(P); % hold mass at reference stations when there
-self.ptaskcallers_step{1} = P; % configure step 1
-for h = 1:lqn.nhosts
-    hidx=h;
-    for tidx = lqn.tasksof{hidx}
-        % initialize the probability mass on tidx
-        x0 = zeros(length(self.ptaskcallers),1);
-        x0(hidx) = 1;
-        x0=x0(:)';
-        % start the walk backward to impute probability of indirect callers
-        x = x0*P; % skip since pcallers already calculated in this case
-        for step=2:self.nlayers % upper bound on maximum dag height
-            x = x*P;
-            % here self.ptaskcallers_step{step}(tidx,remidx) is the
-            % probability that the request to tidx comes from remidx
-            self.ptaskcallers_step{step}(tidx,:) = x(:);
-            % here self.ptaskcallers_step{step}(hidx,remidx) is the
-            % probability that the request to hidx comes from remidx
-            % through the call that tidx puts on hidx, which is
-            % weighted by the relative tput of tidx on the tasks running on
-            % hidx
-            self.ptaskcallers_step{step}(hidx,:) = self.ptaskcallers(hidx,tidx)*x(:)';
-            if sum(x(find(lqn.isref)))>1.0-self.options.tol %#ok<FNDSB>
-                % if all the probability mass has reached backwards the
-                % reference stations, then stop
-                break;
+            if self.callservt(cidx) > 0
+                self.callservtproc{cidx} = Exp.fitMean(self.callservt(cidx));
             end
-            self.ptaskcallers(:,tidx) = max([self.ptaskcallers(:,tidx), x(:)],[],2);
         end
     end
 end
+
 self.ensemble = ensemble;
 end

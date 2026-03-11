@@ -10,6 +10,9 @@ from typing import Optional
 
 from .network_struct import NetworkStruct, SchedStrategy, RoutingStrategy
 
+# FineTol constant matching MATLAB GlobalConstants.FineTol
+_FINE_TOL = 1e-8
+
 
 # ============================================================================
 # Model Type Predicates
@@ -19,7 +22,7 @@ def sn_is_closed_model(sn: NetworkStruct) -> bool:
     """
     Check if the network model is closed (all finite populations).
 
-    A closed model has finite jobs and no infinite (open) job classes.
+    A closed model has all finite job populations.
 
     Args:
         sn: NetworkStruct object
@@ -29,8 +32,7 @@ def sn_is_closed_model(sn: NetworkStruct) -> bool:
     """
     if sn.njobs is None or len(sn.njobs) == 0:
         return False
-    njobs = sn.njobs.flatten()
-    return not np.any(np.isinf(njobs)) and np.any(np.isfinite(njobs) & (njobs > 0))
+    return np.all(np.isfinite(sn.njobs.flatten()))
 
 
 def sn_is_open_model(sn: NetworkStruct) -> bool:
@@ -66,17 +68,38 @@ def sn_is_mixed_model(sn: NetworkStruct) -> bool:
 
 def sn_is_population_model(sn: NetworkStruct) -> bool:
     """
-    Check if the network model has populations defined.
+    Check if the network model is a population model.
+
+    A population model uses only delay-like scheduling strategies
+    (INF, PS, PSPRIO, DPS, GPS, GPSPRIO, DPSPRIO, EXT),
+    has no priorities, and no fork-join topology.
 
     Args:
         sn: NetworkStruct object
 
     Returns:
-        True if population is defined
+        True if model is population-based
     """
-    if sn.njobs is None or len(sn.njobs) == 0:
+    if sn.sched is None or len(sn.sched) == 0:
         return False
-    return np.any(sn.njobs.flatten() > 0)
+    population_strategies = {
+        SchedStrategy.INF,
+        SchedStrategy.PS,
+        SchedStrategy.PSPRIO,
+        SchedStrategy.DPS,
+        SchedStrategy.GPS,
+        SchedStrategy.GPSPRIO,
+        SchedStrategy.DPSPRIO,
+        SchedStrategy.EXT,
+    }
+    for strategy in sn.sched.values():
+        if strategy not in population_strategies:
+            return False
+    if sn_has_priorities(sn):
+        return False
+    if sn_has_fork_join(sn):
+        return False
+    return True
 
 
 # ============================================================================
@@ -277,6 +300,21 @@ def sn_has_lcfspr(sn: NetworkStruct) -> bool:
     if sn.sched is None or len(sn.sched) == 0:
         return False
     return any(s == SchedStrategy.LCFSPR for s in sn.sched.values())
+
+
+def sn_has_lcfs_pr(sn: NetworkStruct) -> bool:
+    """
+    Check if the network has any LCFS-PR (LCFS Preemptive Resume) stations.
+
+    This is an alias for sn_has_lcfspr, matching the MATLAB function name.
+
+    Args:
+        sn: NetworkStruct object
+
+    Returns:
+        True if network has at least one LCFS-PR station
+    """
+    return sn_has_lcfspr(sn)
 
 
 def sn_has_siro(sn: NetworkStruct) -> bool:
@@ -526,15 +564,30 @@ def sn_has_homogeneous_scheduling(sn: NetworkStruct, strategy: int) -> bool:
 
 def sn_has_multi_class_fcfs(sn: NetworkStruct) -> bool:
     """
-    Check if the network has a multiclass FCFS station.
+    Check if the network has an FCFS station that serves multiple classes.
 
     Args:
         sn: NetworkStruct object
 
     Returns:
-        True if network has multiclass and at least one FCFS station
+        True if any FCFS station serves more than one class
     """
-    return sn_has_multi_class(sn) and sn_has_fcfs(sn)
+    if sn.sched is None or len(sn.sched) == 0:
+        return False
+    if sn.rates is None or sn.rates.size == 0:
+        return False
+
+    for station_id, strategy in sn.sched.items():
+        strategy_val = int(strategy) if hasattr(strategy, '__int__') else strategy
+        if strategy_val != int(SchedStrategy.FCFS):
+            continue
+        if station_id >= sn.rates.shape[0]:
+            continue
+        row = sn.rates[station_id, :]
+        # Count classes with positive rates at this FCFS station
+        if np.sum(row > 0) > 1:
+            return True
+    return False
 
 
 def sn_has_multi_class_heter_fcfs(sn: NetworkStruct) -> bool:
@@ -542,6 +595,8 @@ def sn_has_multi_class_heter_fcfs(sn: NetworkStruct) -> bool:
     Check if network has multiclass heterogeneous FCFS stations.
 
     A heterogeneous FCFS station has different service rates for different classes.
+    Uses MATLAB's range() check: max(rates) - min(rates) > 0 across all classes
+    at each FCFS station.
 
     Args:
         sn: NetworkStruct object
@@ -551,23 +606,22 @@ def sn_has_multi_class_heter_fcfs(sn: NetworkStruct) -> bool:
     """
     if sn.sched is None or len(sn.sched) == 0:
         return False
-    if sn.rates is None or len(sn.rates) == 0:
+    if sn.rates is None or sn.rates.size == 0:
         return False
 
     rates = sn.rates
     for station_id, strategy in sn.sched.items():
-        # Use integer comparison for cross-module SchedStrategy compatibility
-        # Both lang.base.SchedStrategy and api.sn.network_struct.SchedStrategy use FCFS=0
         strategy_val = int(strategy) if hasattr(strategy, '__int__') else strategy
         if strategy_val != int(SchedStrategy.FCFS):
             continue
         if station_id >= rates.shape[0]:
             continue
         row = rates[station_id, :]
-        # Check if rates vary across classes (heterogeneous)
-        finite_rates = row[np.isfinite(row) & (row > 0)]
-        if len(finite_rates) > 1:
-            if np.max(finite_rates) - np.min(finite_rates) > 1e-10:
+        # MATLAB: range([sn.rates(i,:)]) > 0
+        # range() = max - min over all values (including NaN-handling)
+        finite_vals = row[np.isfinite(row)]
+        if len(finite_vals) > 0:
+            if np.max(finite_vals) - np.min(finite_vals) > 0:
                 return True
     return False
 
@@ -576,15 +630,40 @@ def sn_has_multi_class_heter_exp_fcfs(sn: NetworkStruct) -> bool:
     """
     Check if network has multiclass heterogeneous exponential FCFS stations.
 
+    Returns true if any FCFS station has heterogeneous rates AND all
+    service time SCVs at that station are approximately 1.0 (exponential).
+
     Args:
         sn: NetworkStruct object
 
     Returns:
         True if network has FCFS stations with heterogeneous exponential service
     """
-    # For now, we treat this the same as sn_has_multi_class_heter_fcfs
-    # since we don't track distribution types in basic NetworkStruct
-    return sn_has_multi_class_heter_fcfs(sn)
+    if sn.sched is None or len(sn.sched) == 0:
+        return False
+    if sn.rates is None or sn.rates.size == 0:
+        return False
+    if sn.scv is None or sn.scv.size == 0:
+        return False
+
+    for station_id, strategy in sn.sched.items():
+        strategy_val = int(strategy) if hasattr(strategy, '__int__') else strategy
+        if strategy_val != int(SchedStrategy.FCFS):
+            continue
+        if station_id >= sn.rates.shape[0]:
+            continue
+        row = sn.rates[station_id, :]
+        # Check if rates vary across classes (heterogeneous)
+        finite_vals = row[np.isfinite(row)]
+        if len(finite_vals) > 0 and (np.max(finite_vals) - np.min(finite_vals)) > 0:
+            # Check if all SCVs are ~1 (exponential)
+            if station_id < sn.scv.shape[0]:
+                scvs = sn.scv[station_id, :]
+                finite_scvs = scvs[np.isfinite(scvs)]
+                if len(finite_scvs) > 0:
+                    if np.max(finite_scvs) < 1 + _FINE_TOL and np.min(finite_scvs) > 1 - _FINE_TOL:
+                        return True
+    return False
 
 
 # ============================================================================
@@ -625,10 +704,12 @@ def sn_has_load_dependence(sn: NetworkStruct) -> bool:
     """
     if sn.lldscaling is None:
         return False
-    if sn.lldscaling.size == 0:
-        return False
-    # Check if any scaling differs from 1.0
-    return np.any(sn.lldscaling != 1.0)
+    if isinstance(sn.lldscaling, np.ndarray):
+        if sn.lldscaling.ndim < 2:
+            return sn.lldscaling.size > 0
+        return sn.lldscaling.shape[1] > 0
+    # For non-array types (list, etc.)
+    return len(sn.lldscaling) > 0
 
 
 def sn_has_joint_dependence(sn: NetworkStruct) -> bool:
@@ -689,42 +770,36 @@ def sn_has_priorities(sn: NetworkStruct) -> bool:
     """
     Check if the network uses class priorities.
 
+    In LINE, priority 0 is default (no priority). Values > 0 indicate
+    priority classes are in use.
+
     Args:
         sn: NetworkStruct object
 
     Returns:
-        True if the network has priority-based scheduling (non-uniform priorities)
+        True if any class has priority > 0
     """
     if sn.classprio is None:
         return False
     if sn.classprio.size == 0:
         return False
-    # Check if priorities are non-uniform (not all the same value)
-    # Priority 0 is the highest priority in LINE, so checking > 0 is incorrect
-    return not np.all(sn.classprio == sn.classprio.flat[0])
+    return np.any(sn.classprio.flatten() > 0)
 
 
 def sn_has_class_switching(sn: NetworkStruct) -> bool:
     """
     Check if the network has class switching.
 
+    Class switching is indicated by the number of classes
+    differing from the number of chains.
+
     Args:
         sn: NetworkStruct object
 
     Returns:
-        True if network has class switching
+        True if number of classes differs from number of chains
     """
-    if sn.csmask is None:
-        return False
-    if sn.csmask.size == 0:
-        return False
-    # Check if any off-diagonal elements are non-zero
-    K = sn.nclasses
-    for i in range(min(K, sn.csmask.shape[0])):
-        for j in range(min(K, sn.csmask.shape[1])):
-            if i != j and sn.csmask[i, j] > 0:
-                return True
-    return False
+    return sn.nclasses != sn.nchains
 
 
 def sn_has_fractional_populations(sn: NetworkStruct) -> bool:
@@ -740,8 +815,7 @@ def sn_has_fractional_populations(sn: NetworkStruct) -> bool:
     if sn.njobs is None or len(sn.njobs) == 0:
         return False
     njobs = sn.njobs.flatten()
-    finite_jobs = njobs[np.isfinite(njobs)]
-    return np.any(finite_jobs != np.floor(finite_jobs))
+    return np.any(njobs != np.round(njobs))
 
 
 # ============================================================================
@@ -831,19 +905,23 @@ def sn_has_product_form_not_het_fcfs(sn: NetworkStruct) -> bool:
     """
     Check if network has product form except for heterogeneous FCFS.
 
+    This checks:
+    - All stations use INF, PS, FCFS, LCFSPR, or EXT scheduling
+    - No priorities, no fork-join, no state-dependent routing
+    - At FCFS stations, all active class SCVs are approximately 1 (exponential)
+
     Args:
         sn: NetworkStruct object
 
     Returns:
         True if network would have product form without heterogeneous FCFS
     """
-    # Check scheduling strategies
+    # Check scheduling strategies (note: MATLAB excludes LCFS here, only LCFSPR)
     if sn.sched is not None and len(sn.sched) > 0:
         product_form_strategies = {
             SchedStrategy.INF,
             SchedStrategy.PS,
             SchedStrategy.FCFS,
-            SchedStrategy.LCFS,
             SchedStrategy.LCFSPR,
             SchedStrategy.EXT,
         }
@@ -851,13 +929,29 @@ def sn_has_product_form_not_het_fcfs(sn: NetworkStruct) -> bool:
             if strategy not in product_form_strategies:
                 return False
 
-    # Check for other violations (but not heterogeneous FCFS)
+    # Check for other violations
     if sn_has_priorities(sn):
         return False
     if sn_has_fork_join(sn):
         return False
     if sn_has_sd_routing(sn):
         return False
+
+    # At FCFS stations, check that all active class SCVs are ~1 (exponential)
+    if sn.sched is not None and sn.scv is not None and sn.scv.size > 0:
+        for station_id, strategy in sn.sched.items():
+            strategy_val = int(strategy) if hasattr(strategy, '__int__') else strategy
+            if strategy_val != int(SchedStrategy.FCFS):
+                continue
+            if station_id >= sn.scv.shape[0]:
+                continue
+            scvs = sn.scv[station_id, :]
+            # Active classes: finite and positive SCV
+            active = np.isfinite(scvs) & (scvs > 0)
+            if np.any(active):
+                active_scvs = scvs[active]
+                if not (np.all(active_scvs > 1 - _FINE_TOL) and np.all(active_scvs < 1 + _FINE_TOL)):
+                    return False
 
     return True
 

@@ -17,6 +17,8 @@ class _butools_settings:
     checkInput = checkInput
 butools = _butools_settings()
 
+# Minimum matrix size to use JIT kernels
+
 def QBDFundamentalMatrices (B, L, F, matrices="G", precision=1e-14, maxNumIt=50, method="CR", shift=True):
     """
     Returns the fundamental matrices corresponding to the
@@ -123,7 +125,6 @@ def QBDFundamentalMatrices (B, L, F, matrices="G", precision=1e-14, maxNumIt=50,
         PI *= BB
         check = min(la.norm(BB,np.inf),la.norm(BF,np.inf))
         numit += 1
-
 
     if numit == maxNumIt and butools.verbose==True:
         print("Maximum Number of Iterations reached")
@@ -238,7 +239,7 @@ def QBDStationaryDistr (pi0, R, K):
         The stationary probability vector up to level K
     """
 
-    m = R.shape[0]    
+    m = R.shape[0]
     qld = ml.empty((1,(K+1)*m))
     qld[0,0:m] = pi0
     pix = pi0

@@ -55,14 +55,16 @@ for c=1:sn.nchains
     if sn.refclass(c)>0 % if the model has a ref class
         for i=1:sn.nstations
             Vchain(i,c) = sum(sn.visits{c}(sn.stationToStateful(i),inchain)) / sum(sn.visits{c}(sn.stationToStateful(sn.refstat(inchain(1))),sn.refclass(c)));
-            for k=inchain
+            for kidx=1:length(inchain)
+                k = inchain(kidx);
                 alpha(i,k) = alpha(i,k) + sn.visits{c}(sn.stationToStateful(i),k) / sum(sn.visits{c}(sn.stationToStateful(i),inchain));
             end
         end
     else
         for i=1:sn.nstations
             Vchain(i,c) = sum(sn.visits{c}(sn.stationToStateful(i),inchain)) / sum(sn.visits{c}(sn.stationToStateful(sn.refstat(inchain(1))),inchain));
-            for k=inchain
+            for kidx=1:length(inchain)
+                k = inchain(kidx);
                 alpha(i,k) = alpha(i,k) + sn.visits{c}(sn.stationToStateful(i),k) / sum(sn.visits{c}(sn.stationToStateful(i),inchain));
             end
         end
@@ -102,7 +104,7 @@ for c=1:sn.nchains
     end
     refstatchain(c) = sn.refstat(inchain(1));
     if any((sn.refstat(inchain(1))-refstatchain(c))~=0)
-        line_error(mfilename,sprintf('Classes in chain %d have different reference station.',c));
+        line_error(mfilename,sprintf('Classes in chain %g have different reference station.',c));
     end
 end
 Lchain(~isfinite(Lchain))=0;

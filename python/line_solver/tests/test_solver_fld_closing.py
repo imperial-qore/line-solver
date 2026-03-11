@@ -15,6 +15,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from line_solver.solvers.solver_fld.ode.closing_ode import (
     compute_theta_pnorm,
     compute_theta_softmin,
+)
+from line_solver.solvers.solver_fld.ode.closing_ode import (
     compute_theta_statedep,
     ClosingODESystem,
 )

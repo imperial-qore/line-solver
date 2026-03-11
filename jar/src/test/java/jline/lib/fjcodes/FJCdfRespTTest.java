@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static jline.TestTools.*;
 
 /**
  * Tests for FJ_codes CDF response time calculations
@@ -65,7 +66,7 @@ public class FJCdfRespTTest {
 
         // Verify result structure
         assertEquals(1, result.getK());
-        assertArrayEquals(new double[]{50.0, 90.0, 95.0, 99.0}, result.getPercentiles(), 0.01);
+        assertArrayEquals(new double[]{50.0, 90.0, 95.0, 99.0}, result.getPercentiles(), COARSE_TOL);
 
         // M/M/1 theoretical sojourn time percentiles (λ=0.5, μ=1.0, K=1)
         // For Exp(μ-λ) = Exp(0.5): percentile p at -ln(1-p)/0.5

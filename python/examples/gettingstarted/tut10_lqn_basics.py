@@ -15,7 +15,8 @@ from line_solver.constants import SchedStrategy
 from line_solver.distributions import Exp
 from line_solver.solvers import LN, MVA, LQNS
 
-def main():
+
+def tut10_lqn_basics():
     # Create the layered network model
     model = LayeredNetwork('ClientDBSystem')
 
@@ -40,6 +41,11 @@ def main():
     # DB activity: processes database request
     A2 = Activity(model, 'DBActivity', Exp.fit_mean(0.8)).on(T2)
     A2.bound_to(E2).replies_to(E2)
+    return model
+
+
+def main():
+    model = tut10_lqn_basics()
 
     # Solve the layered network using the LN solver with MVA applied to each layer
     print("LN Solver Results:")
@@ -56,12 +62,6 @@ def main():
     else:
         print("LQNS solver not available - skipping")
 
-    # This example illustrates key layered queueing network concepts:
-    # - Hierarchical structure: Clients make requests to servers
-    # - Synchronous calls: Client requests block until database responds
-    # - Call multiplicity: Single client request triggers multiple database operations
-    # - Performance analysis: End-to-end response times including call dependencies
-    # - Multiple solution methods: Both LN (iterative) and LQNS (analytical) solvers
 
 if __name__ == '__main__':
     main()

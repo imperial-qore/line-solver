@@ -393,7 +393,15 @@ if hasOpen
     for s=indexOpenClasses
         s_chain = find(chains(:,s));
         others_in_chain = find(chains(s_chain,:)); %#ok<FNDSB>
-        rtnodes((idxSink-1)*K+others_in_chain,(idxSource-1)*K+others_in_chain) = repmat(arvRates(others_in_chain)/sum(arvRates(others_in_chain)),length(others_in_chain),1);
+        chainSum = sum(arvRates(others_in_chain));
+        if chainSum > 0
+            arvProbs = arvRates(others_in_chain) / chainSum;
+        else
+            % All rates are zero (e.g., all arrivals disabled): use equal probabilities
+            % to avoid NaN in Sink->Source routing
+            arvProbs = ones(size(others_in_chain)) / length(others_in_chain);
+        end
+        rtnodes((idxSink-1)*K+others_in_chain,(idxSource-1)*K+others_in_chain) = repmat(arvProbs,length(others_in_chain),1);
     end
 end
 

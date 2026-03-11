@@ -42,7 +42,7 @@ import static java.lang.Double.isInfinite;
 // close of this current project.
 
 public class PStarSearcher {
-    // TODO: this still needs integration with the fluid solver as per info above
+    // Research/experimentation class for p-norm smoothing (see class header for details)
     public long runTime;
 
     private void determinePStarInitialSolution(

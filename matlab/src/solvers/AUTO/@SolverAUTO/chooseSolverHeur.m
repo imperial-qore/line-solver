@@ -51,7 +51,14 @@ switch method
                     solver = self.solvers{self.CANDIDATE_JMT};
                 end
             case 'LayeredNetwork'
-                line_error(mfilename,'Method not yet supported with LayeredNetworks');
+                % Use SolverLN with Fluid sub-solver for transient metrics
+                if ~isempty(self.solvers{self.CANDIDATE_LN_FLUID})
+                    solver = self.solvers{self.CANDIDATE_LN_FLUID};
+                elseif ~isempty(self.solvers{self.CANDIDATE_LN_MVA})
+                    solver = self.solvers{self.CANDIDATE_LN_MVA};
+                else
+                    line_error(mfilename,'No LayeredNetwork solver available for transient analysis');
+                end
         end
     case {'getCdfRespT'}
         this_model = self.model;
@@ -65,7 +72,14 @@ switch method
                     solver = self.solvers{self.CANDIDATE_JMT};
                 end
             case 'LayeredNetwork'
-                line_error(mfilename,'Method not yet supported with LayeredNetworks');
+                % Use SolverLN with Fluid sub-solver for CDF metrics
+                if ~isempty(self.solvers{self.CANDIDATE_LN_FLUID})
+                    solver = self.solvers{self.CANDIDATE_LN_FLUID};
+                elseif ~isempty(self.solvers{self.CANDIDATE_LN_MVA})
+                    solver = self.solvers{self.CANDIDATE_LN_MVA};
+                else
+                    line_error(mfilename,'No LayeredNetwork solver available for CDF analysis');
+                end
         end
     case {'getTranCdfPassT','getTranCdfRespT'}
         this_model = self.model;
@@ -77,7 +91,14 @@ switch method
                     solver = self.solvers{self.CANDIDATE_JMT};
                 end
             case 'LayeredNetwork'
-                line_error(mfilename,'Method not yet supported with LayeredNetworks');
+                % Use SolverLN with Fluid sub-solver for transient CDF metrics
+                if ~isempty(self.solvers{self.CANDIDATE_LN_FLUID})
+                    solver = self.solvers{self.CANDIDATE_LN_FLUID};
+                elseif ~isempty(self.solvers{self.CANDIDATE_LN_MVA})
+                    solver = self.solvers{self.CANDIDATE_LN_MVA};
+                else
+                    line_error(mfilename,'No LayeredNetwork solver available for transient CDF analysis');
+                end
         end
     case {'getTranProb','getTranProbSys','getTranProbAggr','getTranProbSysAggr'}
         this_model = self.model;
@@ -85,7 +106,14 @@ switch method
             case 'Network'
                 solver = self.solvers{self.CANDIDATE_CTMC};
             case 'LayeredNetwork'
-                line_error(mfilename,'Method not yet supported with LayeredNetworks');
+                % Use SolverLN with MVA sub-solver (closest available for prob analysis)
+                if ~isempty(self.solvers{self.CANDIDATE_LN_MVA})
+                    solver = self.solvers{self.CANDIDATE_LN_MVA};
+                elseif ~isempty(self.solvers{self.CANDIDATE_LN_NC})
+                    solver = self.solvers{self.CANDIDATE_LN_NC};
+                else
+                    line_error(mfilename,'No LayeredNetwork solver available for probability analysis');
+                end
         end
     case {'sample','sampleSys'}
         this_model = self.model;
@@ -93,7 +121,14 @@ switch method
             case 'Network'
                 solver = self.solvers{self.CANDIDATE_SSA};
             case 'LayeredNetwork'
-                line_error(mfilename,'Method not yet supported with LayeredNetworks');
+                % Use LQNS or SolverLN for sampling (best effort)
+                if ~isempty(self.solvers{self.CANDIDATE_LQNS})
+                    solver = self.solvers{self.CANDIDATE_LQNS};
+                elseif ~isempty(self.solvers{self.CANDIDATE_LN_MVA})
+                    solver = self.solvers{self.CANDIDATE_LN_MVA};
+                else
+                    line_error(mfilename,'No LayeredNetwork solver available for sampling');
+                end
         end
     case {'sampleAggr','sampleSysAggr'}
         this_model = self.model;
@@ -101,8 +136,15 @@ switch method
             case 'Network'
                 solver = self.solvers{self.CANDIDATE_JMT};
             case 'LayeredNetwork'
-                line_error(mfilename,'Method not yet supported with LayeredNetworks');
-        end        
+                % Use LQNS or SolverLN for aggregate sampling (best effort)
+                if ~isempty(self.solvers{self.CANDIDATE_LQNS})
+                    solver = self.solvers{self.CANDIDATE_LQNS};
+                elseif ~isempty(self.solvers{self.CANDIDATE_LN_MVA})
+                    solver = self.solvers{self.CANDIDATE_LN_MVA};
+                else
+                    line_error(mfilename,'No LayeredNetwork solver available for aggregate sampling');
+                end
+        end
     case {'getProb','getProbAggr','getProbSys','getProbSysAggr','getProbNormConstAggr'}
         this_model = self.model;
         switch class(this_model)
@@ -113,7 +155,14 @@ switch method
                     solver = self.solvers{self.CANDIDATE_JMT};
                 end
             case 'LayeredNetwork'
-                line_error(mfilename,'Method not yet supported with LayeredNetworks');
+                % Use SolverLN with NC sub-solver for probability analysis
+                if ~isempty(self.solvers{self.CANDIDATE_LN_NC})
+                    solver = self.solvers{self.CANDIDATE_LN_NC};
+                elseif ~isempty(self.solvers{self.CANDIDATE_LN_MVA})
+                    solver = self.solvers{self.CANDIDATE_LN_MVA};
+                else
+                    line_error(mfilename,'No LayeredNetwork solver available for probability analysis');
+                end
         end
 end
 end

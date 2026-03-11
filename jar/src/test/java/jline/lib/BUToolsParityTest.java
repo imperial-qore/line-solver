@@ -35,6 +35,7 @@ import jline.lib.butools.queues.FluFluResult;
 import jline.util.matrix.Matrix;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
+import static jline.TestTools.*;
 
 /**
  * BUTools Parity Tests - Unit tests validating JAR implementation against butools.tmp examples
@@ -44,7 +45,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class BUToolsParityTest {
 
-    private static final double TOLERANCE = 1e-4;
 
     // ============ MAP2FromMoments - From butools.tmp/MAP2FromMoments.txt ============
 
@@ -71,13 +71,13 @@ public class BUToolsParityTest {
 
         // Validate parity by recomputing moments
         double[] computedMoms = MarginalMomentsFromMAPKt.marginalMomentsFromMAP(D0, D1, 3);
-        assertEquals(moms[0], computedMoms[0], TOLERANCE);
-        assertEquals(moms[1], computedMoms[1], TOLERANCE);
-        assertEquals(moms[2], computedMoms[2], TOLERANCE);
+        assertEquals(moms[0], computedMoms[0], MID_TOL);
+        assertEquals(moms[1], computedMoms[1], MID_TOL);
+        assertEquals(moms[2], computedMoms[2], MID_TOL);
 
         // Validate correlation
         double[] computedCorr = LagCorrelationsFromMAPKt.lagCorrelationsFromMAP(D0, D1, 1);
-        assertEquals(corr, computedCorr[0], TOLERANCE);
+        assertEquals(corr, computedCorr[0], MID_TOL);
     }
 
     // ============ CheckMAPRepresentation - From butools.tmp/CheckMAPRepresentation.txt ============
@@ -179,9 +179,9 @@ public class BUToolsParityTest {
 
         // Verify moments are preserved
         double[] computedMoms = MomentsFromMEKt.momentsFromPH(ph2.getAlpha(), ph2.getA(), 3);
-        assertEquals(moms[0], computedMoms[0], TOLERANCE);
-        assertEquals(moms[1], computedMoms[1], TOLERANCE);
-        assertEquals(moms[2], computedMoms[2], TOLERANCE);
+        assertEquals(moms[0], computedMoms[0], MID_TOL);
+        assertEquals(moms[1], computedMoms[1], MID_TOL);
+        assertEquals(moms[2], computedMoms[2], MID_TOL);
     }
 
     /**
@@ -204,9 +204,9 @@ public class BUToolsParityTest {
 
         // Verify moments are preserved
         double[] computedMoms = MomentsFromMEKt.momentsFromPH(ph2.getAlpha(), ph2.getA(), 3);
-        assertEquals(moms[0], computedMoms[0], TOLERANCE);
-        assertEquals(moms[1], computedMoms[1], TOLERANCE);
-        assertEquals(moms[2], computedMoms[2], TOLERANCE);
+        assertEquals(moms[0], computedMoms[0], MID_TOL);
+        assertEquals(moms[1], computedMoms[1], MID_TOL);
+        assertEquals(moms[2], computedMoms[2], MID_TOL);
     }
 
     // ============ CheckPHRepresentation - From butools.tmp/CheckPHRepresentation.txt ============
@@ -273,7 +273,7 @@ public class BUToolsParityTest {
         // Reverse: factorial moms -> moms (validate round-trip)
         Matrix recoveredMoms = MomsFromFactorialMomsKt.MomsFromFactorialMoms(factMoms);
         for (int i = 0; i < momsArray.length; i++) {
-            assertEquals(momsArray[i], recoveredMoms.get(0, i), TOLERANCE);
+            assertEquals(momsArray[i], recoveredMoms.get(0, i), MID_TOL);
         }
     }
 
@@ -299,7 +299,7 @@ public class BUToolsParityTest {
         // Reverse: reduced moms -> moms (validate round-trip)
         Matrix recoveredMoms = MomsFromReducedMomsKt.momsFromReducedMoms(reduced);
         for (int i = 0; i < momsArray.length; i++) {
-            assertEquals(momsArray[i], recoveredMoms.get(0, i), TOLERANCE);
+            assertEquals(momsArray[i], recoveredMoms.get(0, i), MID_TOL);
         }
     }
 
@@ -325,7 +325,7 @@ public class BUToolsParityTest {
         // Reverse: Hankel moms -> moms (validate round-trip)
         Matrix recoveredMoms = MomsFromHankelMomsKt.momsFromHankelMoms(hankel);
         for (int i = 0; i < momsArray.length; i++) {
-            assertEquals(momsArray[i], recoveredMoms.get(0, i), TOLERANCE);
+            assertEquals(momsArray[i], recoveredMoms.get(0, i), MID_TOL);
         }
     }
 
@@ -350,7 +350,7 @@ public class BUToolsParityTest {
         }
         Matrix recoveredMoms = MomsFromNormMomsKt.momsFromNormMoms(normMomsMatrix);
         for (int i = 0; i < momsArray.length; i++) {
-            assertEquals(momsArray[i], recoveredMoms.get(0, i), TOLERANCE);
+            assertEquals(momsArray[i], recoveredMoms.get(0, i), MID_TOL);
         }
     }
 
@@ -376,9 +376,9 @@ public class BUToolsParityTest {
 
         // Verify moments are preserved
         double[] computedMoms = MomentsFromMEKt.momentsFromPH(alpha, T, 3);
-        assertEquals(moms[0], computedMoms[0], TOLERANCE);
-        assertEquals(moms[1], computedMoms[1], TOLERANCE);
-        assertEquals(moms[2], computedMoms[2], TOLERANCE);
+        assertEquals(moms[0], computedMoms[0], MID_TOL);
+        assertEquals(moms[1], computedMoms[1], MID_TOL);
+        assertEquals(moms[2], computedMoms[2], MID_TOL);
     }
 
     /**
@@ -401,9 +401,9 @@ public class BUToolsParityTest {
 
         // Verify moments are preserved
         double[] computedMoms = MomentsFromMEKt.momentsFromPH(alpha, T, 3);
-        assertEquals(moms[0], computedMoms[0], TOLERANCE);
-        assertEquals(moms[1], computedMoms[1], TOLERANCE);
-        assertEquals(moms[2], computedMoms[2], TOLERANCE);
+        assertEquals(moms[0], computedMoms[0], MID_TOL);
+        assertEquals(moms[1], computedMoms[1], MID_TOL);
+        assertEquals(moms[2], computedMoms[2], MID_TOL);
     }
 
     // ============ MEFromMoments - From butools.tmp/MEFromMoments.txt ============
@@ -432,7 +432,7 @@ public class BUToolsParityTest {
         // Verify moments are preserved
         double[] computedMoms = MomentsFromMEKt.momentsFromME(me.getAlpha(), me.getA(), 5);
         for (int i = 0; i < moms.length; i++) {
-            assertEquals(moms[i], computedMoms[i], TOLERANCE,
+            assertEquals(moms[i], computedMoms[i], MID_TOL,
                     "Moment " + (i+1) + " mismatch");
         }
     }
@@ -461,7 +461,7 @@ public class BUToolsParityTest {
         // Verify moments are preserved
         double[] computedMoms = MomentsFromMEKt.momentsFromME(me.getAlpha(), me.getA(), 3);
         for (int i = 0; i < moms.length; i++) {
-            assertEquals(moms[i], computedMoms[i], TOLERANCE,
+            assertEquals(moms[i], computedMoms[i], MID_TOL,
                     "Moment " + (i+1) + " mismatch");
         }
     }
@@ -825,29 +825,29 @@ public class BUToolsParityTest {
         assertEquals(3, U.getNumCols());
 
         // Validate Psi values from butools.tmp
-        assertEquals(0.33722, Psi.get(0, 0), TOLERANCE);
-        assertEquals(0.16517, Psi.get(0, 1), TOLERANCE);
-        assertEquals(0.49761, Psi.get(0, 2), TOLERANCE);
-        assertEquals(0.3318, Psi.get(1, 0), TOLERANCE);
-        assertEquals(0.12995, Psi.get(1, 1), TOLERANCE);
-        assertEquals(0.53825, Psi.get(1, 2), TOLERANCE);
+        assertEquals(0.33722, Psi.get(0, 0), MID_TOL);
+        assertEquals(0.16517, Psi.get(0, 1), MID_TOL);
+        assertEquals(0.49761, Psi.get(0, 2), MID_TOL);
+        assertEquals(0.3318, Psi.get(1, 0), MID_TOL);
+        assertEquals(0.12995, Psi.get(1, 1), MID_TOL);
+        assertEquals(0.53825, Psi.get(1, 2), MID_TOL);
 
         // Validate K values from butools.tmp
-        assertEquals(-3.658, K.get(0, 0), TOLERANCE);
-        assertEquals(1.8258, K.get(0, 1), TOLERANCE);
-        assertEquals(3.2553, K.get(1, 0), TOLERANCE);
-        assertEquals(-2.3502, K.get(1, 1), TOLERANCE);
+        assertEquals(-3.658, K.get(0, 0), MID_TOL);
+        assertEquals(1.8258, K.get(0, 1), MID_TOL);
+        assertEquals(3.2553, K.get(1, 0), MID_TOL);
+        assertEquals(-2.3502, K.get(1, 1), MID_TOL);
 
         // Validate U values from butools.tmp
-        assertEquals(-6.9883, U.get(0, 0), TOLERANCE);
-        assertEquals(4.4955, U.get(0, 1), TOLERANCE);
-        assertEquals(2.4928, U.get(0, 2), TOLERANCE);
-        assertEquals(4.3334, U.get(1, 0), TOLERANCE);
-        assertEquals(-11.02, U.get(1, 1), TOLERANCE);
-        assertEquals(6.6865, U.get(1, 2), TOLERANCE);
-        assertEquals(2.0, U.get(2, 0), TOLERANCE);
-        assertEquals(0.0, U.get(2, 1), TOLERANCE);
-        assertEquals(-2.0, U.get(2, 2), TOLERANCE);
+        assertEquals(-6.9883, U.get(0, 0), MID_TOL);
+        assertEquals(4.4955, U.get(0, 1), MID_TOL);
+        assertEquals(2.4928, U.get(0, 2), MID_TOL);
+        assertEquals(4.3334, U.get(1, 0), MID_TOL);
+        assertEquals(-11.02, U.get(1, 1), MID_TOL);
+        assertEquals(6.6865, U.get(1, 2), MID_TOL);
+        assertEquals(2.0, U.get(2, 0), MID_TOL);
+        assertEquals(0.0, U.get(2, 1), MID_TOL);
+        assertEquals(-2.0, U.get(2, 2), MID_TOL);
     }
 
     // ============ FluidSolve - From butools.tmp/FluidSolve.txt ============
@@ -914,33 +914,33 @@ public class BUToolsParityTest {
 
         // Validate mass0 = [0, 0, 0.037514, 0.015303, 0.097921] (zeros for + states, values for - states)
         // Note: JAR implementation returns [zeros(Np), mass0Minus]
-        assertEquals(0.0, mass0.get(0, 0), TOLERANCE);
-        assertEquals(0.0, mass0.get(0, 1), TOLERANCE);
-        assertEquals(0.037514, mass0.get(0, 2), TOLERANCE);
-        assertEquals(0.015303, mass0.get(0, 3), TOLERANCE);
-        assertEquals(0.097921, mass0.get(0, 4), TOLERANCE);
+        assertEquals(0.0, mass0.get(0, 0), MID_TOL);
+        assertEquals(0.0, mass0.get(0, 1), MID_TOL);
+        assertEquals(0.037514, mass0.get(0, 2), MID_TOL);
+        assertEquals(0.015303, mass0.get(0, 3), MID_TOL);
+        assertEquals(0.097921, mass0.get(0, 4), MID_TOL);
 
         // Validate ini = [0.14315, 0.076517]
-        assertEquals(0.14315, ini.get(0, 0), TOLERANCE);
-        assertEquals(0.076517, ini.get(0, 1), TOLERANCE);
+        assertEquals(0.14315, ini.get(0, 0), MID_TOL);
+        assertEquals(0.076517, ini.get(0, 1), MID_TOL);
 
         // Validate K = [[-3.658, 1.8258], [3.2553, -2.3502]]
-        assertEquals(-3.658, K.get(0, 0), TOLERANCE);
-        assertEquals(1.8258, K.get(0, 1), TOLERANCE);
-        assertEquals(3.2553, K.get(1, 0), TOLERANCE);
-        assertEquals(-2.3502, K.get(1, 1), TOLERANCE);
+        assertEquals(-3.658, K.get(0, 0), MID_TOL);
+        assertEquals(1.8258, K.get(0, 1), MID_TOL);
+        assertEquals(3.2553, K.get(1, 0), MID_TOL);
+        assertEquals(-2.3502, K.get(1, 1), MID_TOL);
 
         // Validate clo = [[1, 0, 0.33722, 0.16517, 0.49761], [0, 1, 0.3318, 0.12995, 0.53825]]
-        assertEquals(1.0, clo.get(0, 0), TOLERANCE);
-        assertEquals(0.0, clo.get(0, 1), TOLERANCE);
-        assertEquals(0.33722, clo.get(0, 2), TOLERANCE);
-        assertEquals(0.16517, clo.get(0, 3), TOLERANCE);
-        assertEquals(0.49761, clo.get(0, 4), TOLERANCE);
-        assertEquals(0.0, clo.get(1, 0), TOLERANCE);
-        assertEquals(1.0, clo.get(1, 1), TOLERANCE);
-        assertEquals(0.3318, clo.get(1, 2), TOLERANCE);
-        assertEquals(0.12995, clo.get(1, 3), TOLERANCE);
-        assertEquals(0.53825, clo.get(1, 4), TOLERANCE);
+        assertEquals(1.0, clo.get(0, 0), MID_TOL);
+        assertEquals(0.0, clo.get(0, 1), MID_TOL);
+        assertEquals(0.33722, clo.get(0, 2), MID_TOL);
+        assertEquals(0.16517, clo.get(0, 3), MID_TOL);
+        assertEquals(0.49761, clo.get(0, 4), MID_TOL);
+        assertEquals(0.0, clo.get(1, 0), MID_TOL);
+        assertEquals(1.0, clo.get(1, 1), MID_TOL);
+        assertEquals(0.3318, clo.get(1, 2), MID_TOL);
+        assertEquals(0.12995, clo.get(1, 3), MID_TOL);
+        assertEquals(0.53825, clo.get(1, 4), MID_TOL);
     }
 
     // ============ GeneralFluidSolve - From butools.tmp/GeneralFluidSolve.txt ============
@@ -992,19 +992,19 @@ public class BUToolsParityTest {
 
         assertNotNull(result);
         for (int i = 0; i < 6; i++) {
-            assertEquals(expectedMass0[i], result.getMass0().get(0, i), TOLERANCE);
+            assertEquals(expectedMass0[i], result.getMass0().get(0, i), MID_TOL);
         }
         for (int i = 0; i < 2; i++) {
-            assertEquals(expectedIni[i], result.getIni().get(0, i), TOLERANCE);
+            assertEquals(expectedIni[i], result.getIni().get(0, i), MID_TOL);
         }
         for (int i = 0; i < 2; i++) {
             for (int j = 0; j < 2; j++) {
-                assertEquals(expectedK[i][j], result.getK().get(i, j), TOLERANCE);
+                assertEquals(expectedK[i][j], result.getK().get(i, j), MID_TOL);
             }
         }
         for (int i = 0; i < 2; i++) {
             for (int j = 0; j < 6; j++) {
-                assertEquals(expectedClo[i][j], result.getClo().get(i, j), TOLERANCE);
+                assertEquals(expectedClo[i][j], result.getClo().get(i, j), MID_TOL);
             }
         }
     }
@@ -1063,8 +1063,8 @@ public class BUToolsParityTest {
         assertNotNull(flMoms);
         assertNotNull(stMoms);
         for (int i = 0; i < 5; i++) {
-            assertEquals(expectedFlMoms[i], flMoms[i], TOLERANCE, "flMom[" + i + "] mismatch");
-            assertEquals(expectedStMoms[i], stMoms[i], TOLERANCE, "stMom[" + i + "] mismatch");
+            assertEquals(expectedFlMoms[i], flMoms[i], MID_TOL, "flMom[" + i + "] mismatch");
+            assertEquals(expectedStMoms[i], stMoms[i], MID_TOL, "stMom[" + i + "] mismatch");
         }
     }
 
@@ -1113,8 +1113,8 @@ public class BUToolsParityTest {
         assertNotNull(flMoms);
         assertNotNull(stMoms);
         for (int i = 0; i < 5; i++) {
-            assertEquals(expectedFlMoms[i], flMoms[i], TOLERANCE, "flMom[" + i + "] mismatch");
-            assertEquals(expectedStMoms[i], stMoms[i], TOLERANCE, "stMom[" + i + "] mismatch");
+            assertEquals(expectedFlMoms[i], flMoms[i], MID_TOL, "flMom[" + i + "] mismatch");
+            assertEquals(expectedStMoms[i], stMoms[i], MID_TOL, "stMom[" + i + "] mismatch");
         }
     }
 }

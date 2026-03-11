@@ -413,20 +413,6 @@ fun solver_nc(sn: NetworkStruct, options: SolverOptions): SolverNC.SolverNCRetur
         }
     }
 
-    // Handle self-looping classes - jobs stay at reference station
-    for (k in 0..<K) {
-        if (sn.isslc.get(k) == 1.0) {
-            for (m in 0..<M) {
-                Q!!.set(m, k, 0.0)
-            }
-            val ist = sn.refstat.get(k).toInt()
-            Q!!.set(ist, k, sn.njobs.get(k))
-            T!!.set(ist, k, sn.njobs.get(k) * sn.rates.get(ist, k))
-            R!!.set(ist, k, Q.get(ist, k) / T.get(ist, k))
-            U!!.set(ist, k, ST.get(ist, k) * T.get(ist, k))
-        }
-    }
-
     val runtime = (System.nanoTime() - startTime) / 1000000000.0
 
     return SolverNC.SolverNCReturn(Q, U, R, T, C, X, lG, STeff, it, runtime, method)

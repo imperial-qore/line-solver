@@ -44,7 +44,7 @@ model.link(P);
 solver = {};
 solver{end+1} = JMT(model,'seed',23000);
 solver{end+1} = MVA(model);
-%solver{end+1} = DES(model,'seed',23000);
+%solver{end+1} = LDES(model,'seed',23000);
 
 AvgTable = {};
 for s=1:length(solver)

@@ -17,7 +17,6 @@ from typing import Tuple, Optional
 from .utils import multichoose, matchrow
 from .replicas import pfqn_unique
 
-
 def pfqn_recal(L: np.ndarray, N: np.ndarray,
                Z: Optional[np.ndarray] = None,
                m0: Optional[np.ndarray] = None) -> Tuple[float, float]:
@@ -94,7 +93,10 @@ def pfqn_recal(L: np.ndarray, N: np.ndarray,
             n += 1
             I = multichoose(M + 1, (Ntot + 1) - (n + 1))
 
-            for i in range(I.shape[0]):
+            n_I = I.shape[0]
+            n_I_1 = I_1.shape[0]
+
+            for i in range(n_I):
                 m = I[i, :].copy()
                 mZ = m[:M]
 
@@ -120,6 +122,5 @@ def pfqn_recal(L: np.ndarray, N: np.ndarray,
     lG = np.log(max(G_final, 1e-300))
 
     return G_final, lG
-
 
 __all__ = ['pfqn_recal']

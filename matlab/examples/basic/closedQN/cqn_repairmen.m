@@ -26,7 +26,7 @@ solver{end+1} = MVA(model);
 solver{end+1} = NC(model,'exact');
 solver{end+1} = MAM(model);
 solver{end+1} = LINE(model);
-solver{end+1} = DES(model,'seed',23000,'verbose',true);
+solver{end+1} = LDES(model,'seed',23000,'verbose',true);
 
 AvgTable = cell(1,length(solver));
 for s=1:length(solver)

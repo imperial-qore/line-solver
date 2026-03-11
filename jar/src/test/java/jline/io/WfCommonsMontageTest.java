@@ -20,6 +20,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static jline.TestTools.*;
 
 /**
  * Test suite for loading Montage workflows from WfCommons Pegasus-instances repository.
@@ -227,7 +228,7 @@ public class WfCommonsMontageTest {
         APH ph = wf.toPH();
 
         // Serial workflow: mean = 5.0 + 3.0 = 8.0
-        assertEquals(8.0, ph.getMean(), 0.1);
+        assertEquals(8.0, ph.getMean(), VERY_COARSE_TOL);
     }
 
     /**
@@ -254,7 +255,7 @@ public class WfCommonsMontageTest {
         Workflow wf = WfCommonsLoader.load(tempFile.getAbsolutePath());
         APH ph = wf.toPH();
 
-        assertEquals(5.0, ph.getMean(), 0.1);
+        assertEquals(5.0, ph.getMean(), VERY_COARSE_TOL);
         assertEquals(2, wf.getActivities().size());
     }
 

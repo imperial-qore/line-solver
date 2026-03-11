@@ -22,36 +22,21 @@ from scipy.integrate import solve_ivp
 from typing import Dict, Any, Optional, List, Tuple, Union
 from dataclasses import dataclass
 
-# Try to import numba for JIT compilation
-try:
-    from numba import njit
-    HAS_NUMBA = True
-except ImportError:
-    HAS_NUMBA = False
-    def njit(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator if args and callable(args[0]) else decorator
 
-# Try to import JIT-compiled kernels
-try:
-    from .ctmc_jit import (
-        HAS_NUMBA as CTMC_HAS_NUMBA,
-        time_reverse_kernel_jit,
-        randomization_step_jit,
-        simulate_ctmc_jit,
-    )
-except ImportError:
-    CTMC_HAS_NUMBA = False
-    time_reverse_kernel_jit = None
-    randomization_step_jit = None
-    simulate_ctmc_jit = None
-
-# Threshold for using JIT (number of states)
-CTMC_JIT_THRESHOLD = 20
+def issym(Q):
+    """Check if matrix contains sympy symbolic expressions."""
+    try:
+        import sympy
+        if isinstance(Q, sympy.MatrixBase):
+            return True
+        if isinstance(Q, np.ndarray) and Q.dtype == object:
+            return any(isinstance(x, sympy.Basic) for x in Q.flat)
+    except ImportError:
+        pass
+    return False
 
 
-def ctmc_makeinfgen(Q: np.ndarray) -> np.ndarray:
+def ctmc_makeinfgen(Q):
     """
     Convert a matrix into a valid infinitesimal generator for a CTMC.
 
@@ -66,6 +51,19 @@ def ctmc_makeinfgen(Q: np.ndarray) -> np.ndarray:
     Returns:
         Valid infinitesimal generator matrix with corrected diagonal
     """
+    if issym(Q):
+        import sympy
+        if isinstance(Q, sympy.MatrixBase):
+            M = Q.copy()
+        else:
+            M = sympy.Matrix(Q.tolist())
+        n = M.rows
+        for i in range(n):
+            M[i, i] = 0
+        for i in range(n):
+            M[i, i] = -sum(M[i, j] for j in range(n))
+        return M
+
     Q = np.asarray(Q, dtype=np.float64)
     n = Q.shape[0]
 
@@ -127,6 +125,30 @@ def ctmc_solve(Q: np.ndarray) -> np.ndarray:
     Returns:
         Steady-state probability distribution (1D array)
     """
+    if issym(Q):
+        import sympy
+        if isinstance(Q, sympy.MatrixBase):
+            Qs = Q.copy()
+        else:
+            Qs = sympy.Matrix(Q.tolist())
+        n = Qs.rows
+        if n == 1:
+            return sympy.Matrix([[1]])
+        Qs = ctmc_makeinfgen(Qs)
+        # Solve pi * Q = 0 with sum(pi) = 1
+        # Replace last column with ones for normalization
+        A = Qs.T.copy()
+        for i in range(n):
+            A[i, n - 1] = 1
+        b = sympy.zeros(n, 1)
+        b[n - 1] = 1
+        try:
+            pi = A.solve(b)
+        except Exception:
+            pi = sympy.ones(1, n) / n
+            return pi
+        return pi.T
+
     Q = np.asarray(Q, dtype=np.float64)
     n = Q.shape[0]
 
@@ -269,7 +291,7 @@ def ctmc_solve_reducible_blkdecomp(
     """
     Solve reducible CTMCs via direct block decomposition on the generator.
 
-    Algorithm (based on SMART's computeInfinityDistribution):
+    Algorithm:
       1. Decompose states into transient and recurrent classes via SCC
       2. For transient states: solve n * Q_tt = -p0_t for expected sojourn
       3. Compute hitting probabilities: h = n * Q_ta + p0_r
@@ -691,10 +713,6 @@ def ctmc_timereverse(
 
     n = Q.shape[0]
 
-    # Use JIT kernel for larger state spaces
-    if CTMC_HAS_NUMBA and n > CTMC_JIT_THRESHOLD:
-        return time_reverse_kernel_jit(Q, pi)
-
     Q_rev = np.zeros_like(Q)
 
     for i in range(n):
@@ -771,18 +789,6 @@ def ctmc_simulate(
 
     Q = np.asarray(Q, dtype=np.float64)
     n = Q.shape[0]
-
-    # Use JIT kernel for simulation
-    if CTMC_HAS_NUMBA and max_events > 100:
-        random_uniforms = np.random.rand(2 * max_events)
-        states, times, sojourn_times = simulate_ctmc_jit(
-            Q, initial_state, max_time, max_events, random_uniforms
-        )
-        return {
-            'states': states,
-            'times': times,
-            'sojourn_times': sojourn_times
-        }
 
     states = [initial_state]
     times = [0.0]

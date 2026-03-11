@@ -10,8 +10,8 @@ This example demonstrates:
 
 from line_solver import *
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
+
+def prio_psprio():
 
     model = Network('MyNetwork')
 
@@ -34,6 +34,13 @@ if __name__ == "__main__":
     P[jobclass[0], jobclass[0]] = Network.serial_routing(node)
     P[jobclass[1], jobclass[1]] = Network.serial_routing(node)
     model.link(P)
+
+    return model
+
+
+if __name__ == '__main__':
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+    model = prio_psprio()
 
     # Run solvers
     solver = np.array([], dtype=object)

@@ -16,6 +16,7 @@ from typing import Optional, Dict, Any, List, Tuple
 import pandas as pd
 
 from ...api.sn import NetworkStruct, NodeType
+from ...api.io.logging import line_debug
 from .jmva_writer import write_jmva
 from ..base import NetworkSolver
 
@@ -182,6 +183,8 @@ class SolverQNS(NetworkSolver):
         XN = np.zeros((1, C))
 
         actual_method = self.options.method
+        multiserver = self.options.config.get('multiserver', 'default') if hasattr(self.options, 'config') and self.options.config else 'default'
+        line_debug("QNS: starting (method=%s, multiserver=%s)", self.options.method, multiserver, options=self.options)
 
         # Determine which path to use (matches MATLAB runAnalyzer lines 46-97)
         from ...api.sn.predicates import sn_has_product_form
@@ -190,9 +193,11 @@ class SolverQNS(NetworkSolver):
 
         if has_pf or has_open:
             # Product-form or open: use qnsolver directly
+            line_debug("QNS: product-form or open model, routing to qns_analyzer", options=self.options)
             QN, UN, RN, TN, AN, WN, CN, XN, actual_method = self._run_qnsolver_path(M, K, C)
         else:
             # Non-product-form closed: convert to LQN and solve via SolverLQNS
+            line_debug("QNS: non-product-form closed model, converting to LQN and using SolverLQNS", options=self.options)
             QN, UN, RN, TN, AN, WN, CN, XN, actual_method = self._run_lqns_path(M, K, C)
 
         runtime = time.time() - start_time
@@ -672,7 +677,396 @@ class SolverQNS(NetworkSolver):
 
         return df
 
+    # =========================================================================
+    # Core Metric Getters
+    # =========================================================================
+
+    def getAvg(self):
+        """Get all average metrics at once.
+
+        Returns:
+            Tuple of (Q, U, R, T, A, W)
+        """
+        if self._result is None:
+            self.runAnalyzer()
+        r = self._result
+        return r.QN.copy(), r.UN.copy(), r.RN.copy(), r.TN.copy(), r.AN.copy(), r.WN.copy()
+
+    def getAvgQLen(self) -> np.ndarray:
+        """Get average queue lengths (M x K)."""
+        if self._result is None:
+            self.runAnalyzer()
+        return self._result.QN.copy()
+
+    def getAvgUtil(self) -> np.ndarray:
+        """Get average utilizations (M x K)."""
+        if self._result is None:
+            self.runAnalyzer()
+        return self._result.UN.copy()
+
+    def getAvgRespT(self) -> np.ndarray:
+        """Get average response times (M x K)."""
+        if self._result is None:
+            self.runAnalyzer()
+        return self._result.RN.copy()
+
+    def getAvgResidT(self) -> np.ndarray:
+        """Get average residence times (M x K)."""
+        if self._result is None:
+            self.runAnalyzer()
+        return self._result.WN.copy()
+
+    def getAvgWaitT(self) -> np.ndarray:
+        """Get average waiting times (M x K)."""
+        if self._result is None:
+            self.runAnalyzer()
+        R = self._result.RN.copy()
+        if hasattr(self.sn, 'rates') and self.sn.rates is not None:
+            rates = np.asarray(self.sn.rates)
+            S = np.zeros_like(rates)
+            nonzero = rates > 0
+            S[nonzero] = 1.0 / rates[nonzero]
+            W = R - S
+            W = np.maximum(W, 0.0)
+            return W
+        return R
+
+    def getAvgTput(self) -> np.ndarray:
+        """Get average throughputs (M x K)."""
+        if self._result is None:
+            self.runAnalyzer()
+        return self._result.TN.copy()
+
+    def getAvgArvR(self) -> np.ndarray:
+        """Get average arrival rates (M x K)."""
+        if self._result is None:
+            self.runAnalyzer()
+        return self._result.AN.copy()
+
+    # =========================================================================
+    # System-Level Methods
+    # =========================================================================
+
+    def getAvgSysRespT(self) -> np.ndarray:
+        """Get system response times (1 x C)."""
+        if self._result is None:
+            self.runAnalyzer()
+        return self._result.CN.flatten().copy()
+
+    def getAvgSysTput(self) -> np.ndarray:
+        """Get system throughputs (1 x C)."""
+        if self._result is None:
+            self.runAnalyzer()
+        return self._result.XN.flatten().copy()
+
+    def getAvgSys(self):
+        """Get system-level average metrics.
+
+        Returns:
+            Tuple of (CN, XN) - system response times and throughputs
+        """
+        return self.getAvgSysRespT(), self.getAvgSysTput()
+
+    def getAvgSysTable(self) -> pd.DataFrame:
+        """Get system-level metrics as DataFrame."""
+        CN, XN = self.getAvgSys()
+        nchains = len(CN)
+        rows = []
+        for c in range(nchains):
+            rows.append({
+                'Chain': f'Chain{c + 1}',
+                'SysRespT': CN[c],
+                'SysTput': XN[c],
+            })
+        return pd.DataFrame(rows)
+
+    # =========================================================================
+    # Chain-Level Methods
+    # =========================================================================
+
+    def _get_chains(self) -> List[List[int]]:
+        """Get chain-to-class mapping from network structure."""
+        if hasattr(self.sn, 'chains') and self.sn.chains is not None:
+            chains_arr = np.asarray(self.sn.chains)
+            nchains = self.sn.nchains if hasattr(self.sn, 'nchains') else 1
+            if chains_arr.ndim == 1:
+                if len(chains_arr) == 0:
+                    return [[k] for k in range(self.sn.nclasses)]
+                nchains = max(nchains, int(np.max(chains_arr)) + 1)
+                chains = [[] for _ in range(nchains)]
+                for k in range(self.sn.nclasses):
+                    if k < len(chains_arr):
+                        c = int(chains_arr[k])
+                        if 0 <= c < nchains:
+                            chains[c].append(k)
+                chains = [c for c in chains if c]
+                return chains if chains else [[k for k in range(self.sn.nclasses)]]
+            else:
+                chains = []
+                for c in range(nchains):
+                    chain_classes = []
+                    for k in range(self.sn.nclasses):
+                        if c < chains_arr.shape[0] and k < chains_arr.shape[1]:
+                            if chains_arr[c, k] > 0:
+                                chain_classes.append(k)
+                    chains.append(chain_classes)
+                chains = [c for c in chains if c]
+                return chains if chains else [[k for k in range(self.sn.nclasses)]]
+        return [[k] for k in range(self.sn.nclasses)]
+
+    def getAvgQLenChain(self) -> np.ndarray:
+        """Get average queue lengths aggregated by chain."""
+        Q = self.getAvgQLen()
+        chains = self._get_chains()
+        nstations = Q.shape[0]
+        nchains = len(chains)
+        QN_chain = np.zeros((nstations, nchains))
+        for c, cc in enumerate(chains):
+            if cc:
+                QN_chain[:, c] = np.sum(Q[:, cc], axis=1)
+        return QN_chain
+
+    def getAvgUtilChain(self) -> np.ndarray:
+        """Get average utilizations aggregated by chain."""
+        U = self.getAvgUtil()
+        chains = self._get_chains()
+        nstations = U.shape[0]
+        nchains = len(chains)
+        UN_chain = np.zeros((nstations, nchains))
+        for c, cc in enumerate(chains):
+            if cc:
+                UN_chain[:, c] = np.sum(U[:, cc], axis=1)
+        return UN_chain
+
+    def getAvgRespTChain(self) -> np.ndarray:
+        """Get average response times aggregated by chain."""
+        R = self.getAvgRespT()
+        chains = self._get_chains()
+        nstations = R.shape[0]
+        nchains = len(chains)
+        RN_chain = np.zeros((nstations, nchains))
+        for c, cc in enumerate(chains):
+            if cc:
+                RN_chain[:, c] = np.mean(R[:, cc], axis=1)
+        return RN_chain
+
+    def getAvgResidTChain(self) -> np.ndarray:
+        """Get average residence times aggregated by chain."""
+        return self.getAvgRespTChain()
+
+    def getAvgTputChain(self) -> np.ndarray:
+        """Get average throughputs aggregated by chain."""
+        T = self.getAvgTput()
+        chains = self._get_chains()
+        nstations = T.shape[0]
+        nchains = len(chains)
+        TN_chain = np.zeros((nstations, nchains))
+        for c, cc in enumerate(chains):
+            if cc:
+                TN_chain[:, c] = np.sum(T[:, cc], axis=1)
+        return TN_chain
+
+    def getAvgArvRChain(self) -> np.ndarray:
+        """Get average arrival rates aggregated by chain."""
+        return self.getAvgTputChain()
+
+    def getAvgChain(self):
+        """Get all average metrics aggregated by chain.
+
+        Returns:
+            Tuple of (QN, UN, RN, WN, AN, TN) aggregated by chain
+        """
+        return (self.getAvgQLenChain(), self.getAvgUtilChain(),
+                self.getAvgRespTChain(), self.getAvgResidTChain(),
+                self.getAvgArvRChain(), self.getAvgTputChain())
+
+    def getAvgChainTable(self) -> pd.DataFrame:
+        """Get average metrics by chain as DataFrame."""
+        QN, UN, RN, WN, AN, TN = self.getAvgChain()
+        nstations, nchains = QN.shape
+        rows = []
+        for i in range(nstations):
+            node_idx = int(self.sn.stationToNode[i])
+            station_name = self.sn.nodenames[node_idx]
+            for c in range(nchains):
+                rows.append({
+                    'Station': station_name,
+                    'Chain': f'Chain{c + 1}',
+                    'QLen': QN[i, c],
+                    'Util': UN[i, c],
+                    'RespT': RN[i, c],
+                    'ResidT': WN[i, c],
+                    'ArvR': AN[i, c],
+                    'Tput': TN[i, c],
+                })
+        return pd.DataFrame(rows)
+
+    # =========================================================================
+    # Node-Level Methods
+    # =========================================================================
+
+    def getAvgNode(self):
+        """Get average metrics per node.
+
+        Returns:
+            Tuple of (QNn, UNn, RNn, WNn, ANn, TNn) - node-level metrics
+        """
+        if self._result is None:
+            self.runAnalyzer()
+
+        sn = self.sn
+        I = sn.nnodes
+        M = sn.nstations
+        K = sn.nclasses
+
+        QN = self._result.QN
+        UN = self._result.UN
+        RN = self._result.RN
+        TN = self._result.TN
+        WN = self._result.WN
+
+        QNn = np.zeros((I, K))
+        UNn = np.zeros((I, K))
+        RNn = np.zeros((I, K))
+        WNn = np.zeros((I, K))
+        TNn = np.zeros((I, K))
+        ANn = np.zeros((I, K))
+
+        for ist in range(M):
+            ind = int(sn.stationToNode[ist])
+            if 0 <= ind < I:
+                QNn[ind, :] = QN[ist, :]
+                UNn[ind, :] = UN[ist, :]
+                RNn[ind, :] = RN[ist, :]
+                WNn[ind, :] = WN[ist, :]
+                TNn[ind, :] = TN[ist, :]
+                ANn[ind, :] = self._result.AN[ist, :]
+
+        return QNn, UNn, RNn, WNn, ANn, TNn
+
+    def getAvgNodeTable(self) -> pd.DataFrame:
+        """Get average metrics by node as DataFrame."""
+        QNn, UNn, RNn, WNn, ANn, TNn = self.getAvgNode()
+        sn = self.sn
+        nodenames = list(sn.nodenames) if hasattr(sn, 'nodenames') and sn.nodenames else []
+        rows = []
+        for node_idx in range(sn.nnodes):
+            node_name = nodenames[node_idx] if node_idx < len(nodenames) else f'Node{node_idx}'
+            for r in range(sn.nclasses):
+                class_name = sn.classnames[r] if r < len(sn.classnames) else f'Class{r + 1}'
+                if (abs(QNn[node_idx, r]) < 1e-10 and abs(UNn[node_idx, r]) < 1e-10 and
+                        abs(RNn[node_idx, r]) < 1e-10 and abs(ANn[node_idx, r]) < 1e-10 and
+                        abs(TNn[node_idx, r]) < 1e-10):
+                    continue
+                rows.append({
+                    'Node': node_name,
+                    'JobClass': class_name,
+                    'QLen': QNn[node_idx, r],
+                    'Util': UNn[node_idx, r],
+                    'RespT': RNn[node_idx, r],
+                    'ResidT': WNn[node_idx, r],
+                    'ArvR': ANn[node_idx, r],
+                    'Tput': TNn[node_idx, r],
+                })
+        df = pd.DataFrame(rows)
+        if not self._table_silent:
+            print(df.to_string(index=False))
+        return df
+
+    def getAvgNodeChain(self):
+        """Get average metrics by node and chain."""
+        return self.getAvgChain()
+
+    def getAvgNodeChainTable(self) -> pd.DataFrame:
+        """Get average metrics by node and chain as DataFrame."""
+        return self.getAvgChainTable()
+
+    def getAvgNodeQLenChain(self) -> np.ndarray:
+        """Get average queue lengths by node aggregated by chain."""
+        return self.getAvgQLenChain()
+
+    def getAvgNodeUtilChain(self) -> np.ndarray:
+        """Get average utilizations by node aggregated by chain."""
+        return self.getAvgUtilChain()
+
+    def getAvgNodeRespTChain(self) -> np.ndarray:
+        """Get average response times by node aggregated by chain."""
+        return self.getAvgRespTChain()
+
+    def getAvgNodeResidTChain(self) -> np.ndarray:
+        """Get average residence times by node aggregated by chain."""
+        return self.getAvgResidTChain()
+
+    def getAvgNodeTputChain(self) -> np.ndarray:
+        """Get average throughputs by node aggregated by chain."""
+        return self.getAvgTputChain()
+
+    def getAvgNodeArvRChain(self) -> np.ndarray:
+        """Get average arrival rates by node aggregated by chain."""
+        return self.getAvgArvRChain()
+
+    # =========================================================================
+    # Utility / Static Methods
+    # =========================================================================
+
+    @staticmethod
+    def getFeatureSet() -> set:
+        """Get supported features."""
+        return {
+            'Source', 'Sink', 'Queue', 'Delay', 'DelayStation',
+            'Exp', 'Erlang', 'HyperExp', 'PH', 'APH', 'Cox2',
+            'InfiniteServer', 'SharedServer', 'Buffer', 'Dispatcher',
+            'Server', 'ServiceTunnel', 'RandomSource', 'JobSink',
+            'SchedStrategy_INF', 'SchedStrategy_PS', 'SchedStrategy_FCFS',
+            'RoutingStrategy_PROB', 'RoutingStrategy_RAND',
+            'ClosedClass', 'OpenClass',
+        }
+
+    @staticmethod
+    def supports(model) -> bool:
+        """Check if model is supported."""
+        try:
+            if hasattr(model, 'nstations'):
+                nstations = model.nstations
+            elif hasattr(model, 'getNumberOfStations'):
+                nstations = model.getNumberOfStations()
+            else:
+                return False
+            if hasattr(model, 'nclasses'):
+                nclasses = model.nclasses
+            elif hasattr(model, 'getNumberOfClasses'):
+                nclasses = model.getNumberOfClasses()
+            else:
+                return False
+            return nstations > 0 and nclasses > 0
+        except Exception:
+            return False
+
+    @staticmethod
+    def defaultOptions():
+        """Get default solver options."""
+        return QNSOptions()
+
+    # =========================================================================
     # Aliases
+    # =========================================================================
+
     run_analyzer = runAnalyzer
     is_available = isAvailable
     list_valid_methods = listValidMethods
+    get_avg = getAvg
+    get_avg_qlen = getAvgQLen
+    get_avg_util = getAvgUtil
+    get_avg_respt = getAvgRespT
+    get_avg_residt = getAvgResidT
+    get_avg_waitt = getAvgWaitT
+    get_avg_tput = getAvgTput
+    get_avg_arvr = getAvgArvR
+    get_avg_sys_respt = getAvgSysRespT
+    get_avg_sys_tput = getAvgSysTput
+    get_avg_sys = getAvgSys
+    get_avg_sys_table = getAvgSysTable
+    get_avg_chain = getAvgChain
+    get_avg_chain_table = getAvgChainTable
+    get_avg_node = getAvgNode
+    get_avg_node_table = getAvgNodeTable

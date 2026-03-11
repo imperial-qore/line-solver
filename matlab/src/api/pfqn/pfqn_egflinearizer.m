@@ -108,6 +108,7 @@ end
 function [Q,W,T,iter] = Core(L,M,R,N_1,Z,Q,Delta,type,tol,maxiter,alpha)
 hasConverged = false;
 W = L;
+T = zeros(1,R);
 iter = 0;
 while ~hasConverged
     Qlast = Q;

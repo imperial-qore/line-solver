@@ -327,6 +327,49 @@ class Queue(Station):
             return None
         return self._switchover.get((from_class, to_class))
 
+    def set_delay_off(self, jobclass, setup_time, delay_off_time) -> None:
+        """
+        Set setup and delay-off time distributions for a job class.
+
+        Models a vacation queue: when a server finishes serving class r and no
+        more class r jobs are waiting, the server enters a delay-off period.
+        When a new class r job arrives during delay-off, the server goes through
+        setup before serving.
+
+        Args:
+            jobclass: Job class
+            setup_time: Distribution for setup time
+            delay_off_time: Distribution for delay-off time
+        """
+        if not hasattr(self, '_setup_time'):
+            self._setup_time = {}
+        if not hasattr(self, '_delay_off_time'):
+            self._delay_off_time = {}
+        self._setup_time[jobclass] = setup_time
+        self._delay_off_time[jobclass] = delay_off_time
+        self._invalidate_java()
+
+    # MATLAB-compatible alias
+    setDelayOff = set_delay_off
+
+    def get_setup_time(self, jobclass):
+        """Get setup time distribution for a job class."""
+        if not hasattr(self, '_setup_time'):
+            return None
+        return self._setup_time.get(jobclass)
+
+    # MATLAB-compatible alias
+    getSetupTime = get_setup_time
+
+    def get_delay_off_time(self, jobclass):
+        """Get delay-off time distribution for a job class."""
+        if not hasattr(self, '_delay_off_time'):
+            return None
+        return self._delay_off_time.get(jobclass)
+
+    # MATLAB-compatible alias
+    getDelayOffTime = get_delay_off_time
+
     # =========================================================================
     # ROUTING METHODS
     # =========================================================================
@@ -397,6 +440,156 @@ class Queue(Station):
             return 1.0
         return self._routing_weights[jobclass].get(destination, 1.0)
 
+    def set_balking(self, jobclass, strategy, thresholds):
+        """
+        Configure balking for a job class.
+
+        Args:
+            jobclass: JobClass object
+            strategy: BalkingStrategy enum value
+            thresholds: List of (minJobs, maxJobs, probability) tuples
+        """
+        if not hasattr(self, '_balking_strategies'):
+            self._balking_strategies = {}
+            self._balking_thresholds = {}
+        self._balking_strategies[jobclass] = strategy
+        self._balking_thresholds[jobclass] = thresholds
+        self._invalidate_java()
+
+    def get_balking(self, jobclass):
+        """Get balking config for a job class. Returns (strategy, thresholds) or (None, [])."""
+        if not hasattr(self, '_balking_strategies'):
+            return None, []
+        strategy = self._balking_strategies.get(jobclass)
+        thresholds = self._balking_thresholds.get(jobclass, [])
+        return strategy, thresholds
+
+    def has_balking(self, jobclass):
+        """Check if a job class has balking configured."""
+        strategy, _ = self.get_balking(jobclass)
+        return strategy is not None
+
+    def set_retrial(self, jobclass, delay_distribution, max_attempts=-1):
+        """
+        Configure retrial for a job class.
+
+        Args:
+            jobclass: JobClass object
+            delay_distribution: Distribution for retrial delay
+            max_attempts: Maximum retrial attempts (-1 = unlimited)
+        """
+        if not hasattr(self, '_retrial_delays'):
+            self._retrial_delays = {}
+            self._retrial_max_attempts = {}
+        self._retrial_delays[jobclass] = delay_distribution
+        self._retrial_max_attempts[jobclass] = max_attempts
+        from .base import DropStrategy
+        if max_attempts < 0:
+            self._drop_rule = DropStrategy.RETRIAL
+        else:
+            self._drop_rule = DropStrategy.RETRIAL_WITH_LIMIT
+        self._invalidate_java()
+
+    def get_retrial(self, jobclass):
+        """Get retrial config for a job class. Returns (delay_dist, max_attempts) or (None, -1)."""
+        if not hasattr(self, '_retrial_delays'):
+            return None, -1
+        delay_dist = self._retrial_delays.get(jobclass)
+        max_attempts = self._retrial_max_attempts.get(jobclass, -1)
+        return delay_dist, max_attempts
+
+    def has_retrial(self, jobclass):
+        """Check if a job class has retrial configured."""
+        delay_dist, _ = self.get_retrial(jobclass)
+        return delay_dist is not None
+
+    def set_patience(self, jobclass, distribution, impatience_type=None):
+        """
+        Set patience distribution for a job class.
+
+        Args:
+            jobclass: JobClass object
+            distribution: Patience distribution
+            impatience_type: ImpatienceType enum value (default: RENEGING)
+        """
+        if not hasattr(self, '_patience_distributions'):
+            self._patience_distributions = {}
+            self._impatience_types = {}
+        from .base import ImpatienceType
+        if impatience_type is None:
+            impatience_type = ImpatienceType.RENEGING
+        self._patience_distributions[jobclass] = distribution
+        self._impatience_types[jobclass] = impatience_type
+        self._invalidate_java()
+
+    def get_patience(self, jobclass):
+        """Get patience distribution for a job class, or None."""
+        if not hasattr(self, '_patience_distributions'):
+            return None
+        return self._patience_distributions.get(jobclass)
+
+    def get_impatience_type(self, jobclass):
+        """Get impatience type for a job class, or None."""
+        if not hasattr(self, '_impatience_types'):
+            return None
+        return self._impatience_types.get(jobclass)
+
+    def has_patience(self, jobclass):
+        """Check if a job class has patience configured."""
+        dist = self.get_patience(jobclass)
+        return dist is not None
+
+    def set_immediate_feedback(self, value):
+        """
+        Configure immediate feedback for this queue.
+
+        When enabled, a job that routes back to this queue (self-loop)
+        stays in service instead of re-entering the queue.
+
+        Args:
+            value: bool (enable/disable for all classes),
+                   JobClass (enable for specific class),
+                   or list of JobClass (enable for specific classes)
+        """
+        if not hasattr(self, '_immediate_feedback_classes'):
+            self._immediate_feedback_classes = set()
+            self._immediate_feedback_all = False
+
+        if isinstance(value, bool):
+            self._immediate_feedback_all = value
+            if not value:
+                self._immediate_feedback_classes = set()
+        elif isinstance(value, list):
+            for jc in value:
+                self._immediate_feedback_classes.add(jc._index)
+        else:
+            # Single JobClass
+            self._immediate_feedback_classes.add(value._index)
+        self._invalidate_java()
+
+    def has_immediate_feedback(self, jobclass=None):
+        """
+        Check if immediate feedback is enabled.
+
+        Args:
+            jobclass: If provided, check for specific class. If None, check if any class has it.
+        """
+        if not hasattr(self, '_immediate_feedback_classes'):
+            return False
+        if self._immediate_feedback_all:
+            return True
+        if jobclass is None:
+            return len(self._immediate_feedback_classes) > 0
+        return jobclass._index in self._immediate_feedback_classes
+
+    def get_immediate_feedback_classes(self):
+        """Get set of class indices with immediate feedback enabled, or 'all'."""
+        if not hasattr(self, '_immediate_feedback_classes'):
+            return set()
+        if self._immediate_feedback_all:
+            return 'all'
+        return self._immediate_feedback_classes
+
     # PascalCase aliases
     setPollingType = set_polling_type
     getPollingType = get_polling_type
@@ -408,6 +601,19 @@ class Queue(Station):
     getState = get_state
     setRoutingWeight = set_routing_weight
     getRoutingWeight = get_routing_weight
+    setBalking = set_balking
+    getBalking = get_balking
+    hasBalking = has_balking
+    setRetrial = set_retrial
+    getRetrial = get_retrial
+    hasRetrial = has_retrial
+    setPatience = set_patience
+    getPatience = get_patience
+    hasPatience = has_patience
+    getImpatienceType = get_impatience_type
+    setImmediateFeedback = set_immediate_feedback
+    hasImmediateFeedback = has_immediate_feedback
+    getImmediateFeedbackClasses = get_immediate_feedback_classes
 
 
 class Delay(Queue):

@@ -65,6 +65,8 @@ if nargin == 1
 end
 
 options = self.options;
+% Force MATLAB path for transient analysis (Java path only produces steady-state)
+self.options.lang = 'matlab';
 switch options.method
     case {'default', 'matrix', 'closing'}
         % These methods can switch to closing silently for transient analysis

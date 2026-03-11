@@ -192,6 +192,57 @@ fun jmtGetPath(jmtPath: String): String {
 }
 
 /**
+ * Returns the path to the line-viewer JAR file.
+ */
+fun lineViewerGetPath(): String {
+    // Try to find the common folder by traversing up the directory tree
+    val currentDir = System.getProperty("user.dir") ?: System.getProperty("java.io.tmpdir") ?: "."
+    var currentPath = Paths.get(currentDir)
+
+    // Look for common folder by going up the directory tree
+    while (currentPath != null && currentPath.nameCount > 0) {
+        val commonPath = currentPath.resolve("common")
+        if (Files.exists(commonPath) && Files.isDirectory(commonPath)) {
+            val jarPath = commonPath.resolve("line-viewer.jar")
+            if (Files.exists(jarPath)) {
+                return jarPath.toString()
+            }
+        }
+        currentPath = currentPath.parent
+    }
+
+    // If common folder not found, use rootFolder if available
+    val path = rootFolder?.let {
+        val commonPath = Paths.get(it, "common")
+        if (!Files.exists(commonPath)) {
+            Files.createDirectories(commonPath)
+        }
+        commonPath.resolve("line-viewer.jar").toString()
+    } ?: run {
+        // Fallback: try to find jline.jar location and use ../common relative to it
+        try {
+            val jarLocation = GlobalConstants::class.java.protectionDomain.codeSource.location.toURI()
+            val jarPath = Paths.get(jarLocation)
+            val jarDir = if (Files.isDirectory(jarPath)) jarPath else jarPath.parent
+            val commonPath = jarDir.resolve("common")
+            if (!Files.exists(commonPath)) {
+                Files.createDirectories(commonPath)
+            }
+            commonPath.resolve("line-viewer.jar").toString()
+        } catch (e: Exception) {
+            // Last resort: use common folder in current directory
+            val commonPath = Paths.get(currentDir, "common")
+            if (!Files.exists(commonPath)) {
+                Files.createDirectories(commonPath)
+            }
+            commonPath.resolve("line-viewer.jar").toString()
+        }
+    }
+
+    return path
+}
+
+/**
  * Executes a system command and returns the output or error.
  *
  * This function reads stdout and stderr concurrently to avoid deadlock.

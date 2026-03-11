@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static jline.TestTools.withSuppressedOutput;
+import static jline.TestTools.LOOSE_MID_TOL;
 import static jline.TestTools.assertTableMetrics;
 
 /**
@@ -98,7 +99,7 @@ public class InitStateExamplesTest {
             // Verify the network structure
             assertEquals(2, model.getNumberOfStations(), "Should have 2 stations");
             assertEquals(1, model.getNumberOfClasses(), "Should have 1 job class");
-            assertEquals(5, model.getNumberOfJobs().get(0), 0.001, "Should have 5 jobs total");
+            assertEquals(5, model.getNumberOfJobs().get(0), LOOSE_MID_TOL, "Should have 5 jobs total");
             
             // Run CTMC solver with default initialization
             SolverCTMC ctmcSolver1 = new SolverCTMC(model, options);
@@ -325,7 +326,6 @@ public class InitStateExamplesTest {
     }
     
     @Test
-    //@Disabled("Fluid solver produces different results from ground truth - needs investigation")
     public void testInitStatePs_Fluid() {
         // Test init_state_ps with Fluid solver based on ground truth from MATLAB
         withSuppressedOutput(() -> {

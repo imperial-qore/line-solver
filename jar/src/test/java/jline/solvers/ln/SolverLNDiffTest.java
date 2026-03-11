@@ -13,7 +13,6 @@ import static jline.TestTools.*;
  */
 class SolverLNDiffTest extends SolverLNTestBase {
 
-    private double allowedMaxRelDiffLQNS = 0.10;
 
     @org.junit.jupiter.api.Test
     public void difftest_buildModel_1() throws Exception {
@@ -27,11 +26,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, 0.4739, 0.4739, 0.4739, 0.4739};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 
@@ -47,11 +46,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, Double.NaN, 0.0888, 0.0888, 0.0888, 0.0888, 0.0888, 0.0888, 0.0888, 0.0888};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 
@@ -67,11 +66,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, 0.0149, 0.0149, 0.0149, 0.0149, 0.0149, 0.0149, 0.0149, 0.0149};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 
@@ -87,11 +86,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, Double.NaN, 15.1000, 15.1000, 75.6000, 15.1000, 15.1000, 75.6000, 15.1000, 15.1000, 75.6000};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 
@@ -107,11 +106,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, 0.0794, 0.0794, 0.0794, 0.1746, 0.0794};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 
@@ -127,11 +126,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, 0.0853, 0.0853, 0.0853, 0.0256, 0.0256, 0.0341, 0.0853};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 
@@ -147,11 +146,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, Double.NaN, 0.0888, 0.0888, 0.0888, 0.0888, 0.0888, 0.0888, 0.0888, 0.0888};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 
@@ -167,11 +166,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, Double.NaN, 0.3770, 0.3770, 0.3770, 0.3770, 0.3770, 0.3770, 0.3770, 0.3770, 0.3770, 0.3770};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 
@@ -187,11 +186,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, Double.NaN, Double.NaN, 0.0087, 0.0087, 0.0087, 0.0087, 0.0087, 0.0087, 0.0087, 0.0087, 0.0087};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 
@@ -207,11 +206,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, Double.NaN, Double.NaN, 0.0960, 0.0960, 0.0960, 0.0960, 0.0960, 0.0960, 0.0960, 0.0960, 0.0960, 0.0960, 0.0960, 0.0960};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 
@@ -227,11 +226,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, Double.NaN, Double.NaN, 0.0096, 0.0096, 0.0000, 0.0096, 0.0096, 0.0000, 0.0096, 0.0096, 0.0048, 0.0048, 0.0096, 0.0000};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 
@@ -247,11 +246,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, Double.NaN, Double.NaN, 0.0093, 0.0093, 0.0000, 0.0093, 0.0093, 0.0000, 0.0093, 0.0093, 0.0093, 0.0000};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 
@@ -267,11 +266,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, Double.NaN, 0.0091, 0.0091, 0.0091, 0.0091, 0.0091, 0.0091, 0.0273, 0.0091};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 
@@ -287,11 +286,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, Double.NaN, 0.0096, 0.0096, 0.0096, 0.0096, 0.0096, 0.0096, 0.0048, 0.0048, 0.0096};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 
@@ -307,11 +306,11 @@ class SolverLNDiffTest extends SolverLNTestBase {
         double[] expectedTput = {Double.NaN, Double.NaN, 0.0093, 0.0093, 0.0093, 0.0093, 0.0093, 0.0093, 0.0093};
         LayeredNetworkAvgTable avg = (LayeredNetworkAvgTable) solver.getEnsembleAvg();
         for (int idx = 0; idx < avg.getQLen().size(); idx++) {
-            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], allowedMaxRelDiffLQNS));
-            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], allowedMaxRelDiffLQNS));
+            warningAssertTrue(compareRelErrPositive(avg.getQLen().get(idx), expectedQLen[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getUtil().get(idx), expectedUtil[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getRespT().get(idx), expectedRespT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getResidT().get(idx), expectedResidT[idx], VERY_COARSE_TOL));
+            warningAssertTrue(compareRelErrPositive(avg.getTput().get(idx), expectedTput[idx], VERY_COARSE_TOL));
         }
     }
 }

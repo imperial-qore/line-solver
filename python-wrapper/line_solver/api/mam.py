@@ -4074,297 +4074,6 @@ def qbd_r_logred(A0, A1, A2):
 
 
 
-# MAPQN Functions
-def mapqn_bnd_lr(MAP, N, Z=None):
-    """
-    Computes lower and upper response time bounds for MAP queueing networks.
-
-    Args:
-        MAP: MAP representation of arrival process
-        N: Population vector
-        Z: Think times (optional)
-
-    Returns:
-        dict: Lower and upper bounds
-    """
-    if Z is not None:
-        result = jpype.JPackage('jline').api.mam.Mapqn_bnd_lrKt.mapqn_bnd_lr(
-            jlineMatrixFromArray(MAP), jlineMatrixFromArray(N), jlineMatrixFromArray(Z)
-        )
-    else:
-        result = jpype.JPackage('jline').api.mam.Mapqn_bnd_lrKt.mapqn_bnd_lr(
-            jlineMatrixFromArray(MAP), jlineMatrixFromArray(N)
-        )
-
-    return {
-        'lower': jlineMatrixToArray(result.getLower()),
-        'upper': jlineMatrixToArray(result.getUpper())
-    }
-
-
-def mapqn_bnd_lr_mva(MAP, N, Z=None):
-    """
-    Computes MAP queueing network bounds using MVA approach.
-
-    Args:
-        MAP: MAP representation of arrival process
-        N: Population vector
-        Z: Think times (optional)
-
-    Returns:
-        dict: MVA-based bounds
-    """
-    if Z is not None:
-        result = jpype.JPackage('jline').api.mam.Mapqn_bnd_lr_mvaKt.mapqn_bnd_lr_mva(
-            jlineMatrixFromArray(MAP), jlineMatrixFromArray(N), jlineMatrixFromArray(Z)
-        )
-    else:
-        result = jpype.JPackage('jline').api.mam.Mapqn_bnd_lr_mvaKt.mapqn_bnd_lr_mva(
-            jlineMatrixFromArray(MAP), jlineMatrixFromArray(N)
-        )
-
-    return {
-        'lower': jlineMatrixToArray(result.getLower()),
-        'upper': jlineMatrixToArray(result.getUpper()),
-        'iterations': int(result.getIterations()) if hasattr(result, 'getIterations') else None
-    }
-
-
-def mapqn_bnd_lr_pf(MAP, N, Z=None):
-    """
-    Computes MAP queueing network bounds using product-form approach.
-
-    Args:
-        MAP: MAP representation of arrival process
-        N: Population vector
-        Z: Think times (optional)
-
-    Returns:
-        dict: Product-form based bounds
-    """
-    if Z is not None:
-        result = jpype.JPackage('jline').api.mam.Mapqn_bnd_lr_pfKt.mapqn_bnd_lr_pf(
-            jlineMatrixFromArray(MAP), jlineMatrixFromArray(N), jlineMatrixFromArray(Z)
-        )
-    else:
-        result = jpype.JPackage('jline').api.mam.Mapqn_bnd_lr_pfKt.mapqn_bnd_lr_pf(
-            jlineMatrixFromArray(MAP), jlineMatrixFromArray(N)
-        )
-
-    return {
-        'lower': jlineMatrixToArray(result.getLower()),
-        'upper': jlineMatrixToArray(result.getUpper())
-    }
-
-
-def mapqn_bnd_qr(MAP, N, Z=None):
-    """
-    Computes queue length and response time bounds for MAP queueing networks.
-
-    Args:
-        MAP: MAP representation of arrival process
-        N: Population vector
-        Z: Think times (optional)
-
-    Returns:
-        dict: Queue and response time bounds
-    """
-    if Z is not None:
-        result = jpype.JPackage('jline').api.mam.Mapqn_bnd_qrKt.mapqn_bnd_qr(
-            jlineMatrixFromArray(MAP), jlineMatrixFromArray(N), jlineMatrixFromArray(Z)
-        )
-    else:
-        result = jpype.JPackage('jline').api.mam.Mapqn_bnd_qrKt.mapqn_bnd_qr(
-            jlineMatrixFromArray(MAP), jlineMatrixFromArray(N)
-        )
-
-    return {
-        'queue_lower': jlineMatrixToArray(result.getQueueLower()),
-        'queue_upper': jlineMatrixToArray(result.getQueueUpper()),
-        'response_lower': jlineMatrixToArray(result.getResponseLower()),
-        'response_upper': jlineMatrixToArray(result.getResponseUpper())
-    }
-
-
-def mapqn_bnd_qr_delay(MAP, N, Z, delay):
-    """
-    Computes bounds for MAP queueing networks with delay.
-
-    Args:
-        MAP: MAP representation of arrival process
-        N: Population vector
-        Z: Think times
-        delay: Delay parameters
-
-    Returns:
-        dict: Bounds with delay consideration
-    """
-    result = jpype.JPackage('jline').api.mam.Mapqn_bnd_qr_delayKt.mapqn_bnd_qr_delay(
-        jlineMatrixFromArray(MAP), jlineMatrixFromArray(N),
-        jlineMatrixFromArray(Z), jlineMatrixFromArray(delay)
-    )
-
-    return {
-        'queue_lower': jlineMatrixToArray(result.getQueueLower()),
-        'queue_upper': jlineMatrixToArray(result.getQueueUpper()),
-        'response_lower': jlineMatrixToArray(result.getResponseLower()),
-        'response_upper': jlineMatrixToArray(result.getResponseUpper())
-    }
-
-
-def mapqn_bnd_qr_ld(MAP, N, Z, mu):
-    """
-    Computes bounds for load-dependent MAP queueing networks.
-
-    Args:
-        MAP: MAP representation of arrival process
-        N: Population vector
-        Z: Think times
-        mu: Load-dependent service rates
-
-    Returns:
-        dict: Load-dependent bounds
-    """
-    result = jpype.JPackage('jline').api.mam.Mapqn_bnd_qr_ldKt.mapqn_bnd_qr_ld(
-        jlineMatrixFromArray(MAP), jlineMatrixFromArray(N),
-        jlineMatrixFromArray(Z), jlineMatrixFromArray(mu)
-    )
-
-    return {
-        'queue_lower': jlineMatrixToArray(result.getQueueLower()),
-        'queue_upper': jlineMatrixToArray(result.getQueueUpper()),
-        'response_lower': jlineMatrixToArray(result.getResponseLower()),
-        'response_upper': jlineMatrixToArray(result.getResponseUpper())
-    }
-
-
-def mapqn_lpmodel(MAP, N, Z=None):
-    """
-    Creates linear programming model for MAP queueing network.
-
-    Args:
-        MAP: MAP representation of arrival process
-        N: Population vector
-        Z: Think times (optional)
-
-    Returns:
-        dict: LP model components
-    """
-    if Z is not None:
-        result = jpype.JPackage('jline').api.mam.Mapqn_lpmodelKt.mapqn_lpmodel(
-            jlineMatrixFromArray(MAP), jlineMatrixFromArray(N), jlineMatrixFromArray(Z)
-        )
-    else:
-        result = jpype.JPackage('jline').api.mam.Mapqn_lpmodelKt.mapqn_lpmodel(
-            jlineMatrixFromArray(MAP), jlineMatrixFromArray(N)
-        )
-
-    return {
-        'A': jlineMatrixToArray(result.getA()),
-        'b': jlineMatrixToArray(result.getB()),
-        'c': jlineMatrixToArray(result.getC()),
-        'bounds': jlineMatrixToArray(result.getBounds()) if hasattr(result, 'getBounds') else None
-    }
-
-
-def mapqn_parameters(MAP, N):
-    """
-    Extracts parameters from MAP queueing network.
-
-    Args:
-        MAP: MAP representation of arrival process
-        N: Population vector
-
-    Returns:
-        dict: Network parameters
-    """
-    result = jpype.JPackage('jline').api.mam.Mapqn_parametersKt.mapqn_parameters(
-        jlineMatrixFromArray(MAP), jlineMatrixFromArray(N)
-    )
-
-    return {
-        'arrival_rate': float(result.getArrivalRate()),
-        'service_rates': jlineMatrixToArray(result.getServiceRates()),
-        'routing': jlineMatrixToArray(result.getRouting()),
-        'think_times': jlineMatrixToArray(result.getThinkTimes()) if hasattr(result, 'getThinkTimes') else None
-    }
-
-
-def mapqn_parameters_factory(params_dict):
-    """
-    Factory method to create MAP queueing network parameters.
-
-    Args:
-        params_dict: Dictionary of parameters
-
-    Returns:
-        dict: Formatted network parameters
-    """
-    result = jpype.JPackage('jline').api.mam.Mapqn_parameters_factoryKt.mapqn_parameters_factory(
-        jpype.JObject(params_dict)
-    )
-
-    return {
-        'MAP': jlineMatrixToArray(result.getMAP()),
-        'N': jlineMatrixToArray(result.getN()),
-        'Z': jlineMatrixToArray(result.getZ()) if hasattr(result, 'getZ') else None
-    }
-
-
-def mapqn_qr_bounds_bas(MAP, N, Z=None):
-    """
-    Computes Balanced Asymptotic System (BAS) bounds for MAP queueing networks.
-
-    Args:
-        MAP: MAP representation of arrival process
-        N: Population vector
-        Z: Think times (optional)
-
-    Returns:
-        dict: BAS bounds
-    """
-    if Z is not None:
-        result = jpype.JPackage('jline').api.mam.Mapqn_qr_bounds_basKt.mapqn_qr_bounds_bas(
-            jlineMatrixFromArray(MAP), jlineMatrixFromArray(N), jlineMatrixFromArray(Z)
-        )
-    else:
-        result = jpype.JPackage('jline').api.mam.Mapqn_qr_bounds_basKt.mapqn_qr_bounds_bas(
-            jlineMatrixFromArray(MAP), jlineMatrixFromArray(N)
-        )
-
-    return {
-        'queue_bounds': jlineMatrixToArray(result.getQueueBounds()),
-        'response_bounds': jlineMatrixToArray(result.getResponseBounds())
-    }
-
-
-def mapqn_qr_bounds_rsrd(MAP, N, Z=None):
-    """
-    Computes Response-time Scaled Routing Delay (RSRD) bounds for MAP queueing networks.
-
-    Args:
-        MAP: MAP representation of arrival process
-        N: Population vector
-        Z: Think times (optional)
-
-    Returns:
-        dict: RSRD bounds
-    """
-    if Z is not None:
-        result = jpype.JPackage('jline').api.mam.Mapqn_qr_bounds_rsrdKt.mapqn_qr_bounds_rsrd(
-            jlineMatrixFromArray(MAP), jlineMatrixFromArray(N), jlineMatrixFromArray(Z)
-        )
-    else:
-        result = jpype.JPackage('jline').api.mam.Mapqn_qr_bounds_rsrdKt.mapqn_qr_bounds_rsrd(
-            jlineMatrixFromArray(MAP), jlineMatrixFromArray(N)
-        )
-
-    return {
-        'queue_bounds': jlineMatrixToArray(result.getQueueBounds()),
-        'response_bounds': jlineMatrixToArray(result.getResponseBounds())
-    }
-
-
 # M3PP Functions (Markovian Multi-class Point Processes)
 
 def m3pp22_fitc_approx_cov(mean, scv, skew, cov):
@@ -4692,3 +4401,210 @@ def mamap2m_fit_trace(trace, num_states):
         'D0': jlineMatrixToArray(result.getD0()),
         'D1': jlineMatrixToArray(result.getD1())
     }
+
+
+# ========== MAP DISTANCE FUNCTIONS ==========
+# Reference:
+#   G. Horvath, "Measuring the distance between MAPs and some
+#   applications," in Proc. ASMTA 2015, LNCS 9081, pp. 95-109.
+#   https://link.springer.com/chapter/10.1007/978-3-319-18579-8_8
+#
+# Discrete-time extensions by QORE Lab (https://qore.doc.ic.ac.uk/)
+
+
+def map_exp_mul_int(A0, A1, B0, B1, L, alA=None, alB=None):
+    """
+    Joint density inner product of two MAPs via recursive Sylvester equations.
+
+    Args:
+        A0, A1: D0, D1 matrices of first MAP.
+        B0, B1: D0, D1 matrices of second MAP.
+        L: Number of inter-arrival times in the joint density.
+        alA, alB: Optional stationary vectors at arrival epochs.
+
+    Returns:
+        float: Inner product of the joint densities.
+    """
+    jmam = jpype.JPackage('jline').api.mam
+    jA0 = jlineMatrixFromArray(A0)
+    jA1 = jlineMatrixFromArray(A1)
+    jB0 = jlineMatrixFromArray(B0)
+    jB1 = jlineMatrixFromArray(B1)
+    if alA is not None and alB is not None:
+        return float(jmam.Map_exp_mul_intKt.map_exp_mul_int(
+            jA0, jA1, jB0, jB1, jpype.JInt(L),
+            jlineMatrixFromArray(alA), jlineMatrixFromArray(alB)))
+    else:
+        return float(jmam.Map_exp_mul_intKt.map_exp_mul_int(
+            jA0, jA1, jB0, jB1, jpype.JInt(L),
+            jmam.Map_pieKt.map_pie(jA0, jA1),
+            jmam.Map_pieKt.map_pie(jB0, jB1)))
+
+
+def map_dist(A0, A1, B0, B1, L, alA=None, alB=None):
+    """
+    Squared L2 distance between lag-L joint densities of two MAPs.
+
+    Args:
+        A0, A1: D0, D1 matrices of first MAP.
+        B0, B1: D0, D1 matrices of second MAP.
+        L: Number of lags (L=1 for lag-1 joint density distance).
+        alA, alB: Optional stationary vectors at arrival epochs.
+
+    Returns:
+        float: Squared L2 distance.
+    """
+    jmam = jpype.JPackage('jline').api.mam
+    jA0 = jlineMatrixFromArray(A0)
+    jA1 = jlineMatrixFromArray(A1)
+    jB0 = jlineMatrixFromArray(B0)
+    jB1 = jlineMatrixFromArray(B1)
+    if alA is not None and alB is not None:
+        return float(jmam.Map_distKt.map_dist(
+            jA0, jA1, jB0, jB1, jpype.JInt(L),
+            jlineMatrixFromArray(alA), jlineMatrixFromArray(alB)))
+    else:
+        return float(jmam.Map_distKt.map_dist(
+            jA0, jA1, jB0, jB1, jpype.JInt(L)))
+
+
+def map_geo_mul_sum(A0, A1, B0, B1, alA=None, alB=None):
+    """
+    Geometric sum for autocorrelation distance computation.
+
+    Args:
+        A0, A1: D0, D1 matrices of first MAP.
+        B0, B1: D0, D1 matrices of second MAP.
+        alA, alB: Optional stationary vectors at arrival epochs.
+
+    Returns:
+        float: Geometric sum value.
+    """
+    jmam = jpype.JPackage('jline').api.mam
+    jA0 = jlineMatrixFromArray(A0)
+    jA1 = jlineMatrixFromArray(A1)
+    jB0 = jlineMatrixFromArray(B0)
+    jB1 = jlineMatrixFromArray(B1)
+    if alA is not None and alB is not None:
+        return float(jmam.Map_dist_acfKt.map_geo_mul_sum(
+            jA0, jA1, jB0, jB1,
+            jlineMatrixFromArray(alA), jlineMatrixFromArray(alB)))
+    else:
+        jalA = jmam.Map_pieKt.map_pie(jA0, jA1)
+        jalB = jmam.Map_pieKt.map_pie(jB0, jB1)
+        return float(jmam.Map_dist_acfKt.map_geo_mul_sum(
+            jA0, jA1, jB0, jB1, jalA, jalB))
+
+
+def map_dist_acf(A0, A1, B0, B1, alA=None, alB=None):
+    """
+    Squared L2 distance between autocorrelation functions of two MAPs.
+
+    Args:
+        A0, A1: D0, D1 matrices of first MAP.
+        B0, B1: D0, D1 matrices of second MAP.
+        alA, alB: Optional stationary vectors at arrival epochs.
+
+    Returns:
+        float: Squared L2 distance of autocorrelation functions.
+    """
+    jmam = jpype.JPackage('jline').api.mam
+    jA0 = jlineMatrixFromArray(A0)
+    jA1 = jlineMatrixFromArray(A1)
+    jB0 = jlineMatrixFromArray(B0)
+    jB1 = jlineMatrixFromArray(B1)
+    if alA is not None and alB is not None:
+        return float(jmam.Map_dist_acfKt.map_dist_acf(
+            jA0, jA1, jB0, jB1,
+            jlineMatrixFromArray(alA), jlineMatrixFromArray(alB)))
+    else:
+        return float(jmam.Map_dist_acfKt.map_dist_acf(
+            jA0, jA1, jB0, jB1))
+
+
+def dmap_geo_mul_sum(D0A, D1A, D0B, D1B, L, alA=None, alB=None):
+    """
+    Joint PMF inner product of two D-MAPs via recursive discrete Lyapunov.
+
+    Discrete-time extension by QORE Lab (https://qore.doc.ic.ac.uk/)
+
+    Args:
+        D0A, D1A: D0, D1 matrices of first D-MAP.
+        D0B, D1B: D0, D1 matrices of second D-MAP.
+        L: Number of inter-arrival times in the joint PMF.
+        alA, alB: Optional stationary vectors at arrival epochs.
+
+    Returns:
+        float: Inner product of joint PMFs.
+    """
+    jmam = jpype.JPackage('jline').api.mam
+    jD0A = jlineMatrixFromArray(D0A)
+    jD1A = jlineMatrixFromArray(D1A)
+    jD0B = jlineMatrixFromArray(D0B)
+    jD1B = jlineMatrixFromArray(D1B)
+    if alA is not None and alB is not None:
+        return float(jmam.Dmap_distKt.dmap_geo_mul_sum(
+            jD0A, jD1A, jD0B, jD1B, jpype.JInt(L),
+            jlineMatrixFromArray(alA), jlineMatrixFromArray(alB)))
+    else:
+        return float(jmam.Dmap_distKt.dmap_geo_mul_sum(
+            jD0A, jD1A, jD0B, jD1B, jpype.JInt(L),
+            jmam.Dmap_distKt.dmap_pie(jD0A, jD1A),
+            jmam.Dmap_distKt.dmap_pie(jD0B, jD1B)))
+
+
+def dmap_dist(D0A, D1A, D0B, D1B, L, alA=None, alB=None):
+    """
+    Squared L2 distance between lag-L joint PMFs of two D-MAPs.
+
+    Discrete-time extension by QORE Lab (https://qore.doc.ic.ac.uk/)
+
+    Args:
+        D0A, D1A: D0, D1 matrices of first D-MAP.
+        D0B, D1B: D0, D1 matrices of second D-MAP.
+        L: Number of lags.
+        alA, alB: Optional stationary vectors at arrival epochs.
+
+    Returns:
+        float: Squared L2 distance.
+    """
+    jmam = jpype.JPackage('jline').api.mam
+    jD0A = jlineMatrixFromArray(D0A)
+    jD1A = jlineMatrixFromArray(D1A)
+    jD0B = jlineMatrixFromArray(D0B)
+    jD1B = jlineMatrixFromArray(D1B)
+    if alA is not None and alB is not None:
+        return float(jmam.Dmap_distKt.dmap_dist(
+            jD0A, jD1A, jD0B, jD1B, jpype.JInt(L),
+            jlineMatrixFromArray(alA), jlineMatrixFromArray(alB)))
+    else:
+        return float(jmam.Dmap_distKt.dmap_dist(
+            jD0A, jD1A, jD0B, jD1B, jpype.JInt(L)))
+
+
+def dmap_dist_acf(D0A, D1A, D0B, D1B, alA=None, alB=None):
+    """
+    Squared L2 distance between autocorrelation functions of two D-MAPs.
+
+    Discrete-time extension by QORE Lab (https://qore.doc.ic.ac.uk/)
+
+    Args:
+        D0A, D1A: D0, D1 matrices of first D-MAP.
+        D0B, D1B: D0, D1 matrices of second D-MAP.
+        alA, alB: Optional stationary vectors at arrival epochs.
+
+    Returns:
+        float: Squared L2 distance.
+    """
+    jmam = jpype.JPackage('jline').api.mam
+    jD0A = jlineMatrixFromArray(D0A)
+    jD1A = jlineMatrixFromArray(D1A)
+    jD0B = jlineMatrixFromArray(D0B)
+    jD1B = jlineMatrixFromArray(D1B)
+    if alA is not None and alB is not None:
+        return float(jmam.Dmap_distKt.dmap_dist_acf(
+            jD0A, jD1A, jD0B, jD1B,
+            jlineMatrixFromArray(alA), jlineMatrixFromArray(alB)))
+    else:
+        return float(jmam.Dmap_distKt.dmap_dist_acf(
+            jD0A, jD1A, jD0B, jD1B))

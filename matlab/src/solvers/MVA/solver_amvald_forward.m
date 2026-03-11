@@ -342,24 +342,24 @@ for ir=1:length(nnzclasses)
                 end
 
             case SchedStrategy.DPS
-                if nservers(k)>1
-                    line_error(mfilename,'Multi-server DPS not supported yet in AMVA solver.')
-                else
-                    w = schedparam; % DPS weight
-                    tss = Inf; % time-scale separation threshold, this was originally at 5, presently it is disabled
-                    %Uhiprio(k,r) = sum(Uchain(k,w(k,:)>tss*w(k,r))); % disabled at the moment
-                    %STeff(k,r) = STeff(k,r) / (1-Uhiprio(k,r));
+                w = schedparam; % DPS weight
+                tss = Inf; % time-scale separation threshold, this was originally at 5, presently it is disabled
 
-                    Wchain(k,r) = STeff(k,r) * (1 + selfArvlQlenSeenByClosed(k,r)); % class-r
-                    for s=sd  % slowdown due to classes s!=r
-                        if w(k,s) == w(k,r) % handle gracefully 0/0 case
-                            Wchain(k,r) = Wchain(k,r) + STeff(k,r) * stationaryQlen(k,s);
-                        elseif w(k,s)/w(k,r)<=tss
-                            Wchain(k,r) = Wchain(k,r) + STeff(k,r) * stationaryQlen(k,s) * w(k,s)/w(k,r);
-                        elseif w(k,s)/w(k,r)>tss
-                            % if there is time-scale separation, do nothing
-                            % all is accounted for by 1/(1-Uhiprio)
-                        end
+                if nservers(k) > 1
+                    % Multi-server DPS: seidmann-style correction
+                    % STeff already contains 1/nservers(k) factor from chain aggregation
+                    Wchain(k,r) = STeff(k,r) * (nservers(k) - 1); % serial think time correction
+                end
+
+                Wchain(k,r) = Wchain(k,r) + STeff(k,r) * (1 + selfArvlQlenSeenByClosed(k,r)); % class-r
+                for s=sd  % slowdown due to classes s!=r
+                    if w(k,s) == w(k,r) % handle gracefully 0/0 case
+                        Wchain(k,r) = Wchain(k,r) + STeff(k,r) * stationaryQlen(k,s);
+                    elseif w(k,s)/w(k,r)<=tss
+                        Wchain(k,r) = Wchain(k,r) + STeff(k,r) * stationaryQlen(k,s) * w(k,s)/w(k,r);
+                    elseif w(k,s)/w(k,r)>tss
+                        % if there is time-scale separation, do nothing
+                        % all is accounted for by 1/(1-Uhiprio)
                     end
                 end
 

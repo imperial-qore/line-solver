@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 
 import java.util.Random;
 
+import static jline.TestTools.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -18,8 +19,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class MultivariateNormalTest {
 
-    private static final double TOL = 1e-6;
-    private static final double CONVERGENCE_TOL = 0.1; // 10% tolerance for sampling
     private Random random;
 
     @BeforeEach
@@ -37,8 +36,8 @@ class MultivariateNormalTest {
         MultivariateNormal mvn = new MultivariateNormal(mu, Sigma);
 
         assertEquals(2, mvn.getDimension());
-        assertEquals(1.0, mvn.getMeanVector().get(0, 0), TOL);
-        assertEquals(2.0, mvn.getMeanVector().get(1, 0), TOL);
+        assertEquals(1.0, mvn.getMeanVector().get(0, 0), LOOSE_FINE_TOL);
+        assertEquals(2.0, mvn.getMeanVector().get(1, 0), LOOSE_FINE_TOL);
     }
 
     @Test
@@ -53,8 +52,8 @@ class MultivariateNormalTest {
         MultivariateNormal mvn = new MultivariateNormal(mu, Sigma);
 
         assertEquals(3, mvn.getDimension());
-        assertEquals(1.0, mvn.getMean(), TOL);  // First component
-        assertEquals(1.0, mvn.getVar(), TOL);  // Variance of first component
+        assertEquals(1.0, mvn.getMean(), LOOSE_FINE_TOL);  // First component
+        assertEquals(1.0, mvn.getVar(), LOOSE_FINE_TOL);  // Variance of first component
     }
 
     @Test
@@ -120,8 +119,8 @@ class MultivariateNormalTest {
         MultivariateNormal mvn = new MultivariateNormal(mu, Sigma);
         Matrix mean = mvn.getMeanVector();
 
-        assertEquals(1.5, mean.get(0, 0), TOL);
-        assertEquals(2.5, mean.get(1, 0), TOL);
+        assertEquals(1.5, mean.get(0, 0), LOOSE_FINE_TOL);
+        assertEquals(2.5, mean.get(1, 0), LOOSE_FINE_TOL);
     }
 
     @Test
@@ -132,10 +131,10 @@ class MultivariateNormalTest {
         MultivariateNormal mvn = new MultivariateNormal(mu, Sigma);
         Matrix cov = mvn.getCovariance();
 
-        assertEquals(2.0, cov.get(0, 0), TOL);
-        assertEquals(0.5, cov.get(0, 1), TOL);
-        assertEquals(0.5, cov.get(1, 0), TOL);
-        assertEquals(1.5, cov.get(1, 1), TOL);
+        assertEquals(2.0, cov.get(0, 0), LOOSE_FINE_TOL);
+        assertEquals(0.5, cov.get(0, 1), LOOSE_FINE_TOL);
+        assertEquals(0.5, cov.get(1, 0), LOOSE_FINE_TOL);
+        assertEquals(1.5, cov.get(1, 1), LOOSE_FINE_TOL);
     }
 
     @Test
@@ -146,10 +145,10 @@ class MultivariateNormalTest {
         MultivariateNormal mvn = new MultivariateNormal(mu, Sigma);
         Matrix corr = mvn.getCorrelation();
 
-        assertEquals(1.0, corr.get(0, 0), TOL);  // Diagonal elements are 1
-        assertEquals(1.0, corr.get(1, 1), TOL);
-        assertEquals(0.5 / sqrt(1.0 * 2.0), corr.get(0, 1), TOL);  // Off-diagonal correlation
-        assertEquals(0.5 / sqrt(1.0 * 2.0), corr.get(1, 0), TOL);
+        assertEquals(1.0, corr.get(0, 0), LOOSE_FINE_TOL);  // Diagonal elements are 1
+        assertEquals(1.0, corr.get(1, 1), LOOSE_FINE_TOL);
+        assertEquals(0.5 / sqrt(1.0 * 2.0), corr.get(0, 1), LOOSE_FINE_TOL);  // Off-diagonal correlation
+        assertEquals(0.5 / sqrt(1.0 * 2.0), corr.get(1, 0), LOOSE_FINE_TOL);
     }
 
     // =================== STATISTICAL PROPERTIES TESTS ===================
@@ -161,7 +160,7 @@ class MultivariateNormalTest {
 
         MultivariateNormal mvn = new MultivariateNormal(mu, Sigma);
 
-        assertEquals(3.5, mvn.getMean(), TOL);  // First component
+        assertEquals(3.5, mvn.getMean(), LOOSE_FINE_TOL);  // First component
     }
 
     @Test
@@ -171,7 +170,7 @@ class MultivariateNormalTest {
 
         MultivariateNormal mvn = new MultivariateNormal(mu, Sigma);
 
-        assertEquals(2.0, mvn.getVar(), TOL);  // Variance of first component
+        assertEquals(2.0, mvn.getVar(), LOOSE_FINE_TOL);  // Variance of first component
     }
 
     @Test
@@ -191,7 +190,7 @@ class MultivariateNormalTest {
 
         MultivariateNormal mvn = new MultivariateNormal(mu, Sigma);
 
-        assertEquals(0.0, mvn.getSkewness(), TOL);
+        assertEquals(0.0, mvn.getSkewness(), LOOSE_FINE_TOL);
     }
 
     // =================== SAMPLING TESTS ===================
@@ -226,8 +225,8 @@ class MultivariateNormalTest {
         empMean[1] /= 10000;
 
         // Check convergence (10% tolerance)
-        assertEquals(mu[0], empMean[0], CONVERGENCE_TOL * mu[0]);
-        assertEquals(mu[1], empMean[1], CONVERGENCE_TOL * mu[1]);
+        assertEquals(mu[0], empMean[0], VERY_COARSE_TOL * mu[0]);
+        assertEquals(mu[1], empMean[1], VERY_COARSE_TOL * mu[1]);
     }
 
     @Test
@@ -280,7 +279,7 @@ class MultivariateNormalTest {
         double pdfAtMean = mvn.evalPDF(new double[]{0, 0});
         double expected = 1.0 / (2 * Math.PI);
 
-        assertEquals(expected, pdfAtMean, TOL);
+        assertEquals(expected, pdfAtMean, LOOSE_FINE_TOL);
     }
 
     @Test
@@ -293,7 +292,7 @@ class MultivariateNormalTest {
         double pdfAt0 = mvn.evalPDF(new double[]{0});
         double expected = 1.0 / Math.sqrt(2 * Math.PI);
 
-        assertEquals(expected, pdfAt0, TOL);
+        assertEquals(expected, pdfAt0, LOOSE_FINE_TOL);
     }
 
     @Test
@@ -306,7 +305,7 @@ class MultivariateNormalTest {
         double pdfAtMean = mvn.evalPDF(new double[]{1, 2});
         double expected = 1.0 / (2 * Math.PI);
 
-        assertEquals(expected, pdfAtMean, TOL);
+        assertEquals(expected, pdfAtMean, LOOSE_FINE_TOL);
     }
 
     @Test
@@ -322,7 +321,7 @@ class MultivariateNormalTest {
         double pdfAtMean = mvn.evalPDF(x);
         double expected = 1.0 / (2 * Math.PI);
 
-        assertEquals(expected, pdfAtMean, TOL);
+        assertEquals(expected, pdfAtMean, LOOSE_FINE_TOL);
     }
 
     @Test
@@ -375,11 +374,11 @@ class MultivariateNormalTest {
         MultivariateNormal marginal = mvn.getMarginal(new int[]{0, 2});
 
         assertEquals(2, marginal.getDimension());
-        assertEquals(1.0, marginal.getMeanVector().get(0, 0), TOL);
-        assertEquals(3.0, marginal.getMeanVector().get(1, 0), TOL);
-        assertEquals(1.0, marginal.getCovariance().get(0, 0), TOL);
-        assertEquals(0.2, marginal.getCovariance().get(0, 1), TOL);
-        assertEquals(1.5, marginal.getCovariance().get(1, 1), TOL);
+        assertEquals(1.0, marginal.getMeanVector().get(0, 0), LOOSE_FINE_TOL);
+        assertEquals(3.0, marginal.getMeanVector().get(1, 0), LOOSE_FINE_TOL);
+        assertEquals(1.0, marginal.getCovariance().get(0, 0), LOOSE_FINE_TOL);
+        assertEquals(0.2, marginal.getCovariance().get(0, 1), LOOSE_FINE_TOL);
+        assertEquals(1.5, marginal.getCovariance().get(1, 1), LOOSE_FINE_TOL);
     }
 
     @Test
@@ -394,8 +393,8 @@ class MultivariateNormalTest {
 
         Normal norm = mvn.getMarginalUniv(1);
 
-        assertEquals(2.0, norm.getMean(), TOL);
-        assertEquals(Math.sqrt(2.0), norm.getStd(), TOL);
+        assertEquals(2.0, norm.getMean(), LOOSE_FINE_TOL);
+        assertEquals(Math.sqrt(2.0), norm.getStd(), LOOSE_FINE_TOL);
     }
 
     @Test
@@ -406,8 +405,8 @@ class MultivariateNormalTest {
 
         Normal norm = mvn.getMarginalUniv(0);
 
-        assertEquals(1.5, norm.getMean(), TOL);
-        assertEquals(Math.sqrt(3.0), norm.getStd(), TOL);
+        assertEquals(1.5, norm.getMean(), LOOSE_FINE_TOL);
+        assertEquals(Math.sqrt(3.0), norm.getStd(), LOOSE_FINE_TOL);
     }
 
     @Test
@@ -444,7 +443,7 @@ class MultivariateNormalTest {
         assertEquals(2, prior.getNumAlternatives());
         // Prior.getMean() = sum of first component means weighted by probabilities
         double expectedMean = 0.6 * 0.0 + 0.4 * 2.0;
-        assertEquals(expectedMean, prior.getMean(), TOL);
+        assertEquals(expectedMean, prior.getMean(), LOOSE_FINE_TOL);
     }
 
     // =================== UTILITY TESTS ===================

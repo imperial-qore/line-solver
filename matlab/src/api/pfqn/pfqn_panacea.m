@@ -55,9 +55,11 @@ for j=1:p
     A2 = A2 + 2 * beta(j) * pfqn_ca(gammatilde,m);
     m = zeros(1,p); m(j)=4;
     A2 = A2 + 3 * beta(j)^2 * pfqn_ca(gammatilde,m);
-    for k=setdiff(1:p,j)
-        m = zeros(1,p); m(j)=2; m(k)=2;
-        A2 = A2 + 0.5 * beta(j) * beta(k) * pfqn_ca(gammatilde,m);
+    for k=1:p
+        if k~=j
+            m = zeros(1,p); m(j)=2; m(k)=2;
+            A2 = A2 + 0.5 * beta(j) * beta(k) * pfqn_ca(gammatilde,m);
+        end
     end
 end
 

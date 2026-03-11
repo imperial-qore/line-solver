@@ -303,6 +303,14 @@ class TestMethodResolution(unittest.TestCase):
         solver = SolverFLD(sn, method='fluid.mfq')
         self.assertEqual(solver._resolve_method(), 'mfq')
 
+    def test_keyword_method_overrides_default_positional(self):
+        """Test that keyword method is honored when positional method is omitted."""
+        sn = SimpleNetworkStruct(nstations=2, nclasses=1)
+        solver = SolverFLD(sn, method='mfq')
+
+        self.assertEqual(solver.options.method, 'mfq')
+        self.assertEqual(solver._resolve_method(), 'mfq')
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

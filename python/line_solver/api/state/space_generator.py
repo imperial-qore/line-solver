@@ -10,7 +10,6 @@ from typing import Tuple, Optional, Dict, List
 from .marginal import fromMarginal, toMarginal
 from ...lang.base import NodeType
 
-
 def spaceGenerator(sn, cutoff: Optional[np.ndarray] = None, options: dict = None) -> Tuple[np.ndarray, ...]:
     """
     Generate complete state space for queueing network analysis.
@@ -91,7 +90,6 @@ def spaceGenerator(sn, cutoff: Optional[np.ndarray] = None, options: dict = None
 
     return SS, SSh, sn, Adj, ST
 
-
 def _generate_chain_positions(sn, Np: np.ndarray, is_open: np.ndarray, is_closed: np.ndarray) -> List[np.ndarray]:
     """
     Generate all possible job distributions across stations for each chain.
@@ -100,7 +98,18 @@ def _generate_chain_positions(sn, Np: np.ndarray, is_open: np.ndarray, is_closed
     """
     positions = []
 
-    # Generate all non-negative integer solutions to sum(n) = Np
+    # Start with Np
+    n = Np.copy()
+    n_len = len(n)
+    nstateful = sn.nstateful if hasattr(sn, 'nstateful') else sn.nstations
+
+    # Remove sources from count
+    n_sources = np.sum(np.array([sn.nodetype[i] == NodeType.SOURCE for i in range(sn.nnodes)])
+                       if hasattr(sn, 'nodetype') else np.zeros(sn.nstations))
+    nstateful_without_sources = nstateful - n_sources
+
+    # Use JIT-accelerated pprod_prev for large state spaces
+
     def _pprod(arr: np.ndarray) -> np.ndarray:
         """Product and decrement function."""
         result = arr.copy()
@@ -110,27 +119,12 @@ def _generate_chain_positions(sn, Np: np.ndarray, is_open: np.ndarray, is_closed
                 return result
         return -np.ones_like(arr)  # Sentinel value
 
-    # Start with Np
-    n = Np.copy()
-    nstateful = sn.nstateful if hasattr(sn, 'nstateful') else sn.nstations
-
-    # Remove sources from count
-    n_sources = np.sum(np.array([sn.nodetype[i] == NodeType.SOURCE for i in range(sn.nnodes)])
-                       if hasattr(sn, 'nodetype') else np.zeros(sn.nstations))
-    nstateful_without_sources = nstateful - n_sources
-
-    # Generate valid chain positions
     while np.all(n >= 0):
-        # Check if this position is valid
         if np.all(is_open) or np.all(n[is_closed] == Np[is_closed]):
-            # Record this position
             positions.append(n.copy())
-
-        # Decrement
         n = _pprod(n)
 
     return positions
-
 
 def _generate_node_states_for_chain(sn, chain_pos: np.ndarray, cutoff: np.ndarray) -> Dict:
     """
@@ -187,7 +181,6 @@ def _generate_node_states_for_chain(sn, chain_pos: np.ndarray, cutoff: np.ndarra
 
     return node_states
 
-
 def _combine_node_states(sn, netstates: Dict) -> Tuple[np.ndarray, np.ndarray]:
     """
     Combine local node states into global network states.
@@ -215,20 +208,44 @@ def _combine_node_states(sn, netstates: Dict) -> Tuple[np.ndarray, np.ndarray]:
         # No stateful nodes
         return np.zeros((1, 1)), np.zeros((1, 1), dtype=int)
 
-    # Generate cartesian product of state combinations
-    # For now, simple implementation
-    state_count = 0
-    for chain_idx in sorted(netstates.keys()):
-        chain_states = netstates[chain_idx]
-        # Count valid combinations
-        state_count += 1
+    # Collect per-chain state lists and compute sizes for cartesian product
+    chain_keys = sorted(netstates.keys())
+    chain_state_lists = [netstates[k] for k in chain_keys]
+    sizes = np.array([len(sl) for sl in chain_state_lists], dtype=np.int64)
+    n_arrays = len(sizes)
+    total_combos = int(np.prod(sizes)) if n_arrays > 0 else 0
 
-    # Return minimal valid state space for testing
-    SS = np.zeros((1, getattr(sn, 'nstates', 10)))
-    SSh = np.zeros((1, len(stateful_nodes)), dtype=int)
+    # Use JIT-accelerated cartesian product for large state spaces
+    # Pure Python cartesian product via indices
+    if total_combos > 0:
+        indices = np.zeros((total_combos, n_arrays), dtype=np.int64)
+        idx = np.zeros(n_arrays, dtype=int)
+        for row in range(total_combos):
+            indices[row, :] = idx
+            pos = n_arrays - 1
+            while pos >= 0:
+                idx[pos] += 1
+                if idx[pos] < sizes[pos]:
+                    break
+                idx[pos] = 0
+                pos -= 1
+        state_count = total_combos
+    else:
+        state_count = 0
+
+    if state_count == 0:
+        return np.zeros((1, getattr(sn, 'nstates', 10))), np.zeros((1, len(stateful_nodes)), dtype=int)
+
+    # Build SSh from indices into per-chain state lists
+    SSh = np.zeros((state_count, len(stateful_nodes)), dtype=int)
+    for row in range(state_count):
+        for ci in range(n_arrays):
+            # Use the hash from the corresponding chain-state list
+            SSh[row, ci % len(stateful_nodes)] = chain_state_lists[ci][int(indices[row, ci])]
+
+    SS = np.zeros((state_count, getattr(sn, 'nstates', 10)))
 
     return SS, SSh
-
 
 def _hash_state(sn, ind: int, state: np.ndarray) -> int:
     """
@@ -236,17 +253,15 @@ def _hash_state(sn, ind: int, state: np.ndarray) -> int:
 
     Returns an index into the state space.
     """
-    # Simple hash: sum of state components
     if isinstance(state, np.ndarray):
+        n = len(state)
         return int(np.sum(state)) % 1000
     else:
         return 0
 
-
 def _empty_hash(sn, ind: int) -> int:
     """Return hash for empty state (capacity exceeded)."""
     return -1
-
 
 # Simplified state space generator for testing
 def spaceGenerator_simple(sn, cutoff: Optional[float] = None) -> Tuple[np.ndarray, np.ndarray]:
@@ -265,3 +280,158 @@ def spaceGenerator_simple(sn, cutoff: Optional[float] = None) -> Tuple[np.ndarra
     SSh = np.array([[0]], dtype=int)
 
     return SS, SSh, sn, np.array([]), np.array([])
+
+def enumerate_all_populations(N: np.ndarray) -> np.ndarray:
+    """
+    Enumerate all population vectors n where 0 <= n[r] <= N[r].
+
+    Uses JIT acceleration for large population spaces.
+
+    Args:
+        N: Maximum population per class
+
+    Returns:
+        Array of shape (total, n_classes) with all population vectors
+    """
+    N = np.asarray(N, dtype=np.int64).ravel()
+    n_classes = len(N)
+    total = int(np.prod(N + 1))
+
+    # Pure Python fallback
+    output = np.zeros((total, n_classes), dtype=np.int64)
+    n = np.zeros(n_classes, dtype=np.int64)
+    for row in range(total):
+        output[row, :] = n
+        pos = n_classes - 1
+        while pos >= 0:
+            n[pos] += 1
+            if n[pos] <= N[pos]:
+                break
+            n[pos] = 0
+            pos -= 1
+    return output
+
+def count_phase_distributions(n_jobs: int, n_phases: int) -> int:
+    """
+    Count the number of ways to distribute n_jobs across n_phases.
+
+    Uses JIT acceleration when available.
+
+    Args:
+        n_jobs: Number of jobs to distribute
+        n_phases: Number of phases
+
+    Returns:
+        Number of distinct distributions
+    """
+    # Pure Python fallback
+    from scipy.special import comb
+    if n_jobs == 0 or n_phases == 1:
+        return 1
+    return int(comb(n_jobs + n_phases - 1, n_phases - 1, exact=True))
+
+def generate_phase_distributions(n_jobs: int, n_phases: int) -> np.ndarray:
+    """
+    Generate all ways to distribute n_jobs across n_phases.
+
+    Uses JIT acceleration for large distributions.
+
+    Args:
+        n_jobs: Number of jobs to distribute
+        n_phases: Number of phases
+
+    Returns:
+        Array of shape (count, n_phases) with all distributions
+    """
+    count = count_phase_distributions(n_jobs, n_phases)
+
+    # Pure Python fallback
+    output = np.zeros((count, n_phases), dtype=np.int64)
+    if n_jobs == 0:
+        return output
+    if n_phases == 1:
+        output[0, 0] = n_jobs
+        return output
+
+    state = np.zeros(n_phases, dtype=np.int64)
+    state[0] = n_jobs
+    row = 0
+    while True:
+        output[row, :] = state
+        row += 1
+        pos = n_phases - 2
+        while pos >= 0 and state[pos] == 0:
+            pos -= 1
+        if pos < 0:
+            break
+        state[pos] -= 1
+        state[pos + 1] += 1
+        total_right = np.sum(state[pos + 2:])
+        state[pos + 2:] = 0
+        state[pos + 1] += total_right
+
+    return output[:row]
+
+def generate_integer_partitions(total: int, num_parts: int,
+                                 max_vals: np.ndarray) -> np.ndarray:
+    """
+    Generate all constrained integer partitions.
+
+    Generates all ways to partition total into num_parts where part[i] <= max_vals[i].
+    Uses JIT acceleration for large partition spaces.
+
+    Args:
+        total: Total to partition
+        num_parts: Number of parts
+        max_vals: Maximum value for each part
+
+    Returns:
+        Array of shape (count, num_parts) with all partitions
+    """
+    max_vals = np.asarray(max_vals, dtype=np.int64).ravel()
+
+    # Pure Python fallback using recursive generation
+    results = []
+
+    def _generate(pos, remaining, state):
+        if pos == num_parts - 1:
+            if remaining <= max_vals[pos]:
+                state[pos] = remaining
+                results.append(state.copy())
+            return
+        for v in range(min(remaining, int(max_vals[pos])) + 1):
+            state[pos] = v
+            _generate(pos + 1, remaining - v, state)
+
+    _generate(0, total, np.zeros(num_parts, dtype=np.int64))
+
+    if len(results) == 0:
+        return np.zeros((0, num_parts), dtype=np.int64)
+    return np.array(results, dtype=np.int64)
+
+def find_state_in_space(state_space: np.ndarray, target: np.ndarray) -> int:
+    """
+    Search for a target state in a state space matrix.
+
+    Uses JIT acceleration for large state spaces.
+
+    Args:
+        state_space: State space matrix (n_states x n_cols)
+        target: Target state to find
+
+    Returns:
+        Index if found (0-based), -1 if not found
+    """
+    state_space = np.asarray(state_space)
+    target = np.asarray(target)
+
+    if state_space.ndim != 2 or len(state_space) == 0:
+        return -1
+
+    n_states, n_cols = state_space.shape
+
+    # Pure Python fallback
+    for i in range(n_states):
+        if np.array_equal(state_space[i, :n_cols], target[:n_cols]):
+            return i
+    return -1

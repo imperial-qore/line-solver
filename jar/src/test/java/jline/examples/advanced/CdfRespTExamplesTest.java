@@ -39,7 +39,6 @@ import static jline.TestTools.*;
  * AvgRespT = diff(CDF(:,1))' * CDF(2:end,2)
  * matching the MATLAB implementation.
  */
-// @Disabled("Takes several minutes to run")
 public class CdfRespTExamplesTest {
 
     @BeforeAll

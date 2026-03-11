@@ -45,7 +45,7 @@ logpath = lineTempDir;
 modelCopy.linkAndLog(Plinked, isNodeLogged, logpath);
 
 % simulate the model copy and retrieve log data
-options = self.getOptions; options.samples = numEvents;
+options = self.getOptions;
 options.method = 'jsim';  % Force jsim method to avoid recursion with 'replication'
 solverjmt = SolverJMT(modelCopy, options);
 solverjmt.maxEvents = numEvents*sn.nnodes*sn.nclasses;

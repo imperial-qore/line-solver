@@ -136,7 +136,9 @@ classdef LINE < SolverAuto
                 case {'default','auto'}
                     if strcmp(options.method,'auto'), options.method='default'; end
                     result = LINE(model, options);
-                case {'ctmc','ctmc.gpu','gpu'}
+                case {'ctmc','ctmc.gpu','gpu',...
+                        'ctmc.qrf.mmi','ctmc.qrf.mem','ctmc.qrf.mmi.ld','ctmc.qrf.mmi.linear',...
+                        'ctmc.qrf.bas.mmi','ctmc.qrf.bas.mem','ctmc.qrf.bas','ctmc.qrf.rsrd'}
                     if strcmp(options.method,'ctmc'), options.method='default'; end
                     options.method = erase(options.method,'ctmc.');
                     result = SolverCTMC(model, options);

@@ -15,6 +15,8 @@ from line_solver.solvers.solver_fld.ode.pnorm import (
     pnorm_smooth,
     pnorm_smooth_vectorized,
     fluid_ode_pnorm,
+)
+from line_solver.solvers.solver_fld.ode.pnorm import (
     PNormODESystem,
 )
 

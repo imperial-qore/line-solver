@@ -622,6 +622,55 @@ public class Ret {
 
 
     /**
+     * Data structure for storing results from the Queue-Dependent (QD) approximate MVA method.
+     * Contains queue lengths (Q), throughput (X), utilization (U), and iteration count (iter).
+     */
+    public static class pfqnQd {
+        public Matrix Q;
+        public Matrix X;
+        public Matrix U;
+        public int iter;
+
+        public pfqnQd(Matrix Q, Matrix X, Matrix U, int iter) {
+            this.Q = Q;
+            this.X = X;
+            this.U = U;
+            this.iter = iter;
+        }
+    }
+
+    /**
+     * Data structure for storing results from the ProCoMoM method.
+     * Contains marginal probability matrix (Pr) and mean queue lengths (Q).
+     */
+    public static class pfqnProcomom {
+        public Matrix Pr;
+        public Matrix Q;
+
+        public pfqnProcomom(Matrix Pr, Matrix Q) {
+            this.Pr = Pr;
+            this.Q = Q;
+        }
+    }
+
+    /**
+     * Data structure for storing results from the CoMoM multiserver method.
+     * Contains normalizing constant (G), logarithm of normalizing constant (lG),
+     * and state probability distribution (prob).
+     */
+    public static class pfqnComomrmMs {
+        public double G;
+        public double lG;
+        public Matrix prob;
+
+        public pfqnComomrmMs(double G, double lG, Matrix prob) {
+            this.G = G;
+            this.lG = lG;
+            this.prob = prob;
+        }
+    }
+
+    /**
      * Data structure for storing linearizer estimtate results from a queueing network analysis.
      * Contains queue length (Q), wait time (W), throughput (X), probability matrices (P, PB),
      * and the number of iterations performed (iter).
@@ -1639,7 +1688,7 @@ public class Ret {
         /**
          * Number of samples generated.
          */
-        public int numSamples;
+        public int numEvents;
         
         /**
          * Default constructor.
@@ -1651,7 +1700,7 @@ public class Ret {
             this.event = new Matrix(0, 0);
             this.isAggregate = false;
             this.nodeIndex = null;
-            this.numSamples = 0;
+            this.numEvents = 0;
         }
         
         /**
@@ -1663,17 +1712,17 @@ public class Ret {
          * @param event event sequence
          * @param isAggregate whether states are aggregated
          * @param nodeIndex the node index
-         * @param numSamples number of samples
+         * @param numEvents number of samples
          */
         public SampleResult(String handle, Matrix t, Matrix state, Matrix event, 
-                           boolean isAggregate, Integer nodeIndex, int numSamples) {
+                           boolean isAggregate, Integer nodeIndex, int numEvents) {
             this.handle = handle;
             this.t = t.copy();
             this.state = state.copy();
             this.event = event.copy();
             this.isAggregate = isAggregate;
             this.nodeIndex = nodeIndex;
-            this.numSamples = numSamples;
+            this.numEvents = numEvents;
         }
         
         /**
@@ -1684,17 +1733,17 @@ public class Ret {
          * @param systemState list of state trajectories (one per node)
          * @param event event sequence
          * @param isAggregate whether states are aggregated
-         * @param numSamples number of samples
+         * @param numEvents number of samples
          */
         public SampleResult(String handle, Matrix t, List<Matrix> systemState, Matrix event, 
-                           boolean isAggregate, int numSamples) {
+                           boolean isAggregate, int numEvents) {
             this.handle = handle;
             this.t = t.copy();
             this.state = new ArrayList<>(systemState);
             this.event = event.copy();
             this.isAggregate = isAggregate;
             this.nodeIndex = null; // System-wide sampling
-            this.numSamples = numSamples;
+            this.numEvents = numEvents;
         }
         
         /**
@@ -1739,7 +1788,7 @@ public class Ret {
          * @return true if the result contains valid samples
          */
         public boolean hasValidSamples() {
-            return t != null && !t.isEmpty() && state != null && numSamples > 0;
+            return t != null && !t.isEmpty() && state != null && numEvents > 0;
         }
     }
 

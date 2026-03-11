@@ -31,7 +31,7 @@ for ind=1:sn.nnodes
                         end
                     end
                 end
-            case {SchedStrategy.FCFS, SchedStrategy.SIRO, SchedStrategy.PS, SchedStrategy.INF, SchedStrategy.DPS, SchedStrategy.HOL}
+            case {SchedStrategy.FCFS, SchedStrategy.SIRO, SchedStrategy.PS, SchedStrategy.INF, SchedStrategy.DPS, SchedStrategy.HOL, SchedStrategy.LCFS, SchedStrategy.LCFSPR}
                 for r=1:size(kir_i,2)
                     for k=1:length(sn.mu{ist}{r})
                         if k==1

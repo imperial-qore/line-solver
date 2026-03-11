@@ -11,9 +11,8 @@ This example demonstrates:
 
 from line_solver import *
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
 
+def cqn_multiserver():
     model = Network('model')
 
     node = np.empty(3, dtype=object)
@@ -89,6 +88,15 @@ if __name__ == "__main__":
             my_p.set(jobclass[3], jobclass[2], node[i], node[j], pmatrix_4_3[i][j])
 
     model.link(my_p)
+
+    return model
+
+
+if __name__ == "__main__":
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+
+    model = cqn_multiserver()
+    node = model.get_nodes()
 
     # Get state space examples
     space_running = State.from_marginal_and_running(model, node[1], [2, 1, 1, 1], [2, 1, 0, 0])

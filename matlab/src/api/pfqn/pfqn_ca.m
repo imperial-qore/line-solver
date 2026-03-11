@@ -18,6 +18,9 @@ function [Gn,lGn]=pfqn_ca(L,N,Z)
 %}
 %}
 [M,R]=size(L);
+if nargin<3 || isempty(Z)
+    Z=zeros(1,R);
+end
 if M==0
     lGn = - sum(factln(N)) + sum(N.*log(sum(Z,1)));
     Gn = exp(lGn);
@@ -36,10 +39,6 @@ if sum(N)==0
     return;
 end
 
-
-if nargin<3 || isempty(Z)
-    Z=zeros(1,R);
-end
 
 G = ones(M+1,prod(N+1)); % stores G across recursion
 n = pprod(N);

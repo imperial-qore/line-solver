@@ -18,9 +18,32 @@ fun snHasMultiClassHeterExpFCFS(sn: NetworkStruct): Boolean {
             continue
         }
         val row = Matrix.extractRows(sn.rates, i, i + 1, null)
-        if (row.elementMax() - row.elementMin() > 0) {
+        // Compute max and min ignoring NaN values to match MATLAB's max/min behavior
+        var rateMax = Double.NEGATIVE_INFINITY
+        var rateMin = Double.POSITIVE_INFINITY
+        var hasRate = false
+        for (j in 0..<row.numElements) {
+            val v = row.get(j)
+            if (!java.lang.Double.isNaN(v)) {
+                if (v > rateMax) rateMax = v
+                if (v < rateMin) rateMin = v
+                hasRate = true
+            }
+        }
+        if (hasRate && rateMax - rateMin > 0) {
             val scvs = Matrix.extractRows(sn.scv, i, i + 1, null)
-            if ((scvs.elementMax() < 1 + GlobalConstants.FineTol) && (scvs.elementMin() < 1 - GlobalConstants.FineTol)) {
+            // Compute max and min of SCV ignoring NaN, matching MATLAB:
+            // max(scvs) < 1+FineTol && min(scvs) > 1-FineTol
+            var scvMax = Double.NEGATIVE_INFINITY
+            var scvMin = Double.POSITIVE_INFINITY
+            for (j in 0..<scvs.numElements) {
+                val v = scvs.get(j)
+                if (!java.lang.Double.isNaN(v)) {
+                    if (v > scvMax) scvMax = v
+                    if (v < scvMin) scvMin = v
+                }
+            }
+            if (scvMax < 1 + GlobalConstants.FineTol && scvMin > 1 - GlobalConstants.FineTol) {
                 return true
             }
         }

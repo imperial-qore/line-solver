@@ -1,4 +1,4 @@
-function stationStateAggr = sampleAggr(self, node, numSamples, markActivePassive)
+function stationStateAggr = sampleAggr(self, node, numEvents, markActivePassive)
 % SAMPLE = SAMPLEAGGR(NODE, NUMSAMPLES)
 
 if GlobalConstants.DummyMode
@@ -17,7 +17,7 @@ end
 options = self.getOptions;
 switch options.method
     case {'default','serial'}
-        options.samples = numSamples;
+        options.samples = numEvents;
         options.force = true;
         options.method = 'serial'; % nrm does not support tran*
         [~, tranSystemState, event] = self.runAnalyzer(options);

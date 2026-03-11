@@ -19,7 +19,8 @@ function X = lyap(A, B, C, E)
 %       A*X*E' + E*X*A' + Q = 0.
 %
 %   Note that unlike the built-in MATLAB LYAP() routine there is no need for Q
-%   to be symmetric in the final case. Also note that no balancing is performed.
+%   to be symmetric in the final case. Balancing is performed for the standard
+%   and Sylvester cases using MATLAB's BALANCE to improve numerical stability.
 %
 %   For solving generalised Sylvestter equations of the form 
 %       A*X*B^T + C*X*D^T = E
@@ -42,30 +43,37 @@ function X = lyap(A, B, C, E)
 
 % Nick Hale, Nov 2014. (nick.p.hale@gmail.com)
 
-% TODO: Balancing?
-
 if ( nargin == 2 )
     % A*X + X*A' + B = 0
-    X = sylv(A, [], B);
+    % Balance A for improved numerical stability
+    [T, Ab] = balance(A);
+    Bb = T \ (B / T);  % T^{-1} * B * T^{-1}
+    Xb = sylv(Ab, [], Bb);
+    X = T * Xb * T;
     if ( isreal(A) && isreal(B) )
         X = real(X);
     end
-    
+
 elseif ( nargin == 3 )
     % A*X + X*B + C = 0
-    X = sylv(A, B, C);
+    % Balance A and B for improved numerical stability
+    [TA, Ab] = balance(A);
+    [TB, Bb] = balance(B);
+    Cb = TA \ C * TB;  % TA^{-1} * C * TB
+    Xb = sylv(Ab, Bb, Cb);
+    X = TA * Xb / TB;  % TA * Xb * TB^{-1}
     if ( isreal(A) && isreal(B) && isreal(C) )
         X = real(X);
     end
-    
+
 else
     % A*X*E' + E*X*A' + B = 0
-%     X = bartelsStewart(A, E, E, A, -B);
+    % Generalized case: balancing deferred to bartelsStewart
     X = bartelsStewart(A, E, [], [], -B);
     if ( isreal(A) && isreal(B) && isreal(E) )
         X = real(X);
     end
-    
+
 end
 
 end

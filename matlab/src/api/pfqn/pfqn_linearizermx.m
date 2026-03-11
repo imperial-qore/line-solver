@@ -59,7 +59,8 @@ UN = zeros(M,R);
 WN = zeros(M,R);
 QN = zeros(M,R);
 CN = zeros(1,R);
-for r=openClasses
+for ridx=1:length(openClasses)
+    r = openClasses(ridx);
     for ist=1:M
         UN(ist,r) = lambda(r)*L(ist,r);
     end
@@ -75,7 +76,7 @@ else
 end
 Dc = L(:,closedClasses) ./ (1-repmat(UNt,1,length((closedClasses))));
 
-if max(nservers)==1
+if max(nservers(:))==1
     switch method
         case {'default','lin'}
             [QNc,UNc,WNc,CNc,XNc,totiter] = pfqn_linearizer(Dc,N(closedClasses),Z(closedClasses),type,tol,maxiter);
@@ -84,7 +85,8 @@ if max(nservers)==1
             [QNc,UNc,WNc,CNc,XNc,totiter] = pfqn_gflinearizer(Dc,N(closedClasses),Z(closedClasses),type,tol,maxiter,linAlpha);
         case 'egflin'
             alphaM = zeros(1,R);
-            for r=closedClasses
+            for ridx=1:length(closedClasses)
+                r = closedClasses(ridx);
                 alphaM(r) = 0.6 + 1.4 * exp(-8 * exp(-0.8 * N(r)));
             end
             [QNc,UNc,WNc,CNc,XNc,totiter] = pfqn_egflinearizer(Dc,N(closedClasses),Z(closedClasses),type,tol,maxiter,alphaM);
@@ -102,12 +104,14 @@ UN(:,closedClasses) = UNc;
 CN(closedClasses) = CNc;
 
 for ist = 1:M
-    for r=closedClasses
+    for ridx=1:length(closedClasses)
+        r = closedClasses(ridx);
         UN(ist,r) = XN(r)*L(ist,r);
     end
 end
 for ist = 1:M
-    for r=openClasses
+    for ridx=1:length(openClasses)
+        r = openClasses(ridx);
         if isempty(QNc)
             WN(ist,r) = L(ist,r) / (1-UNt(ist));
         else

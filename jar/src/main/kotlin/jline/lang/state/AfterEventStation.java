@@ -130,6 +130,8 @@ public class AfterEventStation implements Serializable {
                             break;
                         case FCFS:
                         case HOL:
+                        case FCFSPRIO:
+                        case LCFSPRIO:
                         case LCFS:
                             // find states with all servers busy
                             // if MAP service, when empty restart from the phase stored in spaceVar for this class
@@ -386,6 +388,10 @@ public class AfterEventStation implements Serializable {
                                 outprobK.zero(); // zero probability event
                             }
                             break;
+                        case FCFSPRPRIO: // FCFS preempt-resume with priority groups
+                        case LCFSPRPRIO: // LCFS preempt-resume with priority groups
+                        case FCFSPIPRIO: // FCFS preempt-independent with priority groups
+                        case LCFSPIPRIO: // LCFS preempt-independent with priority groups
                         case LCFSPR: // LCFS with Preemption
                             // find states with all servers busy
                             Matrix allBusySrv = new Matrix(spaceSrvK.getNumRows(), 1);
@@ -443,7 +449,18 @@ public class AfterEventStation implements Serializable {
                             Matrix psentryLcfspr = new Matrix(spaceBufKReordLcfspr.getNumRows(), 1);
                             psentryLcfspr.ones(); // probability scaling due to preemption
 
+                            boolean hasDiffPrioArr = false;
+                            for (int cp = 1; cp < R; cp++) {
+                                if (sn.classprio.get(cp) != sn.classprio.get(0)) { hasDiffPrioArr = true; break; }
+                            }
                             for (int classpreempt = 0; classpreempt < R; classpreempt++) {
+                                // For priority variants, only higher-priority jobs can preempt
+                                SchedStrategy schedIstArr = sn.sched.get(sn.stations.get(ist));
+                                boolean isPrioSched = (schedIstArr == SchedStrategy.FCFSPRPRIO || schedIstArr == SchedStrategy.FCFSPIPRIO || schedIstArr == SchedStrategy.LCFSPRPRIO || schedIstArr == SchedStrategy.LCFSPIPRIO);
+                                boolean isPrioAware = isPrioSched || (hasDiffPrioArr && (schedIstArr == SchedStrategy.LCFSPR || schedIstArr == SchedStrategy.FCFSPR));
+                                if (isPrioAware) {
+                                    if (sn.classprio.get(jobClass) >= sn.classprio.get(classpreempt)) continue; // arriving job has same or lower priority
+                                }
                                 for (int phasepreempt = 0; phasepreempt < K.get(classpreempt); phasepreempt++) {
                                     // Check if there are jobs of this class/phase to preempt
                                     Matrix siPreempt = new Matrix(spaceSrvK.getNumRows(), 1);
@@ -606,13 +623,19 @@ public class AfterEventStation implements Serializable {
                                                 }
                                                 
                                                 // Store preempted job in buffer - match MATLAB sub2ind logic
+                                                boolean isPreemptIndep = (schedIstArr == SchedStrategy.LCFSPI || schedIstArr == SchedStrategy.LCFSPIPRIO ||
+                                                                          schedIstArr == SchedStrategy.FCFSPI || schedIstArr == SchedStrategy.FCFSPIPRIO);
                                                 for (int row = 0; row < spaceBufKPreemptFiltered.getNumRows(); row++) {
                                                     int emptySlot = (int) emptySlotsFiltered.get(row, 0);
                                                     if (emptySlot > 0) { // MATLAB uses 1-based indexing
                                                         // Convert back to 0-based for Java
                                                         int zeroBasedSlot = emptySlot - 1;
                                                         spaceBufKPreemptFiltered.set(row, zeroBasedSlot, classpreempt + 1); // Store class (1-based)
-                                                        spaceBufKPreemptFiltered.set(row, zeroBasedSlot + 1, phasepreempt + 1); // Store phase (1-based)
+                                                        if (isPreemptIndep) {
+                                                            spaceBufKPreemptFiltered.set(row, zeroBasedSlot + 1, 1); // Preempt-independent: store phase 1 placeholder
+                                                        } else {
+                                                            spaceBufKPreemptFiltered.set(row, zeroBasedSlot + 1, phasepreempt + 1); // Preempt-resume: store actual phase (1-based)
+                                                        }
                                                     }
                                                 }
                                                 
@@ -1385,7 +1408,7 @@ public class AfterEventStation implements Serializable {
                                         outprob_bottom_ps.ones();
                                         outprob = Matrix.concatRows(outprob, outprob_bottom_ps, null);
                                         break;
-                                    case PSPRIO:
+                                    case PSPRIO: {
                                         int minPrio = Integer.MAX_VALUE; // min priority level = most urgent (lower value = higher priority in LINE)
                                         for (int r = 0; r < sn.nclasses; r++) {
                                             int rPrio = (int) sn.classprio.get(r);
@@ -1525,6 +1548,7 @@ public class AfterEventStation implements Serializable {
                                         }
 
                                         break;
+                                    }
 
                                     case FCFS:
                                         // job departing
@@ -1918,6 +1942,7 @@ public class AfterEventStation implements Serializable {
                                         break;
 
                                     case HOL: // FCFS priority - Head of Line
+                                    case FCFSPRIO: // FCFS priority (alias)
                                         // record departure
                                         for (int row = 0; row < spaceSrv.getNumRows(); row++) {
                                             if (en.get(row, 0) == 1) {
@@ -2335,7 +2360,7 @@ public class AfterEventStation implements Serializable {
                                         outprob = Matrix.concatRows(outprob, outprob_bottom_dps, null);
                                         break;
 
-                                    case DPSPRIO:
+                                    case DPSPRIO: {
                                         int minPrioDps = Integer.MAX_VALUE; // min priority level = most urgent (lower value = higher priority in LINE)
                                         for (int r = 0; r < sn.nclasses; r++) {
                                             int rPrio = (int) sn.classprio.get(r);
@@ -2502,6 +2527,7 @@ public class AfterEventStation implements Serializable {
                                             outprob = Matrix.concatRows(outprob, new Matrix(en.getNumRows(), 1), null);
                                         }
                                         break;
+                                    }
 
                                     case GPS:
                                         // record departure
@@ -2628,7 +2654,7 @@ public class AfterEventStation implements Serializable {
                                         outprob = Matrix.concatRows(outprob, outprob_bottom_gps, null);
                                         break;
 
-                                    case GPSPRIO:
+                                    case GPSPRIO: {
                                         int minPrioGps = Integer.MAX_VALUE; // min priority level = most urgent (lower value = higher priority in LINE)
                                         for (int r = 0; r < sn.nclasses; r++) {
                                             int rPrio = (int) sn.classprio.get(r);
@@ -2798,6 +2824,287 @@ public class AfterEventStation implements Serializable {
                                             outprob = Matrix.concatRows(outprob, new Matrix(en.getNumRows(), 1), null);
                                         }
                                         break;
+                                    }
+
+                                    case LCFSPRIO: {
+                                        // LCFS priority - like HOL but LCFS order within priority groups
+                                        // record departure
+                                        for (int row = 0; row < spaceSrv.getNumRows(); row++) {
+                                            if (en.get(row, 0) == 1) {
+                                                spaceSrv.set(row, (int) (Ks.get(jobClass) + k), spaceSrv.get(row, (int) (Ks.get(jobClass) + k)) - 1);
+                                            }
+                                        }
+
+                                        Matrix kirEnClassKLcfsprio = new Matrix(0, 0);
+                                        for (int l_ind = 0; l_ind < en.getNumElements(); l_ind++) {
+                                            if (en.get(l_ind) == 1) {
+                                                if (kirEnClassKLcfsprio.isEmpty()) {
+                                                    kirEnClassKLcfsprio = new Matrix(1, 1);
+                                                    kirEnClassKLcfsprio.set(0, 0, kir.get(k).get(l_ind, jobClass));
+                                                } else {
+                                                    Matrix new_elem = new Matrix(1, 1);
+                                                    new_elem.set(0, 0, kir.get(k).get(l_ind, jobClass));
+                                                    kirEnClassKLcfsprio = Matrix.concatRows(kirEnClassKLcfsprio, new_elem, null);
+                                                }
+                                            }
+                                        }
+
+                                        for (int l_ind = 0; l_ind < kirEnClassKLcfsprio.getNumRows(); l_ind++) {
+                                            if (rate.isEmpty()) {
+                                                rate = new Matrix(1, 1);
+                                                rate.set(0, 0, mu.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k) * phi.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k) * kirEnClassKLcfsprio.get(l_ind));
+                                            } else {
+                                                Matrix new_elem = new Matrix(1, 1);
+                                                new_elem.set(0, 0, mu.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k) * phi.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k) * kirEnClassKLcfsprio.get(l_ind));
+                                                if (l_ind < rate.getNumElements()) {
+                                                    rate.set(l_ind, new_elem.value());
+                                                } else {
+                                                    rate = Matrix.concatRows(rate, new_elem, null);
+                                                }
+                                            }
+                                        }
+
+                                        // set en_wbuf to states with jobs in buffer
+                                        Matrix enWbufLcfsprio = new Matrix(en.getNumRows(), 1);
+                                        Matrix enWobufLcfsprio = new Matrix(en.getNumRows(), 1);
+                                        for (int row = 0; row < en.getNumRows(); row++) {
+                                            if (en.get(row, 0) == 1 && ni.get(row) > S.get(ist)) {
+                                                enWbufLcfsprio.set(row, 0, 1);
+                                                enWobufLcfsprio.set(row, 0, 0);
+                                            } else {
+                                                enWbufLcfsprio.set(row, 0, 0);
+                                                enWobufLcfsprio.set(row, 0, 1);
+                                            }
+                                        }
+
+                                        // Process states without jobs in buffer first
+                                        Matrix rateEnWobufLcfsprio = new Matrix(0, 0);
+                                        for (int row = 0; row < enWobufLcfsprio.getNumRows(); row++) {
+                                            if (enWobufLcfsprio.get(row, 0) == 1) {
+                                                if (rateEnWobufLcfsprio.isEmpty()) {
+                                                    rateEnWobufLcfsprio = Matrix.extractRows(rate, row, row + 1, null);
+                                                } else {
+                                                    rateEnWobufLcfsprio = Matrix.concatRows(rateEnWobufLcfsprio, Matrix.extractRows(rate, row, row + 1, null), null);
+                                                }
+                                            }
+                                        }
+
+                                        Matrix spaceBufEnWobufLcfsprio = new Matrix(0, 0);
+                                        Matrix spaceSrvEnWobufLcfsprio = new Matrix(0, 0);
+                                        Matrix spaceVarEnWobufLcfsprio = new Matrix(0, 0);
+                                        for (int row = 0; row < enWobufLcfsprio.getNumRows(); row++) {
+                                            if (enWobufLcfsprio.get(row, 0) == 1) {
+                                                if (spaceBufEnWobufLcfsprio.isEmpty()) {
+                                                    spaceBufEnWobufLcfsprio = Matrix.extractRows(spaceBuf, row, row + 1, null);
+                                                    spaceSrvEnWobufLcfsprio = Matrix.extractRows(spaceSrv, row, row + 1, null);
+                                                    spaceVarEnWobufLcfsprio = Matrix.extractRows(spaceVar, row, row + 1, null);
+                                                } else {
+                                                    spaceBufEnWobufLcfsprio = Matrix.concatRows(spaceBufEnWobufLcfsprio, Matrix.extractRows(spaceBuf, row, row + 1, null), null);
+                                                    spaceSrvEnWobufLcfsprio = Matrix.concatRows(spaceSrvEnWobufLcfsprio, Matrix.extractRows(spaceSrv, row, row + 1, null), null);
+                                                    spaceVarEnWobufLcfsprio = Matrix.concatRows(spaceVarEnWobufLcfsprio, Matrix.extractRows(spaceVar, row, row + 1, null), null);
+                                                }
+                                            }
+                                        }
+
+                                        if (!spaceBufEnWobufLcfsprio.isEmpty()) {
+                                            Matrix left_bottom_lcfsprio = Matrix.concatColumns(spaceBufEnWobufLcfsprio, spaceSrvEnWobufLcfsprio, null);
+                                            Matrix bottom_lcfsprio = Matrix.concatColumns(left_bottom_lcfsprio, spaceVarEnWobufLcfsprio, null);
+                                            outspace = Matrix.concatRows(outspace, bottom_lcfsprio, null);
+
+                                            if (ni.hasInfinite()) {
+                                                double cdscalingIst = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                                                double lld = lldscaling.get(ist, lldscaling.getNumCols() - 1);
+                                                Matrix outrate_bottom_lcfsprio = Matrix.scaleMult(rateEnWobufLcfsprio, cdscalingIst * lld);
+                                                outrate = Matrix.concatRows(outrate, outrate_bottom_lcfsprio, null);
+                                            } else {
+                                                double cdscalingIst = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                                                double lld = lldscaling.get(ist, (int) Maths.min(ni.get(0), lldlimit) - 1);
+                                                Matrix outrate_bottom_lcfsprio = Matrix.scaleMult(rateEnWobufLcfsprio, cdscalingIst * lld);
+                                                outrate = Matrix.concatRows(outrate, outrate_bottom_lcfsprio, null);
+                                            }
+
+                                            Matrix outprob_bottom_lcfsprio = new Matrix(rateEnWobufLcfsprio.getNumRows(), 1);
+                                            outprob_bottom_lcfsprio.ones();
+                                            outprob = Matrix.concatRows(outprob, outprob_bottom_lcfsprio, null);
+                                        }
+
+                                        // Process states with jobs in buffer using LCFSPRIO logic
+                                        boolean any_jobs_in_buffer_lcfsprio = false;
+                                        for (int row = 0; row < enWbufLcfsprio.getNumRows(); row++) {
+                                            if (enWbufLcfsprio.get(row, 0) == 1) {
+                                                any_jobs_in_buffer_lcfsprio = true;
+                                                break;
+                                            }
+                                        }
+
+                                        if (any_jobs_in_buffer_lcfsprio) {
+                                            // Create priority group matrix (Inf for empty, classprio for occupied)
+                                            Matrix priogroupLcfsprio = new Matrix(1, R + 1);
+                                            priogroupLcfsprio.set(0, 0, Double.POSITIVE_INFINITY); // empty slot
+                                            for (int r = 0; r < R; r++) {
+                                                priogroupLcfsprio.set(0, r + 1, sn.classprio.get(r));
+                                            }
+
+                                            // Transform buffer to priority groups
+                                            Matrix spaceBufGroupLcfsprio = new Matrix(spaceBuf.getNumRows(), spaceBuf.getNumCols());
+                                            for (int row = 0; row < spaceBuf.getNumRows(); row++) {
+                                                for (int col = 0; col < spaceBuf.getNumCols(); col++) {
+                                                    int bufVal = (int) spaceBuf.get(row, col);
+                                                    spaceBufGroupLcfsprio.set(row, col, priogroupLcfsprio.get(0, bufVal));
+                                                }
+                                            }
+
+                                            // Find minimum priority per row (highest priority class in buffer)
+                                            // Then find LEFTMOST position with that priority (LCFS order)
+                                            Matrix startSvcClassLcfsprio = new Matrix(0, 0);
+                                            Matrix leftmostMinPosLcfsprio = new Matrix(0, 0);
+
+                                            for (int row = 0; row < enWbufLcfsprio.getNumRows(); row++) {
+                                                if (enWbufLcfsprio.get(row, 0) == 1) {
+                                                    // Find min priority in this row
+                                                    double minPrioLcfsprio = Double.POSITIVE_INFINITY;
+                                                    for (int col = 0; col < spaceBufGroupLcfsprio.getNumCols(); col++) {
+                                                        double prio = spaceBufGroupLcfsprio.get(row, col);
+                                                        if (prio < minPrioLcfsprio) {
+                                                            minPrioLcfsprio = prio;
+                                                        }
+                                                    }
+
+                                                    // Find leftmost position with min priority (LCFS = most recent)
+                                                    int leftmostPos = -1;
+                                                    for (int col = 0; col < spaceBufGroupLcfsprio.getNumCols(); col++) {
+                                                        if (spaceBufGroupLcfsprio.get(row, col) == minPrioLcfsprio) {
+                                                            leftmostPos = col;
+                                                            break;
+                                                        }
+                                                    }
+
+                                                    if (leftmostMinPosLcfsprio.isEmpty()) {
+                                                        leftmostMinPosLcfsprio = new Matrix(1, 1);
+                                                        leftmostMinPosLcfsprio.set(0, 0, leftmostPos);
+                                                        startSvcClassLcfsprio = new Matrix(1, 1);
+                                                        startSvcClassLcfsprio.set(0, 0, leftmostPos >= 0 ? spaceBuf.get(row, leftmostPos) : 0);
+                                                    } else {
+                                                        Matrix new_pos = new Matrix(1, 1);
+                                                        new_pos.set(0, 0, leftmostPos);
+                                                        leftmostMinPosLcfsprio = Matrix.concatRows(leftmostMinPosLcfsprio, new_pos, null);
+                                                        Matrix new_class = new Matrix(1, 1);
+                                                        new_class.set(0, 0, leftmostPos >= 0 ? spaceBuf.get(row, leftmostPos) : 0);
+                                                        startSvcClassLcfsprio = Matrix.concatRows(startSvcClassLcfsprio, new_class, null);
+                                                    }
+                                                }
+                                            }
+
+                                            // Check if there is a valid job to start
+                                            boolean hasValidStartLcfsprio = false;
+                                            int startClassLcfsprio = 0;
+                                            if (!startSvcClassLcfsprio.isEmpty()) {
+                                                startClassLcfsprio = (int) startSvcClassLcfsprio.get(0, 0);
+                                                if (startClassLcfsprio > 0) {
+                                                    hasValidStartLcfsprio = true;
+                                                }
+                                            }
+
+                                            if (hasValidStartLcfsprio) {
+                                                int startClassIdxLcfsprio = startClassLcfsprio - 1; // Convert to 0-based
+                                                Matrix pentrySvcClassLcfsprio = pie.get(sn.stations.get(ist)).get(sn.jobclasses.get(startClassIdxLcfsprio));
+
+                                                for (int kentry = 0; kentry < K.get(startClassIdxLcfsprio); kentry++) {
+                                                    Matrix spaceSrvKLcfsprio = spaceSrv.copy();
+                                                    Matrix spaceBufKLcfsprio = spaceBuf.copy();
+
+                                                    // Add job to service
+                                                    int bufRowIdx = 0;
+                                                    for (int row = 0; row < enWbufLcfsprio.getNumRows(); row++) {
+                                                        if (enWbufLcfsprio.get(row, 0) == 1) {
+                                                            spaceSrvKLcfsprio.set(row, (int) (Ks.get(startClassIdxLcfsprio) + kentry),
+                                                                    spaceSrvKLcfsprio.get(row, (int) (Ks.get(startClassIdxLcfsprio) + kentry)) + 1);
+                                                            // Remove from leftmost position, shift buffer
+                                                            int pos = (int) leftmostMinPosLcfsprio.get(bufRowIdx, 0);
+                                                            if (pos >= 0) {
+                                                                // Shift: [0, buf[0..pos-1], buf[pos+1..end]]
+                                                                Matrix newBufRow = new Matrix(1, spaceBufKLcfsprio.getNumCols());
+                                                                newBufRow.set(0, 0, 0); // prepend empty slot
+                                                                int destCol = 1;
+                                                                for (int col = 0; col < spaceBufKLcfsprio.getNumCols(); col++) {
+                                                                    if (col != pos) {
+                                                                        if (destCol < newBufRow.getNumCols()) {
+                                                                            newBufRow.set(0, destCol, spaceBufKLcfsprio.get(row, col));
+                                                                            destCol++;
+                                                                        }
+                                                                    }
+                                                                }
+                                                                for (int col = 0; col < spaceBufKLcfsprio.getNumCols(); col++) {
+                                                                    spaceBufKLcfsprio.set(row, col, newBufRow.get(0, col));
+                                                                }
+                                                            }
+                                                            bufRowIdx++;
+                                                        }
+                                                    }
+
+                                                    // Build output for buffer states
+                                                    Matrix spaceBufEnWbufLcfsprio = new Matrix(0, 0);
+                                                    Matrix spaceSrvEnWbufLcfsprio = new Matrix(0, 0);
+                                                    Matrix spaceVarEnWbufLcfsprio = new Matrix(0, 0);
+                                                    for (int row = 0; row < enWbufLcfsprio.getNumRows(); row++) {
+                                                        if (enWbufLcfsprio.get(row, 0) == 1) {
+                                                            if (spaceBufEnWbufLcfsprio.isEmpty()) {
+                                                                spaceBufEnWbufLcfsprio = Matrix.extractRows(spaceBufKLcfsprio, row, row + 1, null);
+                                                                spaceSrvEnWbufLcfsprio = Matrix.extractRows(spaceSrvKLcfsprio, row, row + 1, null);
+                                                                spaceVarEnWbufLcfsprio = Matrix.extractRows(spaceVar, row, row + 1, null);
+                                                            } else {
+                                                                spaceBufEnWbufLcfsprio = Matrix.concatRows(spaceBufEnWbufLcfsprio, Matrix.extractRows(spaceBufKLcfsprio, row, row + 1, null), null);
+                                                                spaceSrvEnWbufLcfsprio = Matrix.concatRows(spaceSrvEnWbufLcfsprio, Matrix.extractRows(spaceSrvKLcfsprio, row, row + 1, null), null);
+                                                                spaceVarEnWbufLcfsprio = Matrix.concatRows(spaceVarEnWbufLcfsprio, Matrix.extractRows(spaceVar, row, row + 1, null), null);
+                                                            }
+                                                        }
+                                                    }
+
+                                                    if (!spaceBufEnWbufLcfsprio.isEmpty()) {
+                                                        Matrix left_bottom_wbuf_lcfsprio = Matrix.concatColumns(spaceBufEnWbufLcfsprio, spaceSrvEnWbufLcfsprio, null);
+                                                        Matrix bottom_wbuf_lcfsprio = Matrix.concatColumns(left_bottom_wbuf_lcfsprio, spaceVarEnWbufLcfsprio, null);
+                                                        outspace = Matrix.concatRows(outspace, bottom_wbuf_lcfsprio, null);
+
+                                                        // Apply pie probability to rate
+                                                        Matrix rateKLcfsprio = rate.copy();
+                                                        for (int row = 0; row < enWbufLcfsprio.getNumRows(); row++) {
+                                                            if (enWbufLcfsprio.get(row, 0) == 1) {
+                                                                rateKLcfsprio.set(row, 0, rateKLcfsprio.get(row, 0) * pentrySvcClassLcfsprio.get(kentry));
+                                                            }
+                                                        }
+
+                                                        Matrix rateEnWbufLcfsprio = new Matrix(0, 0);
+                                                        for (int row = 0; row < enWbufLcfsprio.getNumRows(); row++) {
+                                                            if (enWbufLcfsprio.get(row, 0) == 1) {
+                                                                if (rateEnWbufLcfsprio.isEmpty()) {
+                                                                    rateEnWbufLcfsprio = Matrix.extractRows(rateKLcfsprio, row, row + 1, null);
+                                                                } else {
+                                                                    rateEnWbufLcfsprio = Matrix.concatRows(rateEnWbufLcfsprio, Matrix.extractRows(rateKLcfsprio, row, row + 1, null), null);
+                                                                }
+                                                            }
+                                                        }
+
+                                                        if (ni.hasInfinite()) {
+                                                            double cdscalingIst = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                                                            double lld = lldscaling.get(ist, lldscaling.getNumCols() - 1);
+                                                            Matrix outrate_bottom = Matrix.scaleMult(rateEnWbufLcfsprio, cdscalingIst * lld);
+                                                            outrate = Matrix.concatRows(outrate, outrate_bottom, null);
+                                                        } else {
+                                                            double cdscalingIst = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                                                            double lld = lldscaling.get(ist, (int) Maths.min(ni.get(0), lldlimit));
+                                                            Matrix outrate_bottom = Matrix.scaleMult(rateEnWbufLcfsprio, cdscalingIst * lld);
+                                                            outrate = Matrix.concatRows(outrate, outrate_bottom, null);
+                                                        }
+
+                                                        Matrix outprob_bottom_wbuf_lcfsprio = new Matrix(rateEnWbufLcfsprio.getNumRows(), 1);
+                                                        outprob_bottom_wbuf_lcfsprio.ones();
+                                                        outprob = Matrix.concatRows(outprob, outprob_bottom_wbuf_lcfsprio, null);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        break;
+                                    }
 
                                     case LCFS: // Last Come First Served
                                         // record departure
@@ -2846,18 +3153,37 @@ public class AfterEventStation implements Serializable {
                                             }
                                         }
 
-                                        // Find first non-zero column (leftmost job = most recent arrival)
+                                        // Find column to promote from buffer
+                                        boolean hasDiffPrioDepLcfs = false;
+                                        for (int cp = 1; cp < R; cp++) {
+                                            if (sn.classprio.get(cp) != sn.classprio.get(0)) { hasDiffPrioDepLcfs = true; break; }
+                                        }
                                         Matrix colFirstNnz = new Matrix(0, 0);
                                         Matrix startSvcClassLcfs = new Matrix(0, 0);
 
                                         for (int row = 0; row < enWbufLcfs.getNumRows(); row++) {
                                             if (enWbufLcfs.get(row, 0) == 1) {
-                                                // Find first non-zero column in this row
                                                 int firstCol = -1;
-                                                for (int col = 0; col < spaceBuf.getNumCols(); col++) {
-                                                    if (spaceBuf.get(row, col) != 0) {
-                                                        firstCol = col;
-                                                        break;
+                                                if (hasDiffPrioDepLcfs) {
+                                                    // Priority-aware: find leftmost among highest-priority class
+                                                    double bestPrio = Double.MAX_VALUE;
+                                                    for (int col = 0; col < spaceBuf.getNumCols(); col++) {
+                                                        if (spaceBuf.get(row, col) != 0) {
+                                                            int cls = (int) spaceBuf.get(row, col) - 1; // 0-based class
+                                                            double prio = sn.classprio.get(cls);
+                                                            if (prio < bestPrio) {
+                                                                bestPrio = prio;
+                                                                firstCol = col; // leftmost among best priority
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    // Default: find first non-zero column (leftmost = most recent)
+                                                    for (int col = 0; col < spaceBuf.getNumCols(); col++) {
+                                                        if (spaceBuf.get(row, col) != 0) {
+                                                            firstCol = col;
+                                                            break;
+                                                        }
                                                     }
                                                 }
 
@@ -3145,19 +3471,38 @@ public class AfterEventStation implements Serializable {
                                             }
                                         }
 
-                                        // Find first non-zero column (leftmost job = most recent)
+                                        // Find column to promote from buffer
+                                        boolean hasDiffPrioDepLcfspr = false;
+                                        for (int cp = 1; cp < R; cp++) {
+                                            if (sn.classprio.get(cp) != sn.classprio.get(0)) { hasDiffPrioDepLcfspr = true; break; }
+                                        }
                                         Matrix colFirstNnzLcfspr = new Matrix(0, 0);
                                         Matrix startSvcClassLcfspr = new Matrix(0, 0);
                                         Matrix kentryLcfspr = new Matrix(0, 0);
 
                                         for (int row = 0; row < enWbufLcfspr.getNumRows(); row++) {
                                             if (enWbufLcfspr.get(row, 0) == 1) {
-                                                // Find first non-zero column in this row
                                                 int firstCol = -1;
-                                                for (int col = 0; col < spaceBuf.getNumCols(); col++) {
-                                                    if (spaceBuf.get(row, col) != 0) {
-                                                        firstCol = col;
-                                                        break;
+                                                if (hasDiffPrioDepLcfspr) {
+                                                    // Priority-aware: find leftmost pair among highest-priority class
+                                                    double bestPrio = Double.MAX_VALUE;
+                                                    for (int col = 0; col < spaceBuf.getNumCols() - 1; col += 2) {
+                                                        if (spaceBuf.get(row, col) != 0) {
+                                                            int cls = (int) spaceBuf.get(row, col) - 1; // 0-based class
+                                                            double prio = sn.classprio.get(cls);
+                                                            if (prio < bestPrio) {
+                                                                bestPrio = prio;
+                                                                firstCol = col; // leftmost among best priority
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    // Default: find first non-zero column (leftmost = most recent)
+                                                    for (int col = 0; col < spaceBuf.getNumCols(); col++) {
+                                                        if (spaceBuf.get(row, col) != 0) {
+                                                            firstCol = col;
+                                                            break;
+                                                        }
                                                     }
                                                 }
 
@@ -3336,6 +3681,502 @@ public class AfterEventStation implements Serializable {
                                         outprobBottomLcfspr.ones();
                                         outprob = Matrix.concatRows(outprob, outprobBottomLcfspr, null);
                                         break;
+
+                                    case LCFSPRPRIO:
+                                    case FCFSPRPRIO: {
+                                        // LCFSPRPRIO/FCFSPRPRIO departure - like LCFSPR but with priority-based buffer selection
+                                        SchedStrategy schedIstDep = sn.sched.get(sn.stations.get(ist));
+
+                                        // Record departure from service
+                                        for (int row = 0; row < spaceSrv.getNumRows(); row++) {
+                                            if (en.get(row, 0) == 1) {
+                                                spaceSrv.set(row, (int) (Ks.get(jobClass) + k), spaceSrv.get(row, (int) (Ks.get(jobClass) + k)) - 1);
+                                            }
+                                        }
+
+                                        // Calculate rate for enabled states
+                                        rate = new Matrix(en.getNumRows(), 1);
+                                        for (int row = 0; row < en.getNumRows(); row++) {
+                                            if (en.get(row, 0) == 1) {
+                                                double muVal = mu.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k);
+                                                double phiVal = phi.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k);
+                                                double kirVal = kir.get(k).get(row, jobClass);
+                                                rate.set(row, 0, muVal * phiVal * kirVal);
+                                            } else {
+                                                rate.set(row, 0, 0);
+                                            }
+                                        }
+
+                                        Matrix enWbufPrio = new Matrix(en.getNumRows(), 1);
+                                        // States with jobs in buffer
+                                        for (int row = 0; row < en.getNumRows(); row++) {
+                                            if (en.get(row, 0) == 1 && ni.get(row) > S.get(ist)) {
+                                                enWbufPrio.set(row, 0, 1);
+                                            } else {
+                                                enWbufPrio.set(row, 0, 0);
+                                            }
+                                        }
+
+                                        // Build priority array
+                                        double[] classprio = new double[R];
+                                        for (int r = 0; r < R; r++) {
+                                            classprio[r] = sn.classprio.get(r);
+                                        }
+
+                                        // Find highest-priority job in buffer for each enabled row
+                                        Matrix colTargetPrio = new Matrix(0, 0);
+                                        Matrix startSvcClassPrio = new Matrix(0, 0);
+                                        Matrix kentryPrio = new Matrix(0, 0);
+
+                                        for (int row = 0; row < enWbufPrio.getNumRows(); row++) {
+                                            if (enWbufPrio.get(row, 0) == 1) {
+                                                double minPrio = Double.POSITIVE_INFINITY;
+                                                int targetBufCol = -1;
+
+                                                if (schedIstDep == SchedStrategy.LCFSPRPRIO) {
+                                                    // LCFSPRPRIO: scan left-to-right, use < so leftmost (most recently preempted) wins
+                                                    for (int col = 0; col < spaceBuf.getNumCols(); col += 2) {
+                                                        double bufVal = spaceBuf.get(row, col);
+                                                        if (bufVal > 0) {
+                                                            int cls = (int) bufVal - 1; // 0-based class index
+                                                            double prio = classprio[cls];
+                                                            if (prio < minPrio) {
+                                                                minPrio = prio;
+                                                                targetBufCol = col;
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    // FCFSPRPRIO: scan right-to-left, first match = rightmost (longest waiting)
+                                                    for (int col = spaceBuf.getNumCols() - 2; col >= 0; col -= 2) {
+                                                        double bufVal = spaceBuf.get(row, col);
+                                                        if (bufVal > 0) {
+                                                            int cls = (int) bufVal - 1; // 0-based class index
+                                                            double prio = classprio[cls];
+                                                            if (prio < minPrio) {
+                                                                minPrio = prio;
+                                                                targetBufCol = col;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                if (colTargetPrio.isEmpty()) {
+                                                    colTargetPrio = new Matrix(1, 1);
+                                                    colTargetPrio.set(0, 0, targetBufCol);
+                                                    startSvcClassPrio = new Matrix(1, 1);
+                                                    kentryPrio = new Matrix(1, 1);
+                                                    if (targetBufCol >= 0) {
+                                                        startSvcClassPrio.set(0, 0, spaceBuf.get(row, targetBufCol)); // class (1-based)
+                                                        kentryPrio.set(0, 0, spaceBuf.get(row, targetBufCol + 1)); // phase (1-based)
+                                                    } else {
+                                                        startSvcClassPrio.set(0, 0, 0);
+                                                        kentryPrio.set(0, 0, 0);
+                                                    }
+                                                } else {
+                                                    Matrix new_col = new Matrix(1, 1);
+                                                    new_col.set(0, 0, targetBufCol);
+                                                    colTargetPrio = Matrix.concatRows(colTargetPrio, new_col, null);
+                                                    Matrix new_class = new Matrix(1, 1);
+                                                    Matrix new_phase = new Matrix(1, 1);
+                                                    if (targetBufCol >= 0) {
+                                                        new_class.set(0, 0, spaceBuf.get(row, targetBufCol));
+                                                        new_phase.set(0, 0, spaceBuf.get(row, targetBufCol + 1));
+                                                    } else {
+                                                        new_class.set(0, 0, 0);
+                                                        new_phase.set(0, 0, 0);
+                                                    }
+                                                    startSvcClassPrio = Matrix.concatRows(startSvcClassPrio, new_class, null);
+                                                    kentryPrio = Matrix.concatRows(kentryPrio, new_phase, null);
+                                                }
+                                            }
+                                        }
+
+                                        // Remove job from buffer (set both class and phase to 0)
+                                        Matrix spaceBufPrio = spaceBuf.copy();
+                                        int bufRowIdxPrio = 0;
+                                        for (int row = 0; row < enWbufPrio.getNumRows(); row++) {
+                                            if (enWbufPrio.get(row, 0) == 1) {
+                                                int targetCol = (int) colTargetPrio.get(bufRowIdxPrio, 0);
+                                                if (targetCol >= 0) {
+                                                    spaceBufPrio.set(row, targetCol, 0); // zero popped job class
+                                                    spaceBufPrio.set(row, targetCol + 1, 0); // zero popped phase
+                                                }
+                                                bufRowIdxPrio++;
+                                            }
+                                        }
+
+                                        // Check if we have valid jobs to start
+                                        if (!startSvcClassPrio.isEmpty() && startSvcClassPrio.getNumRows() > 0) {
+                                            boolean hasValidStartClassPrio = false;
+                                            for (int i = 0; i < startSvcClassPrio.getNumRows(); i++) {
+                                                if (startSvcClassPrio.get(i, 0) > 0) {
+                                                    hasValidStartClassPrio = true;
+                                                    break;
+                                                }
+                                            }
+
+                                            if (!hasValidStartClassPrio) {
+                                                // No valid job to start, just add current state
+                                                Matrix spaceBufEnPrio = new Matrix(0, 0);
+                                                Matrix spaceSrvEnPrio = new Matrix(0, 0);
+                                                Matrix spaceVarEnPrio = new Matrix(0, 0);
+                                                for (int row = 0; row < en.getNumRows(); row++) {
+                                                    if (en.get(row, 0) == 1) {
+                                                        if (spaceBufEnPrio.isEmpty()) {
+                                                            spaceBufEnPrio = Matrix.extractRows(spaceBuf, row, row + 1, null);
+                                                            spaceSrvEnPrio = Matrix.extractRows(spaceSrv, row, row + 1, null);
+                                                            spaceVarEnPrio = Matrix.extractRows(spaceVar, row, row + 1, null);
+                                                        } else {
+                                                            spaceBufEnPrio = Matrix.concatRows(spaceBufEnPrio, Matrix.extractRows(spaceBuf, row, row + 1, null), null);
+                                                            spaceSrvEnPrio = Matrix.concatRows(spaceSrvEnPrio, Matrix.extractRows(spaceSrv, row, row + 1, null), null);
+                                                            spaceVarEnPrio = Matrix.concatRows(spaceVarEnPrio, Matrix.extractRows(spaceVar, row, row + 1, null), null);
+                                                        }
+                                                    }
+                                                }
+
+                                                Matrix leftBottomPrio = Matrix.concatColumns(spaceBufEnPrio, spaceSrvEnPrio, null);
+                                                Matrix bottomPrio = Matrix.concatColumns(leftBottomPrio, spaceVarEnPrio, null);
+                                                outspace = Matrix.concatRows(outspace, bottomPrio, null);
+
+                                                Matrix rateEnPrio = new Matrix(0, 0);
+                                                for (int row = 0; row < en.getNumRows(); row++) {
+                                                    if (en.get(row, 0) == 1) {
+                                                        if (rateEnPrio.isEmpty()) {
+                                                            rateEnPrio = Matrix.extractRows(rate, row, row + 1, null);
+                                                        } else {
+                                                            rateEnPrio = Matrix.concatRows(rateEnPrio, Matrix.extractRows(rate, row, row + 1, null), null);
+                                                        }
+                                                    }
+                                                }
+
+                                                if (ni.hasInfinite()) {
+                                                    double cdscalingIstPrio = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                                                    double lldPrio = lldscaling.get(ist, lldscaling.getNumCols() - 1);
+                                                    Matrix outrateBottomPrio = Matrix.scaleMult(rateEnPrio, cdscalingIstPrio * lldPrio);
+                                                    outrate = Matrix.concatRows(outrate, outrateBottomPrio, null);
+                                                } else {
+                                                    double cdscalingIstPrio = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                                                    double lldPrio = lldscaling.get(ist, (int) Maths.min(ni.get(0), lldlimit) - 1);
+                                                    Matrix outrateBottomPrio = Matrix.scaleMult(rateEnPrio, cdscalingIstPrio * lldPrio);
+                                                    outrate = Matrix.concatRows(outrate, outrateBottomPrio, null);
+                                                }
+
+                                                Matrix outprobBottomPrio = new Matrix(rateEnPrio.getNumRows(), 1);
+                                                outprobBottomPrio.ones();
+                                                outprob = Matrix.concatRows(outprob, outprobBottomPrio, null);
+
+                                                if (isSimulation && eventCache.isEnabled()) {
+                                                    eventCache.put(key, new Ret.EventResult(outspace, outrate, outprob));
+                                                }
+                                                return new Ret.EventResult(outspace, outrate, outprob);
+                                            }
+
+                                            // Add job to service with preserved phase
+                                            bufRowIdxPrio = 0;
+                                            for (int row = 0; row < enWbufPrio.getNumRows(); row++) {
+                                                if (enWbufPrio.get(row, 0) == 1) {
+                                                    int startClass = (int) startSvcClassPrio.get(bufRowIdxPrio, 0) - 1; // Convert to 0-based index
+                                                    int kentry = (int) kentryPrio.get(bufRowIdxPrio, 0);
+                                                    if (startClass >= 0 && startClass < Ks.length()) {
+                                                        int colIndex = (int) (Ks.get(startClass) + kentry - 1);
+                                                        if (colIndex >= 0 && colIndex < spaceSrv.getNumCols()) {
+                                                            spaceSrv.set(row, colIndex, spaceSrv.get(row, colIndex) + 1);
+                                                        }
+                                                    }
+                                                    bufRowIdxPrio++;
+                                                }
+                                            }
+                                        }
+
+                                        // Add state to output
+                                        Matrix leftBottomPrio = Matrix.concatColumns(spaceBufPrio, spaceSrv, null);
+                                        Matrix bottomPrio = Matrix.concatColumns(leftBottomPrio, spaceVar, null);
+
+                                        Matrix spaceBufEnPrio = new Matrix(0, 0);
+                                        Matrix spaceSrvEnPrio = new Matrix(0, 0);
+                                        Matrix spaceVarEnPrio = new Matrix(0, 0);
+                                        for (int row = 0; row < en.getNumRows(); row++) {
+                                            if (en.get(row, 0) == 1) {
+                                                if (spaceBufEnPrio.isEmpty()) {
+                                                    spaceBufEnPrio = Matrix.extractRows(bottomPrio, row, row + 1, null);
+                                                } else {
+                                                    spaceBufEnPrio = Matrix.concatRows(spaceBufEnPrio, Matrix.extractRows(bottomPrio, row, row + 1, null), null);
+                                                }
+                                            }
+                                        }
+                                        outspace = Matrix.concatRows(outspace, spaceBufEnPrio, null);
+
+                                        Matrix rateEnPrio = new Matrix(0, 0);
+                                        for (int row = 0; row < en.getNumRows(); row++) {
+                                            if (en.get(row, 0) == 1) {
+                                                if (rateEnPrio.isEmpty()) {
+                                                    rateEnPrio = Matrix.extractRows(rate, row, row + 1, null);
+                                                } else {
+                                                    rateEnPrio = Matrix.concatRows(rateEnPrio, Matrix.extractRows(rate, row, row + 1, null), null);
+                                                }
+                                            }
+                                        }
+
+                                        if (ni.hasInfinite()) {
+                                            double cdscalingIstPrio = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                                            double lldPrio = lldscaling.get(ist, lldscaling.getNumCols() - 1);
+                                            Matrix outrateBottomPrio = Matrix.scaleMult(rateEnPrio, cdscalingIstPrio * lldPrio);
+                                            outrate = Matrix.concatRows(outrate, outrateBottomPrio, null);
+                                        } else {
+                                            double cdscalingIstPrio = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                                            double lldPrio = lldscaling.get(ist, (int) Maths.min(ni.get(0), lldlimit) - 1);
+                                            Matrix outrateBottomPrio = Matrix.scaleMult(rateEnPrio, cdscalingIstPrio * lldPrio);
+                                            outrate = Matrix.concatRows(outrate, outrateBottomPrio, null);
+                                        }
+
+                                        Matrix outprobBottomPrio = new Matrix(rateEnPrio.getNumRows(), 1);
+                                        outprobBottomPrio.ones();
+                                        outprob = Matrix.concatRows(outprob, outprobBottomPrio, null);
+                                        break;
+                                    }
+
+                                    case FCFSPIPRIO:
+                                    case LCFSPIPRIO: {
+                                        // FCFSPIPRIO/LCFSPIPRIO departure - like FCFSPRPRIO/LCFSPRPRIO but preempt-independent (restart from pie)
+                                        SchedStrategy schedIstPiPrio = sn.sched.get(sn.stations.get(ist));
+
+                                        // Record departure from service
+                                        for (int row = 0; row < spaceSrv.getNumRows(); row++) {
+                                            if (en.get(row, 0) == 1) {
+                                                spaceSrv.set(row, (int) (Ks.get(jobClass) + k), spaceSrv.get(row, (int) (Ks.get(jobClass) + k)) - 1);
+                                            }
+                                        }
+
+                                        // Calculate rate for enabled states
+                                        rate = new Matrix(en.getNumRows(), 1);
+                                        for (int row = 0; row < en.getNumRows(); row++) {
+                                            if (en.get(row, 0) == 1) {
+                                                double muVal = mu.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k);
+                                                double phiVal = phi.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(k);
+                                                double kirVal = kir.get(k).get(row, jobClass);
+                                                rate.set(row, 0, muVal * phiVal * kirVal);
+                                            } else {
+                                                rate.set(row, 0, 0);
+                                            }
+                                        }
+
+                                        Matrix enWbufPiPrio = new Matrix(en.getNumRows(), 1);
+                                        Matrix enWobufPiPrio = new Matrix(en.getNumRows(), 1);
+                                        for (int row = 0; row < en.getNumRows(); row++) {
+                                            if (en.get(row, 0) == 1 && ni.get(row) > S.get(ist)) {
+                                                enWbufPiPrio.set(row, 0, 1);
+                                                enWobufPiPrio.set(row, 0, 0);
+                                            } else {
+                                                enWbufPiPrio.set(row, 0, 0);
+                                                enWobufPiPrio.set(row, 0, 1);
+                                            }
+                                        }
+
+                                        // Handle states without buffer jobs
+                                        if (enWobufPiPrio.elementSum() > 0) {
+                                            Matrix spaceBufEnWobufPiPrio = new Matrix(0, 0);
+                                            Matrix spaceSrvEnWobufPiPrio = new Matrix(0, 0);
+                                            Matrix spaceVarEnWobufPiPrio = new Matrix(0, 0);
+                                            for (int row = 0; row < enWobufPiPrio.getNumRows(); row++) {
+                                                if (enWobufPiPrio.get(row, 0) == 1) {
+                                                    if (spaceBufEnWobufPiPrio.isEmpty()) {
+                                                        spaceBufEnWobufPiPrio = Matrix.extractRows(spaceBuf, row, row + 1, null);
+                                                        spaceSrvEnWobufPiPrio = Matrix.extractRows(spaceSrv, row, row + 1, null);
+                                                        spaceVarEnWobufPiPrio = Matrix.extractRows(spaceVar, row, row + 1, null);
+                                                    } else {
+                                                        spaceBufEnWobufPiPrio = Matrix.concatRows(spaceBufEnWobufPiPrio, Matrix.extractRows(spaceBuf, row, row + 1, null), null);
+                                                        spaceSrvEnWobufPiPrio = Matrix.concatRows(spaceSrvEnWobufPiPrio, Matrix.extractRows(spaceSrv, row, row + 1, null), null);
+                                                        spaceVarEnWobufPiPrio = Matrix.concatRows(spaceVarEnWobufPiPrio, Matrix.extractRows(spaceVar, row, row + 1, null), null);
+                                                    }
+                                                }
+                                            }
+                                            if (!spaceBufEnWobufPiPrio.isEmpty()) {
+                                                Matrix leftBottomWobufPiPrio = Matrix.concatColumns(spaceBufEnWobufPiPrio, spaceSrvEnWobufPiPrio, null);
+                                                Matrix bottomWobufPiPrio = Matrix.concatColumns(leftBottomWobufPiPrio, spaceVarEnWobufPiPrio, null);
+                                                outspace = Matrix.concatRows(outspace, bottomWobufPiPrio, null);
+
+                                                Matrix rateEnWobufPiPrio = new Matrix(0, 0);
+                                                for (int row = 0; row < enWobufPiPrio.getNumRows(); row++) {
+                                                    if (enWobufPiPrio.get(row, 0) == 1) {
+                                                        if (rateEnWobufPiPrio.isEmpty()) {
+                                                            rateEnWobufPiPrio = Matrix.extractRows(rate, row, row + 1, null);
+                                                        } else {
+                                                            rateEnWobufPiPrio = Matrix.concatRows(rateEnWobufPiPrio, Matrix.extractRows(rate, row, row + 1, null), null);
+                                                        }
+                                                    }
+                                                }
+
+                                                if (ni.hasInfinite()) {
+                                                    double cdscalingIstPiPrio = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                                                    double lldPiPrio = lldscaling.get(ist, lldscaling.getNumCols() - 1);
+                                                    Matrix outrateBottomPiPrio = Matrix.scaleMult(rateEnWobufPiPrio, cdscalingIstPiPrio * lldPiPrio);
+                                                    outrate = Matrix.concatRows(outrate, outrateBottomPiPrio, null);
+                                                } else {
+                                                    double cdscalingIstPiPrio = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                                                    double lldPiPrio = lldscaling.get(ist, (int) Maths.min(ni.get(0), lldlimit) - 1);
+                                                    Matrix outrateBottomPiPrio = Matrix.scaleMult(rateEnWobufPiPrio, cdscalingIstPiPrio * lldPiPrio);
+                                                    outrate = Matrix.concatRows(outrate, outrateBottomPiPrio, null);
+                                                }
+
+                                                Matrix outprobBottomWobufPiPrio = new Matrix(rateEnWobufPiPrio.getNumRows(), 1);
+                                                outprobBottomWobufPiPrio.ones();
+                                                outprob = Matrix.concatRows(outprob, outprobBottomWobufPiPrio, null);
+                                            }
+                                        }
+
+                                        // Handle states with buffer jobs
+                                        if (enWbufPiPrio.elementSum() > 0) {
+                                            // Build priority array
+                                            double[] classprioPiPrio = new double[R];
+                                            for (int r = 0; r < R; r++) {
+                                                classprioPiPrio[r] = sn.classprio.get(r);
+                                            }
+
+                                            // Find highest-priority job in buffer for each enabled row
+                                            Matrix startSvcClassPiPrio = new Matrix(0, 0);
+                                            Matrix colTargetPiPrio = new Matrix(0, 0);
+
+                                            for (int row = 0; row < enWbufPiPrio.getNumRows(); row++) {
+                                                if (enWbufPiPrio.get(row, 0) == 1) {
+                                                    double minPrio = Double.POSITIVE_INFINITY;
+                                                    int targetBufCol = -1;
+
+                                                    if (schedIstPiPrio == SchedStrategy.LCFSPIPRIO) {
+                                                        // LCFSPIPRIO: scan left-to-right, leftmost highest-priority wins
+                                                        for (int col = 0; col < spaceBuf.getNumCols(); col += 2) {
+                                                            double bufVal = spaceBuf.get(row, col);
+                                                            if (bufVal > 0) {
+                                                                int cls = (int) bufVal - 1;
+                                                                double prio = classprioPiPrio[cls];
+                                                                if (prio < minPrio) {
+                                                                    minPrio = prio;
+                                                                    targetBufCol = col;
+                                                                }
+                                                            }
+                                                        }
+                                                    } else {
+                                                        // FCFSPIPRIO: scan right-to-left, rightmost highest-priority wins
+                                                        for (int col = spaceBuf.getNumCols() - 2; col >= 0; col -= 2) {
+                                                            double bufVal = spaceBuf.get(row, col);
+                                                            if (bufVal > 0) {
+                                                                int cls = (int) bufVal - 1;
+                                                                double prio = classprioPiPrio[cls];
+                                                                if (prio < minPrio) {
+                                                                    minPrio = prio;
+                                                                    targetBufCol = col;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    if (colTargetPiPrio.isEmpty()) {
+                                                        colTargetPiPrio = new Matrix(1, 1);
+                                                        colTargetPiPrio.set(0, 0, targetBufCol);
+                                                        startSvcClassPiPrio = new Matrix(1, 1);
+                                                        startSvcClassPiPrio.set(0, 0, targetBufCol >= 0 ? spaceBuf.get(row, targetBufCol) : 0);
+                                                    } else {
+                                                        Matrix new_col = new Matrix(1, 1);
+                                                        new_col.set(0, 0, targetBufCol);
+                                                        colTargetPiPrio = Matrix.concatRows(colTargetPiPrio, new_col, null);
+                                                        Matrix new_class = new Matrix(1, 1);
+                                                        new_class.set(0, 0, targetBufCol >= 0 ? spaceBuf.get(row, targetBufCol) : 0);
+                                                        startSvcClassPiPrio = Matrix.concatRows(startSvcClassPiPrio, new_class, null);
+                                                    }
+                                                }
+                                            }
+
+                                            // Check if there is a valid job to start
+                                            boolean hasValidStartPiPrio = false;
+                                            int startClassPiPrio = 0;
+                                            if (!startSvcClassPiPrio.isEmpty()) {
+                                                startClassPiPrio = (int) startSvcClassPiPrio.get(0, 0);
+                                                if (startClassPiPrio > 0) {
+                                                    hasValidStartPiPrio = true;
+                                                }
+                                            }
+
+                                            if (hasValidStartPiPrio) {
+                                                int startClassIdxPiPrio = startClassPiPrio - 1; // Convert to 0-based
+                                                Matrix pentrySvcClassPiPrio = pie.get(sn.stations.get(ist)).get(sn.jobclasses.get(startClassIdxPiPrio));
+
+                                                // For preempt-independent, loop over kentry phases using pie distribution
+                                                for (int kentry = 0; kentry < K.get(startClassIdxPiPrio); kentry++) {
+                                                    Matrix spaceBufPiPrio = spaceBuf.copy();
+                                                    Matrix spaceSrvPiPrio = spaceSrv.copy();
+
+                                                    // Remove job from buffer (set both class and phase to 0) and add to service
+                                                    int bufRowIdxPiPrio = 0;
+                                                    for (int row = 0; row < enWbufPiPrio.getNumRows(); row++) {
+                                                        if (enWbufPiPrio.get(row, 0) == 1) {
+                                                            int targetCol = (int) colTargetPiPrio.get(bufRowIdxPiPrio, 0);
+                                                            if (targetCol >= 0) {
+                                                                spaceBufPiPrio.set(row, targetCol, 0); // zero class
+                                                                spaceBufPiPrio.set(row, targetCol + 1, 0); // zero phase
+                                                            }
+                                                            // Add job to service in phase kentry (pie distribution)
+                                                            spaceSrvPiPrio.set(row, (int) (Ks.get(startClassIdxPiPrio) + kentry),
+                                                                    spaceSrvPiPrio.get(row, (int) (Ks.get(startClassIdxPiPrio) + kentry)) + 1);
+                                                            bufRowIdxPiPrio++;
+                                                        }
+                                                    }
+
+                                                    // Build output
+                                                    Matrix leftBottomPiPrio = Matrix.concatColumns(spaceBufPiPrio, spaceSrvPiPrio, null);
+                                                    Matrix bottomPiPrio = Matrix.concatColumns(leftBottomPiPrio, spaceVar, null);
+
+                                                    Matrix spaceBufEnPiPrio = new Matrix(0, 0);
+                                                    for (int row = 0; row < en.getNumRows(); row++) {
+                                                        if (enWbufPiPrio.get(row, 0) == 1) {
+                                                            if (spaceBufEnPiPrio.isEmpty()) {
+                                                                spaceBufEnPiPrio = Matrix.extractRows(bottomPiPrio, row, row + 1, null);
+                                                            } else {
+                                                                spaceBufEnPiPrio = Matrix.concatRows(spaceBufEnPiPrio, Matrix.extractRows(bottomPiPrio, row, row + 1, null), null);
+                                                            }
+                                                        }
+                                                    }
+                                                    outspace = Matrix.concatRows(outspace, spaceBufEnPiPrio, null);
+
+                                                    // Apply pie probability to rates
+                                                    Matrix rateKPiPrio = rate.copy();
+                                                    for (int row = 0; row < enWbufPiPrio.getNumRows(); row++) {
+                                                        if (enWbufPiPrio.get(row, 0) == 1) {
+                                                            rateKPiPrio.set(row, 0, rateKPiPrio.get(row, 0) * pentrySvcClassPiPrio.get(kentry));
+                                                        }
+                                                    }
+
+                                                    Matrix rateEnPiPrio = new Matrix(0, 0);
+                                                    for (int row = 0; row < enWbufPiPrio.getNumRows(); row++) {
+                                                        if (enWbufPiPrio.get(row, 0) == 1) {
+                                                            if (rateEnPiPrio.isEmpty()) {
+                                                                rateEnPiPrio = Matrix.extractRows(rateKPiPrio, row, row + 1, null);
+                                                            } else {
+                                                                rateEnPiPrio = Matrix.concatRows(rateEnPiPrio, Matrix.extractRows(rateKPiPrio, row, row + 1, null), null);
+                                                            }
+                                                        }
+                                                    }
+
+                                                    if (ni.hasInfinite()) {
+                                                        double cdscalingIstPiPrio = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                                                        double lldPiPrio = lldscaling.get(ist, lldscaling.getNumCols() - 1);
+                                                        Matrix outrateBottomPiPrio = Matrix.scaleMult(rateEnPiPrio, cdscalingIstPiPrio * lldPiPrio);
+                                                        outrate = Matrix.concatRows(outrate, outrateBottomPiPrio, null);
+                                                    } else {
+                                                        double cdscalingIstPiPrio = cdscaling.get(sn.stations.get(ist)).apply(nir);
+                                                        double lldPiPrio = lldscaling.get(ist, (int) Maths.min(ni.get(0), lldlimit) - 1);
+                                                        Matrix outrateBottomPiPrio = Matrix.scaleMult(rateEnPiPrio, cdscalingIstPiPrio * lldPiPrio);
+                                                        outrate = Matrix.concatRows(outrate, outrateBottomPiPrio, null);
+                                                    }
+
+                                                    Matrix outprobBottomPiPrio = new Matrix(rateEnPiPrio.getNumRows(), 1);
+                                                    outprobBottomPiPrio.ones();
+                                                    outprob = Matrix.concatRows(outprob, outprobBottomPiPrio, null);
+                                                }
+                                            }
+                                        }
+                                        break;
+                                    }
+
                                     case LCFSPI:
                                         // LCFSPI departure - record departure from service and restart jobs from pie distribution
                                         for (int row = 0; row < spaceSrv.getNumRows(); row++) {
@@ -4161,31 +5002,97 @@ public class AfterEventStation implements Serializable {
                                             denom.set(0, 0, ni_value * Maths.min(ni_value, S.get(ist)));
                                             rate = numerator.elementDivide(denom);
                                             break;
-                                        case PSPRIO:
-                                        case DPSPRIO:
-                                        case GPSPRIO: {
+                                        case PSPRIO: {
                                             // Find minimum priority among present classes
-                                            int minPrioPh = Integer.MAX_VALUE;
+                                            int minPrioPsPh = Integer.MAX_VALUE;
                                             for (int r = 0; r < sn.nclasses; r++) {
                                                 if (nir.get(0, r) > 0) {
                                                     int rPrio = (int) sn.classprio.get(r);
-                                                    if (rPrio < minPrioPh) {
-                                                        minPrioPh = rPrio;
+                                                    if (rPrio < minPrioPsPh) {
+                                                        minPrioPsPh = rPrio;
                                                     }
                                                 }
                                             }
-                                            double ni_value_prio = ni.get(0);
+                                            double ni_value_psprio = ni.get(0);
                                             // If ni <= S (all jobs get service) or this class has highest priority
-                                            if (ni_value_prio <= S.get(ist) || (int) sn.classprio.get(jobClass) == minPrioPh) {
+                                            if (ni_value_psprio <= S.get(ist) || (int) sn.classprio.get(jobClass) == minPrioPsPh) {
                                                 double proc_value_psprio = proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(0).get(k, kdest);
                                                 double kir_value_psprio = kir.get(k).get(jobClass);
                                                 Matrix numerator_prio = new Matrix(1, 1);
                                                 numerator_prio.set(0, 0, proc_value_psprio * kir_value_psprio);
                                                 Matrix denom_prio = new Matrix(1, 1);
-                                                denom_prio.set(0, 0, ni_value_prio * Maths.min(ni_value_prio, S.get(ist)));
+                                                denom_prio.set(0, 0, ni_value_psprio * Maths.min(ni_value_psprio, S.get(ist)));
                                                 rate = numerator_prio.elementDivide(denom_prio);
                                             } else {
                                                 // Not in highest priority group - no service
+                                                rate.set(0, 0, 0.0);
+                                            }
+                                            break;
+                                        }
+                                        case DPSPRIO: {
+                                            int minPrioDpsPh = Integer.MAX_VALUE;
+                                            for (int r = 0; r < sn.nclasses; r++) {
+                                                if (nir.get(0, r) > 0) {
+                                                    int rPrio = (int) sn.classprio.get(r);
+                                                    if (rPrio < minPrioDpsPh) minPrioDpsPh = rPrio;
+                                                }
+                                            }
+                                            double ni_value_dpsprio = ni.get(0);
+                                            if (ni_value_dpsprio <= S.get(ist) || (int) sn.classprio.get(jobClass) == minPrioDpsPh) {
+                                                Matrix wDpsPh = sn.schedparam.getRow(ist);
+                                                wDpsPh.scaleEq(1.0 / wDpsPh.elementSum());
+                                                Matrix nirprioPh = nir.copy();
+                                                if (ni_value_dpsprio > S.get(ist)) {
+                                                    for (int r = 0; r < sn.nclasses; r++) {
+                                                        if (sn.classprio.get(r) != sn.classprio.get(jobClass)) {
+                                                            nirprioPh.set(r, 0);
+                                                        }
+                                                    }
+                                                }
+                                                double proc_val_dpsprio = proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(0).get(k, kdest);
+                                                double kir_val_dpsprio = kir.get(k).get(jobClass);
+                                                double wDenom = wDpsPh.mult(nirprioPh.transpose()).sumRows().get(0, 0);
+                                                rate.set(0, 0, proc_val_dpsprio * kir_val_dpsprio * wDpsPh.get(jobClass) / wDenom);
+                                            } else {
+                                                rate.set(0, 0, 0.0);
+                                            }
+                                            break;
+                                        }
+                                        case GPSPRIO: {
+                                            int minPrioGpsPh = Integer.MAX_VALUE;
+                                            for (int r = 0; r < sn.nclasses; r++) {
+                                                if (nir.get(0, r) > 0) {
+                                                    int rPrio = (int) sn.classprio.get(r);
+                                                    if (rPrio < minPrioGpsPh) minPrioGpsPh = rPrio;
+                                                }
+                                            }
+                                            double ni_value_gpsprio = ni.get(0);
+                                            if (ni_value_gpsprio <= S.get(ist) || (int) sn.classprio.get(jobClass) == minPrioGpsPh) {
+                                                Matrix wGpsPh = sn.schedparam.getRow(ist);
+                                                wGpsPh.scaleEq(1.0 / wGpsPh.elementSum());
+                                                Matrix nirprioPh = nir.copy();
+                                                if (ni_value_gpsprio > S.get(ist)) {
+                                                    for (int r = 0; r < sn.nclasses; r++) {
+                                                        if (sn.classprio.get(r) != sn.classprio.get(jobClass)) {
+                                                            nirprioPh.set(r, 0);
+                                                        }
+                                                    }
+                                                }
+                                                Matrix cirPh = new Matrix(nirprioPh.getNumRows(), nirprioPh.getNumCols());
+                                                for (int row = 0; row < cirPh.getNumRows(); row++) {
+                                                    for (int col = 0; col < cirPh.getNumCols(); col++) {
+                                                        cirPh.set(row, col, Math.min(nirprioPh.get(row, col), 1.0));
+                                                    }
+                                                }
+                                                Matrix cirPh1D = new Matrix(0, 0);
+                                                for (int col = 0; col < cirPh.getNumCols(); col++) {
+                                                    cirPh1D = Matrix.concatRows(cirPh1D, cirPh.getColumn(col), null);
+                                                }
+                                                double wcirPh = wGpsPh.mult(cirPh1D).get(0);
+                                                double proc_val_gpsprio = proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(0).get(k, kdest);
+                                                double kir_val_gpsprio = kir.get(k).get(jobClass);
+                                                rate.set(0, 0, proc_val_gpsprio * kir_val_gpsprio / nirprioPh.get(jobClass) * wGpsPh.get(jobClass) / wcirPh);
+                                            } else {
                                                 rate.set(0, 0, 0.0);
                                             }
                                             break;
@@ -4242,9 +5149,15 @@ public class AfterEventStation implements Serializable {
                                             break;
                                         case FCFS:
                                         case HOL:
+                                        case FCFSPRIO:
+                                        case LCFSPRIO:
                                         case LCFS:
                                         case LCFSPR:
+                                        case LCFSPRPRIO:
+                                        case FCFSPRPRIO:
                                         case LCFSPI:
+                                        case FCFSPIPRIO:
+                                        case LCFSPIPRIO:
                                         case SIRO:
                                         case SEPT:
                                         case LEPT:
@@ -4373,31 +5286,98 @@ public class AfterEventStation implements Serializable {
                                                     }
                                                     break;
                                                 case PSPRIO:
-                                                case DPSPRIO:
-                                                case GPSPRIO:
                                                     double procRatePsprio = proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(0).get(mapK, mapKdest);
                                                     for (int row = 0; row < mapRate.getNumRows(); row++) {
                                                         if (mapEn.get(row, 0) == 1 && mapK < kir.size()) {
-                                                            // Find minimum priority among present classes for this state
-                                                            int minPrioMap = Integer.MAX_VALUE;
+                                                            int minPrioMapPs = Integer.MAX_VALUE;
                                                             for (int r = 0; r < sn.nclasses; r++) {
                                                                 if (nir.get(row, r) > 0) {
                                                                     int rPrio = (int) sn.classprio.get(r);
-                                                                    if (rPrio < minPrioMap) {
-                                                                        minPrioMap = rPrio;
-                                                                    }
+                                                                    if (rPrio < minPrioMapPs) minPrioMapPs = rPrio;
                                                                 }
                                                             }
                                                             double kirValue = kir.get(mapK).get(row, jobClass);
                                                             double niValue = (row < ni.getNumRows()) ? ni.get(row, 0) : ni.get(0, 0);
                                                             double servers = Math.min(niValue, S.get(ist, 0));
-                                                            // If ni <= S (all jobs get service) or this class has highest priority
-                                                            if (niValue <= S.get(ist, 0) || (int) sn.classprio.get(jobClass) == minPrioMap) {
+                                                            if (niValue <= S.get(ist, 0) || (int) sn.classprio.get(jobClass) == minPrioMapPs) {
                                                                 if (niValue > 0) {
                                                                     mapRate.set(row, 0, procRatePsprio * kirValue / niValue * servers);
                                                                 }
                                                             } else {
-                                                                // Not in highest priority group - no service
+                                                                mapRate.set(row, 0, 0.0);
+                                                            }
+                                                        }
+                                                    }
+                                                    break;
+                                                case DPSPRIO:
+                                                    double procRateDpsprio = proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(0).get(mapK, mapKdest);
+                                                    for (int row = 0; row < mapRate.getNumRows(); row++) {
+                                                        if (mapEn.get(row, 0) == 1 && mapK < kir.size()) {
+                                                            int minPrioMapDps = Integer.MAX_VALUE;
+                                                            for (int r = 0; r < sn.nclasses; r++) {
+                                                                if (nir.get(row, r) > 0) {
+                                                                    int rPrio = (int) sn.classprio.get(r);
+                                                                    if (rPrio < minPrioMapDps) minPrioMapDps = rPrio;
+                                                                }
+                                                            }
+                                                            double kirValueDps = kir.get(mapK).get(row, jobClass);
+                                                            double niValueDps = (row < ni.getNumRows()) ? ni.get(row, 0) : ni.get(0, 0);
+                                                            if (niValueDps <= S.get(ist, 0) || (int) sn.classprio.get(jobClass) == minPrioMapDps) {
+                                                                Matrix wDpsMap = sn.schedparam.getRow(ist);
+                                                                wDpsMap.scaleEq(1.0 / wDpsMap.elementSum());
+                                                                Matrix nirprioMap = nir.copy();
+                                                                if (niValueDps > S.get(ist, 0)) {
+                                                                    for (int r = 0; r < sn.nclasses; r++) {
+                                                                        if (sn.classprio.get(r) != sn.classprio.get(jobClass)) {
+                                                                            nirprioMap.set(r, 0);
+                                                                        }
+                                                                    }
+                                                                }
+                                                                double wDenomMap = wDpsMap.mult(nirprioMap.transpose()).sumRows().get(0, 0);
+                                                                mapRate.set(row, 0, procRateDpsprio * kirValueDps * wDpsMap.get(jobClass) / wDenomMap);
+                                                            } else {
+                                                                mapRate.set(row, 0, 0.0);
+                                                            }
+                                                        }
+                                                    }
+                                                    break;
+                                                case GPSPRIO:
+                                                    double procRateGpsprio = proc.get(sn.stations.get(ist)).get(sn.jobclasses.get(jobClass)).get(0).get(mapK, mapKdest);
+                                                    for (int row = 0; row < mapRate.getNumRows(); row++) {
+                                                        if (mapEn.get(row, 0) == 1 && mapK < kir.size()) {
+                                                            int minPrioMapGps = Integer.MAX_VALUE;
+                                                            for (int r = 0; r < sn.nclasses; r++) {
+                                                                if (nir.get(row, r) > 0) {
+                                                                    int rPrio = (int) sn.classprio.get(r);
+                                                                    if (rPrio < minPrioMapGps) minPrioMapGps = rPrio;
+                                                                }
+                                                            }
+                                                            double kirValueGps = kir.get(mapK).get(row, jobClass);
+                                                            double niValueGps = (row < ni.getNumRows()) ? ni.get(row, 0) : ni.get(0, 0);
+                                                            if (niValueGps <= S.get(ist, 0) || (int) sn.classprio.get(jobClass) == minPrioMapGps) {
+                                                                Matrix wGpsMap = sn.schedparam.getRow(ist);
+                                                                wGpsMap.scaleEq(1.0 / wGpsMap.elementSum());
+                                                                Matrix nirprioMapGps = nir.copy();
+                                                                if (niValueGps > S.get(ist, 0)) {
+                                                                    for (int r = 0; r < sn.nclasses; r++) {
+                                                                        if (sn.classprio.get(r) != sn.classprio.get(jobClass)) {
+                                                                            nirprioMapGps.set(r, 0);
+                                                                        }
+                                                                    }
+                                                                }
+                                                                Matrix cirMapGps = new Matrix(nirprioMapGps.getNumRows(), nirprioMapGps.getNumCols());
+                                                                for (int cr = 0; cr < cirMapGps.getNumRows(); cr++) {
+                                                                    for (int cc = 0; cc < cirMapGps.getNumCols(); cc++) {
+                                                                        cirMapGps.set(cr, cc, Math.min(nirprioMapGps.get(cr, cc), 1.0));
+                                                                    }
+                                                                }
+                                                                Matrix cirMapGps1D = new Matrix(0, 0);
+                                                                for (int col = 0; col < cirMapGps.getNumCols(); col++) {
+                                                                    cirMapGps1D = Matrix.concatRows(cirMapGps1D, cirMapGps.getColumn(col), null);
+                                                                }
+                                                                double wcirMapGps = wGpsMap.mult(cirMapGps1D).get(0);
+                                                                mapRate.set(row, 0, procRateGpsprio * kirValueGps / nirprioMapGps.get(jobClass) * wGpsMap.get(jobClass) / wcirMapGps);
+                                                            } else {
                                                                 mapRate.set(row, 0, 0.0);
                                                             }
                                                         }

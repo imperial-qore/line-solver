@@ -509,7 +509,7 @@ fun solver_amvald(sn: NetworkStruct, options: SolverOptions?): MVAResult {
         for (r in 0..<K) {
             if (Vchain.get(k, r) * STeff!!.get(k, r) > 0) {
                 when (sn.sched.get(sn.stations.get(k))) {
-                    SchedStrategy.FCFS, SchedStrategy.SIRO, SchedStrategy.PS, SchedStrategy.LCFSPR, SchedStrategy.DPS, SchedStrategy.HOL -> if (Uchain.sumRows(
+                    SchedStrategy.FCFS, SchedStrategy.SIRO, SchedStrategy.PS, SchedStrategy.LCFSPR, SchedStrategy.DPS, SchedStrategy.HOL, SchedStrategy.FCFSPRIO -> if (Uchain.sumRows(
                             k) > 1) {
                         var sum_vchain_steff_xchain_k = 0.0
                         var i = 0
@@ -645,7 +645,7 @@ fun solver_amvald_forward(gamma: MutableList<Matrix>?,
         interpTotArvlQlen.set(k, 0, delta * sum_qchain_k_nnz)
         for (r in nnzclasses) {
             selfArvlQlenSeenByClosed.set(k, r, deltaclass.get(r) * Qchain_in.get(k, r))
-            if (sched[k] == SchedStrategy.HOL) {
+            if (sched[k] == SchedStrategy.HOL || sched[k] == SchedStrategy.FCFSPRIO) {
                 var sum_qchain_k_ehprio = 0.0
                 for (i in nnzclasses_ehprio.get(r)!!) sum_qchain_k_ehprio += Qchain_in.get(k, i)
                 totArvlQlenSeenByOpen.set(r, k, sum_qchain_k_ehprio)
@@ -868,7 +868,7 @@ fun solver_amvald_forward(gamma: MutableList<Matrix>?,
 
             var k = 0
             while (k < M) {
-                if (sched[k] == SchedStrategy.HOL) {
+                if (sched[k] == SchedStrategy.HOL || sched[k] == SchedStrategy.FCFSPRIO) {
                     for (r in nnzclasses) {
                         //Calculate sum_Qchain_k_r_ephrio;
                         var sum_Qchain_k_r_ephrio = 0.0
@@ -933,7 +933,7 @@ fun solver_amvald_forward(gamma: MutableList<Matrix>?,
 
             var k = 0
             while (k < M) {
-                if (sched[k] == SchedStrategy.HOL) {
+                if (sched[k] == SchedStrategy.HOL || sched[k] == SchedStrategy.FCFSPRIO) {
                     for (r in nnzclasses) {
                         //Calculate sum_Qchain_k_r_ephrio;
                         var sum_Qchain_k_r_ephrio = 0.0
@@ -1219,7 +1219,7 @@ fun solver_amvald_forward(gamma: MutableList<Matrix>?,
                     }
                 }
 
-                SchedStrategy.HOL -> {
+                SchedStrategy.HOL, SchedStrategy.FCFSPRIO -> {
                     if (STeff.get(k, r) <= 0) break
 
                     var Uchain_r = Matrix(Uchain_in.numRows, Uchain_in.numCols)

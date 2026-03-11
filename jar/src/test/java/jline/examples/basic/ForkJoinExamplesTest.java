@@ -148,7 +148,6 @@ public class ForkJoinExamplesTest {
     }
 
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     //
     // HT results look better than MATLAB version, Disable?
     public void testFjBasicClosedMVA() {
@@ -408,7 +407,6 @@ public class ForkJoinExamplesTest {
     }
     
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testFjNojoinMVA() {
         // Create the model and run solver with suppressed output
         Network model = ForkJoinModel.fj_nojoin();
@@ -629,7 +627,6 @@ public class ForkJoinExamplesTest {
     }
 
     @Test
-    // @Disabled - MAPE was 0.0072%, Max APE was 0.0248%
     public void testFjCsPostforkMVA() {
         // Create the model and run solver with suppressed output
         Network model = ForkJoinModel.fj_cs_postfork();
@@ -815,7 +812,6 @@ public class ForkJoinExamplesTest {
     }
 
     @Test
-    // @Disabled - MAPE was 0.0008%, Max APE was 0.0317%
     public void testFjRouteOverlapJMT() {
         // Create the model and run solver with suppressed output
         Network model = ForkJoinModel.fj_route_overlap();

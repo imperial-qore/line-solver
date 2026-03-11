@@ -52,8 +52,8 @@ else
     xi = cache_xi_iter(gamma,m,xi0);
 end
 
+S = zeros(1, n);
 for k=1:n
-    S(k) = 0;
     for l=1:h
         S(k) = S(k) + gamma(k,l) * xi(l);
     end
@@ -68,6 +68,7 @@ phi = phi - log(xi) * m';
 
 %% A
 delta=eye(h);
+C = zeros(h, h);
 for j=1:h
     for l=1:h
         C1=0;

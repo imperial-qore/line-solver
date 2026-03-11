@@ -31,10 +31,10 @@ classdef SolverSSA < NetworkSolver
         ProbAggr = getProbAggr(self, node, state);
         ProbSys = getProbSys(self);
         ProbSysAggr = getProbSysAggr(self);
-        tranNodeState = sample(self, node, numSamples, markActivePassive);
-        tranNodeStateAggr = sampleAggr(self, node, numSamples, markActivePassive);
-        tranSysStateAggr = sampleSysAggr(self, numSamples, markActivePassive);
-        tranSysState = sampleSys(self, numSamples, markActivePassive);
+        tranNodeState = sample(self, node, numEvents, markActivePassive);
+        tranNodeStateAggr = sampleAggr(self, node, numEvents, markActivePassive);
+        tranSysStateAggr = sampleSysAggr(self, numEvents, markActivePassive);
+        tranSysState = sampleSys(self, numEvents, markActivePassive);
 
         function [allMethods] = listValidMethods(self)
             % allMethods = LISTVALIDMETHODS()

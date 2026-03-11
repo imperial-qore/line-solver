@@ -6,7 +6,7 @@ import jline.examples.java.advanced.LoadDependentModel;
 import jline.lang.Network;
 import jline.solvers.NetworkAvgTable;
 import jline.solvers.ctmc.SolverCTMC;
-import jline.solvers.des.SolverDES;
+import jline.solvers.ldes.SolverLDES;
 import jline.solvers.jmt.SolverJMT;
 import jline.solvers.mva.SolverMVA;
 import jline.solvers.nc.SolverNC;
@@ -181,7 +181,6 @@ public class LoadDepExamplesTest {
     }
     
     @Test
-    //@Disabled("QLen[0] mismatch ==> expected: <0.897502> but was: <0.44711046113604697>")
     public void testLdMultiserverPsTwoclassesJMT() {
         // Test the ld_multiserver_ps_twoclasses example with JMT solver
         Network model = LoadDependentModel.ld_multiserver_ps_twoclasses();
@@ -311,7 +310,6 @@ public class LoadDepExamplesTest {
     // Note: These models have 3 nodes and may have computational complexity
     
     @Test
-    //@Disabled("Expected 6 entries (3 stations × 2 classes) for ld_multiserver_ps model ==> expected: <6> but was: <0>")
     public void testLdMultiserverPsNC() {
         // Test the ld_multiserver_ps example with NC solver
         Network model = LoadDependentModel.ld_multiserver_ps();
@@ -429,12 +427,12 @@ public class LoadDepExamplesTest {
         }
     }
 
-    // ===== ld_multiserver_ps DES tests =====
-    // Tests for load-dependent PS with DES solver
+    // ===== ld_multiserver_ps LDES tests =====
+    // Tests for load-dependent PS with LDES solver
 
     @Test
     public void testLdMultiserverPsDES() {
-        // Test the ld_multiserver_ps example with DES solver
+        // Test the ld_multiserver_ps example with LDES solver
         // Compare against MVA solver as ground truth
         Network model = LoadDependentModel.ld_multiserver_ps();
 
@@ -447,23 +445,23 @@ public class LoadDepExamplesTest {
         NetworkAvgTable mvaTable = mvaTableHolder[0];
         assertNotNull(mvaTable, "MVA solver should produce results");
 
-        // Run DES solver with moderate sample count (50k balances accuracy vs test time)
+        // Run LDES solver with moderate sample count (50k balances accuracy vs test time)
         SolverOptions options = new SolverOptions();
         options.seed = 23000;
         options.samples = 50000;
 
         final NetworkAvgTable[] desTableHolder = new NetworkAvgTable[1];
         withSuppressedOutput(() -> {
-            SolverDES solver = new SolverDES(model, options);
+            SolverLDES solver = new SolverLDES(model, options);
             desTableHolder[0] = solver.getAvgTable();
         });
         NetworkAvgTable desTable = desTableHolder[0];
 
-        assertNotNull(desTable, "DES solver should produce results");
+        assertNotNull(desTable, "LDES solver should produce results");
         assertEquals(6, desTable.getQLen().size(),
             "Expected 6 entries (3 stations × 2 classes) for ld_multiserver_ps model");
 
-        // Verify DES results are close to MVA results (5% tolerance for simulation)
+        // Verify LDES results are close to MVA results (5% tolerance for simulation)
         double tolerance = 0.05;
         for (int i = 0; i < mvaTable.getQLen().size(); i++) {
             double mvaQLen = mvaTable.getQLen().get(i);
@@ -474,14 +472,14 @@ public class LoadDepExamplesTest {
             if (mvaQLen > 0.01) {
                 double qlenRelError = Math.abs(desQLen - mvaQLen) / mvaQLen;
                 assertTrue(qlenRelError < tolerance,
-                    String.format("QLen[%d] relative error %.4f exceeds tolerance %.2f (DES=%.4f, MVA=%.4f)",
+                    String.format("QLen[%d] relative error %.4f exceeds tolerance %.2f (LDES=%.4f, MVA=%.4f)",
                         i, qlenRelError, tolerance, desQLen, mvaQLen));
             }
 
             if (mvaTput > 0.01) {
                 double tputRelError = Math.abs(desTput - mvaTput) / mvaTput;
                 assertTrue(tputRelError < tolerance,
-                    String.format("Tput[%d] relative error %.4f exceeds tolerance %.2f (DES=%.4f, MVA=%.4f)",
+                    String.format("Tput[%d] relative error %.4f exceeds tolerance %.2f (LDES=%.4f, MVA=%.4f)",
                         i, tputRelError, tolerance, desTput, mvaTput));
             }
         }
@@ -489,7 +487,7 @@ public class LoadDepExamplesTest {
 
     @Test
     public void testLdMultiserverPsTwoclassesDES() {
-        // Test the ld_multiserver_ps_twoclasses example with DES solver
+        // Test the ld_multiserver_ps_twoclasses example with LDES solver
         // Compare against MVA solver as ground truth
         Network model = LoadDependentModel.ld_multiserver_ps_twoclasses();
 
@@ -502,23 +500,23 @@ public class LoadDepExamplesTest {
         NetworkAvgTable mvaTable = mvaTableHolder[0];
         assertNotNull(mvaTable, "MVA solver should produce results");
 
-        // Run DES solver
+        // Run LDES solver
         SolverOptions options = new SolverOptions();
         options.seed = 23000;
         options.samples = 50000;  // Reduced from 100000 (10% tolerance allows fewer samples)
 
         final NetworkAvgTable[] desTableHolder = new NetworkAvgTable[1];
         withSuppressedOutput(() -> {
-            SolverDES solver = new SolverDES(model, options);
+            SolverLDES solver = new SolverLDES(model, options);
             desTableHolder[0] = solver.getAvgTable();
         });
         NetworkAvgTable desTable = desTableHolder[0];
 
-        assertNotNull(desTable, "DES solver should produce results");
+        assertNotNull(desTable, "LDES solver should produce results");
         assertEquals(4, desTable.getQLen().size(),
             "Expected 4 entries (2 stations × 2 classes) for ld_multiserver_ps_twoclasses model");
 
-        // Verify DES results are close to MVA results (10% tolerance for simulation)
+        // Verify LDES results are close to MVA results (10% tolerance for simulation)
         double tolerance = 0.10;
         for (int i = 0; i < mvaTable.getQLen().size(); i++) {
             double mvaQLen = mvaTable.getQLen().get(i);
@@ -529,14 +527,14 @@ public class LoadDepExamplesTest {
             if (mvaQLen > 0.01) {
                 double qlenRelError = Math.abs(desQLen - mvaQLen) / mvaQLen;
                 assertTrue(qlenRelError < tolerance,
-                    String.format("QLen[%d] relative error %.4f exceeds tolerance %.2f (DES=%.4f, MVA=%.4f)",
+                    String.format("QLen[%d] relative error %.4f exceeds tolerance %.2f (LDES=%.4f, MVA=%.4f)",
                         i, qlenRelError, tolerance, desQLen, mvaQLen));
             }
 
             if (mvaTput > 0.01) {
                 double tputRelError = Math.abs(desTput - mvaTput) / mvaTput;
                 assertTrue(tputRelError < tolerance,
-                    String.format("Tput[%d] relative error %.4f exceeds tolerance %.2f (DES=%.4f, MVA=%.4f)",
+                    String.format("Tput[%d] relative error %.4f exceeds tolerance %.2f (LDES=%.4f, MVA=%.4f)",
                         i, tputRelError, tolerance, desTput, mvaTput));
             }
         }

@@ -37,12 +37,6 @@ if length(P) > 2
     return;
 end
 
-% TODO: if it is a Poisson process, convert to a second-order Poisson
-% in order to have more degrees of freedom for the marked process
-
-% TODO: if it is a PH-Renewal process and forward moments are preferred,
-% convert to non-canonical form
-
 if abs(GAMMA) < gammatol
     fprintf('Fitting MAMAP(2,m): fitting MAPH because gamma = %e\n', GAMMA);
     MMAP = maph2m_fit(M1, M2, M3, P, B);
@@ -52,20 +46,32 @@ end
 % fit underlying AMAP(2)
 [~,MAPS] = amap2_fit_gamma(M1, M2, M3, GAMMA);
 
-% fit marked Poisson process
+% If the underlying process is Poisson (1 state), try to convert to a
+% second-order process for more degrees of freedom in the marked process
 if length(MAPS) == 1 && size(MAPS{1}{1},1) == 1
-    fprintf('Fitting MAMAP(2,m): fitting marked Poisson because the underlying process has one state\n');
-    MAP = MAPS{1};
-    % number of classes
-    m = length(P);
-    % fit class probabilities
-    MMAP = cell(1,2+m);
-    MMAP{1} = MAP{1};
-    MMAP{2} = MAP{2};
-    for c = 1:m
-        MMAP{2+c} = MMAP{2} .* P(c);
+    % Perturb moments slightly above exponential to get 2-state AMAP(2)
+    M2a = M2 * (1 + 1e-4);
+    M3a = M3 * (M2a/M2)^(3/2); % scale M3 proportionally
+    MAPS2 = amap2_fitall_gamma(M1, M2a, M3a, GAMMA);
+    if ~isempty(MAPS2)
+        fprintf('Fitting MAMAP(2,m): converting Poisson to second-order process\n');
+        for j = 1:length(MAPS2)
+            MAPS2{j} = map_normalize(MAPS2{j});
+        end
+        MAPS = MAPS2;
+    else
+        % Fallback: fit as marked Poisson
+        fprintf('Fitting MAMAP(2,m): fitting marked Poisson because the underlying process has one state\n');
+        MAP = MAPS{1};
+        m = length(P);
+        MMAP = cell(1,2+m);
+        MMAP{1} = MAP{1};
+        MMAP{2} = MAP{2};
+        for c = 1:m
+            MMAP{2+c} = MMAP{2} .* P(c);
+        end
+        return;
     end
-    return;
 end
 
 MMAPS = cell(1,length(MAPS));

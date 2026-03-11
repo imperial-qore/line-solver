@@ -98,10 +98,15 @@ W = W - diag(sum(W, 2));
 imm_states = unique(eventIdx(imm_idx));
 timed_states = setdiff(1:n_states, imm_states);
 
-% Check that we have some timed states remaining
-if isempty(timed_states)
-    error('LINE:Fluid:AllImmediate', ...
-        'All states have immediate transitions - cannot eliminate');
+% Check that we have enough timed states remaining
+if isempty(timed_states) || length(timed_states) <= 1
+    % Too few timed states - elimination would produce a trivial system.
+    % Fall back to the original system without elimination.
+    all_jumps_red = all_jumps;
+    rateBase_red = rateBase;
+    eventIdx_red = eventIdx;
+    state_map = 1:n_states;
+    return;
 end
 
 % Step 3: Apply stochastic complement

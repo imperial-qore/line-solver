@@ -267,10 +267,10 @@ end
 
 end
 
-%% Reneging (MAPMSG) helper functions
+%% Reneging (MAPMsG) helper functions
 
 function [isReneging, info] = detectRenegingTopology(sn)
-% DETECTRENGINGTOPOLOGY Detect if model is suitable for MAPMSG solver
+% DETECTRENGINGTOPOLOGY Detect if model is suitable for MAPMsG solver
 %
 % Requirements:
 % - Open model, single class
@@ -290,13 +290,13 @@ isReneging = false;
 
 % Check open model
 if ~sn_is_open_model(sn)
-    info.errorMsg = 'MAPMSG requires open queueing model.';
+    info.errorMsg = 'MAPMsG requires open queueing model.';
     return;
 end
 
 % Check single class (current limitation)
 if sn.nclasses > 1
-    info.errorMsg = 'MAPMSG currently supports single class only.';
+    info.errorMsg = 'MAPMsG currently supports single class only.';
     return;
 end
 info.classIdx = 1;
@@ -313,7 +313,7 @@ for ist = 1:sn.nstations
             queueIdx = ist;
         else
             % Multiple queues - not supported
-            info.errorMsg = 'MAPMSG requires single queue station.';
+            info.errorMsg = 'MAPMsG requires single queue station.';
             return;
         end
     end
@@ -354,7 +354,7 @@ end
 
 % Check FCFS scheduling
 if sn.sched(queueIdx) ~= SchedStrategy.FCFS
-    info.errorMsg = 'MAPMSG requires FCFS scheduling.';
+    info.errorMsg = 'MAPMsG requires FCFS scheduling.';
     return;
 end
 
@@ -366,7 +366,7 @@ if isempty(serviceProc) || ~iscell(serviceProc) || length(serviceProc) < 2
 end
 % For exponential, the service process should be 1x1 matrices
 if size(serviceProc{1}, 1) ~= 1
-    info.errorMsg = 'MAPMSG requires exponential service (single-phase).';
+    info.errorMsg = 'MAPMsG requires exponential service (single-phase).';
     return;
 end
 
@@ -387,7 +387,7 @@ isReneging = true;
 end
 
 function [QN,UN,RN,TN,CN,XN,totiter] = solveReneging(sn, options, info)
-% SOLVERENEGING Solve MAP/M/s+G queue using MAPMSG library
+% SOLVERENEGING Solve MAP/M/s+G queue using MAPMsG library
 %
 % Reference: O. Gursoy, K. A. Mehr, N. Akar, "The MAP/M/s + G Call Center
 % Model with Generally Distributed Patience Times"
@@ -405,7 +405,7 @@ sourceIdx = info.sourceIdx;
 queueIdx = info.queueIdx;
 classIdx = info.classIdx;
 
-% Extract MAP arrival process matrices (C, D in MAPMSG notation)
+% Extract MAP arrival process matrices (C, D in MAPMsG notation)
 arrivalProc = sn.proc{sourceIdx}{classIdx};
 C = arrivalProc{1};  % D0 (subgenerator)
 D = arrivalProc{2};  % D1 (arrival transitions)
@@ -419,7 +419,7 @@ SERVERSIZE = info.nServers;
 patienceProc = sn.patienceProc{queueIdx, classIdx};
 [BoundaryLevels, ga, QUANTIZATION] = convertPatienceToRegimes(patienceProc, options);
 
-% Build MRMFQ matrices following MAPMSGCompiler.m logic
+% Build MRMFQ matrices following MAPMsGCompiler.m logic
 I = eye(MAPSIZE);
 em = ones(MAPSIZE, 1);
 lmap = D * em;  % Arrival rate vector
@@ -479,7 +479,7 @@ B(end+1) = 10000000;
 [coefficients, boundaries, Lzeromulti, Lnegmulti, Lposmulti, Anegmulti, Aposmulti] = ...
     MRMFQSolver(Qy, Qybounds, ydriftregimes, ydriftbounds, B);
 
-% Compute steady-state results following MAPMSGCompiler.m
+% Compute steady-state results following MAPMsGCompiler.m
 zeromass = boundaries{1};
 
 % Compute integrals for each regime
@@ -561,10 +561,10 @@ totiter = QUANTIZATION;
 end
 
 function [BoundaryLevels, ga, QUANTIZATION] = convertPatienceToRegimes(patienceProc, options)
-% CONVERTPATIENCETOREGIMES Convert patience distribution to MAPMSG regimes
+% CONVERTPATIENCETOREGIMES Convert patience distribution to MAPMsG regimes
 %
 % Converts a patience distribution (in MAP/PH format) to piecewise-constant
-% abandonment function for MAPMSG.
+% abandonment function for MAPMsG.
 
 % Default quantization
 QUANTIZATION = 11;

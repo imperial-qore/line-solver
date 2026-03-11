@@ -39,7 +39,7 @@ solver{end+1} = MAM(model,options);
 solver{end+1} = NC(model,options);
 solver{end+1} = JMT(model,options);
 solver{end+1} = SSA(model,options);
-solver{end+1} = DES(model,options);
+solver{end+1} = LDES(model,options);
 for s=1:length(solver)
     fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgTable();

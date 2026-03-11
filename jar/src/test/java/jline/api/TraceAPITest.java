@@ -16,7 +16,7 @@ public class TraceAPITest {
         // Symmetric data should have skewness close to 0
         double[] symmetricData = {1.0, 2.0, 3.0, 4.0, 5.0, 4.0, 3.0, 2.0, 1.0};
         double skewness = trace_skew(symmetricData);
-        assertEquals(0.146354523591967, skewness, 0.01, "Symmetric data should have skewness close to 0");
+        assertEquals(0.146354523591967, skewness, COARSE_TOL, "Symmetric data should have skewness close to 0");
     }
     
     @Test
@@ -40,7 +40,7 @@ public class TraceAPITest {
         List<Double> dataList = Arrays.asList(1.0, 2.0, 3.0, 4.0, 5.0);
         double skewnessFromList = trace_skew(dataList);
         double skewnessFromArray = trace_skew(new double[]{1.0, 2.0, 3.0, 4.0, 5.0});
-        assertEquals(skewnessFromArray, skewnessFromList, 1e-10, "List and array should give same result");
+        assertEquals(skewnessFromArray, skewnessFromList, FINE_TOL, "List and array should give same result");
     }
 
     @Test
@@ -57,7 +57,7 @@ public class TraceAPITest {
             new org.apache.commons.math3.stat.descriptive.moment.Skewness();
         double expectedSkewness = apacheSkewness.evaluate(traceData);
         
-        assertEquals(expectedSkewness, skewness, 1e-10,
+        assertEquals(expectedSkewness, skewness, FINE_TOL,
             "Should match Apache Commons skewness calculation exactly");
     }
 

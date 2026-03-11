@@ -69,19 +69,6 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
                 Dfilt.set(a, Matrix(size, size))
             }
             val local = sn.nnodes + 1
-            // DEBUG: print sn.space for each stateful node
-            val debugSolverCtmc = false
-            if (debugSolverCtmc) {
-                System.err.println("DEBUG: sn.space contents:")
-                for (isf in 0..<sn.nstateful) {
-                    val node = sn.stateful.get(isf)
-                    val space = sn.space.get(node)
-                    System.err.printf("  isf=%d, node=%s, space=%dx%d: %s%n",
-                        isf, node?.getName(), space?.getNumRows() ?: 0, space?.getNumCols() ?: 0,
-                        space?.toString()?.take(100))
-                }
-            }
-
             for (a in 0..<A) {
                 val stateCell = MatrixCell()
 
@@ -95,11 +82,6 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
 
                             val spaceMatrix: Matrix = sn.space.get(sn.stateful.get(isf))!!
                             val stateRow = spaceMatrix.getRow(stateIndex)
-                            if (debugSolverCtmc && s == 0 && a == 0) {
-                                System.err.printf("DEBUG: ind=%d, isf=%d, stateIndex=%d, spaceMatrix=%dx%d, stateRow=%s%n",
-                                    ind, isf, stateIndex, spaceMatrix.getNumRows(), spaceMatrix.getNumCols(),
-                                    stateRow.toString())
-                            }
                             stateCell.set(isf, stateRow)
                         }
                     }
@@ -163,6 +145,18 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
                                         continue
                                     }
 
+                                    // Skip if outprob_p doesn't have an entry for this index
+                                    if (ip >= outprob_p.length()) {
+                                        continue
+                                    }
+
+                                    var outprob_ip = 0.0
+                                    try {
+                                        outprob_ip = outprob_p.get(ip)
+                                    } catch (_: Exception) {
+                                        continue
+                                    }
+
                                     if (node_p + 1 != local) {
                                         if (new_state_p.get(ip) != -1.0) {
                                             if (sn.isstatedep.get(node_a, 2) != 0.0) {
@@ -210,10 +204,10 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
                                                     )
 
                                                 prob_sync_p = sync.get(a)!!.passive.get(0)!!
-                                                    .getProb(nodePairs) * outprob_p.get(ip)
+                                                    .getProb(nodePairs) * outprob_ip
                                             } else {
                                                 prob_sync_p =
-                                                    sync.get(a)!!.passive.get(0)!!.getProb() * outprob_p.get(ip)
+                                                    sync.get(a)!!.passive.get(0)!!.getProb() * outprob_ip
                                             }
                                         } else {
                                             prob_sync_p = 0.0
@@ -280,7 +274,7 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
                                     val ns = Matrix.matchrow(stateSpaceHashed, new_state)
                                     if (ns > -1) {
                                         if (!rate_a.hasNaN()) {
-                                            if (Dfilt.get(a).getNumRows() >= s && Dfilt.get(a).getNumCols() >= ns) {
+                                            if (Dfilt.get(a).getNumRows() >= s + 1 && Dfilt.get(a).getNumCols() >= ns + 1) {
                                                 Dfilt.get(a)
                                                     .set(s, ns, Dfilt.get(a).get(s, ns) + rate_a.get(ia) * prob_sync_p)
                                             } else {
@@ -325,8 +319,11 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
                 if (event_a == EventType.DEP) {
                     val node_a_sf = sn.nodeToStateful.get(node_a).toInt()
                     val node_p_sf = sn.nodeToStateful.get(node_p).toInt()
+                    // Use vectorized sumRows() which operates directly on sparse CSC data
+                    // instead of per-row sumRows(int) which uses get() with binary search
+                    val rowSums = Dfilt.get(a).sumRows()
                     for (s in 0..<stateSpaceHashed.getNumRows()) {
-                        val rate = Dfilt.get(a).sumRows(s)
+                        val rate = rowSums.get(s, 0)
                         depRates!![s]!![node_a_sf]!![class_a] =
                             depRates[s]!![node_a_sf]!![class_a] + rate
                         arvRates!![s]!![node_p_sf]!![class_p] =
@@ -368,29 +365,6 @@ class Solver_ctmc(private val solverCTMC: SolverCTMC?) {
             }
 
             Q = ctmc_makeinfgen(Q)
-
-            // DEBUG: print state space structure
-            val debugStateSpace = false
-            if (debugStateSpace) {
-                println("DEBUG: Q diagonal (first 30 states):")
-                for (s in 0..<minOf(30, Q.getNumRows())) {
-                    println("  state $s: diag=${Q.get(s, s)}")
-                }
-                println("DEBUG: stateSpaceHashed (first 30 rows):")
-                for (s in 0..<minOf(30, stateSpaceHashed.getNumRows())) {
-                    val row = (0..<stateSpaceHashed.getNumCols()).map { stateSpaceHashed.get(s, it) }
-                    println("  row $s: $row")
-                }
-                println("DEBUG: stateSpaceHashed (rows 40-60):")
-                for (s in 40..<minOf(60, stateSpaceHashed.getNumRows())) {
-                    val row = (0..<stateSpaceHashed.getNumCols()).map { stateSpaceHashed.get(s, it) }
-                    println("  row $s: $row")
-                }
-                println("DEBUG: Q diagonal (rows 40-60):")
-                for (s in 40..<minOf(60, Q.getNumRows())) {
-                    println("  state $s: diag=${Q.get(s, s)}")
-                }
-            }
 
             if (options.config.hide_immediate) {
                 // Find non-station stateful nodes, excluding Cache nodes

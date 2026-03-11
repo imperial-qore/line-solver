@@ -11,7 +11,7 @@ package jline.lang.constant;
 public enum SolverType {
     AUTO,
     CTMC,
-    DES,
+    LDES,
     ENV,
     FLUID,
     JMT,

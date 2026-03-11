@@ -89,7 +89,6 @@ public class PrioExamplesTest {
     }
     
     @Test
-    // @Disabled - MAPE was 0.0156%, Max APE was 0.0957%
     public void testPrioHolOpenSSA() {
         // Create the model
         Network model = PrioModel.prio_hol_open();
@@ -146,7 +145,6 @@ public class PrioExamplesTest {
     }
 
     @Test
-    //@Disabled
     public void testPrioHolClosedMVA() {
         // Create the model
         Network model = PrioModel.prio_hol_closed();
@@ -200,7 +198,6 @@ public class PrioExamplesTest {
     }
     
     @Test
-    // @Disabled - MAPE was 0.0096%, Max APE was 0.0669%
     public void testPrioHolClosedSSA() {
         // Create the model
         Network model = PrioModel.prio_hol_closed();

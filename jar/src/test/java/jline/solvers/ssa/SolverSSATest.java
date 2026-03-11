@@ -181,7 +181,6 @@ public class SolverSSATest {
      * </p>
      */
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void test_example_mixedModel_2() {
         List<Double> QLen = Arrays.asList(2.2422, 1.0193, 0.35076, 0.19411, 0.23882, 0.15184, 0.16825, 0.11084, 0.0);
         List<Double> Util = Arrays.asList(0.67299, 0.27014, 0.17964, 0.090441, 0.074645, 0.049973, 0.044622, 0.023411, 0.0);
@@ -306,7 +305,6 @@ public class SolverSSATest {
      * </p>
      */
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void test_example_mixedModel_5() {
         List<Double> QLen = Arrays.asList(98.15, 2.8948, 1.0288, 0.051146, 0.49159, 0.026332, 0.32952, 0.0);
         List<Double> Util = Arrays.asList(0.98494, 0.028814, 0.48568, 0.020247, 0.32266, 0.01618, 0.24605, 0.0);
@@ -876,7 +874,6 @@ options.method = "serial";
         // MVA is an approximation method, so we use a larger tolerance (10%)
         // ===================================================================================
 
-        private static final double TOLERANCE_MVA_OPEN = 0.10; // 10% tolerance for MVA approximation
 
         @Test
         void testOpenRR_n7_m11111() {
@@ -1041,9 +1038,9 @@ options.method = "serial";
 
                 // Verify JAR MVA accuracy against MATLAB NC expected value
                 double relativeError = Math.abs(hitRatio - expectedHitRatio) / expectedHitRatio;
-                assertTrue(relativeError <= TOLERANCE_MVA_OPEN,
+                assertTrue(relativeError <= VERY_COARSE_TOL,
                     String.format("%s: JAR MVA hit ratio relative error %.4f exceeds tolerance %.2f (JAR: %.6f, MATLAB: %.6f)",
-                        testDescription, relativeError, TOLERANCE_MVA_OPEN, hitRatio, expectedHitRatio));
+                        testDescription, relativeError, VERY_COARSE_TOL, hitRatio, expectedHitRatio));
 
             } catch (Exception e) {
                 fail("Test failed with exception: " + e.getMessage());

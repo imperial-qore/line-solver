@@ -267,18 +267,44 @@ while max(max(abs(TN-TN_1))) > tol && it <= options.iter_max %#ok<max>
                                                 alphascv = map_scv(sn.nodeparam{ist}{end}.setupTime);
                                                 betarate = map_lambda(sn.nodeparam{ist}{end}.delayoffTime);
                                                 betascv = map_scv(sn.nodeparam{ist}{end}.delayoffTime);
-                                                aggrRate = 0;
-                                                % TODO: at the moment this
-                                                % maps each class to an
-                                                % independent
-                                                % setup-delayoff queue
+                                                % Multiclass decomposition: compute per-class
+                                                % service rates and traffic intensities, solve
+                                                % aggregate setup-delayoff queue, then
+                                                % decompose per class proportionally
+                                                mu_k = zeros(1, K);
+                                                lambda_k = zeros(1, K);
+                                                active_k = false(1, K);
                                                 for k=1:K
                                                     pie_k = pie{ist}{k};
                                                     if ~isnan(pie_k(1))
-                                                        mu_k = 1 / (pie_k * inv(-D0{ist,k}) * ones(size(pie_k))');
-                                                        aggrRate = mu_k;
-                                                        [Qret{k}] = qbd_setupdelayoff(aggrLambda, aggrRate, alpharate, alphascv, betarate, betascv);
+                                                        mu_k(k) = 1 / (pie_k * inv(-D0{ist,k}) * ones(size(pie_k))');
+                                                        c = find(sn.chains(:,k), 1);
+                                                        lambda_k(k) = rates{ist,c}(k);
+                                                        active_k(k) = true;
+                                                    end
+                                                end
+                                                if any(active_k)
+                                                    rho_k = lambda_k ./ mu_k;
+                                                    rho_k(~active_k) = 0;
+                                                    rho_total = sum(rho_k);
+                                                    if rho_total > 0
+                                                        % Aggregate service rate: weighted harmonic mean
+                                                        aggrRate = aggrLambda / rho_total;
+                                                        Q_total = qbd_setupdelayoff(aggrLambda, aggrRate, alpharate, alphascv, betarate, betascv);
+                                                        for k=1:K
+                                                            if active_k(k)
+                                                                Qret{k} = Q_total * rho_k(k) / rho_total;
+                                                            else
+                                                                Qret{k} = NaN;
+                                                            end
+                                                        end
                                                     else
+                                                        for k=1:K
+                                                            Qret{k} = 0;
+                                                        end
+                                                    end
+                                                else
+                                                    for k=1:K
                                                         Qret{k} = NaN;
                                                     end
                                                 end

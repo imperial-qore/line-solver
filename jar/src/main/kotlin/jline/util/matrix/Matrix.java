@@ -796,6 +796,23 @@ public final class Matrix implements Serializable {
      * @return A matrix containing the extracted column
      */
     public static Matrix extractColumn(Matrix A, int column, Matrix out) {
+        if (A.delegate instanceof DenseMatrix) {
+            // Dense path: extract column using element-by-element copy (O(1) per element)
+            int numRows = A.getNumRows();
+            DMatrixRMaj denseOut = new DMatrixRMaj(numRows, 1);
+            for (int i = 0; i < numRows; i++) {
+                denseOut.set(i, 0, A.get(i, column));
+            }
+            Matrix result = new Matrix(denseOut);
+            if (out != null) {
+                // Copy into provided output matrix
+                for (int i = 0; i < numRows; i++) {
+                    out.set(i, 0, denseOut.get(i, 0));
+                }
+                return out;
+            }
+            return result;
+        }
         if (out == null) {
             return new Matrix(SparseMatrix.extractColumnStatic(A.getData(), column, null));
         } else {
@@ -880,6 +897,18 @@ public final class Matrix implements Serializable {
      * @return A matrix containing the extracted rows
      */
     public static Matrix extractRows(Matrix A, int row0, int row1, Matrix out) {
+        if (A.delegate instanceof DenseMatrix) {
+            // Dense path: extract rows using element-by-element copy (O(1) per element)
+            int numCols = A.getNumCols();
+            int numRows = row1 - row0;
+            DMatrixRMaj denseOut = new DMatrixRMaj(numRows, numCols);
+            for (int i = 0; i < numRows; i++) {
+                for (int j = 0; j < numCols; j++) {
+                    denseOut.set(i, j, A.get(row0 + i, j));
+                }
+            }
+            return new Matrix(denseOut);
+        }
         if (out == null) {
             return new Matrix(SparseMatrix.extractRowsStatic(A.getData(), row0, row1, null));
         } else {
@@ -1186,6 +1215,41 @@ public final class Matrix implements Serializable {
      */
     public static Matrix lyap(Matrix A, Matrix B, Matrix C, Matrix D) {
         return sylv(A, B, C);
+    }
+
+    /**
+     * Solves the discrete Sylvester equation A * X * B - X + C = 0.
+     * Equivalent to MATLAB's dlyap(A, B, C).
+     *
+     * Uses the Kronecker product formulation:
+     * (kron(B', A) - I) * vec(X) = -vec(C)
+     *
+     * @param A Left coefficient matrix
+     * @param B Right coefficient matrix
+     * @param C Constant matrix
+     * @return Solution matrix X
+     */
+    public static Matrix dlyap(Matrix A, Matrix B, Matrix C) {
+        int n = A.getNumRows();
+        int m = B.getNumRows();
+        // Solve via Kronecker: (kron(B', A) - I) * vec(X) = -vec(C)
+        Matrix I_nm = Matrix.eye(n * m);
+        Matrix kron_BA = B.transpose().kron(A);
+        Matrix lhs = kron_BA.add(-1, I_nm); // kron(B',A) - I
+        Matrix vecC = new Matrix(n * m, 1, n * m);
+        for (int j = 0; j < m; j++) {
+            for (int i = 0; i < n; i++) {
+                vecC.set(j * n + i, 0, -C.get(i, j));
+            }
+        }
+        Matrix vecX = robustLeftDivide(lhs, vecC);
+        Matrix X = new Matrix(n, m, n * m);
+        for (int j = 0; j < m; j++) {
+            for (int i = 0; i < n; i++) {
+                X.set(i, j, vecX.get(j * n + i, 0));
+            }
+        }
+        return X;
     }
 
     /**
@@ -1650,7 +1714,7 @@ public final class Matrix implements Serializable {
      * @param B Right-hand side matrix
      * @return Solution matrix X
      */
-    private static Matrix robustLeftDivide(Matrix A, Matrix B) {
+    public static Matrix robustLeftDivide(Matrix A, Matrix B) {
         try {
             // Try standard solver first
             return A.leftMatrixDivide(B);
@@ -2580,8 +2644,10 @@ public final class Matrix implements Serializable {
         Matrix res;
         if (tempRes instanceof SparseMatrix) {
             res = new Matrix(((SparseMatrix) tempRes).getData());
+        } else if (tempRes instanceof DenseMatrix) {
+            res = new Matrix(((DenseMatrix) tempRes).getData());
         } else {
-            throw new UnsupportedOperationException("Non-sparse matrix results not yet supported");
+            throw new UnsupportedOperationException("Unsupported matrix result type: " + tempRes.getClass().getName());
         }
 
         if (val == 0) {
@@ -3410,8 +3476,10 @@ public final class Matrix implements Serializable {
         BaseMatrix tempRes = delegate.findNonNegative();
         if (tempRes instanceof SparseMatrix) {
             return new Matrix(((SparseMatrix) tempRes).getData());
+        } else if (tempRes instanceof DenseMatrix) {
+            return new Matrix(((DenseMatrix) tempRes).getData());
         } else {
-            throw new UnsupportedOperationException("Non-sparse matrix results not yet supported");
+            throw new UnsupportedOperationException("Unsupported matrix result type: " + tempRes.getClass().getName());
         }
     }
 
@@ -3530,6 +3598,9 @@ public final class Matrix implements Serializable {
      * @return value at (i, j)
      */
     public double get(int i, int j) {
+        if (delegate instanceof DenseMatrix) {
+            return delegate.get(i, j);
+        }
         return getData().get(i, j);
     }
 
@@ -3549,12 +3620,18 @@ public final class Matrix implements Serializable {
             if (idx >= totalElements) {
                 throw new RuntimeException("Index out of matrix");
             }
-            
+
             // For row vector (1 x n), access as (0, idx)
             // For column vector (m x 1), access as (idx, 0)
             if (this.getNumRows() == 1) {
+                if (delegate instanceof DenseMatrix) {
+                    return delegate.get(0, idx);
+                }
                 return getData().get(0, idx);
             } else {
+                if (delegate instanceof DenseMatrix) {
+                    return delegate.get(idx, 0);
+                }
                 return getData().get(idx, 0);
             }
         } else {
@@ -3562,10 +3639,13 @@ public final class Matrix implements Serializable {
             if (idx >= this.getNumCols() * this.getNumRows()) {
                 throw new RuntimeException("Index out of matrix");
             }
-            
+
             int row = idx % this.getNumRows();
             int col = idx / this.getNumRows();
-            
+
+            if (delegate instanceof DenseMatrix) {
+                return delegate.get(row, col);
+            }
             return getData().get(row, col);
         }
     }
@@ -3613,11 +3693,13 @@ public final class Matrix implements Serializable {
      */
     public Matrix getColumn(int j) {
         int numRows = this.getNumRows();
-        double[] colData = new double[numRows];
+        // Build column data as dense, then convert to sparse efficiently
+        DMatrixRMaj dense = new DMatrixRMaj(numRows, 1);
         for (int i = 0; i < numRows; i++) {
-            colData[i] = getData().get(i, j);
+            dense.set(i, 0, this.get(i, j));
         }
-        return new Matrix(colData);
+        // Convert dense to sparse in one shot (O(n), not O(n^2) like element-by-element CSC insertion)
+        return new Matrix(DConvertMatrixStruct.convert(dense, (DMatrixSparseCSC) null, 0.0));
     }
 
     // Additional delegation methods for Matrix functionality
@@ -5405,9 +5487,13 @@ public final class Matrix implements Serializable {
      * @param val value to set
      */
     public void set(int row, int col, double val) {
-        getData().set(row, col, val);
-        if (val == 0)
-            ((DMatrixSparseCSC) getData()).remove(row, col); // maintain sparsity
+        if (delegate instanceof DenseMatrix) {
+            delegate.set(row, col, val);
+        } else {
+            getData().set(row, col, val);
+            if (val == 0)
+                ((DMatrixSparseCSC) getData()).remove(row, col); // maintain sparsity
+        }
     }
 
     /**
@@ -5419,14 +5505,24 @@ public final class Matrix implements Serializable {
      * @param val value to set
      */
     public void set(int row, int col, int val) {
-        if (val == Integer.MAX_VALUE) {
-            getData().set(row, col, Inf);
-        } else if (val == Integer.MIN_VALUE) {
-            getData().set(row, col, NegInf);
+        if (delegate instanceof DenseMatrix) {
+            if (val == Integer.MAX_VALUE) {
+                delegate.set(row, col, Inf);
+            } else if (val == Integer.MIN_VALUE) {
+                delegate.set(row, col, NegInf);
+            } else {
+                delegate.set(row, col, val);
+            }
         } else {
-            getData().set(row, col, val);
-            if (val == 0)
-                ((DMatrixSparseCSC) getData()).remove(row, col);
+            if (val == Integer.MAX_VALUE) {
+                getData().set(row, col, Inf);
+            } else if (val == Integer.MIN_VALUE) {
+                getData().set(row, col, NegInf);
+            } else {
+                getData().set(row, col, val);
+                if (val == 0)
+                    ((DMatrixSparseCSC) getData()).remove(row, col);
+            }
         }
     }
 

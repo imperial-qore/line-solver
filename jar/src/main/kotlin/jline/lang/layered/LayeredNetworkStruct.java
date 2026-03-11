@@ -127,6 +127,10 @@ public class LayeredNetworkStruct implements Copyable {
 
     public Matrix isfunction;
 
+    // Fan-out matrix: fanout(source_task_idx, dest_task_idx) = fan-out value
+    // Used for replication load distribution (fork-join semantics)
+    public Matrix fanout;
+
     // Setup time distribution and primitive representations
     @Deprecated // Use setuptime_type, setuptime_params, setuptime_mean, setuptime_scv, setuptime_proc instead
     public Map<Integer, Distribution> setuptime;

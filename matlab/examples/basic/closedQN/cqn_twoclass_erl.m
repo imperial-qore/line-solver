@@ -40,7 +40,7 @@ simoptions.verbose = true;
 simoptions.seed = 23000;
 solver = {};
 solver{end+1} = JMT(model, simoptions);
-solver{end+1} = DES(model, simoptions);
+solver{end+1} = LDES(model, simoptions);
 for s=1:length(solver)
     fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));    
     AvgTable{s} = solver{s}.getAvgTable();

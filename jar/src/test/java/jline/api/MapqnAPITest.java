@@ -10,6 +10,7 @@ import jline.api.mapqn.*;
 import jline.util.matrix.Matrix;
 
 import java.util.Arrays;
+import static jline.TestTools.*;
 
 /**
  * Test class for MAPQN API functionality.
@@ -26,17 +27,7 @@ import java.util.Arrays;
  */
 public class MapqnAPITest {
 
-    // Maximum allowed MAPE for bounds to be considered valid
-    private static final double MAX_MAPE = 0.20;  // 20% max error for bounds
-
-    // Maximum allowed gap between upper and lower bounds
-    private static final double MAX_BOUND_GAP = 0.50;  // 50% max gap
-
-    // Tolerance for comparing with MATLAB reference values
-    private static final double MATLAB_TOLERANCE = 0.01;  // 1% tolerance
-
-    // Stricter tolerance for exact results (symmetric networks)
-    private static final double EXACT_TOLERANCE = 1e-6;
+    // VERY_COARSE_TOL and VERY_COARSE_TOL: use VERY_COARSE_TOL (10%) from TestTools
 
     /**
      * Test QR Bounds for BAS (Blocking After Service) network.
@@ -50,7 +41,6 @@ public class MapqnAPITest {
     public void testQR_BAS() {
         // Reference value from MATLAB qrf_bas.m
         final double EXPECTED_U = 2.0 / 3.0;  // 0.666667
-        final double TOLERANCE = 0.01;  // 1% tolerance
 
         int M = 2;
         int N = 2;
@@ -114,9 +104,9 @@ public class MapqnAPITest {
                   String.format("Lower bound (%.4f) should not exceed upper bound (%.4f)", ULB, UUB));
 
         // Validate against MATLAB reference: LB and UB should both be close to 2/3
-        assertEquals(EXPECTED_U, ULB, TOLERANCE,
+        assertEquals(EXPECTED_U, ULB, COARSE_TOL,
                     String.format("Lower bound (%.6f) should match MATLAB reference (%.6f)", ULB, EXPECTED_U));
-        assertEquals(EXPECTED_U, UUB, TOLERANCE,
+        assertEquals(EXPECTED_U, UUB, COARSE_TOL,
                     String.format("Upper bound (%.6f) should match MATLAB reference (%.6f)", UUB, EXPECTED_U));
     }
 
@@ -132,7 +122,6 @@ public class MapqnAPITest {
     public void testQR_RSRD() {
         // Reference value from MATLAB qrf_rsrd.m
         final double EXPECTED_U = 2.0 / 3.0;  // 0.666667
-        final double TOLERANCE = 0.01;  // 1% tolerance
 
         int M = 2;
         int N = 2;
@@ -186,9 +175,9 @@ public class MapqnAPITest {
                   String.format("Lower bound (%.4f) should not exceed upper bound (%.4f)", ULB, UUB));
 
         // Validate against MATLAB reference: LB and UB should both be close to 2/3
-        assertEquals(EXPECTED_U, ULB, TOLERANCE,
+        assertEquals(EXPECTED_U, ULB, COARSE_TOL,
                     String.format("Lower bound (%.6f) should match MATLAB reference (%.6f)", ULB, EXPECTED_U));
-        assertEquals(EXPECTED_U, UUB, TOLERANCE,
+        assertEquals(EXPECTED_U, UUB, COARSE_TOL,
                     String.format("Upper bound (%.6f) should match MATLAB reference (%.6f)", UUB, EXPECTED_U));
     }
 
@@ -245,7 +234,7 @@ public class MapqnAPITest {
             for (int j = 0; j < M; j++) {
                 rowSum += r.get(i, j);
             }
-            assertEquals(1.0, rowSum, 1e-6,
+            assertEquals(1.0, rowSum, LOOSE_FINE_TOL,
                         String.format("Routing probabilities from queue %d should sum to 1", i + 1));
         }
     }
@@ -376,7 +365,7 @@ public class MapqnAPITest {
             for (int j = 0; j < M; j++) {
                 rowSum += r.get(i, j);
             }
-            assertEquals(1.0, rowSum, 1e-6,
+            assertEquals(1.0, rowSum, LOOSE_FINE_TOL,
                         String.format("Routing probabilities from queue %d should sum to 1", i + 1));
         }
     }
@@ -562,15 +551,15 @@ public class MapqnAPITest {
         assertFalse(Double.isNaN(basMin.getObjectiveValue()), "BAS min should converge");
 
         // Both should match expected value
-        assertEquals(EXPECTED_U, rsrdMin.getObjectiveValue(), MATLAB_TOLERANCE,
+        assertEquals(EXPECTED_U, rsrdMin.getObjectiveValue(), COARSE_TOL,
             "RSRD should match expected");
-        assertEquals(EXPECTED_U, basMin.getObjectiveValue(), MATLAB_TOLERANCE,
+        assertEquals(EXPECTED_U, basMin.getObjectiveValue(), COARSE_TOL,
             "BAS should match expected");
 
         // Both methods should give consistent results
-        assertEquals(rsrdMin.getObjectiveValue(), basMin.getObjectiveValue(), MATLAB_TOLERANCE,
+        assertEquals(rsrdMin.getObjectiveValue(), basMin.getObjectiveValue(), COARSE_TOL,
             "RSRD and BAS should give consistent lower bounds");
-        assertEquals(rsrdMax.getObjectiveValue(), basMax.getObjectiveValue(), MATLAB_TOLERANCE,
+        assertEquals(rsrdMax.getObjectiveValue(), basMax.getObjectiveValue(), COARSE_TOL,
             "RSRD and BAS should give consistent upper bounds");
     }
 
@@ -649,9 +638,9 @@ public class MapqnAPITest {
         assertTrue(lineLB <= lineUB + 1e-6, "Lower bound should not exceed upper bound");
 
         // Validate against MATLAB reference (with tolerance for numerical differences)
-        assertEquals(MATLAB_LB, lineLB, MATLAB_TOLERANCE,
+        assertEquals(MATLAB_LB, lineLB, COARSE_TOL,
             String.format("RSRD LB (%.6f) should match MATLAB reference (%.6f)", lineLB, MATLAB_LB));
-        assertEquals(MATLAB_UB, lineUB, MATLAB_TOLERANCE,
+        assertEquals(MATLAB_UB, lineUB, COARSE_TOL,
             String.format("RSRD UB (%.6f) should match MATLAB reference (%.6f)", lineUB, MATLAB_UB));
     }
 
@@ -809,9 +798,9 @@ public class MapqnAPITest {
         assertTrue(lineLB <= lineUB + 1e-6, "Lower bound should not exceed upper bound");
 
         // Validate against MATLAB reference
-        assertEquals(MATLAB_LB, lineLB, MATLAB_TOLERANCE,
+        assertEquals(MATLAB_LB, lineLB, COARSE_TOL,
             String.format("BAS LB (%.6f) should match MATLAB reference (%.6f)", lineLB, MATLAB_LB));
-        assertEquals(MATLAB_UB, lineUB, MATLAB_TOLERANCE,
+        assertEquals(MATLAB_UB, lineUB, COARSE_TOL,
             String.format("BAS UB (%.6f) should match MATLAB reference (%.6f)", lineUB, MATLAB_UB));
     }
 }

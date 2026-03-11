@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "line-solver"
-version = "3.0.3"
+version = "3.0.5.0"
 description = "Open source queueing theory solvers"
 authors = [
     "Giuliano Casale <g.casale@imperial.ac.uk>"
@@ -8,19 +8,22 @@ authors = [
 license = "BSD-3"
 readme = "README.md"
 homepage = "https://line-solver.sourceforge.net"
-packages = [{ include = "line_solver" }]
+packages = [
+    { include = "line_solver" },
+    { include = "examples", to = "line_solver" },
+]
 
 include = [
-    "examples/**",
-    "gettingstarted/**",
-    "AUTHORS",
-    "LICENSE",
-    "README.md",
-    "mm1.py",
-    "mm1.ipynb",
-    "requirements.txt"
+    { path = "gettingstarted/**", format = ["sdist", "wheel"] },
+    { path = "AUTHORS", format = ["sdist", "wheel"] },
+    { path = "LICENSE", format = ["sdist", "wheel"] },
+    { path = "README.md", format = ["sdist", "wheel"] },
+    { path = "mm1.py", format = ["sdist", "wheel"] },
+    { path = "mm1.ipynb", format = ["sdist", "wheel"] },
+    { path = "requirements.txt", format = ["sdist", "wheel"] },
+    { path = "line_solver/bin/ldes", format = ["sdist", "wheel"] },
 ]
-exclude = ["tests/**", "**/tests/**"]
+exclude = ["tests/**", "**/tests/**", "line_solver/bin/.gitignore"]
 
 [tool.poetry.dependencies]
 python = ">=3.11"
@@ -30,15 +33,15 @@ pandas = "^2.3.2"
 scipy = "^1.16.2"
 enum-tools = "^0.13.0"
 websockets = "^12.0"
-simpy = "^4.0.0"
 
 # Optional dependencies for native backend
 torch = { version = ">=2.0.0", optional = true }
-numba = { version = ">=0.57.0", optional = true }
+sympy = { version = ">=1.10", optional = true }
 
 [tool.poetry.extras]
-native = ["torch", "numba"]
+native = ["torch"]
 gpu = ["torch"]
+symbolic = ["sympy"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.2"

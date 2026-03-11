@@ -101,13 +101,8 @@ class DecSourceAlgorithm(MAMAlgorithm):
         runtime = time.time() - start_time
 
         # Convert handler result to MAMResult
-        M = handler_result.Q.shape[0]
-        K = handler_result.Q.shape[1]
-
-        # TN should be (M x K) for station-class throughputs
-        TN = handler_result.T
-        if TN.ndim == 1:
-            TN = TN.reshape(1, -1)
+        # TN must be station-level (M x K) for getAvgNode and getAvg compatibility
+        TN = handler_result.T if handler_result.T is not None else np.zeros_like(handler_result.Q)
 
         return MAMResult(
             QN=handler_result.Q,

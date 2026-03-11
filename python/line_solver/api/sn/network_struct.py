@@ -316,6 +316,10 @@ class NetworkStruct:
     issignal: Optional[np.ndarray] = None  # (K, 1) - is signal class
     signaltype: Optional[List] = None  # signal types
     syncreply: Optional[np.ndarray] = None  # (K, 1) - sync reply class mapping
+    immfeed: Optional[np.ndarray] = None  # (M, K) - immediate feedback enabled per station/class
+    signalRemovalDist: Optional[List] = None  # removal distribution per signal class
+    signalRemovalPolicy: Optional[List] = None  # removal policy per signal class
+    isCatastrophe: Optional[np.ndarray] = None  # (K, 1) - is catastrophe signal class
 
     # Connectivity
     connmatrix: Optional[np.ndarray] = None  # (N, N) connection matrix

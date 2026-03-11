@@ -214,6 +214,22 @@ public class LayeredExamples {
     }
 
     /**
+     * Sock Shop microservice layered network (lqn_sockshop).
+     * <p>
+     * Demonstrates a multi-tier microservice architecture with
+     * processor replication, fan-in/fan-out, and PS scheduling.
+     */
+    public static void lqn_sockshop() throws Exception {
+        LayeredNetwork model = LayeredModel.lqn_sockshop();
+
+        LN solverLN = new LN(model, SolverType.MVA);
+        AvgTable avgTable = solverLN.getAvgTable();
+        avgTable.print();
+
+        pauseForUser();
+    }
+
+    /**
      * Main method demonstrating selected layered network examples.
      */
     public static void main(String[] args) throws Exception {
@@ -272,7 +288,14 @@ public class LayeredExamples {
             System.err.println("lqn_ofbiz failed: " + e.getMessage());
             e.printStackTrace();
         }
-        
+
+        try {
+            lqn_sockshop();
+        } catch (Exception e) {
+            System.err.println("lqn_sockshop failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+
         scanner.close();
     }
 }

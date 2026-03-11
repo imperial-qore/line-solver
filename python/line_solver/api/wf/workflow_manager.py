@@ -397,7 +397,7 @@ class WorkflowManager:
         Create solver based on name.
 
         Args:
-            solver_name: Name of solver ('mva', 'ctmc', 'fld', 'ssa', 'jmt', 'nc', 'mam', 'des', 'auto')
+            solver_name: Name of solver ('mva', 'ctmc', 'fld', 'ssa', 'jmt', 'nc', 'mam', 'ldes', 'auto')
 
         Returns:
             Solver instance or None if network not set or solver not found
@@ -412,7 +412,7 @@ class WorkflowManager:
         try:
             from ...solvers import (
                 SolverMVA, SolverCTMC, SolverFLD, SolverSSA, SolverJMT,
-                SolverNC, SolverMAM, SolverDES, SolverAuto
+                SolverNC, SolverMAM, SolverLDES, SolverAuto
             )
 
             solver_map = {
@@ -424,7 +424,7 @@ class WorkflowManager:
                 'jmt': SolverJMT,
                 'nc': SolverNC,
                 'mam': SolverMAM,
-                'des': SolverDES,
+                'ldes': SolverLDES,
                 'auto': SolverAuto,
                 'line': SolverAuto,
             }

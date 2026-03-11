@@ -39,7 +39,7 @@ for i=1:sn.nstations
 end
 
 if queueStations > 1
-    line_error(mfilename,'getProb is currently only supported for single queue models in SolverMAM.\nFor networks, this method is not yet implemented.');
+    line_error(mfilename,'getProb is not supported for networks with multiple queues in SolverMAM. The MAM solver uses QBD (quasi-birth-death) analysis, which is fundamentally a single-queue method. Use SolverCTMC or SolverSSA for state probabilities in networks with multiple queues.');
 end
 
 % Check if the model has only one queue

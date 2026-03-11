@@ -35,7 +35,7 @@ solver{end+1} = MVA(model,'exact');
 solver{end+1} = NC(model,'exact');
 solver{end+1} = MAM(model);
 solver{end+1} = LINE(model);
-solver{end+1} = DES(model,'seed',23000,'verbose',true,'samples',5e5); % same time of JMT, 100x samples
+solver{end+1} = LDES(model,'seed',23000,'verbose',true,'samples',5e5); % same time of JMT, 100x samples
 for s=1:length(solver)
     fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));
     AvgTable{s} = solver{s}.getAvgTable();

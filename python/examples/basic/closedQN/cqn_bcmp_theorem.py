@@ -10,8 +10,8 @@ This example demonstrates:
 
 from line_solver import *
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
+
+def cqn_bcmp_theorem():
 
     c = 1
 
@@ -83,6 +83,13 @@ if __name__ == "__main__":
     P[jobclass[0], jobclass[0]] = Network.serial_routing(node)
     P[jobclass[1], jobclass[1]] = Network.serial_routing(node)
     lcfspr_model.link(P)
+
+    return ps_model, fcfs_model, lcfspr_model
+
+
+if __name__ == '__main__':
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+    ps_model, fcfs_model, lcfspr_model = cqn_bcmp_theorem()
 
     # Solve all three models
     solver = np.array([], dtype=object)

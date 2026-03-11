@@ -17,10 +17,17 @@ if nargin<2
     hasSCVChanged = true;
 elseif nargin==2
     classSet = 1:K;
-    rates = self.sn.rates;
-    scv = self.sn.scv;
-    rates_orig = self.sn.rates;
-    scv_orig = self.sn.scv;
+    if isempty(self.sn) || isempty(self.sn.rates)
+        rates = zeros(M,K);
+        scv = nan(M,K);
+        hasRateChanged = true;
+        hasSCVChanged = true;
+    else
+        rates = self.sn.rates;
+        scv = self.sn.scv;
+        rates_orig = self.sn.rates;
+        scv_orig = self.sn.scv;
+    end
 elseif nargin==3 % this is used only to update self.sn
     % we are only updating selected stations and classes so use the
     % existing ones for the others

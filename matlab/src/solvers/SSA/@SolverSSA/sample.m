@@ -1,4 +1,4 @@
-function sampleNodeState = sample(self, node, numSamples, markActivePassive)
+function sampleNodeState = sample(self, node, numEvents, markActivePassive)
 % TRANNODESTATE = SAMPLE(NODE, NUMSAMPLES, MARKACTIVEPASSIVE)
 % Returns a sample path simulation trace showing state evolution at a node
 %
@@ -14,7 +14,7 @@ function sampleNodeState = sample(self, node, numSamples, markActivePassive)
 %
 % @param self SolverSSA instance
 % @param node Queue or node object (or node index as integer) to sample
-% @param numSamples (optional) Number of events to simulate (default: solver's samples option)
+% @param numEvents (optional) Number of events to simulate (default: solver's samples option)
 %                    Use more samples for longer traces and better statistics.
 % @param markActivePassive (optional) Boolean flag to distinguish active vs passive events
 %                          - false (default): Mixed event list
@@ -28,7 +28,7 @@ function sampleNodeState = sample(self, node, numSamples, markActivePassive)
 %         - sampleNodeState.event: Cell array of event information at each time
 %         - sampleNodeState.isaggregate: Boolean false (phase-detailed sample)
 %         - sampleNodeState.nodeIndex: Index of the sampled node
-%         - sampleNodeState.numSamples: Number of events generated
+%         - sampleNodeState.numEvents: Number of events generated
 %
 % @note Phase information allows detailed analysis of service behavior including
 %       time spent in each phase of phase-type distributions. For simpler class-only
@@ -78,10 +78,10 @@ if nargin<4
     markActivePassive = false;
 end
 
-if nargin>=3 %exist('numSamples','var')
-    options.samples = numSamples;
+if nargin>=3 %exist('numEvents','var')
+    options.samples = numEvents;
 else
-    numSamples = options.samples;
+    numEvents = options.samples;
 end
 switch options.method
     case {'default','serial'}

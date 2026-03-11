@@ -7,7 +7,13 @@ function s = sumfinite(v, dim)
 
 v(~isfinite(v)) = 0;
 if nargin>1
-    s = sum(v,dim);
+    if dim == 1
+        s = sum(v, 1);
+    elseif dim == 2
+        s = sum(v, 2);
+    else
+        s = sum(v);
+    end
 else
     s = sum(v);
 end

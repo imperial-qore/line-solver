@@ -7,6 +7,7 @@ package jline.lang;
 
 import jline.lang.constant.JobClassType;
 import jline.lang.constant.JoinStrategy;
+import jline.lang.constant.RoutingStrategy;
 import jline.lang.nodes.Join;
 import jline.lang.nodes.Node;
 import jline.lang.nodes.Station;

@@ -5,7 +5,11 @@ from line_solver import *
 
 def gallery_mapm1(map=None, seed=23000):
     if map is None:
-        map = MAP.rand(seed=seed)
+        D0 = [[-0.6984901916396979, 0.45234650636128054],
+              [0.34690024319398277, -0.8194057961021199]]
+        D1 = [[0.2125067546435463, 0.033636930634871165],
+              [0.4441520099524867, 0.028353542955650513]]
+        map = MAP(D0, D1)
 
     model = Network('MAP/M/1')
 

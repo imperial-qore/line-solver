@@ -9,8 +9,8 @@ This example demonstrates:
 
 from line_solver import *
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
+
+def fj_basic_open():
 
     model = Network('model')
 
@@ -36,6 +36,12 @@ if __name__ == "__main__":
     P.set(jobclass1, jobclass1, join, sink, 1.0)
 
     model.link(P)
+    return model
+
+
+if __name__ == '__main__':
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+    model = fj_basic_open()
 
     solver = np.array([], dtype=object)
     solver = np.append(solver, JMT(model, seed=23000))

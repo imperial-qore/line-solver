@@ -32,9 +32,21 @@ if size(lqn.iscaller,2) > 0 % ignore models without callers
                 % key think time update formula for LQNs, this accounts that in LINE self.utilization is scaled in [0,1] for all queueing stations irrespectively of the number of servers
                 self.thinkt(tidx) = max(GlobalConstants.Zero, njobs*abs(1-self.util(tidx)) / self.tput(tidx) - tidx_thinktime);
             end
+            % Recover from Inf/NaN: snap back to previous iteration's value
+            if it > 1 && ~isnan(self.thinkt_prev(tidx))
+                if isinf(self.thinkt(tidx)) || isnan(self.thinkt(tidx))
+                    self.thinkt(tidx) = self.thinkt_prev(tidx);
+                end
+            end
             % Apply under-relaxation to think time if enabled
             omega = self.relax_omega;
             if omega < 1.0 && it > 1 && ~isnan(self.thinkt_prev(tidx))
+                rawT = self.thinkt(tidx);
+                prevT = self.thinkt_prev(tidx);
+                % If recovering from crash (prev much larger than raw), snap to raw
+                if prevT > 10 * rawT && rawT > GlobalConstants.FineTol
+                    self.thinkt_prev(tidx) = rawT; % reset prev to allow recovery
+                end
                 self.thinkt(tidx) = omega * self.thinkt(tidx) + (1 - omega) * self.thinkt_prev(tidx);
             end
             self.thinkt_prev(tidx) = self.thinkt(tidx);

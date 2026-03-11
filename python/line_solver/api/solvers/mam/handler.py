@@ -108,22 +108,45 @@ def _get_visits(sn: NetworkStruct) -> np.ndarray:
 
     if sn.visits is not None and len(sn.visits) > 0:
         # Get station to stateful mapping
-        stationToStateful = sn.stationToStateful
+        stationToStateful = getattr(sn, 'stationToStateful', None)
         if stationToStateful is None or len(stationToStateful) == 0:
             stationToStateful = np.arange(M)
         else:
             stationToStateful = np.asarray(stationToStateful).flatten()
 
+        visit_matrices = []
+        if isinstance(sn.visits, dict):
+            visit_matrices = list(sn.visits.values())
+        elif isinstance(sn.visits, np.ndarray):
+            if sn.visits.dtype == object:
+                visit_matrices = [entry for entry in sn.visits.flat if entry is not None]
+            else:
+                visit_matrices = [sn.visits]
+        elif isinstance(sn.visits, (list, tuple)):
+            visit_matrices = list(sn.visits)
+        else:
+            visit_matrices = [sn.visits]
+
         # Sum visits across all chains
-        for c, visit_matrix in sn.visits.items():
-            if visit_matrix is not None:
-                v = np.asarray(visit_matrix)
-                # Extract station rows using stationToStateful mapping
-                for ist in range(M):
-                    if ist < len(stationToStateful):
-                        isf = int(stationToStateful[ist])
-                        if isf < v.shape[0]:
-                            V[ist, :] += v[isf, :]
+        for visit_matrix in visit_matrices:
+            if visit_matrix is None:
+                continue
+
+            v = np.asarray(visit_matrix)
+            if v.ndim == 1:
+                v = v.reshape((-1, 1))
+
+            # Extract station rows using stationToStateful mapping when available.
+            for ist in range(M):
+                row_idx = ist
+                if ist < len(stationToStateful):
+                    mapped_idx = int(stationToStateful[ist])
+                    if 0 <= mapped_idx < v.shape[0]:
+                        row_idx = mapped_idx
+
+                if 0 <= row_idx < v.shape[0]:
+                    cols = min(K, v.shape[1])
+                    V[ist, :cols] += v[row_idx, :cols]
     else:
         # Default: equal visits
         V = np.ones((M, K))
@@ -705,8 +728,57 @@ def solver_mam_basic(
 
     M = sn.nstations
     K = sn.nclasses
-    C = sn.nchains
-    N = sn.njobs.flatten() if sn.njobs is not None else np.zeros(K)
+    C = max(int(getattr(sn, 'nchains', K) or K), K)
+    N = np.asarray(sn.njobs).flatten() if sn.njobs is not None else np.array([])
+    if N.size == 0:
+        N = np.full(K, np.inf)
+    elif N.size < K:
+        N = np.pad(N, (0, K - N.size), constant_values=np.inf)
+    sn.njobs = N
+
+    inchain_map = getattr(sn, 'inchain', None)
+    if not isinstance(inchain_map, dict) or len(inchain_map) == 0:
+        inchain_map = {c: np.array([c], dtype=int) for c in range(K)}
+    sn.inchain = inchain_map
+
+    refstat = np.asarray(getattr(sn, 'refstat', np.array([]))).flatten()
+    if refstat.size < K:
+        refstat = np.pad(refstat, (0, K - refstat.size), constant_values=0)
+    sn.refstat = refstat
+
+    refclass = np.asarray(getattr(sn, 'refclass', np.array([]))).flatten()
+    if refclass.size < C:
+        pad_values = np.arange(refclass.size, C, dtype=int)
+        refclass = np.concatenate([refclass, pad_values]) if refclass.size > 0 else np.arange(C, dtype=int)
+    sn.refclass = refclass
+
+    station_to_stateful = np.asarray(getattr(sn, 'stationToStateful', np.array([]))).flatten()
+    if station_to_stateful.size < M:
+        station_to_stateful = np.arange(M, dtype=int)
+    sn.stationToStateful = station_to_stateful
+
+    stateful_to_station = np.asarray(getattr(sn, 'statefulToStation', np.array([]))).flatten()
+    if stateful_to_station.size < M:
+        stateful_to_station = np.arange(M, dtype=int)
+    sn.statefulToStation = stateful_to_station
+
+    visits_obj = getattr(sn, 'visits', None)
+    if isinstance(visits_obj, dict):
+        normalized_visits = visits_obj
+    elif isinstance(visits_obj, np.ndarray):
+        if visits_obj.dtype == object:
+            normalized_visits = {
+                idx: visit for idx, visit in enumerate(visits_obj.flat) if visit is not None
+            }
+        else:
+            normalized_visits = {0: visits_obj}
+    elif isinstance(visits_obj, (list, tuple)):
+        normalized_visits = {idx: visit for idx, visit in enumerate(visits_obj) if visit is not None}
+    elif visits_obj is None:
+        normalized_visits = {}
+    else:
+        normalized_visits = {0: visits_obj}
+    sn.visits = normalized_visits
 
     # Get network parameters
     V = _get_visits(sn)
@@ -738,19 +810,23 @@ def solver_mam_basic(
 
     # Get arrival rates for open chains and initial estimates for closed chains
     for c in range(C):
-        if c not in sn.inchain:
+        if c not in inchain_map:
             continue
-        inchain = sn.inchain[c].flatten().astype(int)
+        inchain = np.asarray(inchain_map[c]).flatten().astype(int)
 
         # Check if chain is open
         is_open_chain = np.any(np.isinf(N[inchain]))
 
         if is_open_chain:
-            # Open chain: get arrival rate from source (refstat)
-            refstat_c = int(sn.refstat.flatten()[inchain[0]]) if sn.refstat is not None else 0
-
-            if hasattr(sn, 'rates') and sn.rates is not None:
-                rates_at_source = sn.rates[refstat_c, inchain]
+            # Open chain: prefer explicit external arrival rates when available.
+            if hasattr(sn, 'lambda_arr') and sn.lambda_arr is not None:
+                lambda_arr = np.asarray(sn.lambda_arr).flatten()
+                finite_rates = lambda_arr[inchain] if lambda_arr.size > np.max(inchain) else np.array([])
+                finite_rates = finite_rates[np.isfinite(finite_rates)]
+                lambdas[c] = np.sum(finite_rates) if len(finite_rates) > 0 else 0.0
+            elif hasattr(sn, 'rates') and sn.rates is not None:
+                refstat_c = int(sn.refstat.flatten()[inchain[0]]) if sn.refstat is not None and len(np.asarray(sn.refstat).flatten()) > inchain[0] else 0
+                rates_at_source = np.asarray(sn.rates)[refstat_c, inchain]
                 finite_rates = rates_at_source[np.isfinite(rates_at_source)]
                 lambdas[c] = np.sum(finite_rates) if len(finite_rates) > 0 else 0.0
         else:
@@ -764,15 +840,19 @@ def solver_mam_basic(
 
     # For open chains, set throughputs at source
     for c in range(C):
-        if c not in sn.inchain:
+        if c not in inchain_map:
             continue
-        inchain = sn.inchain[c].flatten().astype(int)
+        inchain = np.asarray(inchain_map[c]).flatten().astype(int)
         is_open_chain = np.any(np.isinf(N[inchain]))
 
         if is_open_chain:
-            refstat_c = int(sn.refstat.flatten()[inchain[0]]) if sn.refstat is not None else 0
-            if hasattr(sn, 'rates') and sn.rates is not None:
-                TN[refstat_c, inchain] = sn.rates[refstat_c, inchain]
+            if hasattr(sn, 'lambda_arr') and sn.lambda_arr is not None:
+                lambda_arr = np.asarray(sn.lambda_arr).flatten()
+                if lambda_arr.size > np.max(inchain):
+                    TN[0, inchain] = lambda_arr[inchain]
+            elif hasattr(sn, 'rates') and sn.rates is not None:
+                refstat_c = int(sn.refstat.flatten()[inchain[0]]) if sn.refstat is not None and len(np.asarray(sn.refstat).flatten()) > inchain[0] else 0
+                TN[refstat_c, inchain] = np.asarray(sn.rates)[refstat_c, inchain]
 
     # Identify stations with finite servers (for utilization check)
     sd = np.isfinite(nservers)
@@ -792,9 +872,9 @@ def solver_mam_basic(
         else:
             # Adjust lambda for closed chains based on queue lengths
             for c in range(C):
-                if c not in sn.inchain:
+                if c not in inchain_map:
                     continue
-                inchain = sn.inchain[c].flatten().astype(int)
+                inchain = np.asarray(inchain_map[c]).flatten().astype(int)
                 is_open_chain = np.any(np.isinf(N[inchain]))
 
                 if not is_open_chain:
@@ -812,9 +892,9 @@ def solver_mam_basic(
 
         # Update throughputs: TN[m, k] = V[m, k] * lambda[c] for k in chain c
         for c in range(C):
-            if c not in sn.inchain:
+            if c not in inchain_map:
                 continue
-            inchain = sn.inchain[c].flatten().astype(int)
+            inchain = np.asarray(inchain_map[c]).flatten().astype(int)
             for m in range(M):
                 TN[m, inchain] = V[m, inchain] * lambdas[c]
 
@@ -823,9 +903,9 @@ def solver_mam_basic(
             if _is_source_station(sn, ist):
                 # Source station: throughput equals arrival rate, no queue
                 for c in range(C):
-                    if c not in sn.inchain:
+                    if c not in inchain_map:
                         continue
-                    inchain = sn.inchain[c].flatten().astype(int)
+                    inchain = np.asarray(inchain_map[c]).flatten().astype(int)
                     is_open_chain = np.any(np.isinf(N[inchain]))
                     if is_open_chain and sn.rates is not None:
                         TN[ist, inchain] = sn.rates[ist, inchain]
@@ -838,9 +918,9 @@ def solver_mam_basic(
                 # Delay station (infinite server)
                 # MATLAB: TN = lambda*V, UN = S*TN, QN = TN*S*V, RN = QN/TN
                 for c in range(C):
-                    if c not in sn.inchain:
+                    if c not in inchain_map:
                         continue
-                    inchain = sn.inchain[c].flatten().astype(int)
+                    inchain = np.asarray(inchain_map[c]).flatten().astype(int)
                     for k in inchain:
                         # Skip classes that don't visit this station
                         if V[ist, k] < FINE_TOL:
@@ -867,9 +947,9 @@ def solver_mam_basic(
                 # Note: MATLAB ALWAYS uses the capped formula (no special saturated case)
                 # and relies on second-pass rescaling to get correct queue lengths
                 for c in range(C):
-                    if c not in sn.inchain:
+                    if c not in inchain_map:
                         continue
-                    inchain = sn.inchain[c].flatten().astype(int)
+                    inchain = np.asarray(inchain_map[c]).flatten().astype(int)
                     for k in inchain:
                         # Skip classes that don't visit or have no valid service
                         if V[ist, k] < FINE_TOL or not np.isfinite(S[ist, k]):
@@ -886,9 +966,9 @@ def solver_mam_basic(
                 # The second pass will rescale QN to match population.
                 Uden = min(1.0 - FINE_TOL, np.sum(UN[ist, :]))
                 for c in range(C):
-                    if c not in sn.inchain:
+                    if c not in inchain_map:
                         continue
-                    inchain = sn.inchain[c].flatten().astype(int)
+                    inchain = np.asarray(inchain_map[c]).flatten().astype(int)
                     for k in inchain:
                         QN[ist, k] = UN[ist, k] / (1.0 - Uden)
                         RN[ist, k] = QN[ist, k] / TN[ist, k] if TN[ist, k] > FINE_TOL else 0.0
@@ -1012,9 +1092,9 @@ def solver_mam_basic(
     # the entire scaling to become NaN, which then triggers max(S, NaN) = S
     for _ in range(2):
         for c in range(C):
-            if c not in sn.inchain:
+            if c not in inchain_map:
                 continue
-            inchain = sn.inchain[c].flatten().astype(int)
+            inchain = np.asarray(inchain_map[c]).flatten().astype(int)
             Nc = np.sum(N[inchain])
 
             if np.isfinite(Nc) and Nc > 0:

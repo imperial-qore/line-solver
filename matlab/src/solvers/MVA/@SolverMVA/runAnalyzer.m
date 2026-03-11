@@ -25,6 +25,7 @@ iter = 0;
 
 switch options.lang
     case 'java'
+        line_debug(options, 'MVA: using lang=java, delegating to JLINE');
         sn = getStruct(self); % doesn't need initial state
         jmodel = LINE2JLINE(self.model);
         %M = jmodel.getNumberOfStatefulNodes;
@@ -55,6 +56,7 @@ switch options.lang
         self.result.Prob.logNormConstAggr = lG;
         return
     case 'matlab'
+        line_debug(options, 'MVA: using lang=matlab');
         sn = getStruct(self); % doesn't need initial state
         forkLoop = true;
         forkIter = 0;
@@ -66,12 +68,15 @@ switch options.lang
         while (forkLoop && forkIter < options.iter_max)
             if self.model.hasFork
                 forkIter = forkIter + 1;
+                line_debug(options, 'Fork-join iteration %d', forkIter);
                 if forkIter == 1
                     switch options.config.fork_join
                         case {'heidelberger-trivedi', 'ht'}
                             [nonfjmodel, fjclassmap, fjforkmap, fj_auxiliary_delays] = ModelAdapter.ht(self.model);
+                            line_debug(options, 'Fork-join method: heidelberger-trivedi');
                         case {'mmt', 'default', 'fjt'}
                             [nonfjmodel, fjclassmap, fjforkmap, fanout] = ModelAdapter.mmt(self.model, forkLambda);
+                            line_debug(options, 'Fork-join method: mmt');
                             [outer_forks, parent_forks] = ModelAdapter.sortForks(sn, fjforkmap, fjclassmap, nonfjmodel);
                     end
                 elseif ~strcmp(options.config.fork_join, 'heidelberger-trivedi') & ~strcmp(options.config.fork_join, 'ht')
@@ -90,11 +95,13 @@ switch options.lang
                     nonfjmodel.refreshRates();
                 end
                 sn = nonfjmodel.getStruct(false); % this ensures that we solve nonfjmodel instead of the original model
+                line_debug(options, 'Fork-join iter %d: rebuilt nonfjmodel struct (nstations=%d, nclasses=%d)', forkIter, sn.nstations, sn.nclasses);
                 % Convergence check: handle zero/NaN queue lengths from size mismatch and Immediate activities
                 qn_ratio = QN_1 ./ QN;
                 qn_ratio(isnan(qn_ratio)) = 1; % 0/0 = NaN → treat as converged (ratio=1)
                 qn_ratio(isinf(qn_ratio)) = 0; % x/0 = Inf → treat as not converged (ratio=0, error=1)
                 if isequal(size(QN_1), size(QN)) && max(abs(1 - qn_ratio(:))) < GlobalConstants.CoarseTol && (forkIter > 2)
+                    line_debug(options, 'Fork-join iter %d: converged (max ratio error < CoarseTol)', forkIter);
                     forkLoop = false;
                 else
                     if self.model.hasOpenClasses
@@ -109,6 +116,7 @@ switch options.lang
             else
                 forkLoop = false;
             end
+            line_debug(options, 'Product-form check: hasProductForm=%d (exact method requested)', self.model.hasProductFormSolution);
             if strcmp(options.method,'exact')  && ~self.model.hasProductFormSolution
                 line_error(mfilename,'The exact method requires the model to have a product-form solution. This model does not have one.\nYou can use Network.hasProductFormSolution() to check before running the solver.\n Run the ''mva'' method to obtain an approximation based on the exact MVA algorithm.\n');
             end
@@ -128,12 +136,16 @@ switch options.lang
 
             if sn.nclosedjobs == 0 && length(sn.nodetype)==3 && all(sort(sn.nodetype)' == sort([NodeType.Source,NodeType.Queue,NodeType.Sink])) && isSizeBasedPolicy
                 % Multiclass open system with size-based scheduling (SRPT, PSJF, FB, LRPT, SETF)
+                line_debug(options, 'Size-based scheduling detected (%s), routing to qsys_sizebased_analyzer', char(schedType));
                 [QN,UN,RN,TN,CN,XN,lG,runtime,lastiter] = solver_mva_qsys_sizebased_analyzer(sn, options, schedType);
             elseif sn.nclasses==1 && sn.nclosedjobs == 0 && length(sn.nodetype)==3 && all(sort(sn.nodetype)' == sort([NodeType.Source,NodeType.Queue,NodeType.Sink])) % is an open queueing system
+                line_debug(options, 'Single-class open queueing system (Source-Queue-Sink), routing to qsys_analyzer');
                 [QN,UN,RN,TN,CN,XN,lG,runtime,lastiter] = solver_mva_qsys_analyzer(sn, options);
             elseif sn.nclasses>1 && sn.nclosedjobs == 0 && length(sn.nodetype)==3 && all(sort(sn.nodetype)' == sort([NodeType.Source,NodeType.Queue,NodeType.Sink])) && sn.sched(find(sn.nodetype==NodeType.Queue)) == SchedStrategy.POLLING % is an open polling system
+                line_debug(options, 'Multiclass open polling system, routing to polling_analyzer');
                 [QN,UN,RN,TN,CN,XN,lG,runtime,lastiter] = solver_mva_polling_analyzer(sn, options);
             elseif sn.nclosedjobs == 0 && length(sn.nodetype)==3 && all(sort(sn.nodetype)' == sort([NodeType.Source,NodeType.Cache,NodeType.Sink])) % is a non-rentrant cache
+                line_debug(options, 'Non-reentrant cache (Source-Cache-Sink), routing to cache_analyzer');
                 % random initialization
                 for ind = 1:sn.nnodes
                     if sn.nodetype(ind) == NodeType.Cache
@@ -169,6 +181,7 @@ switch options.lang
                 self.model.refreshStruct(true);
             else % queueing network
                 if any(sn.nodetype == NodeType.Cache) % if integrated caching-queueing
+                    line_debug(options, 'Integrated caching-queueing network, routing to cacheqn_analyzer');
                     [QN,UN,RN,TN,CN,XN,lG,hitprob,missprob,runtime,lastiter] = solver_mva_cacheqn_analyzer(self, options);
                     for ind = 1:sn.nnodes
                         if sn.nodetype(ind) == NodeType.Cache
@@ -181,17 +194,21 @@ switch options.lang
                 else % ordinary queueing network
                     switch method
                         case {'aba.upper', 'aba.lower', 'bjb.upper', 'bjb.lower', 'pb.upper', 'pb.lower', 'gb.upper', 'gb.lower', 'sb.upper', 'sb.lower'}
+                            line_debug(options, 'Using bound method: %s', method);
                             [QN,UN,RN,TN,CN,XN,lG,runtime,lastiter] = solver_mva_bound_analyzer(sn, options);
                         otherwise
                             if ~isempty(sn.lldscaling) || ~isempty(sn.cdscaling)
+                                line_debug(options, 'Load-dependent scaling detected (lldscaling=%d, cdscaling=%d), routing to mvald_analyzer', ~isempty(sn.lldscaling), ~isempty(sn.cdscaling));
                                 [QN,UN,RN,TN,CN,XN,lG,runtime,lastiter,actualmethod] = solver_mvald_analyzer(sn, options);
                             else
+                                line_debug(options, 'Standard queueing network, routing to mva_analyzer (method=%s)', method);
                                 [QN,UN,RN,TN,CN,XN,lG,runtime,lastiter,actualmethod] = solver_mva_analyzer(sn, options);
                             end
                     end
                 end
             end
             if self.model.hasFork
+                line_debug(options, 'Fork-join post-processing: method=%s, computing sync delays', options.config.fork_join);
                 nonfjstruct = sn;
                 sn = self.getStruct;
                 % Pre-compute linked routing matrix once (loop-invariant)

@@ -154,6 +154,14 @@ for t=1:lsn.ntasks
     idx = idx + 1;
 end
 
+% Adjust task replication to account for host processor replication.
+% In LQN, task repl >= host repl. If task repl is 1 (default), inherit host repl.
+for t=1:lsn.ntasks
+    tidx = lsn.tshift + t;
+    pidx = lsn.parent(tidx);
+    lsn.repl(tidx,1) = max(lsn.repl(tidx,1), lsn.repl(pidx,1));
+end
+
 for p=1:lsn.nhosts  % for every processor
     pidx = p;
     lsn.tasksof{pidx} = find(lsn.parent == pidx);
@@ -590,6 +598,26 @@ end
 lsn.isref = lsn.sched == SchedStrategy.REF;
 lsn.iscache(1:(lsn.tshift+lsn.ntasks)) = lsn.nitems(1:(lsn.tshift+lsn.ntasks))>0;
 lsn.isfunction(1:(lsn.tshift+lsn.ntasks)) = ~cellfun(@isempty, lsn.setuptime(1:(lsn.tshift+lsn.ntasks)));
+
+% Build fan-out matrix from Task objects' fanOutDest/fanOutValue
+% fanout(source_task_idx, dest_task_idx) = fan-out value (0 means not set)
+lsn.fanout = zeros(lsn.nidx, lsn.nidx);
+taskNameToIdx = containers.Map();
+for t = 1:lsn.ntasks
+    tidx = lsn.tshift + t;
+    taskNameToIdx(self.tasks{t}.name) = tidx;
+end
+for t = 1:lsn.ntasks
+    tidx = lsn.tshift + t;
+    task = self.tasks{t};
+    for f = 1:length(task.fanOutDest)
+        destName = task.fanOutDest{f};
+        if taskNameToIdx.isKey(destName)
+            destIdx = taskNameToIdx(destName);
+            lsn.fanout(tidx, destIdx) = task.fanOutValue(f);
+        end
+    end
+end
 
 % the dag differs from the graph:
 % - dag swaps the direction of entry-task edges

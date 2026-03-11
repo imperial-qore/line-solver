@@ -460,19 +460,5 @@ fun solver_ncld(sn: NetworkStruct, options: SolverOptions): SolverNC.SolverNCLDR
         }
     }
 
-    // Handle self-looping classes - jobs stay at reference station
-    for (k in 0..<K) {
-        if (sn.isslc.get(k) == 1.0) {
-            for (m in 0..<M) {
-                Q.set(m, k, 0.0)
-            }
-            val ist = sn.refstat.get(k).toInt()
-            Q.set(ist, k, sn.njobs.get(k))
-            snDeaggragatedChains!!.T.set(ist, k, sn.njobs.get(k) * sn.rates.get(ist, k))
-            R.set(ist, k, Q.get(ist, k) / snDeaggragatedChains.T.get(ist, k))
-            U.set(ist, k, ST.get(ist, k) * snDeaggragatedChains.T.get(ist, k))
-        }
-    }
-
     return SolverNC.SolverNCLDReturn(Q, U, R, snDeaggragatedChains!!.T, Cmat, X, lG!!, runtime, iter, method)
 }

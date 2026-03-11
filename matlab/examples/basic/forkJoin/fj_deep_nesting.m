@@ -45,7 +45,7 @@ solver{end+1} = JMT(model,'seed',23000);
 mva_options = MVA.defaultOptions;
 mva_options.config.fork_join = 'fjt';
 solver{end+1} = MVA(model, mva_options);
-%solver{end+1} = DES(model,'seed',23000);
+%solver{end+1} = LDES(model,'seed',23000);
 
 AvgTable = {};
 for s=1:length(solver)

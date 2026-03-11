@@ -842,6 +842,50 @@ public class Environment extends Ensemble {
                 Matrix TExit);
     }
 
+    /**
+     * Returns a table of stage information for this environment.
+     * Matches MATLAB Environment.getStageTable() which returns a Table with columns:
+     * Stage, Name, Type, Prob, HoldT, Model.
+     *
+     * @return a formatted string table of stage information
+     */
+    public String getStageTable() {
+        int E = this.names.length;
+        if (probEnv == null || probEnv.isEmpty()) {
+            init();
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("%-8s %-20s %-15s %-12s %-15s %-20s%n",
+                "Stage", "Name", "Type", "Prob", "HoldT", "Model"));
+        sb.append(String.format("%-8s %-20s %-15s %-12s %-15s %-20s%n",
+                "-----", "----", "----", "----", "-----", "-----"));
+
+        for (int e = 0; e < E; e++) {
+            if (names[e] == null) continue;
+            String stageName = names[e] != null ? names[e] : "";
+            String stageType = types[e] != null ? types[e] : "";
+            double prob = (probEnv != null && probEnv.length() > e) ? probEnv.get(0, e) : Double.NaN;
+            String holdTimeStr = (holdTime[e] != null) ? String.format("MMAP(%d)", holdTime[e].size()) : "N/A";
+            String modelName = (models[e] != null) ? models[e].getName() : "N/A";
+
+            sb.append(String.format("%-8d %-20s %-15s %-12.6f %-15s %-20s%n",
+                    e + 1, stageName, stageType, prob, holdTimeStr, modelName));
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * Short alias for getStageTable.
+     *
+     * @return a formatted string table of stage information
+     * @see #getStageTable()
+     */
+    public String getStageT() {
+        return getStageTable();
+    }
+
     // NOTE: the following LINE methods have not been migrated to JLINE
     // a) getEnv() - env has been made public instead, therefore no need for getter
     // b) setEnv() - env has been made public instead, therefore no need for setter

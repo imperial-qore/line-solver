@@ -62,7 +62,7 @@ import static jline.io.InputOutputKt.mfilename;
  *   <li>Correctly models BLOCKING semantics (server waits for reply)</li>
  *   <li>Provides per-task queue metrics (queue length, utilization)</li>
  *   <li>Supports multi-tier call chains (A → B → C)</li>
- *   <li>Uses DES solver with REPLY signal support</li>
+ *   <li>Uses LDES solver with REPLY signal support</li>
  * </ul>
  *
  * <h3>Phase-2 Support:</h3>
@@ -78,7 +78,7 @@ import static jline.io.InputOutputKt.mfilename;
  * LayeredNetwork lqn = new LayeredNetwork("MyLQN");
  * // ... define LQN model ...
  * Network model = LQN2QN.convert(lqn);
- * SolverDES solver = new SolverDES(model);
+ * SolverLDES solver = new SolverLDES(model);
  * solver.getAvgTable();
  * </pre>
  *

@@ -267,7 +267,7 @@ if M>1
     XN = repmat(XN,M,1);
 end
 % Utilization
-UN(1:M,closedClasses) = u(1:M,1:C); % this will return 0 
+UN(1:M,closedClasses) = u(1:M,1:C); % this will return 0
 % Response time
 CN(1:M,closedClasses) = w(1:M,1:C,hkvec);
 for ist=1:M

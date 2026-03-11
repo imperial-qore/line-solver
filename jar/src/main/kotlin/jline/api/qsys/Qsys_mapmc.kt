@@ -97,28 +97,6 @@ fun qsys_mapmc(arrival: MatrixCell, mu: Double, c: Int): QsysMapPhResult {
 }
 
 /**
- * Analyzes a MAP/M/1 queue (single server convenience function).
- *
- * For single-server queues, this delegates to BUTools via qsys_mapph1
- * for better performance metrics including sojourn time moments.
- *
- * @param D0 MAP hidden transition matrix
- * @param D1 MAP arrival transition matrix
- * @param mu Exponential service rate
- * @return QsysMapPhResult with performance metrics
- */
-fun qsys_mapm1(D0: Matrix, D1: Matrix, mu: Double): QsysMapPhResult {
-    // Create exponential service PH
-    val sigma = Matrix(1, 1)
-    sigma[0, 0] = 1.0
-    val S = Matrix(1, 1)
-    S[0, 0] = -mu
-
-    // Use BUTools for single-server case
-    return qsys_mapph1(D0, D1, sigma, S)
-}
-
-/**
  * Analyzes a PH/M/c queue.
  *
  * Converts PH arrival process to equivalent MAP and uses Q-MAM.

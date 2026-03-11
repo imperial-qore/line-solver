@@ -63,11 +63,16 @@ switch options.method
             line_debug('Detected Fork-Join topology, using FJ_codes method');
             [QN,UN,RN,TN,CN,XN,totiter,percResults] = solver_mam_fj(sn, options);
             method = 'qiu';
+        elseif sn_has_fork_join(sn) && sn_is_open_model(sn)
+            % Use MMAP-based FJ decomposition with mmap_max synchronization
+            line_debug('Detected general Fork-Join topology, using dec.source.fj method');
+            [QN,UN,RN,TN,CN,XN,totiter] = solver_mam_basic_fj(sn, options);
+            method = 'dec.source.fj';
         else
             % Check if network is a valid BMAP/PH/N/N bufferless retrial queue
             [isRetrial, ~] = qsys_is_retrial(sn);
 
-            % Check if network has reneging (queue abandonment) for MAPMSG
+            % Check if network has reneging (queue abandonment) for MAPMsG
             isReneging = hasRenegingPatience(sn);
 
             if isRetrial
@@ -79,11 +84,11 @@ switch options.method
                 [QN,UN,RN,TN,CN,XN,totiter] = solver_mam_retrial(sn, options);
                 method = 'retrial';
             elseif isReneging
-                % Use MAP/M/s+G reneging solver (MAPMSG)
+                % Use MAP/M/s+G reneging solver (MAPMsG)
                 if strcmpi(options.method, 'default')
-                    line_debug('Default method: using MAPMSG for MAP/M/s+G with reneging\n');
+                    line_debug('Default method: using MAPMsG for MAP/M/s+G with reneging\n');
                 end
-                line_debug('Detected reneging topology, using MAPMSG method');
+                line_debug('Detected reneging topology, using MAPMsG method');
                 [QN,UN,RN,TN,CN,XN,totiter] = solver_mam_retrial(sn, options);
                 method = 'reneging';
             else
@@ -125,6 +130,10 @@ switch options.method
         % RCAT-based methods (formerly SolverAG)
         line_debug('Using RCAT method: %s', options.method);
         [QN,UN,RN,TN,CN,XN,totiter] = solver_mam_ag(sn, options);
+    case 'dec.source.fj'
+        % MMAP-based FJ decomposition with mmap_max synchronization
+        line_debug('Using dec.source.fj method, calling solver_mam_basic_fj');
+        [QN,UN,RN,TN,CN,XN,totiter] = solver_mam_basic_fj(sn, options);
     otherwise
         line_error(mfilename,'Unknown method: %s', options.method);
 end

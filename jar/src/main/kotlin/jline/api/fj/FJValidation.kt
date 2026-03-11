@@ -88,9 +88,28 @@ fun isFJ(sn: NetworkStruct): Pair<Boolean, FJInfo?> {
             return Pair(false, null)
         }
 
-        // Check homogeneous service (all queues have same service distribution)
-        // Simplified validation for MVP
-        // TODO: Add detailed service homogeneity check
+        // Check homogeneous service: all parallel queues must have same service distribution
+        // Compare rates and process types across all queues for each class
+        if (K > 1) {
+            val firstQueueStationIdx = sn.nodeToStation.get(queueIndices[0]).toInt()
+            for (r in 0 until sn.nclasses) {
+                val refRate = sn.rates.get(firstQueueStationIdx, r)
+                val refProcId = sn.procid[sn.stations[firstQueueStationIdx]]?.get(sn.jobclasses[r])
+                for (q in 1 until K) {
+                    val qStationIdx = sn.nodeToStation.get(queueIndices[q]).toInt()
+                    val qRate = sn.rates.get(qStationIdx, r)
+                    val qProcId = sn.procid[sn.stations[qStationIdx]]?.get(sn.jobclasses[r])
+                    // Check rate match (within tolerance)
+                    if (Math.abs(refRate - qRate) > 1e-10 * Math.max(1.0, Math.abs(refRate))) {
+                        return Pair(false, null)  // Heterogeneous service rates
+                    }
+                    // Check process type match
+                    if (refProcId != qProcId) {
+                        return Pair(false, null)  // Heterogeneous service process types
+                    }
+                }
+            }
+        }
 
         // Check scheduling strategy (should be FCFS or PS)
         for (qIdx in queueIndices) {

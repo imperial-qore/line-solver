@@ -30,6 +30,7 @@ end
 hasOpenClasses = sn_has_open_classes(sn);
 switch options.lang
     case {'java'}
+        line_debug(options, 'FLD: using lang=java, delegating to JLINE');
         jmodel = LINE2JLINE(self.model);
         %M = jmodel.getNumberOfStatefulNodes;
         M = jmodel.getNumberOfStations;
@@ -60,14 +61,17 @@ switch options.lang
         self.result.solverSpecific.odeStateVec = JLINE.from_jline_matrix(jsolver.result.odeStateVec);
         return
     case 'matlab'
+        line_debug(options, 'FLD: using lang=matlab');
         switch options.method
             case {'matrix','pnorm'}
+                line_debug(options, 'FLD method: matrix/pnorm requested');
                 % Matrix method now supports mixed/open models per Ruuskanen et al., PEVA 151 (2021)
                 if sn_has_dps(sn)
                     line_error(mfilename,'The matrix solver does not support DPS scheduling. Use options.method=''closing'' instead.');
                 end
             case {'closing'}
                 options.method = 'closing';
+                line_debug(options, 'FLD method: closing');
             case {'default'}
                 % Use matrix method as default unless DPS is present
                 if sn_has_dps(sn)
@@ -75,12 +79,16 @@ switch options.lang
                 else
                     options.method = 'matrix';
                 end
+                line_debug(options, 'FLD default method resolved to: %s', options.method);
             case {'statedep','softmin'}
+                line_debug(options, 'FLD method: %s', options.method);
                 % do nothing
             case {'diffusion','fluid.diffusion'}
+                line_debug(options, 'FLD method: diffusion approximation');
                 % Diffusion approximation - validated in solver_fluid_diffusion
                 % do nothing here, validation happens in the solver itself
             case {'mfq','fluid.mfq','butools'}
+                line_debug(options, 'FLD method: Markovian fluid queue (BUTools)');
                 % Markovian fluid queue method using BUTools for single-queue analysis
                 % Validation and fallback happens in solver_fluid_analyzer
             otherwise

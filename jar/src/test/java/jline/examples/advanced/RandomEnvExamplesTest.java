@@ -56,7 +56,6 @@ public class RandomEnvExamplesTest {
      * 
      */
     @Test
-    // @Disabled - MAPE was 0.4130%, Max APE was 0.8712%
     public void testRenvTwoStagesRepairmenEnv() {
         // Create the model
         final NetworkAvgTable[] avgTableHolder = new NetworkAvgTable[1];
@@ -119,7 +118,6 @@ public class RandomEnvExamplesTest {
      * This test focuses on the infinitesimal generator computation to match the MATLAB example.
      */
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testRenvThreeStagesRepairmenEnv() {
         // Create the model with CTMC solver configuration
         final SolverENV.EnvGeneratorResult[] generatorResultHolder = new SolverENV.EnvGeneratorResult[1];
@@ -255,7 +253,6 @@ public class RandomEnvExamplesTest {
      * 
      */
     @Test
-    // @Disabled - MAPE was 0.1516%, Max APE was 0.6008%
     public void testRenvFourStagesRepairmenEnv() {
         // Create the model
         final NetworkAvgTable[] avgTableHolder = new NetworkAvgTable[1];

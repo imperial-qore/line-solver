@@ -2,7 +2,40 @@ function  buildLayersRecursive(self, idx, callers, ishostlayer)
 lqn = self.lqn;
 jobPosKey = zeros(lqn.nidx,1);
 curClassKey = cell(lqn.nidx,1);
-nreplicas = lqn.repl(idx);
+% Fan-out check: when all callers have fan-out >= nreplicas for this task,
+% each replica sees the full caller traffic (fork-join semantics).
+% Model a single representative replica; updateThinkTimes multiplies by K.
+% For host layers: if all caller tasks have the same replication as the host,
+% the host is co-replicated with the task, so also use single-replica modeling.
+rawReplicas = lqn.repl(idx);
+reduceFanout = false;
+if rawReplicas > 1 && ~isempty(callers)
+    if ~ishostlayer && isfield(lqn, 'fanout') && ~isempty(lqn.fanout)
+        reduceFanout = true;
+        for c = callers(:)'
+            if lqn.fanout(c, idx) < rawReplicas
+                reduceFanout = false;
+                break;
+            end
+        end
+    elseif ishostlayer
+        reduceFanout = true;
+        for c = callers(:)'
+            if lqn.repl(c) ~= rawReplicas
+                reduceFanout = false;
+                break;
+            end
+        end
+    end
+end
+if reduceFanout
+    nreplicas = 1;
+    if ~ishostlayer
+        self.singleReplicaTasks(end+1) = idx;
+    end
+else
+    nreplicas = rawReplicas;
+end
 %mult = lqn.mult;
 mult = lqn.maxmult; % this removes spare capacity that cannot be used
 lqn.mult = mult;
@@ -126,7 +159,13 @@ for tidx_caller = callers
             % determine job population
             % this block matches the corresponding calculations in
             % updateThinkTimes
-            njobs = mult(tidx_caller)*lqn.repl(tidx_caller);
+            % Use single-replica njobs if this layer or the caller is in single-replica mode
+            callerIsSingleReplica = reduceFanout || any(self.singleReplicaTasks == tidx_caller);
+            if callerIsSingleReplica
+                njobs = mult(tidx_caller);
+            else
+                njobs = mult(tidx_caller)*lqn.repl(tidx_caller);
+            end
             if isinf(njobs)
                 callers_of_tidx_caller = find(lqn.taskgraph(:,tidx_caller));
                 njobs = sum(mult(callers_of_tidx_caller)); %#ok<FNDSB>

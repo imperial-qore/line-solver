@@ -11,26 +11,24 @@ import numpy as np
 from typing import Tuple, Optional
 from scipy.special import gammaln
 
-
-def _factln(n: np.ndarray) -> np.ndarray:
+def _factln(n) -> np.ndarray:
     """Log factorial using gamma function."""
-    return gammaln(1 + np.asarray(n, dtype=float))
-
+    n = np.asarray(n, dtype=float)
+    return gammaln(1 + n)
 
 def _multinomialln(n: np.ndarray) -> float:
     """Log multinomial coefficient."""
     n = np.asarray(n, dtype=float)
     return float(gammaln(1 + np.sum(n)) - np.sum(gammaln(1 + n)))
 
-
 def _allbut(y: np.ndarray, idx: int) -> np.ndarray:
     """Return array without element at index idx."""
     return np.delete(y, idx)
 
-
 def _pfqn_le_fpi(L: np.ndarray, N: np.ndarray) -> np.ndarray:
     """Fixed-point iteration to find mode location (no think time)."""
     M, R = L.shape
+
     u = np.ones(M) / M
     u_prev = np.full(M, np.inf)
 
@@ -49,12 +47,12 @@ def _pfqn_le_fpi(L: np.ndarray, N: np.ndarray) -> np.ndarray:
 
     return u
 
-
 def _pfqn_le_fpiZ(
     L: np.ndarray, N: np.ndarray, Z: np.ndarray
 ) -> Tuple[np.ndarray, float]:
     """Fixed-point iteration to find mode location (with think time)."""
     M, R = L.shape
+
     eta = np.sum(N) + M
     u = np.ones(M) / M
     v = eta + 1
@@ -85,10 +83,10 @@ def _pfqn_le_fpiZ(
 
     return u, v
 
-
 def _pfqn_le_hessian(L: np.ndarray, N: np.ndarray, u: np.ndarray) -> np.ndarray:
     """Compute Hessian matrix (no think time case)."""
     M, R = L.shape
+
     Ntot = np.sum(N)
     hu = np.zeros((M - 1, M - 1))
 
@@ -111,12 +109,12 @@ def _pfqn_le_hessian(L: np.ndarray, N: np.ndarray, u: np.ndarray) -> np.ndarray:
 
     return hu
 
-
 def _pfqn_le_hessianZ(
     L: np.ndarray, N: np.ndarray, Z: np.ndarray, u: np.ndarray, v: float
 ) -> np.ndarray:
     """Compute Hessian matrix (with think time case)."""
     K, R = L.shape
+
     Ntot = np.sum(N)
 
     # Compute csi
@@ -173,7 +171,6 @@ def _pfqn_le_hessianZ(
         A_full[K - 1, i] = val
 
     return A_full
-
 
 def pfqn_le(
     L: np.ndarray, N: np.ndarray, Z: Optional[np.ndarray] = None
@@ -270,7 +267,6 @@ def pfqn_le(
     Gn = np.exp(lGn)
     return float(Gn), float(lGn)
 
-
 def _grnmol(
     f, V: np.ndarray, s: int, tol: float = 1e-8
 ) -> Tuple[np.ndarray, int]:
@@ -324,7 +320,6 @@ def _grnmol(
             return Q[:d], nv
 
     return Q, nv
-
 
 def pfqn_cub(
     L: np.ndarray,
@@ -422,7 +417,6 @@ def pfqn_cub(
     lGn = np.log(max(Gn, 1e-300))
     return float(Gn), float(lGn)
 
-
 def _logmeanexp(x: np.ndarray) -> float:
     """
     Compute log(mean(exp(x))) in a numerically stable way.
@@ -436,7 +430,6 @@ def _logmeanexp(x: np.ndarray) -> float:
     if np.isinf(x_max):
         return x_max
     return x_max + np.log(np.mean(np.exp(x - x_max)))
-
 
 def pfqn_mci(
     D: np.ndarray,
@@ -550,7 +543,6 @@ def pfqn_mci(
 
     return float(G), float(lG), lZ
 
-
 def pfqn_grnmol(L: np.ndarray, N: np.ndarray) -> Tuple[float, float]:
     """
     Normalizing constant using Grundmann-Moeller quadrature.
@@ -643,7 +635,6 @@ def pfqn_grnmol(L: np.ndarray, N: np.ndarray) -> Tuple[float, float]:
 
     return float(G), float(lG)
 
-
 def _next_partition(bvec: np.ndarray, total: int) -> Optional[np.ndarray]:
     """
     Generate next partition of total into M non-negative integers.
@@ -676,7 +667,6 @@ def _next_partition(bvec: np.ndarray, total: int) -> Optional[np.ndarray]:
 
     return None
 
-
 def pfqn_le_fpi(L: np.ndarray, N: np.ndarray) -> np.ndarray:
     """
     Fixed-point iteration to find mode location (no think time).
@@ -691,7 +681,6 @@ def pfqn_le_fpi(L: np.ndarray, N: np.ndarray) -> np.ndarray:
         Mode location vector u (M,).
     """
     return _pfqn_le_fpi(L, N)
-
 
 def pfqn_le_fpiZ(
     L: np.ndarray, N: np.ndarray, Z: np.ndarray
@@ -713,7 +702,6 @@ def pfqn_le_fpiZ(
     """
     return _pfqn_le_fpiZ(L, N, Z)
 
-
 def pfqn_le_hessian(L: np.ndarray, N: np.ndarray, u: np.ndarray) -> np.ndarray:
     """
     Compute Hessian matrix (no think time case).
@@ -729,7 +717,6 @@ def pfqn_le_hessian(L: np.ndarray, N: np.ndarray, u: np.ndarray) -> np.ndarray:
         Hessian matrix (M-1 x M-1).
     """
     return _pfqn_le_hessian(L, N, u)
-
 
 def pfqn_le_hessianZ(
     L: np.ndarray, N: np.ndarray, Z: np.ndarray, u: np.ndarray, v: float
@@ -750,7 +737,6 @@ def pfqn_le_hessianZ(
         Hessian matrix (M x M).
     """
     return _pfqn_le_hessianZ(L, N, Z, u, v)
-
 
 __all__ = [
     'pfqn_le',

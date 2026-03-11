@@ -97,7 +97,7 @@ for k = 1:K
 
     % Compute visit ratios by solving pi * P = pi
     % This is the stationary distribution of the embedded DTMC
-    % Use (I - P' + e*e'/M)' * pi' = e'/M where e is ones vector
+    % Solve (I - P' + e*e'/M) * pi' = e/M
     I = eye(M_sub);
     e = ones(M_sub, 1);
 
@@ -105,7 +105,7 @@ for k = 1:K
     A = I - P_k' + (e * e') / M_sub;
 
     if rank(A) == M_sub
-        pi_k = (A' \ (e / M_sub))';
+        pi_k = (A \ (e / M_sub))';
     else
         % If singular, use uniform distribution
         pi_k = ones(1, M_sub) / M_sub;

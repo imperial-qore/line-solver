@@ -19,6 +19,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static jline.TestTools.*;
 
 /**
  * Tests for UML sequence diagram export from LayeredNetwork models.
@@ -342,15 +343,15 @@ public class SequenceDiagramExporterTest {
                 .setShowReplies(true)
                 .setScale(0.8);
 
-        assertEquals(4.0, options.getLifelineSpacing(), 0.001);
-        assertEquals(1.5, options.getMessageSpacing(), 0.001);
+        assertEquals(4.0, options.getLifelineSpacing(), LOOSE_MID_TOL);
+        assertEquals(1.5, options.getMessageSpacing(), LOOSE_MID_TOL);
         assertFalse(options.isShowHostDemand());
         assertTrue(options.isShowCallMeans());
         assertTrue(options.isShowProcessorFrames());
         assertTrue(options.isShowEntryNames());
         assertTrue(options.isAsyncDashed());
         assertTrue(options.isShowReplies());
-        assertEquals(0.8, options.getScale(), 0.001);
+        assertEquals(0.8, options.getScale(), LOOSE_MID_TOL);
     }
 
     @Test

@@ -50,7 +50,7 @@ solver{end+1} = SSA(model,optionssa);
 solver{end+1} = FLD(model,options);
 solver{end+1} = MVA(model,'lin');
 solver{end+1} = NC(model,options);
-solver{end+1} = DES(model,options);
+solver{end+1} = LDES(model,options);
 %solver{end+1} = MAM(model,options);
 for s=1:length(solver)
     fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));

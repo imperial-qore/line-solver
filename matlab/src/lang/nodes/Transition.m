@@ -180,7 +180,7 @@ classdef Transition < StatefulNode
                         map{r} = self.distributions{r}.getProcess();
                         mu{r} = self.distributions{r}.getMu;
                         phi{r} = self.distributions{r}.getPhi;
-                    case {'Det','Uniform','Pareto','Gamma','Weibull','Lognormal'}
+                    case {'Det','Uniform','Pareto','Gamma','Weibull','Lognormal','Expolynomial'}
                         map{r} = self.distributions{r}.getProcess();
                         mu{r} = [self.distributions{r}.getRate];
                         phi{r} = [1];

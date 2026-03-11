@@ -76,6 +76,8 @@ public class ModelParser {
                 case "lqnx":
                 case "xml":
                     return m2m.LQN2LINE(tempFile.toString());
+                case "json":
+                    return (Model) jline.io.LineModelIO.load(tempFile.toString());
                 default:
                     throw new ModelParseException("Unsupported format: " + format);
             }

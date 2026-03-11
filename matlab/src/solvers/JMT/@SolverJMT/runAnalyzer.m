@@ -10,14 +10,14 @@ if nargin<2 %%~exist('options','var')
     options = self.getOptions;
 end
 
-line_debug('JMT analyzer starting: lang=%s, samples=%d, seed=%d', options.lang, options.samples, options.seed);
+line_debug(options, 'JMT analyzer starting: lang=%s, samples=%d, seed=%d', options.lang, options.samples, options.seed);
 
 self.runAnalyzerChecks(options);
 Solver.resetRandomGeneratorSeed(options.seed);
 
 switch options.lang
     case 'java'
-        line_debug('Using Java JMT implementation, calling JLINE SolverJMT');
+        line_debug(options, 'JMT: using lang=java, delegating to JLINE SolverJMT');
         jmodel = LINE2JLINE(self.model);
         M = jmodel.getNumberOfStations;
         R = jmodel.getNumberOfClasses;
@@ -41,7 +41,7 @@ switch options.lang
         self.result.Prob.logNormConstAggr = lG;
         return
     case 'matlab'
-        line_debug('Using MATLAB JMT implementation');
+        line_debug(options, 'JMT: using lang=matlab');
 
         if ~isfield(options,'verbose')
             options.verbose = 0;
@@ -70,6 +70,7 @@ switch options.lang
                 line_warning(mfilename,'JMT requires at least 5000 samples for each metric, the current value is %d. Starting the simulation with 5000 samples.\n', options.samples);
             %end
             options.samples = 5e3;
+            line_debug(options, 'JMT: sample size adjusted to minimum 5000');
         end
 
         if ~isfield(options,'verbose')
@@ -103,15 +104,15 @@ switch options.lang
         % Auto-detect transient mode: switch to 'replication' if finite timespan with default method
         if strcmpi(options.method, 'default') && isfield(options, 'timespan') && isfinite(options.timespan(2))
             options.method = 'replication';
-            line_debug('Finite timespan detected, automatically using replication method for transient simulation');
+            line_debug(options, 'Finite timespan [%f,%f] detected, auto-switching to replication method', options.timespan(1), options.timespan(2));
         end
 
         switch options.method
             case {'jsim','default'}
                 if strcmpi(options.method, 'default')
-                    line_debug('Default method: using JSIM discrete-event simulation\n');
+                    line_debug(options, 'JMT: default method resolved to JSIM');
                 end
-                line_debug('Using JSIM method (discrete-event simulation)');
+                line_debug(options, 'JMT: using JSIM method (discrete-event simulation), samples=%d, seed=%d', options.samples, options.seed);
                 fname = self.writeJSIM(sn);
                 cmd = ['java -cp "',getJMTJarPath(self),filesep,'JMT.jar" jmt.commandline.Jmt sim "',fname,'" -seed ',num2str(options.seed),' --illegal-access=permit'];
                 if options.verbose
@@ -161,7 +162,7 @@ switch options.lang
                     end
                 end
             case {'replication'}
-                line_debug('Using replication method (transient simulation)');
+                line_debug(options, 'JMT: using replication method (transient simulation), iter_max=%d', options.iter_max);
                 options = self.getOptions;
                 initSeed = self.options.seed;
                 initTimeSpan = self.options.timespan;
@@ -263,7 +264,7 @@ switch options.lang
                 %end
             case {'jmva','jmva.amva','jmva.mva','jmva.recal','jmva.comom','jmva.chow','jmva.bs','jmva.aql','jmva.lin','jmva.dmlin','jmva.ls',...
                     'jmt.jmva','jmt.jmva.mva','jmt.jmva.amva','jmt.jmva.recal','jmt.jmva.comom','jmt.jmva.chow','jmt.jmva.bs','jmt.jmva.aql','jmt.jmva.lin','jmt.jmva.dmlin','jmt.jmva.ls'}
-                line_debug('Using JMVA method: %s', options.method);
+                line_debug(options, 'JMT: using JMVA method: %s', options.method);
                 fname = self.writeJMVA(sn, getJMVATempPath(self), self.options);
                 cmd = ['java -cp "',getJMTJarPath(self),filesep,'JMT.jar" jmt.commandline.Jmt mva "',fname,'" -seed ',num2str(options.seed),' --illegal-access=permit'];
                 if options.verbose

@@ -8,7 +8,9 @@
 
 package jline.solvers.env;
 
+import jline.GlobalConstants;
 import static jline.GlobalConstants.Inf;
+import static jline.io.InputOutputKt.line_debug;
 import static jline.io.InputOutputKt.line_warning;
 
 import jline.io.Ret;
@@ -24,7 +26,7 @@ import jline.lang.processes.Exp;
 import jline.solvers.*;
 import jline.solvers.ctmc.CTMCResult;
 import jline.solvers.ctmc.SolverCTMC;
-import jline.solvers.des.SolverDES;
+import jline.solvers.ldes.SolverLDES;
 import jline.solvers.fluid.SolverFluid;
 import jline.util.matrix.Matrix;
 import jline.util.matrix.MatrixCell;
@@ -98,6 +100,7 @@ public class SolverENV extends EnsembleSolver {
         this.resetFromMarginal = new Environment.ResetQueueLengthsFunction[E][E];
         this.resetEnvRates = new Environment.ResetEnvRatesFunction[E][E];
         this.result = new SolverResult();
+        line_debug(options.verbose, String.format("ENV solver starting: %d stages", E));
 
         for (int e = 0; e < E; e++) {
             this.sn[e] = this.ensemble[e].getStruct(true);
@@ -122,9 +125,7 @@ public class SolverENV extends EnsembleSolver {
 
         if (hasStateDependentRates) {
             this.stateDepMethod = "statedep";
-            if (options != null && options.verbose == VerboseLevel.DEBUG) {
-                System.out.println("ENV solver: Auto-detected state-dependent environment rates");
-            }
+            line_debug(options.verbose, "ENV: auto-detected state-dependent environment rates");
         }
 
         // Validate incompatible method combinations
@@ -374,17 +375,18 @@ public class SolverENV extends EnsembleSolver {
         int M = sn[0].nstations;
         int K = sn[0].nclasses;
         int E = getNumberOfModels();
+        line_debug(options.verbose, String.format("ENV init: %d stages, %d stations, %d classes, SMPMethod=%b, stateDepMethod=%s",
+            E, M, K, SMPMethod, stateDepMethod != null ? stateDepMethod : "none"));
 
-        // Match MATLAB ode15s MaxStep behavior for sub-solvers.
         // Java ODE solvers (LSODA, DormandPrince54) default to MaxStep=Inf which
         // causes inaccurate integration in ENV's iterative convergence loop.
-        // MATLAB's ode15s defaults to MaxStep=(tEnd-t0)/10; use a tighter bound
-        // for Java since its ODE solvers need smaller steps for equivalent accuracy.
+        // MATLAB's ode15s defaults to MaxStep=(tEnd-t0)/10; tEnd/100 is 10x
+        // tighter than MATLAB and sufficient for accurate ENV convergence.
         for (int e = 0; e < E; e++) {
             if (Double.isInfinite(this.solvers[e].options.odesolvers.odemaxstep)) {
                 double tEnd = this.solvers[e].options.timespan[1];
                 if (!Double.isInfinite(tEnd) && tEnd > 0) {
-                    this.solvers[e].options.setODEMaxStep(tEnd / 4000.0);
+                    this.solvers[e].options.setODEMaxStep(tEnd / 100.0);
                 }
             }
         }
@@ -966,6 +968,7 @@ public class SolverENV extends EnsembleSolver {
 
     @Override
     protected void post(int it) {
+        line_debug(options.verbose, String.format("ENV post: iteration %d", it));
 
         int M = sn[0].nstations;
         int K = sn[0].nclasses;
@@ -1126,6 +1129,7 @@ public class SolverENV extends EnsembleSolver {
         // Update transition rates between stages if State Dependent
         // Auto-detected or manually specified via options.method='statedep'
         if ("statedep".equalsIgnoreCase(stateDepMethod) || Objects.equals(options.method, "statedep")) {
+            line_debug(options.verbose, "ENV post: updating state-dependent transition rates");
             boolean anyRateUpdated = false;
             for (int e = 0; e < E; e++) {
                 for (int h = 0; h < E; h++) {
@@ -1215,6 +1219,7 @@ public class SolverENV extends EnsembleSolver {
 
     @Override
     protected void finish() {
+        line_debug(options.verbose, "ENV finish: computing CDF-weighted steady-state metrics");
 
         // Use last iteration — matching MATLAB SolverENV.finish()
         // CDF-weight transient trajectories using holdTime{e} (total sojourn time distribution)
@@ -1699,11 +1704,11 @@ public class SolverENV extends EnsembleSolver {
                 }
                 solverFluid.sn = sn_fl;
                 stageResult = solverFluid.runMethodSpecificAnalyzer();
-            } else if (solvers[e] instanceof SolverDES) {
-                SolverDES solverDES = (SolverDES) solvers[e];
-                solverDES.options.init_sol = initial;
-                // Sync sn.state from init_sol so SolverDES sees the real initial queue lengths
-                NetworkStruct sn_des = solverDES.model.getStruct(false);
+            } else if (solvers[e] instanceof SolverLDES) {
+                SolverLDES solverLDES = (SolverLDES) solvers[e];
+                solverLDES.options.init_sol = initial;
+                // Sync sn.state from init_sol so SolverLDES sees the real initial queue lengths
+                NetworkStruct sn_des = solverLDES.model.getStruct(false);
                 List<StatefulNode> statefulNodes = sn_des.stateful;
                 int offset = 0;
                 for (StatefulNode node : statefulNodes) {
@@ -1712,14 +1717,14 @@ public class SolverENV extends EnsembleSolver {
                     sn_des.state.put(node, nodeState);
                     int nodeIdx = node.getNodeIndex();
                     int stationIdx = (int) sn_des.nodeToStation.get(0, nodeIdx);
-                    solverDES.model.getStations().get(stationIdx).setState(nodeState);
+                    solverLDES.model.getStations().get(stationIdx).setState(nodeState);
                     offset += cols;
                 }
-                solverDES.sn = sn_des;
-                stageResult = solverDES.runMethodSpecificAnalyzer();
+                solverLDES.sn = sn_des;
+                stageResult = solverLDES.runMethodSpecificAnalyzer();
             } else {
                 throw new UnsupportedOperationException(
-                    "getSamplePathTable requires SolverFluid or SolverDES as stage solver, got: " +
+                    "getSamplePathTable requires SolverFluid or SolverLDES as stage solver, got: " +
                     solvers[e].getClass().getSimpleName());
             }
 
@@ -1949,6 +1954,7 @@ public class SolverENV extends EnsembleSolver {
     }
 
     public CTMCResult runAnalyzerByCTMC() {
+        line_debug(options.verbose, "ENV: running CTMC-based analyzer for random environment");
         init();
         int E = getNumberOfModels();
         int M = sn[0].nstations;
@@ -2159,6 +2165,12 @@ public class SolverENV extends EnsembleSolver {
 
     @Override
     public void runAnalyzer() {
+        // Propagate solver verbose level to global
+        if (this.options != null) {
+            GlobalConstants.Verbose = options.verbose;
+        }
+        line_debug(options.verbose, String.format("ENV runAnalyzer: method=%s, iter_max=%d",
+            options.method != null ? options.method : "default", options.iter_max));
         iterate();
     }
 

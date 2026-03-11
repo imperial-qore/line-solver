@@ -111,6 +111,7 @@ __all__ = [
     'trace',
     'phasetype',
     'markov',
+    'mapdist',
     'mvph',
 ]
 

@@ -7,6 +7,7 @@ and Java implementation in jar/src/main/kotlin/jline/lang/Region.java
 """
 
 from typing import Dict, List, Optional, Union
+import numpy as np
 from .base import Node, JobClass, DropStrategy
 
 
@@ -46,6 +47,10 @@ class Region:
         self._drop_rule: Dict[JobClass, DropStrategy] = {}
         self._class_size: Dict[JobClass, int] = {}
         self._class_weight: Dict[JobClass, float] = {}
+
+        # Linear admission constraints: An <= b
+        self._constraint_A: Optional[np.ndarray] = None  # (C, K)
+        self._constraint_b: Optional[np.ndarray] = None  # (C,)
 
         # Initialize defaults for each class
         for job_class in self._classes:
@@ -287,6 +292,40 @@ class Region:
     def getName(self) -> str:
         """MATLAB-compatible alias for get_name()."""
         return self.get_name()
+
+    def set_linear_constraints(self, A, b) -> 'Region':
+        """Set general linear admission constraints An <= b.
+
+        Args:
+            A: Constraint matrix (C x K) where C is the number of constraints
+               and K is the number of classes.
+            b: Capacity vector (C,) or (C, 1).
+
+        Returns:
+            Self for method chaining
+        """
+        self._constraint_A = np.asarray(A, dtype=np.float64)
+        self._constraint_b = np.asarray(b, dtype=np.float64).ravel()
+        return self
+
+    # MATLAB-style alias
+    def setLinearConstraints(self, A, b) -> 'Region':
+        """MATLAB-compatible alias for set_linear_constraints()."""
+        return self.set_linear_constraints(A, b)
+
+    @property
+    def constraint_A(self) -> Optional[np.ndarray]:
+        """Get the linear constraint matrix A."""
+        return self._constraint_A
+
+    @property
+    def constraint_b(self) -> Optional[np.ndarray]:
+        """Get the linear constraint vector b."""
+        return self._constraint_b
+
+    def has_linear_constraints(self) -> bool:
+        """Check whether linear constraints have been set."""
+        return self._constraint_A is not None and self._constraint_b is not None
 
     def __repr__(self) -> str:
         return f"Region(name='{self._name}', nodes={len(self._nodes)}, global_max_jobs={self._global_max_jobs})"

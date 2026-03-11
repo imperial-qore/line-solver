@@ -81,8 +81,6 @@ public class SolverCTMCTestFixtures {
     P.set(missClass, clientClass, cacheDelay, clientDelay, 1.00); // (Client,MissClass) -> (Cache,MissClass)
 
     model.link(P);
-    //TODO: cache SSA
-    //new SolverSSA(model,"samples",2e4,"seed",1,"verbose",true).getAvgTable().print();
     return model;
   }
 }

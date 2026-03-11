@@ -148,7 +148,7 @@ public class ConstantsCoverageTest {
         // Test specific values
         assertNotNull(SolverType.AUTO);
         assertNotNull(SolverType.CTMC);
-        assertNotNull(SolverType.DES);
+        assertNotNull(SolverType.LDES);
         assertNotNull(SolverType.ENV);
         assertNotNull(SolverType.FLUID);
         assertNotNull(SolverType.JMT);
@@ -167,7 +167,7 @@ public class ConstantsCoverageTest {
 
         // Test name
         assertEquals("AUTO", SolverType.AUTO.name());
-        assertEquals("DES", SolverType.DES.name());
+        assertEquals("LDES", SolverType.LDES.name());
 
         // Test ordinal
         assertEquals(0, SolverType.AUTO.ordinal());

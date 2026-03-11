@@ -12,6 +12,8 @@ classdef Task < LayeredNetworkElement
         priority = 0;       %int, priority level (0 = default/no priority)
         fanInSource = '';   %string, source task for fan-in
         fanInValue = 0;     %int, fan-in value (load distribution count)
+        fanOutDest = {};    %cell of strings, destination tasks for fan-out
+        fanOutValue = [];   %vector of ints, fan-out values
         thinkTime;
         thinkTimeMean;      %double
         thinkTimeSCV;       %double
@@ -297,6 +299,13 @@ classdef Task < LayeredNetworkElement
             % self = SETFANIN(self, SOURCE, VALUE)
             self.fanInSource = source;
             self.fanInValue = value;
+        end
+
+        % setFanOut
+        function self = setFanOut(self, dest, value)
+            % self = SETFANOUT(self, DEST, VALUE)
+            self.fanOutDest{end+1} = dest;
+            self.fanOutValue(end+1) = value;
         end
 
     end

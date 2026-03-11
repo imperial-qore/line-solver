@@ -133,7 +133,6 @@ public class ClosedExamplesTest {
     }
     
     @Test
-    // @Disabled - MAPE was 0.0141%, Max APE was 0.0500%
     public void testCqnBcmpTheoremLCFSPRCTMC() {
         // Test BCMP theorem with LCFSPR scheduling using CTMC solver
         Network model = ClosedModel.cqn_bcmp_theorem_lcfspr();
@@ -340,7 +339,6 @@ public class ClosedExamplesTest {
     }
     
     @Test
-    //@Disabled("MAM solver may produce different results than MATLAB implementation")
     public void testCqnRepairmenMAM() {
         // Test repairmen model with MAM solver
         Network model = ClosedModel.cqn_repairmen();
@@ -414,7 +412,6 @@ public class ClosedExamplesTest {
     }
     
     @Test
-    //@Disabled("SSA solver may have issues with repairmen model")
     public void testCqnRepairmenSSA() {
         // Test repairmen model with SSA solver
         Network model = ClosedModel.cqn_repairmen();
@@ -451,7 +448,6 @@ public class ClosedExamplesTest {
     }
     
     @Test
-    //@Disabled("Fluid solver may have issues with repairmen model")
     public void testCqnRepairmenFluid() {
         // Test repairmen model with Fluid solver
         Network model = ClosedModel.cqn_repairmen();
@@ -565,7 +561,6 @@ public class ClosedExamplesTest {
                           expectedResidT, expectedArvR, expectedTput);
     }
 
-    //@Disabled
     @Test
     public void testCqnTwoclassHyperlSSA() {
         // Test two-class hyper-exponential model with SSA solver
@@ -602,7 +597,6 @@ public class ClosedExamplesTest {
                           expectedResidT, expectedArvR, expectedTput);
     }
 
-    // @Disabled - MAPE was 2.0814%, Max APE was 3.3634%
     @Test
     public void testCqnTwoclassHyperlFluid() {
         // Test two-class hyper-exponential model with Fluid solver
@@ -712,7 +706,6 @@ public class ClosedExamplesTest {
                           expectedResidT, expectedArvR, expectedTput);
     }
 
-    //@Disabled
     @Test
     public void testCqnTwoclassHyperlMAM() {
         // Test two-class hyper-exponential model with MAM solver
@@ -790,7 +783,6 @@ public class ClosedExamplesTest {
                           expectedResidT, expectedArvR, expectedTput);
     }
 
-    //@Disabled
     @Test
     public void testCqnThreeclassHyperlJMT() {
         // Test three-class hyper-exponential model with JMT solver
@@ -827,7 +819,6 @@ public class ClosedExamplesTest {
                           expectedResidT, expectedArvR, expectedTput);
     }
 
-    // @Disabled - MAPE was 0.0141%, Max APE was 0.0500%
     @Test
     public void testCqnThreeclassHyperlSSA() {
         // Test three-class hyper-exponential model with SSA solver
@@ -865,7 +856,6 @@ public class ClosedExamplesTest {
                           expectedResidT, expectedArvR, expectedTput);
     }
 
-    // @Disabled - MAPE was 1.5762%, Max APE was 4.4739%
     @Test
     public void testCqnThreeclassHyperlFluid() {
         // Test three-class hyper-exponential model with Fluid solver
@@ -903,7 +893,6 @@ public class ClosedExamplesTest {
                           expectedResidT, expectedArvR, expectedTput);
     }
 
-    //@Disabled
     @Test
     public void testCqnThreeclassHyperlMVA() {
         // Test three-class hyper-exponential model with MVA solver
@@ -940,7 +929,6 @@ public class ClosedExamplesTest {
                           expectedResidT, expectedArvR, expectedTput);
     }
 
-    //@Disabled
     @Test
     public void testCqnThreeclassHyperlNC() {
         // Test three-class hyper-exponential model with NC solver
@@ -977,7 +965,6 @@ public class ClosedExamplesTest {
                           expectedResidT, expectedArvR, expectedTput);
     }
 
-    //@Disabled
     @Test
     public void testCqnThreeclassHyperlMAM() {
         // Test three-class hyper-exponential model with MAM solver
@@ -1195,7 +1182,6 @@ public class ClosedExamplesTest {
                           expectedResidT, expectedArvR, expectedTput);
     }
 
-    //@Disabled
     @Test
     public void testCqnSchedulingDpsFluid() {
         // Test DPS scheduling model with Fluid solver
@@ -1232,7 +1218,6 @@ public class ClosedExamplesTest {
                           expectedResidT, expectedArvR, expectedTput);
     }
 
-    //@Disabled
     @Test
     public void testCqnSchedulingDpsMVA() {
         // Test DPS scheduling model with MVA solver
@@ -1274,7 +1259,6 @@ public class ClosedExamplesTest {
     // Since QNS is not available in Java, we'll only test CTMC, MVA, and NC
     
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testCqnRepairmenMultiCTMC() {
         // Test repairmen multi model with CTMC solver
         Network model = ClosedModel.cqn_repairmen_multi();
@@ -1311,7 +1295,6 @@ public class ClosedExamplesTest {
                           expectedResidT, expectedArvR, expectedTput);
     }
 
-    // @Disabled - MAPE was 0.0928%, Max APE was 0.2715%
     @Test
     public void testCqnRepairmenMultiMVASoftmin() {
         // Test repairmen multi model with MVA solver (softmin option)

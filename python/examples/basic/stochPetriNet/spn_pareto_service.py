@@ -11,7 +11,8 @@ This example demonstrates:
 
 from line_solver import *
 
-if __name__ == "__main__":
+
+def spn_pareto_service():
     GlobalConstants.setVerbose(VerboseLevel.STD)
 
     model = Network("model")
@@ -41,6 +42,12 @@ if __name__ == "__main__":
     R.set(jobclass, jobclass, P1, T1, 1.0)
     R.set(jobclass, jobclass, T1, sink, 1.0)
     model.link(R)
+
+    return model
+
+
+if __name__ == '__main__':
+    model = spn_pareto_service()
 
     # Solver
     solver = JMT(model, seed=23000, samples=10000)

@@ -5,6 +5,9 @@
 
 package jline.rest.routes;
 
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import jline.io.LineModelIO;
 import jline.io.M2M;
 import jline.lang.Model;
 import jline.lang.Network;
@@ -182,21 +185,74 @@ public class ModelRoutes {
                 return new ErrorResponse("CONVERSION_ERROR", "Unexpected error: " + e.getMessage());
             }
         }, json);
+
+        // Describe a model (return line-model JSON)
+        // Note: no JsonTransformer — we return raw JSON strings to avoid double-encoding
+        post(basePath + "/models/describe", (req, res) -> {
+            res.type("application/json");
+            try {
+                ModelInput input = json.fromJson(req.body(), ModelInput.class);
+                if (input == null) {
+                    res.status(400);
+                    return json.toJson(new ErrorResponse("INVALID_REQUEST", "Request body is required"));
+                }
+
+                String validationError = input.validate();
+                if (validationError != null) {
+                    res.status(400);
+                    return json.toJson(new ErrorResponse("INVALID_INPUT", validationError));
+                }
+
+                Model model;
+                try {
+                    model = modelParser.parse(input);
+                } catch (ModelParseException e) {
+                    res.status(400);
+                    return json.toJson(new ErrorResponse("PARSE_ERROR", e.getMessage()));
+                }
+
+                JsonObject doc;
+                if (model instanceof Network) {
+                    doc = LineModelIO.toJsonObject((Network) model);
+                } else if (model instanceof LayeredNetwork) {
+                    doc = LineModelIO.toJsonObject((LayeredNetwork) model);
+                } else {
+                    res.status(400);
+                    return json.toJson(new ErrorResponse("UNSUPPORTED_TYPE", "Unsupported model type: " + model.getClass().getSimpleName()));
+                }
+
+                return doc.toString();
+            } catch (Exception e) {
+                res.status(500);
+                return json.toJson(new ErrorResponse("DESCRIBE_ERROR", "Unexpected error: " + e.getMessage()));
+            }
+        });
     }
 
     /**
      * Check if the format is valid for conversion.
      */
     private static boolean isValidFormat(String format) {
-        return "jsimg".equals(format) || "lqnx".equals(format);
+        return "jsimg".equals(format) || "lqnx".equals(format) || "json".equals(format);
     }
 
     /**
      * Convert a model to the target format.
      */
     private static String convertModel(Model model, String targetFormat) {
+        // JSON format works for any model type
+        if ("json".equals(targetFormat)) {
+            if (model instanceof Network) {
+                JsonObject doc = LineModelIO.toJsonObject((Network) model);
+                return new GsonBuilder().setPrettyPrinting().serializeSpecialFloatingPointValues().create().toJson(doc);
+            } else if (model instanceof LayeredNetwork) {
+                JsonObject doc = LineModelIO.toJsonObject((LayeredNetwork) model);
+                return new GsonBuilder().setPrettyPrinting().serializeSpecialFloatingPointValues().create().toJson(doc);
+            }
+            return null;
+        }
+
         if (!(model instanceof Network)) {
-            // Currently only Network to JSIMG is supported
             return null;
         }
 

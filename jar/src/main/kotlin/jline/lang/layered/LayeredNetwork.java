@@ -328,6 +328,17 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                     }
                 }
 
+                // Parse fan-out elements if present (used for replication load distribution)
+                NodeList fanOutList = taskElement.getElementsByTagName("fan-out");
+                for (int fo = 0; fo < fanOutList.getLength(); fo++) {
+                    Element fanOutElement = (Element) fanOutList.item(fo);
+                    String dest = fanOutElement.getAttribute("dest");
+                    String value = fanOutElement.getAttribute("value");
+                    if (!dest.isEmpty() && !value.isEmpty()) {
+                        newTask.setFanOut(dest, Integer.parseInt(value));
+                    }
+                }
+
                 newTask.on(newProc);  // Assign task to its processor
                 taskObj.put(taskObj.size(), newTask);
 
@@ -440,9 +451,10 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                         }
 
 
-                        for (int l = 0; l < nameList.size() - 1; l++) {
-
-                            ActivityPrecedence newPrec = new ActivityPrecedence(Collections.singletonList(nameList.get(l)), Collections.singletonList(nameList.get(l + 1)));
+                        List<Integer> phases = new ArrayList<>(nameList.keySet());
+                        Collections.sort(phases);
+                        for (int l = 0; l < phases.size() - 1; l++) {
+                            ActivityPrecedence newPrec = new ActivityPrecedence(Collections.singletonList(nameList.get(phases.get(l))), Collections.singletonList(nameList.get(phases.get(l + 1))));
                             newTask.addPrecedence(newPrec);
                         }
 
@@ -460,6 +472,7 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                         // Note: newEntry.parent = newTask already set at line 301
                         entryID++;
                     }
+                }  // End of entry loop
 
                     NodeList taskActsList = taskElement.getElementsByTagName("task-activities");
                     if (taskActsList.getLength() > 0) {
@@ -642,7 +655,6 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                             }
                         }
                     }
-                }
             }
         }
         return myLN;
@@ -1092,6 +1104,36 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             idx++;
         }
 
+        // Adjust task replication to account for host processor replication.
+        // In LQN, task repl >= host repl. If task repl is 1 (default), inherit host repl.
+        for (int t = 0; t < lsn.ntasks; t++) {
+            int tidx = lsn.tshift + t + 1;
+            int pidx2 = (int) lsn.parent.get(0, tidx);
+            double hostRepl = lsn.repl.get(0, pidx2);
+            double taskRepl = lsn.repl.get(0, tidx);
+            lsn.repl.set(0, tidx, Math.max(taskRepl, hostRepl));
+        }
+
+        // Build fan-out matrix from Task objects' fanOutMap
+        // fanout(source_task_idx, dest_task_idx) = fan-out value (0 means not set)
+        lsn.fanout = new Matrix(lsn.nidx + 1, lsn.nidx + 1);
+        // Build task name -> index mapping
+        Map<String, Integer> taskNameToIdx = new HashMap<>();
+        for (int t = 0; t < lsn.ntasks; t++) {
+            int tidx = lsn.tshift + t + 1;
+            taskNameToIdx.put(this.tasks.get(t).getName(), tidx);
+        }
+        // Populate fanout matrix
+        for (int t = 0; t < lsn.ntasks; t++) {
+            int tidx = lsn.tshift + t + 1;
+            Map<String, Integer> fanOutMap = this.tasks.get(t).getFanOutMap();
+            for (Map.Entry<String, Integer> entry : fanOutMap.entrySet()) {
+                Integer destIdx = taskNameToIdx.get(entry.getKey());
+                if (destIdx != null) {
+                    lsn.fanout.set(tidx, destIdx, entry.getValue());
+                }
+            }
+        }
 
         for (int p = 1; p <= lsn.nhosts; p++) {
 
@@ -1140,12 +1182,8 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                     lsn.itemproc_proc.put(idx, itemParams.proc);
                 }
             } else {
-                for (String ra : this.entries.get(e).replyActivity.values()) {
-                    int ractidx = Utils.findString(lsn.hashnames, "A:" + ra);
-                    if (ractidx > 0) {
-                        lsn.replygraph.set(ractidx - lsn.ashift, idx - lsn.eshift, 1);
-                    }
-                }
+                // Note: replygraph population from explicit repliesTo() is deferred
+                // until after activity hashnames are populated (see below)
             }
 
             lsn.hostdem.put(idx, Immediate.getInstance());
@@ -1216,6 +1254,19 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             idx++;
         }
 
+        // Populate replygraph from explicit repliesTo() calls
+        // This must be done after activity hashnames are populated above
+        for (int e = 0; e < lsn.nentries; e++) {
+            int eidx = lsn.eshift + e + 1;
+            if (!(this.entries.get(e) instanceof ItemEntry)) {
+                for (String ra : this.entries.get(e).replyActivity.values()) {
+                    int ractidx = Utils.findString(lsn.hashnames, "A:" + ra);
+                    if (ractidx > 0) {
+                        lsn.replygraph.set(ractidx - lsn.ashift, eidx - lsn.eshift, 1);
+                    }
+                }
+            }
+        }
 
         lsn.graph.set(lsn.nidx, lsn.nidx, 0);
 
@@ -1439,70 +1490,12 @@ public class LayeredNetwork extends Ensemble implements Copyable {
             }
         }
 
-        /* ========== Transform forwarding to pseudo rendezvous calls ========== */
-        // LQNS transforms forwarding by adding pseudo rendezvous calls from original
-        // callers to forwarding targets. This ensures forwarding targets receive throughput.
-        //
-        // For each forwarding call from entry A to entry B with probability P:
-        //   - Find all calls TO entry A
-        //   - For each caller C with rate R, add a pseudo call from C to B with rate R*P
-        //
-        // This implements the same transformation as LQNS's addForwardingRendezvous().
-
-        int initial_cidx = cidx;  // Save initial count before transformation
-
-        for (int fwd_call_idx = 1; fwd_call_idx <= initial_cidx; fwd_call_idx++) {
-            if (lsn.calltype.get(fwd_call_idx) != CallType.FWD) {
-                continue;
-            }
-
-            int fwd_source_eidx = (int) lsn.callpair.get(fwd_call_idx, 1);  // Entry that does forwarding
-            int fwd_target_eidx = (int) lsn.callpair.get(fwd_call_idx, 2);  // Entry receiving forward
-            double fwd_prob = lsn.callproc.get(fwd_call_idx).getMean();  // Forwarding probability (stored as mean)
-
-            // Find all SYNC calls TO the forwarding source entry
-            for (int caller_call_idx = 1; caller_call_idx <= initial_cidx; caller_call_idx++) {
-                if (lsn.calltype.get(caller_call_idx) != CallType.SYNC) {
-                    continue;
-                }
-
-                int call_target = (int) lsn.callpair.get(caller_call_idx, 2);
-                if (call_target == fwd_source_eidx) {
-                    // Found a call TO the forwarding source
-                    int caller_aidx = (int) lsn.callpair.get(caller_call_idx, 1);  // Activity making the call
-                    double call_rate = lsn.callproc.get(caller_call_idx).getMean();
-
-                    // Create pseudo rendezvous from caller to forwarding target
-                    cidx++;
-                    lsn.calltype.put(cidx, CallType.SYNC);
-                    lsn.callpair.set(cidx, 1, caller_aidx);
-                    lsn.callpair.set(cidx, 2, fwd_target_eidx);
-                    lsn.callnames.put(cidx, lsn.names.get(caller_aidx) + "->" + lsn.names.get(fwd_target_eidx) + "[fwd]");
-                    lsn.callhashnames.put(cidx, lsn.hashnames.get(caller_aidx) + "->" + lsn.hashnames.get(fwd_target_eidx) + "[fwd]");
-
-                    // Pseudo call rate = original call rate * forwarding probability
-                    double pseudo_rate = call_rate * fwd_prob;
-                    lsn.callproc.put(cidx, new Geometric(pseudo_rate));
-
-                    // CRITICAL: Update all matrices so the pseudo call is recognized during submodel construction
-                    // (same as regular SYNC calls at lines 1123-1133)
-                    int caller_tidx = (int) lsn.parent.get(0, caller_aidx);
-                    int target_tidx = (int) lsn.parent.get(0, fwd_target_eidx);
-
-                    lsn.callsof.get(caller_aidx).add(cidx);
-                    lsn.iscaller.set(caller_aidx, target_tidx, 1);
-                    lsn.iscaller.set(caller_aidx, fwd_target_eidx, 1);
-                    lsn.iscaller.set(caller_tidx, target_tidx, 1);
-                    lsn.iscaller.set(caller_tidx, fwd_target_eidx, 1);
-                    lsn.issynccaller.set(caller_tidx, target_tidx, 1);
-                    lsn.issynccaller.set(caller_tidx, fwd_target_eidx, 1);
-                    lsn.issynccaller.set(caller_aidx, fwd_target_eidx, 1);
-                    lsn.issynccaller.set(caller_aidx, target_tidx, 1);
-                    lsn.taskgraph.set(caller_tidx, target_tidx, 1);
-                    lsn.graph.set(caller_aidx, fwd_target_eidx, 1);
-                }
-            }
-        }
+        /* ========== Forwarding calls ========== */
+        // Forwarding is NOT transformed into pseudo synchronous calls.
+        // Instead, forwarding is handled in updateMetricsDefault by propagating
+        // target entry service times to source entries. This matches MATLAB's approach.
+        // (Pseudo calls would create separate task layers with the full caller
+        // population, leading to inflated throughputs at forwarding targets.)
 
         lsn.ncalls = cidx;  // Update total number of calls
 
@@ -1585,18 +1578,37 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                                 int loopStartAidx = Utils.findString(lsn.hashnames, "A:" + tasks.get(t).precedences.get(ap).postActs.get(0));
                                 int loopEndAidx = Utils.findString(lsn.hashnames, "A:" + tasks.get(t).precedences.get(ap).postActs.get(postacts.size() - 1));
 
-                                int curAidx = loopEntryAidx;
-                                for (int posta = 0; posta < postacts.size() - 1; posta++) {
-                                    int postaidx = Utils.findString(lsn.hashnames, "A:" + tasks.get(t).precedences.get(ap).postActs.get(posta));
-                                    lsn.graph.set(curAidx, postaidx, 1.0);
-
-                                    lsn.actposttype.set(0, postaidx, ActivityPrecedence.getPrecedenceId(tasks.get(t).precedences.get(ap).postType));
-                                    curAidx = postaidx;
+                                if (counts.value() < 1) {
+                                    // When expected iterations < 1, we may skip loop entirely
+                                    // E[iterations] = counts means P(enter loop) = counts
+                                    lsn.graph.set(loopEntryAidx, loopStartAidx, counts.value());
+                                    lsn.graph.set(loopEntryAidx, loopEndAidx, 1.0 - counts.value());
+                                    // Process activities inside the loop as serial chain
+                                    int curAidx = loopStartAidx;
+                                    for (int posta = 1; posta < postacts.size() - 1; posta++) {
+                                        int postaidx = Utils.findString(lsn.hashnames, "A:" + tasks.get(t).precedences.get(ap).postActs.get(posta));
+                                        lsn.graph.set(curAidx, postaidx, 1.0);
+                                        lsn.actposttype.set(0, postaidx, ActivityPrecedence.getPrecedenceId(tasks.get(t).precedences.get(ap).postType));
+                                        curAidx = postaidx;
+                                    }
+                                    // After loop body, always exit to end (no looping back)
+                                    lsn.graph.set(curAidx, loopEndAidx, 1.0);
+                                    lsn.actposttype.set(0, loopStartAidx, ActivityPrecedence.getPrecedenceId(tasks.get(t).precedences.get(ap).postType));
+                                } else {
+                                    // When expected iterations >= 1, always enter loop
+                                    // E[iterations] = 1/(1-p) = counts => p = 1 - 1/counts
+                                    int curAidx = loopEntryAidx;
+                                    for (int posta = 0; posta < postacts.size() - 1; posta++) {
+                                        int postaidx = Utils.findString(lsn.hashnames, "A:" + tasks.get(t).precedences.get(ap).postActs.get(posta));
+                                        lsn.graph.set(curAidx, postaidx, 1.0);
+                                        lsn.actposttype.set(0, postaidx, ActivityPrecedence.getPrecedenceId(tasks.get(t).precedences.get(ap).postType));
+                                        curAidx = postaidx;
+                                    }
+                                    loop_back_edges.set(curAidx, loopStartAidx, 1);
+                                    lsn.graph.set(curAidx, loopStartAidx, 1.0 - 1.0 / counts.value());
+                                    lsn.graph.set(curAidx, loopEndAidx, 1.0 / counts.value());
+                                    loopInfoList.add(new int[]{loopStartAidx, loopEndAidx});
                                 }
-                                loop_back_edges.set(curAidx, loopStartAidx, 1);
-                                lsn.graph.set(curAidx, loopStartAidx, 1.0 - 1.0 / counts.value());
-                                lsn.graph.set(curAidx, loopEndAidx, 1.0 / counts.value());
-                                loopInfoList.add(new int[]{loopStartAidx, loopEndAidx});
                                 lsn.actposttype.set(0, loopEndAidx, ActivityPrecedence.getPrecedenceId(tasks.get(t).precedences.get(ap).postType));
                                 break;
                             default:
@@ -1612,58 +1624,6 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                 }
             }
 
-        }
-
-        /* Relocate loop back-edges from loop start to loop body terminal.
-         * POST_LOOP places the back-edge on the first activity of the loop body (loopStart),
-         * but when the loop body has multiple serial activities (e.g., a11->a12), the terminal
-         * of the loop body (a12) should carry the back-edge and exit, not the start (a11).
-         * Otherwise, the routing row sum at the start exceeds 1.0 (serial edge + exit + back-edge).
-         *
-         * Note: loopInfoList may contain duplicate entries because the POST_LOOP case is
-         * inside nested task/activity/precedence loops. Use a Set to process each loop only once.
-         */
-        Set<Integer> processedLoopStarts = new HashSet<>();
-        for (int[] loopInfo : loopInfoList) {
-            int loopStart = loopInfo[0];
-            int loopEnd = loopInfo[1];
-
-            if (processedLoopStarts.contains(loopStart)) continue;
-            processedLoopStarts.add(loopStart);
-
-            // Find terminal: follow serial chain from loopStart, skipping back-edge and exit targets
-            int terminal = loopStart;
-            boolean found = true;
-            while (found) {
-                found = false;
-                for (int j = 1; j <= lsn.nidx; j++) {
-                    if (j != loopStart && j != loopEnd
-                            && lsn.graph.get(terminal, j) != 0
-                            && loop_back_edges.get(terminal, j) == 0
-                            && lsn.parent.get(0, j) == lsn.parent.get(0, terminal)
-                            && lsn.type.get(j) == LayeredNetworkElement.ACTIVITY) {
-                        terminal = j;
-                        found = true;
-                        break;
-                    }
-                }
-            }
-
-            if (terminal != loopStart) {
-                // Get back-edge and exit probabilities from loopStart
-                double backProb = lsn.graph.get(loopStart, loopStart);
-                double exitProb = lsn.graph.get(loopStart, loopEnd);
-
-                // Remove back-edge and exit from loopStart
-                lsn.graph.set(loopStart, loopStart, 0);
-                loop_back_edges.set(loopStart, loopStart, 0);
-                lsn.graph.set(loopStart, loopEnd, 0);
-
-                // Add back-edge and exit at terminal
-                lsn.graph.set(terminal, loopStart, backProb);
-                loop_back_edges.set(terminal, loopStart, 1);
-                lsn.graph.set(terminal, loopEnd, exitProb);
-            }
         }
 
         /* Compute entry-to-activity reachability within the same task */
@@ -2473,31 +2433,72 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                         entryType = "NONE";
                     }
 
-                    /* Check if any activity is bound to this entry.
-                       If so, we must use NONE type (activity graph) instead of PH1PH2.
-                       PH1PH2 format is only for entries without explicit activity definitions. */
-                    boolean hasExplicitActivities = false;
+                    /* For PH1PH2 entries, check if activities with phase>1 exist (true multi-phase).
+                       If so, keep PH1PH2 and emit entry-phase-activities.
+                       Otherwise, convert to NONE for task-activities format. */
                     if (entryType.equals("PH1PH2")) {
+                        boolean hasMultiPhase = false;
                         for (Activity act : curTask.activities) {
-                            if (act.boundToEntry.equals(curEntry.getName())) {
-                                hasExplicitActivities = true;
+                            if (act.getPhase() > 1) {
+                                hasMultiPhase = true;
                                 break;
                             }
                         }
-                        if (hasExplicitActivities) {
-                            entryType = "NONE";  // Override to NONE - activities must be in task-activities
-                            overriddenToNoneEntries.add(curEntry.getName());
+                        if (!hasMultiPhase) {
+                            /* Check if any activity is bound to this entry */
+                            boolean hasBoundActivities = false;
+                            for (Activity act : curTask.activities) {
+                                if (act.boundToEntry.equals(curEntry.getName())) {
+                                    hasBoundActivities = true;
+                                    break;
+                                }
+                            }
+                            if (hasBoundActivities && !activitiesInPrecedences.isEmpty()) {
+                                entryType = "NONE";
+                                overriddenToNoneEntries.add(curEntry.getName());
+                            }
                         }
                     }
                     entryElement.setAttribute("type", entryType);
 
-                    /* Collect phase activities bound to this entry for PH1PH2 entries */
+                    /* Collect phase activities for PH1PH2 entries.
+                       Phase-1 is bound to entry; subsequent phases are found by walking
+                       the auto-generated phase-sequence precedence chain. */
                     List<Activity> phaseActivities = new ArrayList<>();
                     if (entryType.equals("PH1PH2")) {
+                        /* Find the phase-1 activity bound to this entry */
+                        Activity phase1Act = null;
                         for (Activity act : curTask.activities) {
                             if (act.boundToEntry.equals(curEntry.getName())) {
+                                phase1Act = act;
                                 phaseActivities.add(act);
-                                phaseActivityNames.add(act.getName());  // Track for exclusion from task-activities
+                                phaseActivityNames.add(act.getName());
+                                break;
+                            }
+                        }
+                        /* Walk precedence chain to find subsequent phases */
+                        if (phase1Act != null) {
+                            String currentName = phase1Act.getName();
+                            boolean found = true;
+                            while (found) {
+                                found = false;
+                                for (ActivityPrecedence prec : curTask.precedences) {
+                                    if (prec.preActs.size() == 1 && prec.postActs.size() == 1 &&
+                                        prec.preActs.get(0).equals(currentName)) {
+                                        String nextName = prec.postActs.get(0);
+                                        /* Find the activity object */
+                                        for (Activity act : curTask.activities) {
+                                            if (act.getName().equals(nextName) && act.getPhase() > 0) {
+                                                phaseActivities.add(act);
+                                                phaseActivityNames.add(act.getName());
+                                                currentName = nextName;
+                                                found = true;
+                                                break;
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
@@ -2548,6 +2549,19 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                 }
 
                 /* ----------- ACTIVITIES ----------- */
+                /* Check if any activities will go into task-activities (not already in entry-phase-activities) */
+                boolean hasTaskActivities = false;
+                for (int a = 0; a < curTask.activities.size(); a++) {
+                    if (!phaseActivityNames.contains(curTask.activities.get(a).getName())) {
+                        hasTaskActivities = true;
+                        break;
+                    }
+                }
+                /* Skip empty task-activities element for pure PH1PH2 tasks */
+                if (!hasTaskActivities && curTask.precedences.isEmpty()) {
+                    continue;  // No task-level activities, precedences, or reply-entries needed
+                }
+
                 Element taskActsElement = doc.createElement("task-activities");
                 taskElement.appendChild(taskActsElement);
 
@@ -2592,6 +2606,19 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                 /* ----------- PRECEDENCES ---------- */
                 for (int ap = 0; ap < curTask.precedences.size(); ap++) {
                     ActivityPrecedence curActPrec = curTask.precedences.get(ap);
+
+                    /* Skip precedences that only involve phase activities (PH1PH2 entries handle sequencing internally) */
+                    boolean allPhase = true;
+                    for (String act : curActPrec.preActs) {
+                        if (!phaseActivityNames.contains(act)) { allPhase = false; break; }
+                    }
+                    if (allPhase) {
+                        for (String act : curActPrec.postActs) {
+                            if (!phaseActivityNames.contains(act)) { allPhase = false; break; }
+                        }
+                    }
+                    if (allPhase) continue;
+
                     Element actPrecElement = doc.createElement("precedence");
                     taskActsElement.appendChild(actPrecElement);
 
@@ -2646,6 +2673,11 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                 }
 
                 for (Entry curEntry : curTask.entries) {
+                    /* Skip reference tasks - they don't reply */
+                    if (curTask.scheduling.equals(SchedStrategy.REF)) {
+                        continue;
+                    }
+
                     /* Skip PH1PH2 entries - they have implicit replies and don't need reply-entry elements
                        But process entries that were overridden to NONE due to precedence activities */
                     String entryType = curEntry.getType();
@@ -2668,20 +2700,20 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                     if (curEntry.replyActivity.isEmpty()) {
                         LayeredNetworkStruct lsn = this.getStruct();
 
-                        /* locate the zero-based column of this entry inside lsn.replygraph   */
+                        /* locate the 1-based column of this entry inside lsn.replygraph   */
                         int eidx = -1;
                         for (Map.Entry<Integer, Entry> kv : this.entries.entrySet()) {
                             if (kv.getValue() == curEntry) {
-                                eidx = kv.getKey() - 1;              // convert 1-based → 0-based
+                                eidx = kv.getKey() + 1;              // entries are 0-based keyed, replygraph columns are 1-based
                                 break;
                             }
                         }
 
                         /* add every activity that replies to this entry, but only if it belongs to this task and is not a phase activity */
-                        if (eidx >= 0) {
-                            for (int ra = 0; ra < lsn.replygraph.getNumRows(); ra++) {
+                        if (eidx >= 1 && eidx < lsn.replygraph.getNumCols()) {
+                            for (int ra = 1; ra < lsn.replygraph.getNumRows(); ra++) {
                                 if (lsn.replygraph.get(ra, eidx) != 0) {
-                                    String actName = lsn.names.get(lsn.ashift + ra + 1); // back to 1-based
+                                    String actName = lsn.names.get(lsn.ashift + ra); // replygraph rows are 1-based, matching names at ashift+ra
                                     // Only add if the activity belongs to this task and is not already in entry-phase-activities
                                     if (taskActivityNames.contains(actName) && !phaseActivityNames.contains(actName)) {
                                         Integer actIndex = findActivityIndexByName(actName);

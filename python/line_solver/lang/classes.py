@@ -209,6 +209,24 @@ class OpenSignal(OpenClass):
         """Check if this signal is a catastrophe (removes all jobs)."""
         return self._signal_type == SignalType.CATASTROPHE
 
+    def forJobClass(self, job_class):
+        """Associate this signal with a target job class.
+
+        Args:
+            job_class: The JobClass this signal targets
+
+        Returns:
+            self for method chaining
+        """
+        self._target_job_class = job_class
+        if job_class is not None:
+            job_class.replySignalClass = self
+        return self
+
+    def getTargetJobClass(self):
+        """Get the associated target job class."""
+        return getattr(self, '_target_job_class', None)
+
     # Aliases
     get_signal_type = getSignalType
     set_signal_type = setSignalType
@@ -216,6 +234,8 @@ class OpenSignal(OpenClass):
     set_removal_distribution = setRemovalDistribution
     get_removal_policy = getRemovalPolicy
     set_removal_policy = setRemovalPolicy
+    for_job_class = forJobClass
+    get_target_job_class = getTargetJobClass
 
 
 class Signal(JobClass):
@@ -597,6 +617,24 @@ class ClosedSignal(ClosedClass):
         """Check if this signal is a catastrophe (removes all jobs)."""
         return self._signal_type == SignalType.CATASTROPHE
 
+    def forJobClass(self, job_class):
+        """Associate this signal with a target job class.
+
+        Args:
+            job_class: The JobClass this signal targets
+
+        Returns:
+            self for method chaining
+        """
+        self._target_job_class = job_class
+        if job_class is not None:
+            job_class.replySignalClass = self
+        return self
+
+    def getTargetJobClass(self):
+        """Get the associated target job class."""
+        return getattr(self, '_target_job_class', None)
+
     # Aliases
     get_signal_type = getSignalType
     set_signal_type = setSignalType
@@ -604,6 +642,8 @@ class ClosedSignal(ClosedClass):
     set_removal_distribution = setRemovalDistribution
     get_removal_policy = getRemovalPolicy
     set_removal_policy = setRemovalPolicy
+    for_job_class = forJobClass
+    get_target_job_class = getTargetJobClass
 
 
 class SelfLoopingClass(ClosedClass):

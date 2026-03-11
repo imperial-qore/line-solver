@@ -6,6 +6,7 @@ tic;
 if nargin<2
     options = self.getOptions;
 end
+line_debug(options, 'LQNS: starting (method=%s, multiserver=%s)', options.method, options.config.multiserver);
 dirpath = lineTempName('lqns');
 filename = [dirpath,filesep,'model.lqnx'];
 self.model.writeXML(filename);
@@ -137,12 +138,13 @@ end
 
 % Check for remote execution
 if isfield(options.config, 'remote') && options.config.remote
-    % Remote execution via lqns-rest API
+    line_debug(options, 'LQNS: using remote execution at %s', options.config.remote_url);
     if options.verbose
         line_printf('\nUsing remote LQNS at: %s\n', options.config.remote_url);
     end
     self.runRemoteLQNS(filename, options);
 else
+    line_debug(options, 'LQNS: using local execution, command: %s', cmd);
     % Local execution
     system(cmd);
 end

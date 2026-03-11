@@ -111,6 +111,85 @@ if all(isfinite(N))
             end
     end
 else
-    line_error(mfilename,'getProbMarg not yet implemented for models with open classes.');
+    % Open class marginal probability
+    if isempty(self.result)
+        self.run;
+    end
+    U = self.result.Avg.U;
+    Q = self.result.Avg.Q;
+
+    if sn.sched(ist) == SchedStrategy.INF
+        % Delay (infinite server): Poisson distribution per class
+        % P(n) = exp(-Q) * Q^n / n!
+        lambda_mean = Q(ist, jobclass);
+        if isempty(state_m)
+            n_max = max(1, ceil(lambda_mean + 5*sqrt(max(lambda_mean, 1))));
+            state_m = 0:n_max;
+        end
+        Pmarg = zeros(1, length(state_m));
+        logPmarg = zeros(1, length(state_m));
+        for idx = 1:length(state_m)
+            n = state_m(idx);
+            if lambda_mean > 0
+                logP = n * log(lambda_mean) - lambda_mean - gammaln(n+1);
+            else
+                if n == 0
+                    logP = 0;
+                else
+                    logP = -Inf;
+                end
+            end
+            logPmarg(idx) = logP;
+            Pmarg(idx) = real(exp(logP));
+        end
+    elseif sn.sched(ist) ~= SchedStrategy.EXT
+        % Queue station: geometric-like marginal distribution
+        % For multiclass open product-form networks:
+        % P(n_r = k) = (1-rho) * rho_r^k / (1-rho+rho_r)^{k+1}
+        % where rho = sum_r U(ist,r), rho_r = U(ist,r)
+        rho_r = U(ist, jobclass);
+        rho_total = min(sum(U(ist, :), 'omitnan'), 1 - GlobalConstants.FineTol);
+        if isempty(state_m)
+            if rho_r > 0 && rho_total < 1
+                denom = 1 - rho_total + rho_r;
+                ratio = rho_r / denom;
+                if ratio > 0 && ratio < 1
+                    n_max = max(1, ceil(-log(1e-10) / (-log(ratio))));
+                else
+                    n_max = 0;
+                end
+                n_max = min(n_max, 1000);
+            else
+                n_max = 0;
+            end
+            state_m = 0:n_max;
+        end
+        Pmarg = zeros(1, length(state_m));
+        logPmarg = zeros(1, length(state_m));
+        if rho_total < 1 - GlobalConstants.FineTol
+            denom = 1 - rho_total + rho_r;
+            for idx = 1:length(state_m)
+                n = state_m(idx);
+                if rho_r > 0
+                    logP = log(1 - rho_total) + n * log(rho_r) - (n+1) * log(denom);
+                else
+                    if n == 0
+                        logP = log(1 - rho_total) - log(denom);
+                    else
+                        logP = -Inf;
+                    end
+                end
+                logPmarg(idx) = logP;
+                Pmarg(idx) = real(exp(logP));
+            end
+        else
+            logPmarg = -Inf * ones(1, length(state_m));
+            Pmarg = zeros(1, length(state_m));
+        end
+    else
+        % Source/External node: no probability distribution
+        Pmarg = 1;
+        logPmarg = 0;
+    end
 end
 end

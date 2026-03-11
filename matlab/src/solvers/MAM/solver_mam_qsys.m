@@ -66,8 +66,8 @@ elseif ~arrivalIsBatch && ~serviceIsBatch
     % MAP/MAP/1 queue - treat as BMAP/MAP/1 with batch size 1
     [QN, UN, RN, TN, piAgg, GM] = solveBMAPMAP1(arrivalMatrices, serviceMatrices, ma, ms, options);
 else
-    % BMAP/BMAP/1 - both batched (not yet supported)
-    error('BMAP/BMAP/1 queues with both batch arrivals and batch service are not yet supported');
+    % BMAP/BMAP/1 - both batched, use finite CTMC truncation
+    [QN, UN, RN, TN, piAgg, GM] = solveBMAPBMAP1(arrivalMatrices, serviceMatrices, ma, ms, options);
 end
 
 end
@@ -83,7 +83,7 @@ function [matrices, isBatch, nPhases] = parseProcess(proc, procType)
         end
         isBatch = K > 1;
         nPhases = size(matrices{1}, 1);
-    elseif isa(proc, 'MAP')
+    elseif isa(proc, 'MAP') || isa(proc, 'DMAP')
         matrices = {proc.D(0), proc.D(1)};
         isBatch = false;
         nPhases = size(matrices{1}, 1);
@@ -309,5 +309,170 @@ UN = rho;
 
 % Mean response time via Little's Law
 RN = QN / TN;
+
+end
+
+%% BMAP/BMAP/1 solver using finite CTMC truncation
+function [QN, UN, RN, TN, piAgg, G] = solveBMAPBMAP1(D, S, ma, ms, options)
+% Solves BMAP/BMAP/1 using finite CTMC truncation
+%
+% When both arrivals and service are batched, the process is neither
+% M/G/1 type nor GI/M/1 type. We construct a finite truncated CTMC
+% over the Kronecker product of arrival and service phases per level.
+%
+% State: (level, arrival_phase, service_phase)
+%   level = number of customers in system (0, 1, ..., L)
+%   arrival_phase = 1, ..., ma
+%   service_phase = 1, ..., ms
+
+Ka = length(D) - 1;  % max batch size for arrivals
+Ks = length(S) - 1;  % max batch size for service
+m = ma * ms;         % combined phases per level
+
+%% Compute arrival and service rates for stability check
+D1_total = zeros(ma, ma);
+for k = 1:Ka
+    D1_total = D1_total + D{k+1};
+end
+pi_bmap = map_prob({D{1}, D1_total});
+e_ma = ones(ma, 1);
+lambda_total = 0;
+for k = 1:Ka
+    lambda_total = lambda_total + k * (pi_bmap * D{k+1} * e_ma);
+end
+
+S1_total = zeros(ms, ms);
+for k = 1:Ks
+    S1_total = S1_total + S{k+1};
+end
+pi_smap = map_prob({S{1}, S1_total});
+e_ms = ones(ms, 1);
+mu_total = 0;
+for k = 1:Ks
+    mu_total = mu_total + k * (pi_smap * S{k+1} * e_ms);
+end
+
+rho = lambda_total / mu_total;
+
+if rho >= 1
+    warning('solver_mam_qsys:Unstable', ...
+        'System is unstable (rho = %.4f >= 1). Results may be invalid.', rho);
+end
+
+%% Choose truncation level based on utilization
+L = max(100, ceil(20 / (1 - min(rho, 0.99))));
+L = min(L, 500);  % cap for memory
+
+%% Build generator matrix Q as sparse (L+1)*m x (L+1)*m
+N_states = (L + 1) * m;
+I_ma = speye(ma);
+I_ms = speye(ms);
+
+% Pre-compute Kronecker products
+arrKron = cell(1, Ka);
+for k = 1:Ka
+    arrKron{k} = kron(sparse(D{k+1}), I_ms);
+end
+svcKron = cell(1, Ks);
+for k = 1:Ks
+    svcKron{k} = kron(I_ma, sparse(S{k+1}));
+end
+phaseKron = kron(sparse(D{1}), I_ms) + kron(I_ma, sparse(S{1}));
+
+% Estimate non-zeros and pre-allocate
+nnz_est = (L+1) * m * m * (1 + Ka + Ks);
+ii = zeros(nnz_est, 1);
+jj = zeros(nnz_est, 1);
+vv = zeros(nnz_est, 1);
+cnt = 0;
+
+for lev = 0:L
+    base = lev * m;
+
+    % Internal phase transitions: D_0 x I_ms + I_ma x S_0
+    [ri, ci, vi] = find(phaseKron);
+    n_entries = length(ri);
+    ii(cnt+1:cnt+n_entries) = base + ri;
+    jj(cnt+1:cnt+n_entries) = base + ci;
+    vv(cnt+1:cnt+n_entries) = vi;
+    cnt = cnt + n_entries;
+
+    % Arrivals: batch size k, level -> min(level+k, L)
+    for k = 1:Ka
+        new_lev = min(lev + k, L);
+        dest = new_lev * m;
+        [ri, ci, vi] = find(arrKron{k});
+        n_entries = length(ri);
+        ii(cnt+1:cnt+n_entries) = base + ri;
+        jj(cnt+1:cnt+n_entries) = dest + ci;
+        vv(cnt+1:cnt+n_entries) = vi;
+        cnt = cnt + n_entries;
+    end
+
+    if lev > 0
+        % Service: batch size j, level -> max(level-j, 0)
+        for j = 1:Ks
+            new_lev = max(lev - j, 0);
+            dest = new_lev * m;
+            [ri, ci, vi] = find(svcKron{j});
+            n_entries = length(ri);
+            ii(cnt+1:cnt+n_entries) = base + ri;
+            jj(cnt+1:cnt+n_entries) = dest + ci;
+            vv(cnt+1:cnt+n_entries) = vi;
+            cnt = cnt + n_entries;
+        end
+    else
+        % Level 0: server idle, service completions stay at level 0
+        for j = 1:Ks
+            [ri, ci, vi] = find(svcKron{j});
+            n_entries = length(ri);
+            ii(cnt+1:cnt+n_entries) = base + ri;
+            jj(cnt+1:cnt+n_entries) = base + ci;
+            vv(cnt+1:cnt+n_entries) = vi;
+            cnt = cnt + n_entries;
+        end
+    end
+end
+
+% Trim and assemble sparse Q
+ii = ii(1:cnt);
+jj = jj(1:cnt);
+vv = vv(1:cnt);
+Q = sparse(ii, jj, vv, N_states, N_states);
+
+% Fix diagonal: Q(i,i) = -sum of off-diagonal entries in row i
+d = full(sum(Q, 2));
+Q = Q - spdiags(d, 0, N_states, N_states);
+
+%% Solve for steady-state distribution
+% Solve pi * Q = 0 with pi * e = 1
+% Equivalent to Q' * pi' = 0
+QT = Q';
+% Replace last equation with normalization constraint
+QT(N_states, :) = 1;
+b = sparse(N_states, 1);
+b(N_states) = 1;
+pi = full(QT \ b)';
+
+% Ensure non-negative
+pi = max(pi, 0);
+pi = pi / sum(pi);
+
+%% Compute performance metrics
+% Mean queue length
+levels = 0:L;
+QN = levels * reshape(sum(reshape(pi, m, L+1), 1), L+1, 1);
+
+% Utilization and throughput
+UN = rho;
+TN = lambda_total;
+
+% Mean response time via Little's law
+RN = QN / TN;
+
+% Aggregate probabilities by level
+piAgg = sum(reshape(pi, m, L+1), 1);
+
+G = [];  % No G matrix for truncation approach
 
 end

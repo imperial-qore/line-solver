@@ -28,6 +28,7 @@ end
 
 switch options.lang
     case 'java'
+        line_debug(options, 'MAM: using lang=java, delegating to JLINE');
         jmodel = LINE2JLINE(self.model);
         %M = jmodel.getNumberOfStatefulNodes;
         M = jmodel.getNumberOfStations;
@@ -49,8 +50,10 @@ switch options.lang
         self.result.Prob.logNormConstAggr = lG;
         return
     case 'matlab'
+        line_debug(options, 'MAM: using lang=matlab');
         sn = getStruct(self);
         if true%~snHasMultipleClosedClasses(sn)
+            line_debug(options, 'MAM: calling solver_mam_analyzer (method=%s)', options.method);
             % Call solver_mam_analyzer - percResults is optional 10th output
             [QN,UN,RN,TN,CN,XN,~,actualmethod,iter,percResults] = solver_mam_analyzer(sn, options);
             T = getAvgTputHandles(self);

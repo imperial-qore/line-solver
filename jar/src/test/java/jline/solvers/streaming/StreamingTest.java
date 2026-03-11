@@ -15,8 +15,8 @@ import jline.lang.nodes.Queue;
 import jline.lang.nodes.Sink;
 import jline.lang.nodes.Source;
 import jline.lang.processes.Exp;
-import jline.solvers.des.DESOptions;
-import jline.solvers.des.SolverDES;
+import jline.solvers.ldes.LDESOptions;
+import jline.solvers.ldes.SolverLDES;
 import jline.solvers.ssa.SampleNodeState;
 import jline.solvers.ssa.SolverSSA;
 import jline.solvers.ssa.SSAOptions;
@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Test suite for streaming functionality in SSA and DES solvers.
+ * Test suite for streaming functionality in SSA and LDES solvers.
  * <p>
  * These tests verify that the stream() and streamAggr() methods work correctly
  * by running simulations with streaming enabled. A mock gRPC server captures
@@ -236,11 +236,11 @@ public class StreamingTest {
                 "Mock receiver should have received requests for streamAggr");
     }
 
-    // ==================== DES Streaming Tests ====================
+    // ==================== LDES Streaming Tests ====================
 
     /**
-     * Tests DES streaming with sampled mode on an M/M/1 queue.
-     * Note: DES stream() runs transient simulation which may have different
+     * Tests LDES streaming with sampled mode on an M/M/1 queue.
+     * Note: LDES stream() runs transient simulation which may have different
      * event handling than SSA. This test verifies simulation completes.
      */
     @Test
@@ -248,7 +248,7 @@ public class StreamingTest {
         Network model = createMM1Network();
         Queue queue = (Queue) model.getNodeByName("Queue");
 
-        DESOptions options = new DESOptions();
+        LDESOptions options = new LDESOptions();
         options.verbose = VerboseLevel.SILENT;
         options.seed = BASE_SEED;
         options.samples = 10000;
@@ -256,7 +256,7 @@ public class StreamingTest {
         // Push every 100 events
         StreamingOptions streamOpts = createTestStreamingOptions(100);
 
-        SolverDES solver = new SolverDES(model, options);
+        SolverLDES solver = new SolverLDES(model, options);
         SampleResult result = solver.stream(queue, streamOpts);
 
         // Verify simulation completed successfully with streaming enabled
@@ -264,19 +264,19 @@ public class StreamingTest {
         assertNotNull(result.t, "Time vector should not be null");
         assertTrue(result.t.length() > 0, "Time vector should have samples");
 
-        // Note: DES transient simulation may not trigger streaming hooks as frequently
+        // Note: LDES transient simulation may not trigger streaming hooks as frequently
         // as SSA, so we don't strictly require metrics to be received here
     }
 
     /**
-     * Tests DES streaming with time-window mode on an M/M/1 queue.
+     * Tests LDES streaming with time-window mode on an M/M/1 queue.
      */
     @Test
     public void testDES_MM1_Stream_TimeWindow() {
         Network model = createMM1Network();
         Queue queue = (Queue) model.getNodeByName("Queue");
 
-        DESOptions options = new DESOptions();
+        LDESOptions options = new LDESOptions();
         options.verbose = VerboseLevel.SILENT;
         options.seed = BASE_SEED;
         options.samples = 10000;
@@ -284,7 +284,7 @@ public class StreamingTest {
         // 1-second windows
         StreamingOptions streamOpts = createTimeWindowStreamingOptions(1.0);
 
-        SolverDES solver = new SolverDES(model, options);
+        SolverLDES solver = new SolverLDES(model, options);
         SampleResult result = solver.stream(queue, streamOpts);
 
         // Verify simulation completed
@@ -294,8 +294,8 @@ public class StreamingTest {
     }
 
     /**
-     * Tests DES streamAggr method on an M/M/1 queue.
-     * DES sample() returns aggregated per-class queue lengths, so sampleAggr
+     * Tests LDES streamAggr method on an M/M/1 queue.
+     * LDES sample() returns aggregated per-class queue lengths, so sampleAggr
      * simply marks the result as aggregated without additional processing.
      */
     @Test
@@ -303,14 +303,14 @@ public class StreamingTest {
         Network model = createMM1Network();
         Queue queue = (Queue) model.getNodeByName("Queue");
 
-        DESOptions options = new DESOptions();
+        LDESOptions options = new LDESOptions();
         options.verbose = VerboseLevel.SILENT;
         options.seed = BASE_SEED;
         options.samples = 10000;
 
         StreamingOptions streamOpts = createTestStreamingOptions(100);
 
-        SolverDES solver = new SolverDES(model, options);
+        SolverLDES solver = new SolverLDES(model, options);
         SampleResult result = solver.streamAggr(queue, streamOpts);
 
         assertNotNull(result, "SampleResult should not be null");

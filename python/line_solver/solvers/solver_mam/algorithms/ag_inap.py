@@ -211,14 +211,29 @@ def _build_rcat(sn, max_states: int = 100) -> RCATModelData:
     # Count actions
     action_map = []
 
+    # Check for catastrophe flags
+    is_catastrophe = [False] * K
+    if hasattr(sn, 'isCatastrophe') and sn.isCatastrophe is not None:
+        isCat = np.asarray(sn.isCatastrophe).flatten()
+        for r_idx in range(min(K, len(isCat))):
+            is_catastrophe[r_idx] = bool(isCat[r_idx])
+
     for ist in queue_stations:
         for r in range(K):
             if process_map[ist, r] > 0:
                 # Check if class r is a negative signal class
                 is_negative_class = False
+                is_catastrophe_class = False
+                removal_dist = None
                 if r < len(issignal) and issignal[r]:
                     if r < len(signaltype_is_negative):
                         is_negative_class = signaltype_is_negative[r]
+                    if r < len(is_catastrophe):
+                        is_catastrophe_class = is_catastrophe[r]
+                    # Get removal distribution
+                    if (hasattr(sn, 'signalRemovalDist') and sn.signalRemovalDist is not None
+                            and r < len(sn.signalRemovalDist)):
+                        removal_dist = sn.signalRemovalDist[r]
 
                 for jst in queue_stations:
                     for s in range(K):
@@ -234,7 +249,9 @@ def _build_rcat(sn, max_states: int = 100) -> RCATModelData:
                                         'to_station': jst,
                                         'to_class': s,
                                         'prob': prob,
-                                        'isNegative': is_negative_class
+                                        'isNegative': is_negative_class,
+                                        'isCatastrophe': is_catastrophe_class,
+                                        'removalDistribution': removal_dist,
                                     })
 
     num_actions = len(action_map)
@@ -281,15 +298,40 @@ def _build_rcat(sn, max_states: int = 100) -> RCATModelData:
 
         if am.get('isNegative', False):
             # NEGATIVE: Job removal at destination (G-network negative customer)
-            # Empty queue (state 0): no effect
-            if Np_passive > 0:
-                Pb[0, 0] = 1.0
-            # Non-empty queues: decrement (n -> n-1)
-            for n in range(1, Np_passive - 1):
-                Pb[n, n - 1] = 1.0
-            # Boundary at max capacity: decrement
-            if Np_passive > 1:
-                Pb[Np_passive - 1, Np_passive - 2] = 1.0
+            if am.get('isCatastrophe', False):
+                # CATASTROPHE: All jobs removed - all states transition to 0 (empty)
+                for n in range(Np_passive):
+                    Pb[n, 0] = 1.0
+            elif am.get('removalDistribution') is not None:
+                # BATCH REMOVAL: Remove random number of jobs based on distribution
+                dist = am['removalDistribution']
+                for n in range(Np_passive):
+                    if n == 0:
+                        # Empty queue: no effect
+                        Pb[0, 0] = 1.0
+                    else:
+                        for m in range(n + 1):
+                            k = n - m  # Number of jobs to remove
+                            if m > 0:
+                                # Remove exactly k jobs
+                                prob_k = dist.evalPMF(k) if hasattr(dist, 'evalPMF') else 0.0
+                            else:
+                                # Remove all jobs (m=0): P(removal >= n)
+                                cdf_nm1 = sum(
+                                    dist.evalPMF(j) if hasattr(dist, 'evalPMF') else 0.0
+                                    for j in range(n)
+                                )
+                                prob_k = 1.0 - cdf_nm1
+                            if prob_k > 0:
+                                Pb[n, m] = prob_k
+            else:
+                # SINGLE REMOVAL: n -> n-1
+                if Np_passive > 0:
+                    Pb[0, 0] = 1.0
+                for n in range(1, Np_passive - 1):
+                    Pb[n, n - 1] = 1.0
+                if Np_passive > 1:
+                    Pb[Np_passive - 1, Np_passive - 2] = 1.0
         else:
             # POSITIVE: Normal job arrival at destination
             for n in range(Np_passive - 1):
@@ -366,9 +408,31 @@ def _build_local_rates(sn, ist: int, r: int, Np: int, rt: np.ndarray,
                         except:
                             pass
 
-    # External arrivals from source - separate positive and negative
-    lambda_ir_pos = 0.0   # Positive arrivals
-    lambda_ir_neg = 0.0   # Negative signal arrivals (single removal)
+    # Check for catastrophe flags and signal types
+    is_catastrophe = [False] * K
+    if hasattr(sn, 'isCatastrophe') and sn.isCatastrophe is not None:
+        isCat = np.asarray(sn.isCatastrophe).flatten()
+        for idx in range(min(K, len(isCat))):
+            is_catastrophe[idx] = bool(isCat[idx])
+
+    # Also check signaltype for CATASTROPHE
+    signaltype_is_catastrophe = [False] * K
+    if hasattr(sn, 'signaltype') and sn.signaltype is not None:
+        for s_idx in range(K):
+            if s_idx < len(sn.signaltype):
+                st = sn.signaltype[s_idx]
+                if st is not None:
+                    if hasattr(st, 'value'):
+                        signaltype_is_catastrophe[s_idx] = (st.value == 'catastrophe' or
+                                                             str(st.name).upper() == 'CATASTROPHE')
+                    elif isinstance(st, str):
+                        signaltype_is_catastrophe[s_idx] = st.lower() == 'catastrophe'
+
+    # External arrivals from source - separate positive, negative, catastrophe, batch
+    lambda_ir_pos = 0.0        # Positive arrivals
+    lambda_ir_neg_single = 0.0 # Negative signal arrivals (single removal)
+    lambda_ir_catastrophe = 0.0 # Catastrophe arrivals (remove all)
+    batch_arrivals = []         # Batch removal arrivals: (rate, distribution)
 
     for isrc in source_stations:
         for s_src in range(K):
@@ -377,7 +441,6 @@ def _build_local_rates(sn, ist: int, r: int, Np: int, rt: np.ndarray,
 
             if is_signal:
                 # For signals: they route to themselves but affect positive customers
-                # Check if signal routes to ANY class at this station
                 prob_src = 0.0
                 for s_dst in range(K):
                     from_idx = isrc * K + s_src
@@ -394,9 +457,22 @@ def _build_local_rates(sn, ist: int, r: int, Np: int, rt: np.ndarray,
                 if isrc < rates.shape[0] and s_src < rates.shape[1]:
                     src_rate = rates[isrc, s_src]
                     if not np.isnan(src_rate):
-                        # Check if source class s_src is a negative signal
-                        if is_signal and s_src < len(signaltype_is_negative) and signaltype_is_negative[s_src]:
-                            lambda_ir_neg += src_rate * prob_src
+                        if is_signal and s_src < len(signaltype_is_negative) and (
+                                signaltype_is_negative[s_src] or signaltype_is_catastrophe[s_src]):
+                            # Check if catastrophe
+                            is_cat = (is_catastrophe[s_src] or signaltype_is_catastrophe[s_src])
+                            if is_cat:
+                                lambda_ir_catastrophe += src_rate * prob_src
+                            else:
+                                # Check for batch removal distribution
+                                removal_dist = None
+                                if (hasattr(sn, 'signalRemovalDist') and sn.signalRemovalDist is not None
+                                        and s_src < len(sn.signalRemovalDist)):
+                                    removal_dist = sn.signalRemovalDist[s_src]
+                                if removal_dist is not None:
+                                    batch_arrivals.append((src_rate * prob_src, removal_dist))
+                                else:
+                                    lambda_ir_neg_single += src_rate * prob_src
                         else:
                             lambda_ir_pos += src_rate * prob_src
 
@@ -405,10 +481,32 @@ def _build_local_rates(sn, ist: int, r: int, Np: int, rt: np.ndarray,
         for n in range(Np - 1):
             L[n, n + 1] = lambda_ir_pos
 
-    # Negative arrival transitions: n -> n-1 (only if queue non-empty)
-    if lambda_ir_neg > 0:
+    # Catastrophe arrival transitions: n -> 0 (for all n > 0)
+    if lambda_ir_catastrophe > 0:
         for n in range(1, Np):
-            L[n, n - 1] = L[n, n - 1] + lambda_ir_neg
+            L[n, 0] = L[n, 0] + lambda_ir_catastrophe
+
+    # Batch removal arrival transitions
+    for batch_rate, dist in batch_arrivals:
+        for n in range(1, Np):
+            for m in range(n + 1):
+                k = n - m  # Number of jobs to remove
+                if m > 0:
+                    prob_k = dist.evalPMF(k) if hasattr(dist, 'evalPMF') else 0.0
+                else:
+                    # Remove all: P(removal >= n)
+                    cdf_nm1 = sum(
+                        dist.evalPMF(j) if hasattr(dist, 'evalPMF') else 0.0
+                        for j in range(n)
+                    )
+                    prob_k = 1.0 - cdf_nm1
+                if prob_k > 0:
+                    L[n, m] = L[n, m] + batch_rate * prob_k
+
+    # Single removal negative arrival transitions: n -> n-1 (only if queue non-empty)
+    if lambda_ir_neg_single > 0:
+        for n in range(1, Np):
+            L[n, n - 1] = L[n, n - 1] + lambda_ir_neg_single
 
     # Service rate at this station
     mu_ir = rates[ist, r] if ist < rates.shape[0] and r < rates.shape[1] else 0.0

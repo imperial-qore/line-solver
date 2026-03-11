@@ -152,7 +152,7 @@ public class WebsiteExamplesTest {
                 code.contains("JMT") || code.contains("SSA") ||
                 code.contains("CTMC") || code.contains("MAM") ||
                 code.contains("AUTO") || code.contains("NC") ||
-                code.contains("DES");
+                code.contains("LDES");
 
         return hasNodes && hasClasses && hasSolver;
     }
@@ -171,6 +171,16 @@ public class WebsiteExamplesTest {
         String path2 = "doc/website_examples.json";
         if (Files.exists(Paths.get(path2))) {
             return path2;
+        }
+
+        // Try classpath (test resources)
+        java.io.InputStream is = getClass().getClassLoader().getResourceAsStream("website_examples.json");
+        if (is != null) {
+            java.io.File tmp = java.io.File.createTempFile("website_examples", ".json");
+            tmp.deleteOnExit();
+            Files.copy(is, tmp.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            is.close();
+            return tmp.getAbsolutePath();
         }
 
         throw new IOException("Cannot find website_examples.json");

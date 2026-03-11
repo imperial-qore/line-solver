@@ -75,7 +75,7 @@ elseif strcmp(method, 'opt_char') || strcmp(method, 'opt_char_gads')
         M2a2 = x(1);
         M3a2 = x(2);
     else
-        options = optimset('Display', 'iter','Algorithm','active-set');
+        options = optimset('Display', 'off','Algorithm','active-set');
         x = fmincon(@fun, [M2 M3], [], [], [], [], [0 0], [], @nonlcon1, options);
         M2a1 = x(1);
         M3a1 = x(2);

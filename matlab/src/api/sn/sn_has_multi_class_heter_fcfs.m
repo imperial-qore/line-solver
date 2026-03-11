@@ -34,8 +34,11 @@ if isempty(iset)
     bool = false;
 else
     bool = false;
-    for i=iset(:)'
-        bool = bool | range([sn.rates(i,:)])>0;
+    for idx=1:length(iset)
+        i = iset(idx);
+        ratesRow = sn.rates(i,:);
+        ratesRow = ratesRow(isfinite(ratesRow) & ~isnan(ratesRow));
+        bool = bool | (max(ratesRow) - min(ratesRow)) > 0;
     end
 end
 end

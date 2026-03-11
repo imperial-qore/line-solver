@@ -32,7 +32,8 @@ import static jline.api.qsys.Qsys_mapmap1Kt.qsys_mapmap1;
 import static jline.api.qsys.Qsys_mapg1Kt.qsys_mapg1;
 import static jline.api.qsys.Qsys_phph1Kt.qsys_phph1;
 import static jline.api.qsys.Qsys_mapmcKt.qsys_mapmc;
-import static jline.api.qsys.Qsys_mapmcKt.qsys_mapm1;
+import static jline.api.qsys.Qsys_mapm1Kt.qsys_mapm1;
+import static jline.TestTools.*;
 import static jline.examples.java.basic.ClosedModel.*;
 import static jline.examples.java.basic.MixedModel.*;
 import static jline.examples.java.basic.OpenModel.*;
@@ -304,7 +305,6 @@ public class SolverMAMTest {
 
     // ===== Qsys MAP/PH Queue Analyzer Tests =====
 
-    private static final double QSYS_TOLERANCE = 1e-4;
 
     /**
      * Creates exponential (1-phase PH) representation.
@@ -343,9 +343,9 @@ public class SolverMAMTest {
         // M/M/1 analytical formula for mean queue length
         double expectedQL = rho / (1 - rho);
 
-        assertEquals(expectedQL, result.getMeanQueueLength(), QSYS_TOLERANCE * expectedQL,
+        assertEquals(expectedQL, result.getMeanQueueLength(), MID_TOL * expectedQL,
                 "Mean queue length should match M/M/1 formula");
-        assertEquals(rho, result.getUtilization(), QSYS_TOLERANCE,
+        assertEquals(rho, result.getUtilization(), MID_TOL,
                 "Utilization should match rho");
         assertEquals("BUTools:MMAPPH1FCFS", result.getAnalyzer(),
                 "Should use BUTools analyzer");
@@ -365,7 +365,7 @@ public class SolverMAMTest {
 
         double expectedQL = rho / (1 - rho);
 
-        assertEquals(expectedQL, result.getMeanQueueLength(), QSYS_TOLERANCE * expectedQL,
+        assertEquals(expectedQL, result.getMeanQueueLength(), MID_TOL * expectedQL,
                 "Mean queue length should match M/M/1 formula");
     }
 
@@ -383,7 +383,7 @@ public class SolverMAMTest {
 
         double expectedQL = rho / (1 - rho);
 
-        assertEquals(expectedQL, result.getMeanQueueLength(), QSYS_TOLERANCE * expectedQL,
+        assertEquals(expectedQL, result.getMeanQueueLength(), MID_TOL * expectedQL,
                 "Mean queue length should match M/M/1 formula");
     }
 
@@ -401,7 +401,7 @@ public class SolverMAMTest {
 
         assertTrue(result.getUtilization() > 0 && result.getUtilization() < 1,
                 "Utilization should be between 0 and 1: " + result.getUtilization());
-        assertEquals(rho, result.getUtilization(), QSYS_TOLERANCE,
+        assertEquals(rho, result.getUtilization(), MID_TOL,
                 "Utilization should match rho");
         assertEquals("Q-MAM:MAP/M/2", result.getAnalyzer(),
                 "Should use Q-MAM analyzer for multi-server");
@@ -422,7 +422,7 @@ public class SolverMAMTest {
 
         double expectedQL = rho / (1 - rho);
 
-        assertEquals(expectedQL, result.getMeanQueueLength(), 2 * QSYS_TOLERANCE * expectedQL,
+        assertEquals(expectedQL, result.getMeanQueueLength(), 2 * MID_TOL * expectedQL,
                 "Mean queue length should approximately match M/M/1 formula");
     }
 
@@ -454,8 +454,6 @@ public class SolverMAMTest {
 
     // ==================== ME/RAP Tests (from SolverMAMMETest) ====================
 
-    private static final double TOLERANCE = 1e-6;
-    private static final double LOOSE_TOLERANCE = 1e-3;
 
     // ==================== MAP/ME/1 Tests ====================
 
@@ -504,7 +502,7 @@ public class SolverMAMTest {
         assertNotNull(avgTableMAM);
 
         // Verify ME service mean
-        assertEquals(0.5, meService.getMean(), TOLERANCE);
+        assertEquals(0.5, meService.getMean(), LOOSE_FINE_TOL);
 
         // Verify solver completed successfully
         double qLen = getQueueLengthForClass(avgTableMAM, queue, jobClass);
@@ -550,12 +548,12 @@ public class SolverMAMTest {
         assertNotNull(avgTableMAM);
 
         // Verify ME moments
-        assertEquals(1.0, meService.getMean(), TOLERANCE);
-        assertEquals(0.5, meService.getSCV(), TOLERANCE);
+        assertEquals(1.0, meService.getMean(), LOOSE_FINE_TOL);
+        assertEquals(0.5, meService.getSCV(), LOOSE_FINE_TOL);
 
         // Verify utilization: ρ = λ * E[S] = 0.8 * 1.0 = 0.8
         double util = getUtilizationForClass(avgTableMAM, queue, jobClass);
-        assertEquals(0.8, util, LOOSE_TOLERANCE);
+        assertEquals(0.8, util, LOOSE_MID_TOL);
     }
 
     // ==================== RAP/PH/1 Tests ====================
@@ -601,7 +599,7 @@ public class SolverMAMTest {
         assertNotNull(avgTableMAM);
 
         // Verify RAP mean
-        assertEquals(1.25, rapArrival.getMean(), TOLERANCE);
+        assertEquals(1.25, rapArrival.getMean(), LOOSE_FINE_TOL);
 
         // Verify solver completed successfully
         double qLen = getQueueLengthForClass(avgTableMAM, queue, jobClass);
@@ -643,13 +641,13 @@ public class SolverMAMTest {
         assertNotNull(avgTableMAM);
 
         // Verify RAP moments
-        assertEquals(2.0, rapArrival.getMean(), TOLERANCE);
-        assertEquals(0.5, rapArrival.getSCV(), TOLERANCE);
+        assertEquals(2.0, rapArrival.getMean(), LOOSE_FINE_TOL);
+        assertEquals(0.5, rapArrival.getSCV(), LOOSE_FINE_TOL);
 
         // Arrival rate = 0.5, service rate = 1.0
         // Utilization = 0.5
         double util = getUtilizationForClass(avgTableMAM, queue, jobClass);
-        assertEquals(0.5, util, LOOSE_TOLERANCE);
+        assertEquals(0.5, util, LOOSE_MID_TOL);
     }
 
     // ==================== ME/ME/1 Test ====================
@@ -690,12 +688,12 @@ public class SolverMAMTest {
         assertNotNull(avgTableMAM);
 
         // Verify moments
-        assertEquals(1.25, meArrival.getMean(), TOLERANCE);
-        assertEquals(0.5, meService.getMean(), TOLERANCE);
+        assertEquals(1.25, meArrival.getMean(), LOOSE_FINE_TOL);
+        assertEquals(0.5, meService.getMean(), LOOSE_FINE_TOL);
 
         // Utilization = 0.8 / 2.0 = 0.4
         double util = getUtilizationForClass(avgTableMAM, queue, jobClass);
-        assertEquals(0.4, util, LOOSE_TOLERANCE);
+        assertEquals(0.4, util, LOOSE_MID_TOL);
     }
 
     // ==================== Validation Against qsys_mapph1 ====================
@@ -741,7 +739,7 @@ public class SolverMAMTest {
         double qLenQsys = qsysResult.getMeanQueueLength();
         double qLenMAM = getQueueLengthForClass(avgTableMAM, queue, jobClass);
 
-        assertEquals(qLenQsys, qLenMAM, LOOSE_TOLERANCE);
+        assertEquals(qLenQsys, qLenMAM, LOOSE_MID_TOL);
     }
 
     @Test
@@ -781,7 +779,7 @@ public class SolverMAMTest {
         double qLen1 = getQueueLengthForClass(table1, queue1, class1);
         double qLen2 = getQueueLengthForClass(table2, queue2, class2);
 
-        assertEquals(qLen1, qLen2, TOLERANCE);
+        assertEquals(qLen1, qLen2, LOOSE_FINE_TOL);
     }
 
     // ==================== Helper Methods ====================

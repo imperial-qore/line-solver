@@ -1,4 +1,4 @@
-function S = sample(self, node, numSamples)
+function S = sample(self, node, numEvents)
 % S = SAMPLE(NODE, NUMSAMPLES) Returns a sample path of state evolution at a node
 %
 % @brief Generates a discrete-event sample path showing state transitions at a node
@@ -14,17 +14,17 @@ function S = sample(self, node, numSamples)
 %
 % @param self SolverCTMC instance
 % @param node Queue or node object (or node index as integer) to sample
-% @param numSamples Integer number of events/transitions to simulate (e.g., 1000)
+% @param numEvents Integer number of events/transitions to simulate (e.g., 1000)
 %
 % @return S Structure containing the sample path with fields:
 %         - S.handle: Reference to the sampled node
 %         - S.t: Vector of time points when transitions occurred
 %         - S.state: Matrix of states at each time point, with phase information
-%           Shape: [numSamples x num_classes+1] where last column is phase number
+%           Shape: [numEvents x num_classes+1] where last column is phase number
 %         - S.event: Cell array of events that triggered transitions
 %         - S.isaggregate: Boolean flag (false, indicating phase-detailed)
 %         - S.nodeIndex: Index of the sampled node
-%         - S.numSamples: Number of samples collected
+%         - S.numEvents: Number of samples collected
 %
 % @note Phase-detailed sample paths include internal state information from
 %       phase-type distributions. Use sampleAggr() for simpler class-based states.
@@ -75,7 +75,7 @@ D0 = infGen-D1;
 MMAP = mmap_normalize([{D0},{D1},eventFilt(:)']);
 
 % now sampel the MMAP
-[sjt,event,~,~,sts] = mmap_sample(MMAP,numSamples, pi0);
+[sjt,event,~,~,sts] = mmap_sample(MMAP,numEvents, pi0);
 
 sn = self.getStruct;
 S = struct();

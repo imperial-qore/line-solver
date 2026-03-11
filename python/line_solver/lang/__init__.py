@@ -31,6 +31,8 @@ from .base import (
     DropStrategy,
     ReplacementStrategy,
     HeteroSchedPolicy,
+    BalkingStrategy,
+    ImpatienceType,
     Element,
     NetworkElement,
     JobClass,
@@ -117,6 +119,8 @@ __all__ = [
     'DropStrategy',
     'ReplacementStrategy',
     'HeteroSchedPolicy',
+    'BalkingStrategy',
+    'ImpatienceType',
     # Base classes
     'Element',
     'ServerType',

@@ -8,9 +8,10 @@ to switch from serving one class to another.
 Copyright (c) 2012-2025, Imperial College London
 All rights reserved.
 """
-if __name__ == "__main__":
-    from line_solver import *
+from line_solver import *
 
+
+def switchover_basic():
     # Create M[2]/M[2]/1-Gated model with switchover times
     model = Network('M[2]/M[2]/1-Gated')
 
@@ -39,6 +40,11 @@ if __name__ == "__main__":
     P[0] = Network.serial_routing([source, queue, sink])
     P[1] = Network.serial_routing([source, queue, sink])
     model.link(P)
+    return model
+
+
+if __name__ == '__main__':
+    model = switchover_basic()
 
     print('=== Switchover Times - Basic Example ===\n')
 

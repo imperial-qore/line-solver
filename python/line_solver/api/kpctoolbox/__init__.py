@@ -33,7 +33,16 @@ from .mc import (
     ctmc_uniformization,
     ctmc_transient,
     ctmc_relsolve,
+    ctmc_simulate,
+    ctmc_stochcomp,
+    ctmc_courtois,
+    ctmc_kms,
+    ctmc_takahashi,
+    ctmc_multi,
+    ctmc_solve_reducible,
+    ctmc_solve_reducible_blkdecomp,
     weaklyconncomp,
+    stronglyconncomp,
     # DTMC functions
     dtmc_makestochastic,
     dtmc_isfeasible,
@@ -43,6 +52,7 @@ from .mc import (
     dtmc_stochcomp,
     dtmc_timereverse,
     dtmc_uniformization,
+    dtmc_solve_reducible,
 )
 
 from .aph import (
@@ -155,7 +165,16 @@ __all__ = [
     'ctmc_uniformization',
     'ctmc_transient',
     'ctmc_relsolve',
+    'ctmc_simulate',
+    'ctmc_stochcomp',
+    'ctmc_courtois',
+    'ctmc_kms',
+    'ctmc_takahashi',
+    'ctmc_multi',
+    'ctmc_solve_reducible',
+    'ctmc_solve_reducible_blkdecomp',
     'weaklyconncomp',
+    'stronglyconncomp',
     # DTMC functions
     'dtmc_makestochastic',
     'dtmc_isfeasible',
@@ -165,6 +184,7 @@ __all__ = [
     'dtmc_stochcomp',
     'dtmc_timereverse',
     'dtmc_uniformization',
+    'dtmc_solve_reducible',
     # APH functions
     'aph_simplify',
     'aph_convpara',

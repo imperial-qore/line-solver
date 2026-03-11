@@ -76,7 +76,7 @@ classdef SolverENV < EnsembleSolver
             % Enable SMP method if specified in options
             if isfield(self.options, 'method') && strcmpi(self.options.method, 'smp')
                 self.SMPMethod = true;
-                line_debug('ENV solver: SMP method enabled via options.method=''smp''');
+                line_debug('ENV: SMP method enabled via options.method=''smp''');
             end
 
             self.envObj = renv;
@@ -121,7 +121,7 @@ classdef SolverENV < EnsembleSolver
 
             if hasStateDependentRates
                 self.stateDepMethod = 'statedep';
-                line_debug('ENV solver: Auto-detected state-dependent environment rates');
+                line_debug('ENV: auto-detected state-dependent environment rates');
             end
 
             % Validate incompatible method combinations
@@ -275,6 +275,7 @@ classdef SolverENV < EnsembleSolver
                     return  % Not converged
                 end
             end
+            line_debug('ENV converged: iteration %d, all classes within tolerance (iter_tol=%e)', it, self.options.iter_tol);
             bool = true;
         end
 
@@ -282,7 +283,7 @@ classdef SolverENV < EnsembleSolver
         function runAnalyzer(self)
             % RUNANALYZER()
             % Run the ensemble solver iteration
-            line_debug('ENV solver starting: nstages=%d, method=%s', self.getNumberOfModels, self.options.method);
+            line_debug('ENV: runAnalyzer starting (nstages=%d, method=%s)', self.getNumberOfModels, self.options.method);
 
             % Show library attribution if verbose and not yet shown
             if self.options.verbose ~= VerboseLevel.SILENT && ~GlobalConstants.isLibraryAttributionShown()
@@ -300,7 +301,7 @@ classdef SolverENV < EnsembleSolver
             % INIT()
             % Initialize the environment solver with enhanced data structures
             % aligned with JAR SolverEnv implementation
-            line_debug('ENV solver init: initializing environment data structures');
+            line_debug('ENV init: initializing environment data structures');
             options = self.options;
             if isfield(options,'seed')
                 Solver.resetRandomGeneratorSeed(options.seed);
@@ -324,6 +325,8 @@ classdef SolverENV < EnsembleSolver
                     end
                 end
             end
+
+            line_debug('ENV init: %d stages, %d stations, %d classes', E, M, K);
 
             % Build rate matrix E0
             self.E0 = zeros(E, E);
@@ -358,7 +361,7 @@ classdef SolverENV < EnsembleSolver
             % SMPMethod: Use DTMC-based computation instead of CTMC for Semi-Markov Processes
             % Verified numerical integration for Semi-Markov Process DTMC transition probabilities
             if self.SMPMethod
-                line_debug('ENV using DTMC-based computation for Semi-Markov Processes (SMPMethod=true)');
+                line_debug('ENV init: using DTMC-based computation for Semi-Markov Processes (SMPMethod=true)');
                 self.dtmcP = zeros(E, E);
                 for k = 1:E
                     for e = 1:E
@@ -397,6 +400,7 @@ classdef SolverENV < EnsembleSolver
                     end
                 end
 
+                line_debug('ENV init: DTMC transition matrix computed, solving for stationary distribution');
                 % Solve DTMC for stationary distribution
                 dtmcPie = dtmc_solve(self.dtmcP);
 
@@ -438,7 +442,7 @@ classdef SolverENV < EnsembleSolver
 
             % Compression: Use Courtois decomposition for large environments
             if self.compression
-                line_debug('ENV using compression (Courtois decomposition)');
+                line_debug('ENV init: using compression (Courtois decomposition) for %d stages', E);
                 self.applyCompression(E, M, K);
             end
         end
@@ -467,6 +471,7 @@ classdef SolverENV < EnsembleSolver
             end
 
             self.Ecompress = length(self.MS);
+            line_debug('ENV compression: %d stages compressed to %d macro-states', E, self.Ecompress);
 
             % Apply decomposition/aggregation
             [p, eps, epsMax, q] = self.ctmc_decompose(self.Eutil, self.MS);
@@ -741,7 +746,7 @@ classdef SolverENV < EnsembleSolver
 
         function pre(self, it)
             % PRE(IT)
-
+            line_debug('ENV pre: iteration %d', it);
             if it==1
                 for e=list(self)
                     try
@@ -775,6 +780,7 @@ classdef SolverENV < EnsembleSolver
         % solves model in stage e
         function [results_e, runtime] = analyze(self, it, e)
             % [RESULTS_E, RUNTIME] = ANALYZE(IT, E)
+            line_debug('ENV analyze: iteration %d, stage %d (%s)', it, e, class(self.solvers{e}));
             results_e = struct();
             results_e.('Tran') = struct();
             results_e.Tran.('Avg') = [];
@@ -796,7 +802,7 @@ classdef SolverENV < EnsembleSolver
 
         function post(self, it)
             % POST(IT)
-
+            line_debug('ENV post: iteration %d, computing exit metrics and entry marginals', it);
             E = self.getNumberOfModels;
             M = self.ensemble{1}.getNumberOfStations;
             K = self.ensemble{1}.getNumberOfClasses;
@@ -868,6 +874,7 @@ classdef SolverENV < EnsembleSolver
             % Auto-detected or manually specified via options.method='statedep'
             if strcmp(self.stateDepMethod, 'statedep') || ...
                (isfield(self.options, 'method') && strcmp(self.options.method, 'statedep'))
+                line_debug('ENV post: updating state-dependent environment transition rates');
                 for e = 1:E
                     for h = 1:E
                         if ~isa(self.envObj.env{e,h}, 'Disabled') && ~isempty(self.resetEnvRates{e,h})
@@ -883,7 +890,7 @@ classdef SolverENV < EnsembleSolver
 
         function finish(self)
             % FINISH()
-
+            line_debug('ENV finish: computing environment-averaged performance metrics');
             it = size(self.results,1); % use last iteration
             E = self.getNumberOfModels;
             M = self.ensemble{1}.getNumberOfStations;

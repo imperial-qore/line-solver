@@ -47,6 +47,11 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
     mu = params.mu;
     v = params.v;
     r = params.r;
+    if isfield(params, 'verbose')
+        verbose = params.verbose;
+    else
+        verbose = true;
+    end
 
     % Default alpha (load-independent)
     if isfield(params, 'alpha') && ~isempty(params.alpha)
@@ -83,7 +88,7 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
     %                              i in 1:M, ni in 0:F(i), hi in 1:K(i)
 
     % Count variables and build index map
-    fprintf('Building variable index map...\n');
+    if verbose; fprintf('Building variable index map...\n'); end
     varCount = 0;
     p2idx = cell(M, 1);
     for j = 1:M
@@ -121,7 +126,7 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
     end
 
     nVars = varCount;
-    fprintf('Total variables: %d (p2: %d, U/Ueff: %d)\n', nVars, nP2Vars, nVars - nP2Vars);
+    if verbose; fprintf('Total variables: %d (p2: %d, U/Ueff: %d)\n', nVars, nP2Vars, nVars - nP2Vars); end
 
     %% Build constraints
     Aeq = [];
@@ -134,10 +139,10 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
     getUIdx = @(i, ki, ni) Uidx{i}(ki, ni);
     getUeffIdx = @(i, ki, ni) Ueffidx{i}(ki, ni);
 
-    fprintf('Building constraints...\n');
+    if verbose; fprintf('Building constraints...\n'); end
 
     %% ONE: Normalization - sum over nj, kj equals 1 for each j
-    fprintf('  ONE constraints...\n');
+    if verbose; fprintf('  ONE constraints...\n'); end
     for j = 1:M
         row = zeros(1, nVars);
         for nj = 0:F(j)
@@ -151,7 +156,7 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
     end
 
     %% ZERO constraints - fix infeasible states to zero
-    fprintf('  ZERO constraints...\n');
+    if verbose; fprintf('  ZERO constraints...\n'); end
     lb = zeros(nVars, 1);
     ub = ones(nVars, 1);
     % U and Ueff bounds are [0, 1]
@@ -213,7 +218,7 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
     end
 
     %% SYMMETRY: p2(i,ni,hi,j,nj,kj) = p2(j,nj,kj,i,ni,hi)
-    fprintf('  SYMMETRY constraints...\n');
+    if verbose; fprintf('  SYMMETRY constraints...\n'); end
     for j = 1:M
         for nj = 0:F(j)
             for kj = 1:K(j)
@@ -240,7 +245,7 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
     end
 
     %% MARGINALS: p2(j,nj,kj,j,nj,kj) = sum over ni,hi of p2(j,nj,kj,i,ni,hi)
-    fprintf('  MARGINALS constraints...\n');
+    if verbose; fprintf('  MARGINALS constraints...\n'); end
     for j = 1:M
         for kj = 1:K(j)
             for nj = 0:F(j)
@@ -265,7 +270,7 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
     end
 
     %% UCLASSIC: U(i,k,ni) = p2(i,ni,k,i,ni,k)
-    fprintf('  UCLASSIC constraints...\n');
+    if verbose; fprintf('  UCLASSIC constraints...\n'); end
     for i = 1:M
         for ki = 1:K(i)
             for ni = 1:F(i)
@@ -281,7 +286,7 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
     end
 
     %% UEFFS: Ueff(i,k,ni) = p2(i,ni,k,i,ni,k) - sum_{j: r(i,j)>0} r(i,j)*p2(i,ni,k,j,F(j),h)
-    fprintf('  UEFFS constraints...\n');
+    if verbose; fprintf('  UEFFS constraints...\n'); end
     for i = 1:M
         for ki = 1:K(i)
             for ni = 1:F(i)
@@ -308,7 +313,7 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
     %% THM2: Phase balance (Theorem 1 - THM:sdeffective)
     % sum_{ni} (sum_{j<>i, h<>k} q(i,j,k,h,ni)*Ueff(i,k,ni) + sum_{h<>k} q(i,i,k,h,ni)*U(i,k,ni))
     % = sum_{ni} (sum_{j<>i, h<>k} q(i,j,h,k,ni)*Ueff(i,h,ni) + sum_{h<>k} q(i,i,h,k,ni)*U(i,h,ni))
-    fprintf('  THM2 (Phase balance) constraints...\n');
+    if verbose; fprintf('  THM2 (Phase balance) constraints...\n'); end
     for i = 1:M
         for ki = 1:K(i)
             row = zeros(1, nVars);
@@ -371,7 +376,7 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
 
     %% THM1: Population constraint (Theorem 2)
     % sum_i sum_ni sum_hi ni * p2(j,nj,kj,i,ni,hi) = N * p2(j,nj,kj,j,nj,kj)
-    fprintf('  THM1 (Population) constraints...\n');
+    if verbose; fprintf('  THM1 (Population) constraints...\n'); end
     for j = 1:M
         for kj = 1:K(j)
             for nj = 0:F(j)
@@ -395,7 +400,7 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
     end
 
     %% THM3a: Marginal balance for ni in 1:F(i)-1
-    fprintf('  THM3a (Marginal balance) constraints...\n');
+    if verbose; fprintf('  THM3a (Marginal balance) constraints...\n'); end
     for i = 1:M
         for ni = 1:(F(i)-1)
             row = zeros(1, nVars);
@@ -437,7 +442,7 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
     end
 
     %% THM3b: Marginal balance for ni=0, per phase
-    fprintf('  THM3b (Marginal balance ni=0) constraints...\n');
+    if verbose; fprintf('  THM3b (Marginal balance ni=0) constraints...\n'); end
     for i = 1:M
         for ui = 1:K(i)
             row = zeros(1, nVars);
@@ -476,7 +481,7 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
 
     %% QBAL: Queue balance constraint
     % This is a complex balance equation that tightens the bounds
-    fprintf('  QBAL (Queue balance) constraints...\n');
+    if verbose; fprintf('  QBAL (Queue balance) constraints...\n'); end
     for i = 1:M
         for ki = 1:K(i)
             row = zeros(1, nVars);
@@ -591,7 +596,7 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
 
     %% THM4: Queue-length bound inequality (Theorem 5)
     % sum_t sum_ht sum_nj sum_nt nt*p2(j,nj,kj,t,nt,ht) >= N * sum_hi sum_nj sum_ni p2(j,nj,kj,i,ni,hi)
-    fprintf('  THM4 (Queue-length bound) constraints...\n');
+    if verbose; fprintf('  THM4 (Queue-length bound) constraints...\n'); end
     for j = 1:M
         for kj = 1:K(j)
             for i = 1:M
@@ -623,7 +628,7 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
     end
 
     %% Build objective function
-    fprintf('Building objective function...\n');
+    if verbose; fprintf('Building objective function...\n'); end
     c = zeros(nVars, 1);
 
     if ischar(objective)
@@ -649,10 +654,14 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
     end
 
     %% Solve LP
-    fprintf('Solving LP with %d variables and %d equality + %d inequality constraints...\n', ...
-        nVars, size(Aeq, 1), size(Aineq, 1));
+    if verbose; fprintf('Solving LP with %d variables and %d equality + %d inequality constraints...\n', ...
+        nVars, size(Aeq, 1), size(Aineq, 1)); end
 
-    options = optimoptions('linprog', 'Display', 'final', 'Algorithm', 'interior-point');
+    if verbose
+        options = optimoptions('linprog', 'Display', 'final', 'Algorithm', 'interior-point');
+    else
+        options = optimoptions('linprog', 'Display', 'off', 'Algorithm', 'interior-point');
+    end
 
     [x, fval, exitflag] = linprog(c, Aineq, bineq, Aeq, beq, lb, ub, options);
 
@@ -688,10 +697,10 @@ function [result, x, fval, exitflag] = qrf_rsrd(params, objective, sense)
         result.getP2 = @(j, nj, kj, i, ni, hi) x(getIdx(j, nj, kj, i, ni, hi));
     end
 
-    fprintf('\n=== Results ===\n');
-    fprintf('Objective value: %f\n', fval);
-    fprintf('Exit flag: %d\n', exitflag);
-    if exitflag > 0
+    if verbose; fprintf('\n=== Results ===\n'); end
+    if verbose; fprintf('Objective value: %f\n', fval); end
+    if verbose; fprintf('Exit flag: %d\n', exitflag); end
+    if exitflag > 0 && verbose
         fprintf('\nUtilizations:\n');
         for i = 1:M
             fprintf('  Queue %d: U = %.6f, Ueff = %.6f, pb = %.6f\n', ...

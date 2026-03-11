@@ -23,6 +23,9 @@ nonZeroRates = slowrate(:);
 nonZeroRates = nonZeroRates( nonZeroRates >tol );
 
 nonZeroRates = nonZeroRates(isfinite(nonZeroRates));
+if isempty(nonZeroRates)
+    nonZeroRates = 1; % fallback when all rates are zero or infinite
+end
 %rategap = log10(max(nonZeroRates)/min(nonZeroRates)); % if the max rate is InfRate and the min is 1, then rategap = 6
 
 % init ode

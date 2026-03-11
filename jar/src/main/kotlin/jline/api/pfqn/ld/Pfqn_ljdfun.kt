@@ -117,6 +117,89 @@ fun ljd_delinearize(idx: Int, cutoffs: Matrix): Matrix {
 }
 
 /**
+ * Multi-linear interpolation for LJCD scaling tables.
+ *
+ * Performs multi-linear interpolation of a throughput value from an LJCD
+ * scaling table for non-integer population vectors. For K classes, interpolates
+ * between 2^K corner points of the hypercube containing the population vector.
+ *
+ * The interpolation uses floor/ceil corners in each dimension with fractional
+ * weights, producing smooth transitions between discrete table entries.
+ *
+ * @param nvec Continuous population vector [n1, n2, ..., nK] (clamped to cutoffs)
+ * @param cutoffs Per-class cutoffs [N1, N2, ..., NK]
+ * @param table Linearized throughput table (1-D matrix indexed by ljd_linearize)
+ * @param K Number of classes
+ * @return Interpolated throughput value
+ */
+fun ljcd_interpolate(nvec: Matrix, cutoffs: Matrix, table: Matrix, K: Int): kotlin.Double {
+    // Get floor and ceiling for each dimension
+    val nFloor = IntArray(K)
+    val nCeil = IntArray(K)
+    val frac = DoubleArray(K)
+
+    for (i in 0 until K) {
+        val v = nvec.get(i)
+        val c = cutoffs.get(i).toInt()
+        nFloor[i] = FastMath.max(0, FastMath.min(Math.floor(v).toInt(), c))
+        nCeil[i] = FastMath.max(0, FastMath.min(Math.ceil(v).toInt(), c))
+        frac[i] = v - Math.floor(v)
+    }
+
+    // Handle edge case: all integer values
+    var allInteger = true
+    for (i in 0 until K) {
+        if (FastMath.abs(frac[i]) >= 1e-10) {
+            allInteger = false
+            break
+        }
+    }
+
+    if (allInteger) {
+        val cornerVec = Matrix(1, K)
+        for (i in 0 until K) {
+            cornerVec.set(0, i, nFloor[i].toDouble())
+        }
+        val idx = ljd_linearize(cornerVec, cutoffs)
+        return if (idx < table.length()) {
+            table.get(idx)
+        } else {
+            0.0
+        }
+    }
+
+    // Multi-linear interpolation over 2^K corners
+    var result = 0.0
+    val numCorners = 1 shl K // 2^K
+
+    for (corner in 0 until numCorners) {
+        // Build corner point: bit i determines floor (0) or ceil (1) for class i
+        val cornerVec = Matrix(1, K)
+        var weight = 1.0
+
+        for (i in 0 until K) {
+            if ((corner shr i) and 1 == 1) {
+                // Use ceiling for this dimension
+                cornerVec.set(0, i, nCeil[i].toDouble())
+                weight *= frac[i]
+            } else {
+                // Use floor for this dimension
+                cornerVec.set(0, i, nFloor[i].toDouble())
+                weight *= (1.0 - frac[i])
+            }
+        }
+
+        // Look up table value at corner point
+        val idx = ljd_linearize(cornerVec, cutoffs)
+        if (idx < table.length()) {
+            result += weight * table.get(idx)
+        }
+    }
+
+    return result
+}
+
+/**
  * PFQN ljdfun algorithms
  */
 @Suppress("unused")

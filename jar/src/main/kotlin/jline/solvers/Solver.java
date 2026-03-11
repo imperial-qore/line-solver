@@ -5,6 +5,7 @@
 
 package jline.solvers;
 
+import jline.GlobalConstants;
 import jline.lang.Model;
 import jline.lang.Network;
 import jline.VerboseLevel;
@@ -573,6 +574,11 @@ public abstract class Solver {
      * @throws RuntimeException if validation fails
      */
     public void runAnalyzerChecks(SolverOptions options) {
+        // Propagate solver verbose level to global so that model-level
+        // messages (e.g., priority info in refreshStruct) respect it
+        if (options != null) {
+            GlobalConstants.Verbose = options.verbose;
+        }
         List<String> allMethods = listValidOptions().get("allMethods");
 
         if (this.enableChecks && !supports((Network) this.model)) {

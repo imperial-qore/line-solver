@@ -65,6 +65,18 @@ fun ctmc_stochcomp(Q: Matrix, I_list: MutableList<Double?>): SolverCTMC.StochCom
     DConvertMatrixStruct.convert(Q22.getData() as DMatrixSparseCSC, denseNegQ22)
     CommonOps_DDRM.scale(-1.0, denseNegQ22)
 
+    // Regularize zero diagonal entries: absorbing immediate states (due to state space
+    // truncation with cutoff) have zero rows in Q22 and Q21, making Q22 singular.
+    // Setting their diagonal to 1.0 makes Q22 non-singular without changing the
+    // stochastic complement, since the corresponding Q21 rows are also zero.
+    // This matches MATLAB's backslash behavior for singular systems.
+    var regularized = 0
+    for (i in 0..<n) {
+        if (Math.abs(denseNegQ22.get(i, i)) < 1e-10) {
+            denseNegQ22.set(i, i, 1.0)
+            regularized++
+        }
+    }
     // LU factorize (reusable for per-event loop)
     val luSolver = LinearSolverFactory_DDRM.lu(n)
     val luOk = luSolver.setA(denseNegQ22)
@@ -81,7 +93,7 @@ fun ctmc_stochcomp(Q: Matrix, I_list: MutableList<Double?>): SolverCTMC.StochCom
         val sparseT = DConvertMatrixStruct.convert(denseT, null as DMatrixSparseCSC?, 1e-15)
         T = Matrix(sparseT as org.ejml.data.DMatrix)
     } else {
-        // LU failed (singular matrix), fall back to pseudoinverse
+        // LU failed, fall back to pseudoinverse
         val negQ22sparse = Q22.neg()
         val negQ22pinv = negQ22sparse.pinv()
         T = negQ22pinv.mult(Q21)

@@ -24,7 +24,6 @@ import static org.junit.jupiter.api.Assertions.*;
 class SolverLNCoreTest extends SolverLNTestBase {
 
     @org.junit.jupiter.api.Test
-    // //@Disabled("Test failing - disabled for investigation")
     public void test_single_layer() throws Exception {
         SolverOptions options = new LNOptions();
         options.verbose = VerboseLevel.SILENT;
@@ -131,7 +130,6 @@ class SolverLNCoreTest extends SolverLNTestBase {
     }
 
     @org.junit.jupiter.api.Test
-    //@Disabled("Test failing - disabled for investigation")
     public void test_lqn_struct() throws Exception {
         LayeredNetworkStruct lqn = SolverLNTestFixtures.buildModel2().getStruct();
         assertEquals(lqn.nidx, 10);
@@ -340,7 +338,6 @@ class SolverLNCoreTest extends SolverLNTestBase {
     }
 
     @org.junit.jupiter.api.Test
-    //@Disabled("Test failing - disabled for investigation")
     public void test_layer_struct() throws Exception {
         // this test is to test the network's job classes, stations and connections
 

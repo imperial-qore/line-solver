@@ -19,7 +19,8 @@ nphases = sn.phases;
 weights = ones(M,K);
 
 % Extract station-to-station routing matrix from stateful-to-stateful matrix
-% Build mapping of station indices in the class-blocked routing matrix
+% using stochastic complementation to resolve routing through non-station
+% stateful nodes (e.g., Router nodes)
 station_indices = [];
 for ist = 1:M
     isf = sn.stationToStateful(ist);
@@ -27,7 +28,7 @@ for ist = 1:M
         station_indices = [station_indices, (isf-1)*K + r];
     end
 end
-P = P_full(station_indices, station_indices);
+P = dtmc_stochcomp(P_full, station_indices);
 
 % Remove Sink->Source feedback routing for open classes
 % In open networks, jobs exit at Sink and should not recirculate back to Source.
@@ -139,7 +140,11 @@ Alambda = Alambda_full(keep);  % Also filter arrival vector
 
 % Eliminate immediate transitions if requested
 state_map_imm = [];
+W_pre_elim = [];
+Alambda_pre_elim = [];
 if isfield(options.config, 'hide_immediate') && options.config.hide_immediate
+    W_pre_elim = W;  % Save for Alambda correction
+    Alambda_pre_elim = Alambda;
     [W, state_map_imm] = eliminate_immediate_matrix(W, sn, options);
 end
 
@@ -164,12 +169,22 @@ for ist=1:M
         else
             for k=1:nphases(ist,r)
                 state = state + 1;
-                init_sol_idx = init_sol_idx + 1;
                 Qa(1,state) = ist;
-                SQC((ist-1)*K+r,state) = 1;
-                SUC((ist-1)*K+r,state) = 1/S(ist);
-                STC((ist-1)*K+r,state) = sum(sn.proc{ist}{r}{2}(k,:));
-                x0_build(state,1) = options.init_sol(init_sol_idx);
+                if isnan(sn.rates(ist,r))
+                    % Class has phases but is disabled (NaN rate) -
+                    % solver_fluid_initsol skips these, so do not
+                    % increment init_sol_idx
+                    SQC((ist-1)*K+r,state) = 0;
+                    SUC((ist-1)*K+r,state) = 0;
+                    STC((ist-1)*K+r,state) = 0;
+                    x0_build(state,1) = 0;
+                else
+                    init_sol_idx = init_sol_idx + 1;
+                    SQC((ist-1)*K+r,state) = 1;
+                    SUC((ist-1)*K+r,state) = 1/S(ist);
+                    STC((ist-1)*K+r,state) = sum(sn.proc{ist}{r}{2}(k,:));
+                    x0_build(state,1) = options.init_sol(init_sol_idx);
+                end
             end
         end
         % code to initialize all jobs at ref station
@@ -204,7 +219,20 @@ if ~isempty(state_map_imm)
     SUC = SUC(:, state_map_imm);
     STC = STC(:, state_map_imm);
     x0 = x0(state_map_imm);
-    Alambda = Alambda(state_map_imm);  % Filter arrival vector for eliminated states
+
+    % Correct Alambda for arrivals directed at eliminated immediate states.
+    % From quasi-steady-state assumption (dx_I/dt = 0):
+    %   lambda_red = lambda_T - Q_IT' * (Q_II')^{-1} * lambda_I
+    % where T = timed states, I = immediate states.
+    lambda_T = Alambda_pre_elim(state_map_imm);
+    lambda_I = Alambda_pre_elim(imm_states_in_keep);
+    if any(lambda_I ~= 0)
+        Q_IT = W_pre_elim(imm_states_in_keep, state_map_imm);
+        Q_II = W_pre_elim(imm_states_in_keep, imm_states_in_keep);
+        Alambda = lambda_T - Q_IT' * (Q_II' \ lambda_I);
+    else
+        Alambda = lambda_T;
+    end
 end
 
 % Build SQ matrix to compute total queue length per station in ODEs
@@ -236,7 +264,14 @@ timespan = options.timespan;
 itermax = options.iter_max;
 odeopt = odeset('AbsTol', tol, 'RelTol', tol, 'NonNegative', 1:length(x0));
 nonZeroRates = abs(W(abs(W)>0)); nonZeroRates=nonZeroRates(:);
-trange = [timespan(1),min(timespan(2),abs(10*itermax/min(nonZeroRates)))];
+if isempty(nonZeroRates)
+    trange = [timespan(1), timespan(2)];
+    if ~isfinite(trange(2))
+        trange(2) = 1;
+    end
+else
+    trange = [timespan(1),min(timespan(2),abs(10*itermax/min(nonZeroRates)))];
+end
 
 % Check if p-norm smoothing should be used (pstar parameter)
 use_pnorm = isfield(options, 'pstar') && ~isempty(options.pstar) || ...

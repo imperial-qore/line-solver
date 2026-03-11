@@ -127,6 +127,12 @@ fprintf(1,'\n<strong>RUNNING: advanced/loadDependent examples</strong>');
 fprintf(1,'\n\nExample: <strong>ld_multiserver_fcfs</strong>\n');
 fprintf(1,'This example shows all solvers on a basic single-class closed model.\n')
 clear; ld_multiserver_fcfs; fprintf(1,'Pausing...'); pause(3.0);
+fprintf(1,'\n\nExample: <strong>ld_fes_singleclass</strong>\n');
+fprintf(1,'This example shows single-class FES aggregation with Norton''s theorem.\n')
+clear; ld_fes_singleclass; fprintf(1,'Pausing...'); pause(3.0);
+fprintf(1,'\n\nExample: <strong>ld_fes_multiclass</strong>\n');
+fprintf(1,'This example shows multiclass FES aggregation with Norton''s theorem.\n')
+clear; ld_fes_multiclass; fprintf(1,'Pausing...'); pause(3.0);
 
 %%
 fprintf(1,'\n<strong>RUNNING: advanced/initState examples</strong>');

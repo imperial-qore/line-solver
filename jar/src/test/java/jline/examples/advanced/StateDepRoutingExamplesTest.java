@@ -95,7 +95,6 @@ public class StateDepRoutingExamplesTest {
      * Expected values from MATLAB dev/test_sdroute_closed.m output.
      */
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testSdrouteClosedJMT() {
         // Create the model
         Network model = StateDepRoutingModel.sdroute_closed();
@@ -186,7 +185,6 @@ public class StateDepRoutingExamplesTest {
      * Expected values from MATLAB dev/test_sdroute_open.m output.
      */
     @Test
-    //@Disabled("RROBIN bug: actual error is ~15% (QLen 0.329 vs expected 0.287), not 0.17% as previously documented")
     public void testSdrouteOpenCTMC() {
         // Create the model
         Network model = StateDepRoutingModel.sdroute_open();
@@ -228,7 +226,6 @@ public class StateDepRoutingExamplesTest {
      * Expected values from MATLAB dev/test_sdroute_open.m output.
      */
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testSdrouteOpenJMT() {
         // Create the model
         Network model = StateDepRoutingModel.sdroute_open();

@@ -110,6 +110,7 @@ from .comom import (
     pfqn_comomrm,
     pfqn_comomrm_orig,
     pfqn_comomrm_ms,
+    pfqn_procomom,
     pfqn_procomom2,
     ComomResult,
 )
@@ -260,6 +261,7 @@ __all__ = [
     'pfqn_comomrm',
     'pfqn_comomrm_orig',
     'pfqn_comomrm_ms',
+    'pfqn_procomom',
     'pfqn_procomom2',
     'ComomResult',
     # Quadrature methods

@@ -37,6 +37,11 @@ else
 end
 delta  = (sum(N) - 1) / sum(N);
 deltar = (N - 1) ./ N;
+Ak = cell(1,R);
+Akr = zeros(M,R);
+for r=1:R
+    Ak{r} = zeros(M,1);
+end
 
 Q_1 = Q*10;
 tol = 1e-6;

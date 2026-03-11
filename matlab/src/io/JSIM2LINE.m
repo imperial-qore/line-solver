@@ -452,18 +452,27 @@ for i=1:length(node_name)
                         for c=1:length(pars)
                             T = [T; pars{c}.value];
                         end
-                        if any(any(tril(T,-1))>0) % not APH
-                            line_warning(mfilename,'The input model uses a general PH distribution, which is not yet supported in LINE. Fitting the first three moments into an APH distribution.');
-                            PH = {T,-T*ones(size(T,1),1)*alpha};
-                            ax = APH.fitCentral(map_mean(PH), map_var(PH), map_skew(PH));
+                        if any(any(tril(T,-1))>0) % not APH, use general PH
+                            ax = PH(alpha, T);
                         else % APH
                             ax = APH(alpha, T);
                         end
                         node{i}.setArrival(jobclass{r}, ax);
                     otherwise
-                        line_error(mfilename,'The model includes an arrival distribution not supported by the model-to-model transformation from JMT.')
-                        xarv_statdistrib{i}{r}{1}.name
-                        node{i}.setArrival(jobclass{r}, Exp(1)); %TODO
+                        line_warning(mfilename,'The model includes an arrival distribution (%s) not directly supported by the model-to-model transformation from JMT. Attempting APH moment-matching.', xarv_statdistrib{i}{r}{1}.name);
+                        try
+                            par={xarv_sec{i}{r}.subParameter}; par=par{2};
+                            mean_val = 1/par(1).value; % JMT stores rate (lambda) as first parameter
+                            if length(par) >= 2
+                                scv_val = par(2).value^2; % JMT stores c (CoV) as second parameter
+                                node{i}.setArrival(jobclass{r}, APH.fit(mean_val, scv_val));
+                            else
+                                node{i}.setArrival(jobclass{r}, Exp(par(1).value));
+                            end
+                        catch me
+                            line_warning(mfilename,'APH moment-matching failed for arrival distribution %s: %s. Using Exp(1) as fallback.', xarv_statdistrib{i}{r}{1}.name, me.message);
+                            node{i}.setArrival(jobclass{r}, Exp(1));
+                        end
                 end
             end
         end
@@ -553,10 +562,8 @@ for i=1:length(node_name)
                     for c=1:length(pars)
                         T = [T; pars{c}.value];
                     end
-                    if any(any(tril(T,-1))>0) % not APH
-                        line_warning(mfilename,'The input model uses a general PH distribution, which is not yet supported in LINE. Fitting the first three moments into an APH distribution.');
-                        PH = {T,-T*ones(size(T,1),1)*alpha};
-                        ax = APH.fitCentral(map_mean(PH), map_var(PH), map_skew(PH));
+                    if any(any(tril(T,-1))>0) % not APH, use general PH
+                        ax = PH(alpha, T);
                     else % APH
                         ax = APH(alpha, T);
                     end
@@ -565,10 +572,20 @@ for i=1:length(node_name)
                     par={xsvc_sec{i}{r}.subParameter}; par=par{2};
                     node{i}.setService(jobclass{r}, Uniform(par(1).value, par(2).value));
                 otherwise
-                    xsvc_statdistrib{i}{r}{1}.name
-                    line_error(mfilename,'The model includes a service distribution not supported by the model-to-model transformation from JMT.')
-                    xsvc_statdistrib{i}{r}{1}.name
-                    node{i}.setService(jobclass{r}, Exp(1), para_ir); %TODO
+                    line_warning(mfilename,'The model includes a service distribution (%s) not directly supported by the model-to-model transformation from JMT. Attempting APH moment-matching.', xsvc_statdistrib{i}{r}{1}.name);
+                    try
+                        par={xsvc_sec{i}{r}.subParameter}; par=par{2};
+                        mean_val = 1/par(1).value; % JMT stores rate (lambda) as first parameter
+                        if length(par) >= 2
+                            scv_val = par(2).value^2; % JMT stores c (CoV) as second parameter
+                            node{i}.setService(jobclass{r}, APH.fit(mean_val, scv_val), para_ir);
+                        else
+                            node{i}.setService(jobclass{r}, Exp(par(1).value), para_ir);
+                        end
+                    catch me
+                        line_warning(mfilename,'APH moment-matching failed for service distribution %s: %s. Using Exp(1) as fallback.', xsvc_statdistrib{i}{r}{1}.name, me.message);
+                        node{i}.setService(jobclass{r}, Exp(1), para_ir);
+                    end
             end
         end
         for c=1:length(xsection_i_par_attr{i})
@@ -631,7 +648,14 @@ for from=1:length(node_name)
                             %                        P((from-1)*length(classes)+r, (target-1)*length(classes)+r) = prob;
                         end
                     case 'Power of k'
-                        line_error(mfilename,'Power of k import not supported yet.')
+                        k = 2; % default
+                        try
+                            xroutparams = {xsection_i{from}(3).parameter.subParameter.subParameter};
+                            if ~isempty(xroutparams) && length(xroutparams) >= r && ~isempty(xroutparams{r})
+                                k = xroutparams{r}.value;
+                            end
+                        end
+                        node{from}.setRouting(jobclass{r}, RoutingStrategy.KCHOICES, k);
                     case 'Round Robin'
                         node{from}.setRouting(jobclass{r},RoutingStrategy.RROBIN);
                     case 'Weighted Round Robin'

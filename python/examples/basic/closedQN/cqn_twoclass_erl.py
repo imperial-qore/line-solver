@@ -10,8 +10,8 @@ This example demonstrates:
 
 from line_solver import *
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
+
+def cqn_twoclass_erl():
 
     model = Network('model')
 
@@ -53,10 +53,17 @@ if __name__ == "__main__":
     node[3].set_routing(jobclass[1], RoutingStrategy.WRROBIN, node[1], 1)
     node[3].set_routing(jobclass[1], RoutingStrategy.WRROBIN, node[2], 2)
 
+    return model
+
+
+if __name__ == '__main__':
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+    model = cqn_twoclass_erl()
+
     # Solve
     solver = np.array([], dtype=object)
     solver = np.append(solver, JMT(model, seed=23000, verbose=True))
-    solver = np.append(solver, DES(model, seed=23000, verbose=True))
+    solver = np.append(solver, LDES(model, seed=23000, verbose=True))
 
     avg_table = np.empty(len(solver), dtype=object)
     for s in range(len(solver)):

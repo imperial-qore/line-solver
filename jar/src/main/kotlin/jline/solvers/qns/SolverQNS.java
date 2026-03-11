@@ -1,8 +1,10 @@
 package jline.solvers.qns;
 
+import jline.GlobalConstants;
 import static jline.GlobalConstants.Inf;
 import static jline.api.sn.SnHasProductFormKt.snHasProductForm;
 import static jline.api.sn.SnHasOpenClassesKt.snHasOpenClasses;
+import static jline.io.InputOutputKt.line_debug;
 
 import jline.lang.FeatureSet;
 import jline.lang.Network;
@@ -237,13 +239,17 @@ public class SolverQNS extends NetworkSolver {
             throw new RuntimeException("Model is not provided");
         }
 
-        if (this.sn == null) {
-            this.sn = this.model.getStruct(false);
-        }
-
         if (this.options == null) {
             this.options = defaultOptions();
         }
+        // Propagate solver verbose level to global
+        GlobalConstants.Verbose = options.verbose;
+
+        if (this.sn == null) {
+            this.sn = this.model.getStruct(false);
+        }
+        line_debug(options.verbose, String.format("QNS solver starting: method=%s, multiserver=%s, nstations=%d, nclasses=%d",
+            options.method, options.config.multiserver, sn.nstations, sn.nclasses));
 
         // Map method to multiserver config (matches MATLAB lines 29-44)
         String method = this.options.method;
@@ -273,6 +279,7 @@ public class SolverQNS extends NetworkSolver {
 
         if (this.model.hasProductFormSolution() || this.model.hasOpenClasses()) {
             // Product-form or open: use qnsolver directly
+            line_debug(options.verbose, "QNS: product-form or open model, using qnsolver directly");
             Solver_qns_analyzer analyzer = new Solver_qns_analyzer(this);
             QNSResult result = analyzer.runAnalyzer();
 
@@ -281,6 +288,7 @@ public class SolverQNS extends NetworkSolver {
                     result.runtime, result.method, result.iter);
         } else {
             // Non-product-form closed: convert to LQN and solve via SolverLQNS
+            line_debug(options.verbose, "QNS: non-product-form model, converting to LQN and solving via SolverLQNS");
             LayeredNetwork lqnmodel = QN2LQN.convert(this.model);
             SolverOptions lqnsoptions = SolverLQNS.defaultOptions();
             lqnsoptions.verbose = this.options.verbose;

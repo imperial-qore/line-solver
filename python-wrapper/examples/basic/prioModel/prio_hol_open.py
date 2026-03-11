@@ -10,8 +10,8 @@ This example demonstrates:
 
 from line_solver import *
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
+
+def prio_hol_open():
 
     model = Network('MyNetwork')
 
@@ -86,6 +86,13 @@ if __name__ == "__main__":
     P.set(jobclass[2], jobclass[2], node[4], node[1], 1.0)
 
     model.link(P)
+
+    return model
+
+
+if __name__ == '__main__':
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+    model = prio_hol_open()
 
     # Run solvers
     solver = np.array([], dtype=object)

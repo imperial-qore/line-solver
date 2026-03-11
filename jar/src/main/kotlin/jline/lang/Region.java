@@ -7,6 +7,7 @@ package jline.lang;
 
 import jline.lang.constant.DropStrategy;
 import jline.lang.nodes.Node;
+import jline.util.matrix.Matrix;
 
 import java.io.Serializable;
 import java.util.HashMap;
@@ -32,6 +33,8 @@ public class Region implements Serializable {
     public Map<JobClass, Double> classWeight;
     private int globalMaxJobs;
     private int globalMaxMemory;
+    private Matrix constraintA;  // Linear constraint matrix A (C x K), null if not set
+    private Matrix constraintB;  // Linear constraint vector b (C x 1), null if not set
 
     public Region(List<Node> nodes, List<JobClass> classes) {
         this.nodes = nodes;
@@ -162,6 +165,45 @@ public class Region implements Serializable {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    /**
+     * Sets general linear admission constraints An &lt;= b.
+     *
+     * @param A constraint matrix (C x K) where C is the number of constraints
+     *          and K is the number of classes
+     * @param b capacity vector (C x 1)
+     */
+    public void setLinearConstraints(Matrix A, Matrix b) {
+        this.constraintA = A;
+        this.constraintB = b;
+    }
+
+    /**
+     * Gets the linear constraint matrix A.
+     *
+     * @return the constraint matrix A, or null if not set
+     */
+    public Matrix getConstraintA() {
+        return constraintA;
+    }
+
+    /**
+     * Gets the linear constraint vector b.
+     *
+     * @return the constraint vector b, or null if not set
+     */
+    public Matrix getConstraintB() {
+        return constraintB;
+    }
+
+    /**
+     * Checks whether linear constraints have been set.
+     *
+     * @return true if linear constraints are defined
+     */
+    public boolean hasLinearConstraints() {
+        return constraintA != null && constraintB != null;
     }
 }
 

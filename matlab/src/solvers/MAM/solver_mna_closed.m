@@ -42,31 +42,29 @@ for ist=1:M
     end
 end
 
-Nc = repmat(sn.njobs,sn.nnodes,1);
+QNc = sn.njobs;
 lambda_lb = zeros(1,K);
 lambda_ub = zeros(1,K);
 for k=1:K
     lambda_ub(k) = min(sn.rates(find(sn.nservers<Inf),k));
 end
 
-Q = zeros(1,K);
+QN = zeros(1,K);
 it_out = 0;
 
 %% main iteration
-while max(norm(Q-Nc,1))>options.iter_tol && it_out < options.iter_max
+while max(abs(QN-QNc))>options.iter_tol && it_out < options.iter_max
     it_out = it_out+1;
 
-
     if it_out ~=1
-        [~,idx] = max(abs(Q-Nc).*(lambda_ub-lambda_lb)./Nc);
-        if sum(Q(idx,:))<sum(Nc(idx,:))
-            lambda_lb(idx)=lambda(idx);
-
-        elseif sum(Q(idx,:))>sum(Nc(idx,:))
-            lambda_ub(idx)=lambda(idx);
-
+        for k=1:K
+            if QN(k) < QNc(k)
+                lambda_lb(k) = lambda(k);
+            else
+                lambda_ub(k) = lambda(k);
+            end
+            lambda(k) = (lambda_ub(k) + lambda_lb(k)) / 2;
         end
-        lambda=(lambda_ub+lambda_lb)/2;
     else
         lambda = lambda_ub;
     end
@@ -308,6 +306,7 @@ while max(norm(Q-Nc,1))>options.iter_tol && it_out < options.iter_max
             end
         end
     end
+    QN = sum(Q,1);
 end
 
 for k=1:K

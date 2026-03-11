@@ -17,12 +17,14 @@ if nargin==2 % this is init
     M=par1; N=par2;
     R=length(N);
     S=0;
+    D = cell(1,R);
     for r=1:R
         D{r}=multichoose(M,N(r));
         S(r)=size(D{r},1);
     end
     S=S-1;
     s=pprod(S);
+    n=zeros(M,R);
     for r=1:R
         n(:,r) = D{r}(1+s(r),:)';
     end

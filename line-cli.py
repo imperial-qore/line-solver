@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-__version__ = "3.0.3"
+__version__ = "3.0.4"
 
 # =============================================================================
 # Data Models

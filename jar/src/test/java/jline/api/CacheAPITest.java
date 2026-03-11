@@ -488,12 +488,12 @@ class CacheAPITest {
             // Miss probability (column 0)
             double exactMiss = exactPij.get(i, 0);
             double isMiss = isPij.get(i, 0);
-            assertEquals(exactMiss, isMiss, 0.05);
+            assertEquals(exactMiss, isMiss, LOOSE_COARSE_TOL);
 
             // Hit probability (column 1)
             double exactHit = exactPij.get(i, 1);
             double isHit = isPij.get(i, 1);
-            assertEquals(exactHit, isHit, 0.05);
+            assertEquals(exactHit, isHit, LOOSE_COARSE_TOL);
         }
     }
 

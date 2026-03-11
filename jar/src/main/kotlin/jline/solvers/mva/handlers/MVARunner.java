@@ -341,15 +341,19 @@ public class MVARunner {
                 NetworkStruct nonfjstruct = this.sn;
                 this.sn = this.model.getStruct(false);
                 // Pre-compute Pcs matrix once (loop-invariant)
+                // Use nonfjmodel's routing matrix which includes auxiliary classes
+                // (matches MATLAB: Pcs = cell2mat(nonfjmodel.getLinkedRoutingMatrix))
                 Matrix Pcs = null;
                 if (options.config.fork_join.equals("mmt") || options.config.fork_join.equals("default") || options.config.fork_join.equals("fjt")) {
+                    Map<JobClass, Map<JobClass, Matrix>> nonfjRtorig = nonfjmodel.getLinkedRoutingMatrix();
                     JobClass anyClass = nonfjmodel.getClasses().get(0);
-                    int Psz = nonfjstruct.rtorig.get(anyClass).get(anyClass).getNumRows();
-                    int Pcs_sz = nonfjmodel.getNumberOfClasses() * Psz;
+                    int Psz = nonfjRtorig.get(anyClass).get(anyClass).getNumRows();
+                    int nclassesNonfj = nonfjmodel.getNumberOfClasses();
+                    int Pcs_sz = nclassesNonfj * Psz;
                     Pcs = new Matrix(Pcs_sz, Pcs_sz);
-                    for (int rcs = 0; rcs < nonfjstruct.nclasses; rcs++) {
-                        for (int scs = 0; scs < nonfjstruct.nclasses; scs++) {
-                            Matrix block_rs = nonfjstruct.rtorig.get(nonfjmodel.getClasses().get(rcs)).get(nonfjmodel.getClasses().get(scs));
+                    for (int rcs = 0; rcs < nclassesNonfj; rcs++) {
+                        for (int scs = 0; scs < nclassesNonfj; scs++) {
+                            Matrix block_rs = nonfjRtorig.get(nonfjmodel.getClasses().get(rcs)).get(nonfjmodel.getClasses().get(scs));
                             Pcs.setSliceEq(rcs * Psz, (rcs + 1) * Psz, scs * Psz, (scs + 1) * Psz, block_rs);
                         }
                     }
@@ -689,10 +693,14 @@ public class MVARunner {
 
         // Compute average arrival rate at steady-state
         AvgHandle T = avgHandles.getAvgTputHandles();
+        Matrix rtRefreshed = sn.rt;
         if (rtOrig != null) {
             sn.rt = rtOrig;
         }
         Matrix AN = snGetArvRFromTput(sn, ret.TN, T);
+        if (rtRefreshed != null) {
+            sn.rt = rtRefreshed;
+        }
 
         AvgHandle W = avgHandles.getAvgResidTHandles();
         Matrix WN;

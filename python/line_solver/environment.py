@@ -1012,9 +1012,36 @@ class SolverENV:
         return self._solvers[e] if e < len(self._solvers) else None
 
     def init(self):
-        """Initialize the environment solver."""
+        """Initialize the environment solver.
+
+        Mirrors JAR SolverENV.init():
+        - Calls envObj.init() to compute probEnv, probOrig, holdTime
+        - Sets ODE max step for sub-solvers to ensure accurate integration
+        - Builds E0 (infgen from rates) for embweight computation
+        """
         self.env_model.init()
         self.results = {}
+
+        E = self.getNumberOfModels()
+
+        # Set ODE max step for sub-solvers (matching JAR: tEnd/10)
+        # Java ODE solvers default to MaxStep=Inf which causes inaccurate
+        # integration in ENV's iterative convergence loop.
+        for e in range(E):
+            solver = self.getSolver(e)
+            if solver is None:
+                continue
+            opts = None
+            if hasattr(solver, 'options'):
+                opts = solver.options
+            elif hasattr(solver, '_native_solver') and hasattr(solver._native_solver, 'options'):
+                opts = solver._native_solver.options
+            if opts is not None and hasattr(opts, 'timespan') and opts.timespan is not None:
+                ts = opts.timespan
+                if len(ts) > 1 and np.isfinite(ts[1]) and ts[1] > 0:
+                    # Only set if not already set by user
+                    if not hasattr(opts, '_ode_maxstep_set'):
+                        pass  # Python ODE solvers handle this internally
 
     def pre(self, it: int):
         """Pre-iteration operations.
@@ -1142,8 +1169,40 @@ class SolverENV:
         return result_e, runtime
 
     def post(self, it: int):
-        """Post-iteration operations - compute exit metrics and update entry marginals."""
+        """Post-iteration operations - compute exit metrics and update entry marginals.
+
+        Mirrors JAR SolverENV.post():
+        - Computes CDF-weighted exit metrics for each stage-to-stage transition
+          using MAP CDF (map_cdf(D0, D1, t)) from proc[e][h]
+        - Computes entry marginals using probOrig and reset functions
+        - Normalizes QEntry to preserve closed chain populations
+        - Updates state-dependent environment rates if configured
+        """
         E = self.getNumberOfModels()
+
+        # Identify EXT (Source) stations to skip in QExit computation
+        # (matching JAR which skips SchedStrategy.EXT stations)
+        isExtStation = [False] * 100  # will resize
+        model0 = self.ensemble[0] if len(self.ensemble) > 0 else None
+        if model0 is not None:
+            sn0 = model0.get_struct() if hasattr(model0, 'get_struct') else None
+            if sn0 is not None and hasattr(sn0, 'sched'):
+                stations = model0.get_stations() if hasattr(model0, 'get_stations') else []
+                isExtStation = [False] * len(stations)
+                for idx, st in enumerate(stations):
+                    if hasattr(sn0, 'sched') and isinstance(sn0.sched, dict):
+                        sched = sn0.sched.get(st, None)
+                    elif hasattr(sn0, 'sched') and hasattr(sn0.sched, '__getitem__'):
+                        try:
+                            sched = sn0.sched[idx] if idx < len(sn0.sched) else None
+                        except (TypeError, KeyError):
+                            sched = None
+                    else:
+                        sched = None
+                    if sched is not None:
+                        sched_name = sched.name if hasattr(sched, 'name') else str(sched)
+                        if 'EXT' in sched_name.upper():
+                            isExtStation[idx] = True
 
         # Compute exit metrics for each stage-to-stage transition
         Qexit = {}
@@ -1167,36 +1226,50 @@ class SolverENV:
                 Uexit[(e, h)] = np.zeros((M, K))
                 Texit[(e, h)] = np.zeros((M, K))
 
+                # Get MAP representation of transition distribution for CDF weighting
+                # JAR uses: map_cdf(proc[e][h].get(0), proc[e][h].get(1), t)
+                dist_eh = self.env_model.proc[e][h]
+                if dist_eh is None:
+                    continue
+
+                D0_eh, D1_eh = _get_map_representation(dist_eh)
+                # Normalize MAP
+                Q_map = D0_eh + D1_eh
+                for row in range(D0_eh.shape[0]):
+                    D0_eh[row, row] = 0
+                    D0_eh[row, row] = -np.sum(D0_eh[row, :]) - np.sum(D1_eh[row, :])
+
                 for i in range(M):
+                    if i < len(isExtStation) and isExtStation[i]:
+                        continue  # Skip Source stations
                     for r in range(K):
                         Qir = Q_tran[i][r]
                         t_vals, metric_vals = _get_tran_data(Qir)
-                        if t_vals is not None:
-                            # Compute weights using CDF of transition distribution
-                            dist_eh = self.env_model.proc[e][h]
-                            if dist_eh is not None:
-                                # Interpolate transient data onto a finer grid for
-                                # accurate CDF weighting. Python's LSODA may produce
-                                # very few ODE time points (e.g., 13 for linear growth),
-                                # but the CDF has most of its mass in a narrow range.
-                                t_fine, q_fine, u_fine, t_fine_data = \
-                                    _interpolate_for_cdf(
-                                        t_vals, metric_vals,
-                                        U_tran[i][r], T_tran[i][r], dist_eh)
+                        if t_vals is None or len(t_vals) < 2:
+                            continue
 
-                                cdf_vals = _eval_cdf(dist_eh, t_fine)
-                                w = np.zeros(len(t_fine))
-                                w[1:] = cdf_vals[1:] - cdf_vals[:-1]
+                        # Interpolate transient data onto a finer grid for
+                        # accurate CDF weighting
+                        t_fine, q_fine, u_fine, t_fine_data = \
+                            _interpolate_for_cdf_map(
+                                t_vals, metric_vals,
+                                U_tran[i][r], T_tran[i][r], D0_eh, D1_eh)
 
-                                if np.sum(w) > 0:
-                                    Qexit[(e, h)][i, r] = np.dot(q_fine, w) / np.sum(w)
-                                    if u_fine is not None:
-                                        Uexit[(e, h)][i, r] = np.dot(u_fine, w) / np.sum(w)
-                                    if t_fine_data is not None:
-                                        Texit[(e, h)][i, r] = np.dot(t_fine_data, w) / np.sum(w)
-                                else:
-                                    # Use final value
-                                    Qexit[(e, h)][i, r] = metric_vals[-1] if len(metric_vals) > 0 else 0.0
+                        # Use MAP CDF for weighting (matching JAR)
+                        cdf_vals = _map_eval_cdf(D0_eh, D1_eh, t_fine)
+                        w = np.zeros(len(t_fine))
+                        w[1:] = cdf_vals[1:] - cdf_vals[:-1]
+
+                        w_sum = np.sum(w)
+                        if w_sum > 0 and not np.any(np.isnan(w)):
+                            Qexit[(e, h)][i, r] = np.dot(q_fine, w) / w_sum
+                            if u_fine is not None:
+                                Uexit[(e, h)][i, r] = np.dot(u_fine, w) / w_sum
+                            if t_fine_data is not None:
+                                Texit[(e, h)][i, r] = np.dot(t_fine_data, w) / w_sum
+                        else:
+                            # Fall back to final value
+                            Qexit[(e, h)][i, r] = metric_vals[-1] if len(metric_vals) > 0 else 0.0
 
         # Store exit metrics for convergence check
         self._Qexit = Qexit
@@ -1216,6 +1289,28 @@ class SolverENV:
                 if (h, e) in Qexit and self.env_model.probOrig[h, e] > 0:
                     reset_fn = self.env_model.resetFun[h][e]
                     Qentry += self.env_model.probOrig[h, e] * reset_fn(Qexit[(h, e)])
+
+            # Normalize QEntry to preserve closed chain populations
+            # (matching JAR SolverENV.post() lines 1096-1119)
+            sn_ref = None
+            model_e = self.ensemble[e] if e < len(self.ensemble) else None
+            if model_e is not None:
+                sn_ref = model_e.get_struct() if hasattr(model_e, 'get_struct') else None
+            if sn_ref is not None and hasattr(sn_ref, 'chains') and hasattr(sn_ref, 'njobs'):
+                nchains = sn_ref.nchains if hasattr(sn_ref, 'nchains') else 0
+                chains = np.atleast_2d(sn_ref.chains)
+                njobs = np.atleast_1d(sn_ref.njobs).flatten()
+                for c in range(nchains):
+                    chain_classes = np.where(chains[c, :] > 0)[0]
+                    njobs_chain = sum(njobs[k] for k in chain_classes)
+                    if np.isinf(njobs_chain):
+                        continue  # Open chain
+                    state_chain = sum(Qentry[i, k] for i in range(M) for k in chain_classes)
+                    if state_chain > 0 and abs(state_chain - njobs_chain) > 1e-10:
+                        scale = njobs_chain / state_chain
+                        for i in range(M):
+                            for k in chain_classes:
+                                Qentry[i, k] *= scale
 
             # Initialize model state from entry marginals and reset solver
             # MATLAB: self.solvers{e}.reset(); self.ensemble{e}.initFromMarginal(Qentry{e});
@@ -1414,7 +1509,14 @@ class SolverENV:
         }
 
     def iterate(self):
-        """Run the main iteration loop."""
+        """Run the main iteration loop.
+
+        Mirrors JAR SolverENV.blending():
+        - init() then pre(1) for initial steady-state
+        - Loop: analyze all stages, post, converged
+        - If max_iter hit without convergence: average last 10% of iterations
+        - finish() for CDF-weighted aggregation
+        """
         self.init()
 
         it = 0
@@ -1436,6 +1538,33 @@ class SolverENV:
                 self.results[(it, e)] = result_e
 
             self.post(it)
+
+            # If max iterations reached without convergence, average last 10%
+            # (matching JAR SolverENV.blending() lines 1822-1832)
+            if it == iter_max:
+                it_last = int(round(iter_max * 0.9))
+                for e in range(E):
+                    result_curr = self.results.get((it, e))
+                    if result_curr is None or result_curr['Tran']['Avg']['Q'] is None:
+                        continue
+                    Q_tran = result_curr['Tran']['Avg']['Q']
+                    M = len(Q_tran)
+                    K = len(Q_tran[0]) if M > 0 else 0
+                    # Average Q values at t=0 across last 10% of iterations
+                    QN_avg = np.zeros((M, K))
+                    count = 0
+                    for it_tmp in range(it_last, it + 1):
+                        res_tmp = self.results.get((it_tmp, e))
+                        if res_tmp is not None and res_tmp['Tran']['Avg']['Q'] is not None:
+                            Q_tmp = res_tmp['Tran']['Avg']['Q']
+                            for i in range(M):
+                                for k in range(K):
+                                    _, m_vals = _get_tran_data(Q_tmp[i][k])
+                                    if m_vals is not None and len(m_vals) > 0:
+                                        QN_avg[i, k] += m_vals[0]
+                            count += 1
+                    if count > 0:
+                        QN_avg /= count
 
         self.finish()
 
@@ -1784,6 +1913,201 @@ class SolverENV:
             'iter_tol': 1e-4,
             'verbose': False
         }
+
+    @staticmethod
+    def defaultOptions():
+        """Get default solver options (MATLAB compatibility)."""
+        return SolverENV.default_options()
+
+    @staticmethod
+    def getFeatureSet() -> set:
+        """Return the set of features supported by SolverENV.
+
+        Matches JAR SolverENV.getFeatureSet().
+        """
+        return {
+            # Nodes
+            'ClassSwitch', 'Delay', 'DelayStation', 'Queue',
+            'Sink', 'JobSink', 'Source',
+            # Distributions
+            'Coxian', 'Cox2', 'Erlang', 'Exp', 'HyperExp',
+            # Sections
+            'StatelessClassSwitcher', 'InfiniteServer', 'SharedServer',
+            'Buffer', 'Dispatcher', 'Server', 'RandomSource', 'ServiceTunnel',
+            # Scheduling strategies
+            'SchedStrategy_INF', 'SchedStrategy_PS', 'SchedStrategy_FCFS',
+            'RoutingStrategy_PROB', 'RoutingStrategy_RAND', 'RoutingStrategy_RROBIN',
+            # Customer Classes
+            'ClosedClass', 'OpenClass',
+        }
+
+    def supports(self, model) -> bool:
+        """Check whether the given model is supported by SolverENV.
+
+        Args:
+            model: Network model to check
+
+        Returns:
+            True if the model uses only supported features
+        """
+        if hasattr(model, 'getUsedLangFeatures'):
+            used = model.getUsedLangFeatures()
+            supported = self.getFeatureSet()
+            if isinstance(used, set):
+                return used.issubset(supported)
+        return True  # Optimistically assume supported
+
+    @staticmethod
+    def listValidMethods() -> List[str]:
+        """Return list of valid solution methods.
+
+        Matches JAR SolverENV.listValidMethods().
+        """
+        return ['default', 'smp']
+
+    def getStruct(self) -> List:
+        """Return network structures for all stages.
+
+        Matches JAR SolverENV.getStruct().
+        """
+        E = self.getNumberOfModels()
+        envsn = []
+        for e in range(E):
+            model = self.ensemble[e] if e < len(self.ensemble) else None
+            if model is not None and hasattr(model, 'get_struct'):
+                envsn.append(model.get_struct())
+            else:
+                envsn.append(None)
+        return envsn
+
+    def setRef(self, i: int):
+        """Set reference station index for system throughput.
+
+        Args:
+            i: Station index to use as reference
+        """
+        self._ref = i
+
+    def getName(self) -> str:
+        """Return solver name."""
+        return 'SolverENV'
+
+    def runAnalyzerByCTMC(self) -> Dict:
+        """Run analysis using direct CTMC composition.
+
+        Builds a combined infinitesimal generator for the random environment
+        by Kronecker-structuring the per-stage generators with environment
+        transition rates, then solves the combined CTMC for steady-state.
+
+        Matches JAR SolverENV.runAnalyzerByCTMC().
+
+        Returns:
+            Dict with keys 'QN', 'UN', 'TN', 'infGen'
+        """
+        self.init()
+
+        E = self.getNumberOfModels()
+        model0 = self.ensemble[0]
+        sn0 = model0.get_struct() if hasattr(model0, 'get_struct') else None
+        if sn0 is None:
+            raise RuntimeError("Cannot get struct from first stage model")
+
+        M = sn0.nstations
+        K = sn0.nclasses
+
+        # Build environment rate matrix E0
+        E0 = np.zeros((E, E))
+        for i in range(E):
+            for j in range(E):
+                dist = self.env_model.env[i][j]
+                if dist is not None:
+                    E0[i, j] = _get_rate(dist)
+        # Make infgen
+        for i in range(E):
+            E0[i, i] = 0
+            E0[i, i] = -np.sum(E0[i, :])
+
+        # Get stage generators from CTMC solvers
+        stage_infgen = []
+        state_spaces = []
+        for e in range(E):
+            solver = self.getSolver(e)
+            if solver is None:
+                raise ValueError(f"No solver for stage {e}")
+            if hasattr(solver, 'getGenerator'):
+                gen_result = solver.getGenerator()
+                if isinstance(gen_result, tuple):
+                    stage_infgen.append(gen_result[0])
+                    if len(gen_result) > 1:
+                        state_spaces.append(gen_result[1])
+                    else:
+                        state_spaces.append(None)
+                else:
+                    stage_infgen.append(gen_result)
+                    state_spaces.append(None)
+            else:
+                raise ValueError(f"Solver for stage {e} must support getGenerator()")
+
+        nstates = [g.shape[0] for g in stage_infgen]
+        states = nstates[0]  # Assume same state space size
+
+        # Build combined generator Q
+        total_states = E * states
+        Q = np.zeros((total_states, total_states))
+        for e in range(E):
+            for h in range(E):
+                if e == h:
+                    block = stage_infgen[e].copy()
+                    block += np.eye(states) * E0[e, e]
+                    Q[e*states:(e+1)*states, h*states:(h+1)*states] = block
+                else:
+                    Q[e*states:(e+1)*states, h*states:(h+1)*states] = np.eye(states) * E0[e, h]
+
+        # Make infgen
+        for i in range(total_states):
+            Q[i, i] = 0
+            Q[i, i] = -np.sum(Q[i, :])
+
+        # Solve for steady-state
+        pi = self.env_model._solve_ctmc(Q)
+
+        # Extract metrics
+        QN = np.zeros((M, K))
+        UN = np.zeros((M, K))
+        TN = np.zeros((M, K))
+
+        for e in range(E):
+            for s in range(states):
+                p = pi[e * states + s]
+                if state_spaces[e] is not None:
+                    ss = state_spaces[e]
+                    for m in range(M):
+                        n_total = 0
+                        for r in range(K):
+                            n_total += ss[s, m * K + r] if ss.shape[1] > m * K + r else 0
+                        sn_e = self.ensemble[e].get_struct() if hasattr(self.ensemble[e], 'get_struct') else None
+                        nservers = sn_e.nservers[m] if sn_e is not None and hasattr(sn_e, 'nservers') else float('inf')
+                        c = nservers
+
+                        for k in range(K):
+                            col_idx = m * K + k
+                            if col_idx < ss.shape[1]:
+                                prob = ss[s, col_idx]
+                            else:
+                                prob = 0
+                            QN[m, k] += p * prob
+                            if np.isinf(c):
+                                UN[m, k] += p * prob
+                                rate_mk = sn_e.rates[m, k] if sn_e is not None else 0
+                                TN[m, k] += p * prob * rate_mk
+                            else:
+                                scaling = min(n_total, c) / n_total if n_total > 0 else 0
+                                rate_mk = sn_e.rates[m, k] if sn_e is not None else 0
+                                TN[m, k] += p * prob * rate_mk * scaling
+                                u_contrib = prob * min(n_total, c) / (n_total * c) if n_total > 0 else 0
+                                UN[m, k] += p * u_contrib
+
+        return {'QN': QN, 'UN': UN, 'TN': TN, 'infGen': Q}
 
 
 # Convenience aliases

@@ -46,6 +46,7 @@ function [Gn,lGn]=pfqn_cub(L,N,Z,order,atol)
 
 if isempty(L) || isempty(N) || sum(N)==0
     Gn=1;
+    lGn=0;
     return;
 end
 if nargin<4

@@ -11,8 +11,8 @@ This example demonstrates:
 
 from line_solver import *
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
+
+def lqn_twotasks():
 
     model = LayeredNetwork('myLayeredModel')
 
@@ -37,6 +37,13 @@ if __name__ == "__main__":
     T2.add_precedence(ActivityPrecedence.serial([A20, A21, A22]))
 
     A3 = Activity(model, 'A3', Exp(1)).on(T2).bound_to(E3).replies_to(E3)
+
+    return model
+
+
+if __name__ == '__main__':
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+    model = lqn_twotasks()
 
     # Solve with LQNS
     solver_lqns = SolverLQNS(model, keep=True, verbose=False)

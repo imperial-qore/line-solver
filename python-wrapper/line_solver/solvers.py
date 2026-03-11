@@ -110,7 +110,7 @@ class SampleResult:
         event: List of events that occurred during simulation.
         isaggregate (bool): Whether results are aggregated across nodes.
         nodeIndex: Index of the node (for node-specific results).
-        numSamples (int): Number of samples collected.
+        numEvents (int): Number of samples collected.
     """
     
     def __init__(self, java_result):
@@ -120,7 +120,7 @@ class SampleResult:
         self.event = self._parse_events(java_result) if hasattr(java_result, 'event') else []
         self.isaggregate = java_result.isAggregate if hasattr(java_result, 'isAggregate') else False
         self.nodeIndex = java_result.nodeIndex if hasattr(java_result, 'nodeIndex') else None
-        self.numSamples = java_result.numSamples if hasattr(java_result, 'numSamples') else 0
+        self.numEvents = java_result.numEvents if hasattr(java_result, 'numEvents') else 0
 
     def _parse_events(self, java_result):
         events = []
@@ -2491,38 +2491,42 @@ class SolverCTMC(NetworkSolver):
 
     prob_sys = getProbSys
 
-    def sample(self, node, numSamples):
+    def sample(self, node, numEvents=None, **kwargs):
         """
         Sample performance metrics at a specific node.
-        
+
         Generates random samples of performance metrics (queue lengths,
         response times, etc.) at the specified node using CTMC simulation.
-        
+
         Args:
             node: Network node to sample
-            numSamples: Number of samples to generate
-            
+            numEvents: Number of events to generate
+
         Returns:
             SampleResult: Object containing sampled performance metrics
         """
-        java_result = self.obj.sample(node.obj, numSamples)
+        if numEvents is None:
+            numEvents = kwargs.get('numSamples', 10000)
+        java_result = self.obj.sample(node.obj, numEvents)
         return SampleResult(java_result) if java_result is not None else None
 
-    def sampleAggr(self, node, numSamples):
+    def sampleAggr(self, node, numEvents=None, **kwargs):
         """
         Sample aggregated performance metrics at a specific node.
-        
+
         Generates random samples of performance metrics aggregated across
         all job classes at the specified node using CTMC simulation.
-        
+
         Args:
             node: Network node to sample
-            numSamples: Number of samples to generate
-            
+            numEvents: Number of events to generate
+
         Returns:
             SampleResult: Object containing aggregated sampled metrics
         """
-        java_result = self.obj.sampleAggr(node.obj, numSamples)
+        if numEvents is None:
+            numEvents = kwargs.get('numSamples', 10000)
+        java_result = self.obj.sampleAggr(node.obj, numEvents)
         return SampleResult(java_result) if java_result is not None else None
 
     def sampleSys(self, numEvents):
@@ -3374,6 +3378,142 @@ class SolverFluid(NetworkSolver):
                 return [[]]
 
     cdf_passt = getCdfPassT
+
+    def getTranCdfPassT(self):
+        """
+        Get transient CDF of passage times.
+
+        Computes the cumulative distribution function of passage times
+        using transient fluid analysis.
+
+        Returns:
+            list: CDF data for passage times per station and class.
+                  Each element is a numpy array with columns [CDF_values, t_values],
+                  or None if no data is available.
+        """
+        try:
+            java_result = self.obj.getTranCdfPassT()
+
+            if java_result is None:
+                num_stations = self.model.get_number_of_stations()
+                num_classes = self.model.get_number_of_classes()
+                return [[None for _ in range(num_classes)] for _ in range(num_stations)]
+
+            num_stations = java_result.numStations
+            num_classes = java_result.numClasses
+
+            CdfPassT = []
+            for i in range(num_stations):
+                station_cdfs = []
+                for c in range(num_classes):
+                    if java_result.hasCdf(i, c):
+                        cdf_matrix = java_result.getCdf(i, c)
+                        if cdf_matrix is not None:
+                            cdf_array = jlineMatrixToArray(cdf_matrix)
+                            station_cdfs.append(cdf_array)
+                        else:
+                            station_cdfs.append(None)
+                    else:
+                        station_cdfs.append(None)
+                CdfPassT.append(station_cdfs)
+
+            return CdfPassT
+        except Exception as e:
+            if not self._verbose_silent:
+                print(f"Fluid getTranCdfPassT failed: {e}")
+            try:
+                num_stations = self.model.get_number_of_stations()
+                num_classes = self.model.get_number_of_classes()
+                return [[None for _ in range(num_classes)] for _ in range(num_stations)]
+            except:
+                return [[]]
+
+    tran_cdf_passt = getTranCdfPassT
+    get_tran_cdf_passt = getTranCdfPassT
+
+    def getAvgAoI(self):
+        """
+        Get average Age of Information statistics.
+
+        Computes mean, variance, and standard deviation of AoI and Peak AoI
+        using fluid/mean-field analysis.
+
+        Returns:
+            dict: Dictionary with keys:
+                - 'AoI': dict with 'mean', 'var', 'std' of Age of Information
+                - 'PAoI': dict with 'mean', 'var', 'std' of Peak Age of Information
+                - 'systemType': system type string
+                - 'preemption': preemption type string
+                Returns None if no AoI results are available.
+        """
+        try:
+            java_result = self.obj.getAvgAoI()
+
+            if java_result is None:
+                return None
+
+            result = {}
+            for key in java_result.keySet():
+                val = java_result.get(key)
+                if hasattr(val, 'keySet'):
+                    inner = {}
+                    for inner_key in val.keySet():
+                        inner[str(inner_key)] = float(val.get(inner_key))
+                    result[str(key)] = inner
+                else:
+                    result[str(key)] = str(val) if val is not None else None
+
+            return result
+        except Exception as e:
+            if not self._verbose_silent:
+                print(f"Fluid getAvgAoI failed: {e}")
+            return None
+
+    avg_aoi = getAvgAoI
+    get_avg_aoi = getAvgAoI
+
+    def getCdfAoI(self, t_values=None):
+        """
+        Get CDF of Age of Information.
+
+        Computes the cumulative distribution function of AoI and Peak AoI
+        using matrix exponential representations.
+
+        Args:
+            t_values: Time values at which to evaluate CDF. Can be a numpy array
+                      or list of floats. If None, uses automatic range based on
+                      mean AoI (0 to 5*mean, 200 points).
+
+        Returns:
+            tuple: (aoi_cdf, paoi_cdf) where each is a numpy array with columns
+                   [CDF_values, t_values]. Returns None if no AoI results are available.
+        """
+        import numpy as np
+        try:
+            if t_values is not None:
+                t_arr = np.asarray(t_values, dtype=float).flatten()
+                Matrix = jpype.JPackage('jline').lang.math.Matrix
+                java_t = Matrix(len(t_arr), 1)
+                for i, t in enumerate(t_arr):
+                    java_t.set(i, 0, float(t))
+                java_result = self.obj.getCdfAoI(java_t)
+            else:
+                java_result = self.obj.getCdfAoI()
+
+            if java_result is None:
+                return None
+
+            aoi_cdf = jlineMatrixToArray(java_result[0])
+            paoi_cdf = jlineMatrixToArray(java_result[1])
+
+            return (aoi_cdf, paoi_cdf)
+        except Exception as e:
+            if not self._verbose_silent:
+                print(f"Fluid getCdfAoI failed: {e}")
+            return None
+
+    cdf_aoi = getCdfAoI
+    get_cdf_aoi = getCdfAoI
 
     get_tran_avg = getTranAvg
     get_cdf_respt = getCdfRespT
@@ -4822,12 +4962,13 @@ class SolverNC(NetworkSolver):
                 # Convert index to node object
                 java_node = self.obj.getStruct().nodes[int(node) - 1]
 
-            # Call JAR method - returns Pair<Matrix, Matrix> of (prob, logprob)
+            # Call JAR method - returns ProbabilityResult
             java_result = self.obj.getProbMarg(java_node)
 
-            # Extract the two matrices
-            prob = jlineMatrixToArray(java_result.getKey())
-            log_prob = jlineMatrixToArray(java_result.getValue())
+            # Extract probability vector from ProbabilityResult
+            prob = jlineMatrixToArray(java_result.probability)
+            import numpy as np
+            log_prob = np.log(np.maximum(prob, 1e-300))
 
             return (prob, log_prob)
         except Exception as e:
@@ -4947,52 +5088,60 @@ class SolverSSA(NetworkSolver):
     avgT = getAvgTable
     aT = getAvgTable
 
-    def sample(self, node, numSamples=10000, markActivePassive=False):
+    def sample(self, node, numEvents=10000, markActivePassive=False, **kwargs):
         """Sample from a specific node"""
+        if 'numSamples' in kwargs:
+            numEvents = kwargs['numSamples']
         try:
-            if numSamples is None:
+            if numEvents is None:
                 java_result = self.obj.sample(node.obj)
             else:
-                java_result = self.obj.sample(node.obj, numSamples, markActivePassive)
+                java_result = self.obj.sample(node.obj, numEvents, markActivePassive)
             return SampleResult(java_result) if java_result is not None else None
         except Exception as e:
             if not self._verbose_silent:
                 print(f"SSA sampling failed: {e}")
             return None
 
-    def sampleAggr(self, node, numSamples=10000, markActivePassive=False):
+    def sampleAggr(self, node, numEvents=10000, markActivePassive=False, **kwargs):
         """Sample from a specific node using aggregated states"""
+        if 'numSamples' in kwargs:
+            numEvents = kwargs['numSamples']
         try:
-            if numSamples is None:
+            if numEvents is None:
                 java_result = self.obj.sampleAggr(node.obj)
             else:
-                java_result = self.obj.sampleAggr(node.obj, numSamples, markActivePassive)
+                java_result = self.obj.sampleAggr(node.obj, numEvents, markActivePassive)
             return SampleResult(java_result) if java_result is not None else None
         except Exception as e:
             if not self._verbose_silent:
                 print(f"SSA aggregated sampling failed: {e}")
             return None
 
-    def sampleSys(self, numSamples=10000):
+    def sampleSys(self, numEvents=10000, **kwargs):
         """Sample system-wide"""
+        if 'numSamples' in kwargs:
+            numEvents = kwargs['numSamples']
         try:
-            if numSamples is None:
+            if numEvents is None:
                 java_result = self.obj.sampleSys()
             else:
-                java_result = self.obj.sampleSys(numSamples)
+                java_result = self.obj.sampleSys(numEvents)
             return SampleResult(java_result) if java_result is not None else None
         except Exception as e:
             if not self._verbose_silent:
                 print(f"SSA system sampling failed: {e}")
             return None
 
-    def sampleSysAggr(self, numSamples=10000):
+    def sampleSysAggr(self, numEvents=10000, **kwargs):
         """Sample system-wide using aggregated states"""
+        if 'numSamples' in kwargs:
+            numEvents = kwargs['numSamples']
         try:
-            if numSamples is None:
+            if numEvents is None:
                 java_result = self.obj.sampleSysAggr()
             else:
-                java_result = self.obj.sampleSysAggr(numSamples)
+                java_result = self.obj.sampleSysAggr(numEvents)
             return SampleResult(java_result) if java_result is not None else None
         except Exception as e:
             if not self._verbose_silent:
@@ -5126,19 +5275,20 @@ class SolverSSA(NetworkSolver):
     get_prob_sys = getProbSys
 
 
-class SolverDES(NetworkSolver):
+class SolverLDES(NetworkSolver):
     """
-    Discrete Event Simulation (DES) solver using SimPy.
+    LINE Discrete Event Simulator (LDES) solver.
 
-    SolverDES implements discrete-event simulation for queueing networks
-    using SimPy (native Python) or SSJ (Java backend). It supports open
+    SolverLDES implements discrete-event simulation for queueing networks
+    using the SSJ (Java) backend. It supports open
     and closed networks with various service distributions, scheduling
     strategies, and advanced node types.
 
     The solver supports:
     - Node types: Queue, Delay, Fork, Join, Router, ClassSwitch, Logger
     - Distributions: Exp, Erlang, HyperExp, PH, APH, Coxian, Replayer, Immediate, Disabled
-    - Scheduling: FCFS, PS, DPS, GPS, LCFS variants, SIRO, SJF, LJF, SEPT, LEPT, HOL (priority)
+    - Scheduling: FCFS, FCFSPR, FCFSPI, PS, DPS, GPS, LCFS variants, LPS, SIRO, SJF, LJF,
+                  SEPT, LEPT, SRPT, HOL (priority)
     - Routing: Probabilistic, Random, Round-Robin, Weighted RR, K-Choices
     - Load-dependent service rates
     - Fork-join parallelism
@@ -5149,20 +5299,22 @@ class SolverDES(NetworkSolver):
 
     Features:
     - High-performance discrete-event simulation
-    - Statistical confidence estimation via MSER-5 and OBM
+    - Statistical confidence intervals via OBM, batch-means (BM), and Heidelberger-Welch
+      spectral analysis (cimethod='spectral', spectral_low_freq_frac=0.25)
     - Configurable sample size for accuracy control
     - Reproducible results via seed control
     - Support for complex queueing networks with advanced features
+    - Direct loading of JMT files (.jsimg/.jsim/.jsimw) by passing the filename as model
 
     Args:
-        model: Network model to solve
-        lang: Language for solver execution ('python' for native SimPy, 'java' for SSJ).
-              Default is 'python' which uses native Python implementation.
+        model: Network model to solve, or path to a JMT file (.jsimg/.jsim/.jsimw).
+        lang: Language for solver execution ('java' for SSJ backend).
+              Default is 'java' which uses the JAR backend.
 
     Note:
         Results are statistical estimates with sampling variability. For exact
         analytical results on product-form networks, consider SolverMVA.
-        The DES solver supports a wide range of network types and features.
+        The LDES solver supports a wide range of network types and features.
     """
     def __init__(self, *args, **kwargs):
         self._model = args[0]
@@ -5174,17 +5326,21 @@ class SolverDES(NetworkSolver):
             super().__init__(options, *args[2:], **kwargs)
         else:
             try:
-                options = SolverDES.defaultOptions()
+                options = SolverLDES.defaultOptions()
             except:
-                options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.DES)
+                options = SolverOptions(jpype.JPackage('jline').lang.constant.SolverType.LDES)
             super().__init__(options, *args[1:], **kwargs)
         model = args[0]
+        # Accept a JMT file path (.jsimg/.jsim/.jsimw/.jmva) in place of a Network object
+        if isinstance(model, str):
+            model = LINE.load(model)
+            self._model = model
         java_network = _get_java_network(model)
-        self.obj = jpype.JPackage('jline').solvers.des.SolverDES(java_network, self.solveropt.obj)
+        self.obj = jpype.JPackage('jline').solvers.ldes.SolverLDES(java_network, self.solveropt.obj)
 
     def runAnalyzer(self):
-        """Run the DES analysis."""
-        # Java DES solver auto-runs simulation when getAvgTable() is called
+        """Run the LDES analysis."""
+        # Java LDES solver auto-runs simulation when getAvgTable() is called
         return self
 
     run_analyzer = runAnalyzer
@@ -5198,8 +5354,8 @@ class SolverDES(NetworkSolver):
 
     @staticmethod
     def defaultOptions():
-        """Returns default solver options for the DES solver."""
-        java_options = jpype.JPackage('jline').solvers.des.SolverDES.defaultOptions()
+        """Returns default solver options for the LDES solver."""
+        java_options = jpype.JPackage('jline').solvers.ldes.SolverLDES.defaultOptions()
         python_options = SolverOptions.__new__(SolverOptions)
         python_options.obj = java_options
         return python_options
@@ -5208,8 +5364,8 @@ class SolverDES(NetworkSolver):
 
     @staticmethod
     def supportsModel(model):
-        """Check if the model is supported by the DES solver."""
-        java_solver_class = jpype.JPackage('jline').solvers.des.SolverDES
+        """Check if the model is supported by the LDES solver."""
+        java_solver_class = jpype.JPackage('jline').solvers.ldes.SolverLDES
         return java_solver_class.supports(model.obj if hasattr(model, 'obj') else model)
 
     supports_model = supportsModel
@@ -5557,11 +5713,15 @@ class LINE(SolverAuto):
                 raise RuntimeError(f"Failed to load JSIM model from: {filename}") from e
 
         elif ext == '.jmva':
-            # JMVA format - would need JMVA2LINE implementation
-            raise NotImplementedError(
-                "JMVA format loading not yet implemented in Python. "
-                "Use MATLAB LINE.load() for JMVA files."
-            )
+            # JMVA format - convert to LINE Network using M2M
+            try:
+                m2m = M2M()
+                jmva_model = m2m.JMVA2LINE(filename)
+                if verbose:
+                    print(f"Loaded JMVA model from: {filename}")
+                return jmva_model
+            except Exception as e:
+                raise RuntimeError(f"Failed to load JMVA model from: {filename}") from e
 
         elif ext == '.pkl':
             # Python pickle format for saved models
@@ -5966,8 +6126,8 @@ SSA = SolverSSA
 JMT = SolverJMT
 """Alias for SolverJMT (Java Modelling Tools solver)."""
 
-DES = SolverDES
-"""Alias for SolverDES (Discrete Event Simulation solver)."""
+LDES = SolverLDES
+"""Alias for SolverLDES (LINE Discrete Event Simulator)."""
 
 Fluid = SolverFluid
 """Alias for SolverFluid (Fluid/Mean-Field Approximation solver)."""

@@ -1,4 +1,4 @@
-function tranSysState = sampleSysAggr(self, numSamples, markActivePassive)
+function tranSysState = sampleSysAggr(self, numEvents, markActivePassive)
 % TRANSYSSTATEAGGR = sampleSysAggr(NUMSAMPLES)
 options = self.getOptions;
 
@@ -7,8 +7,8 @@ if GlobalConstants.DummyMode
     return
 end
 
-if nargin<2 %~exist('numSamples','var')
-    numSamples = options.samples;
+if nargin<2 %~exist('numEvents','var')
+    numEvents = options.samples;
 end
 
 if nargin<3
@@ -17,7 +17,7 @@ end
 
 switch options.method
     case {'default','serial'}
-        options.samples = numSamples;
+        options.samples = numEvents;
         options.force = true;
         sn = self.getStruct;
         options.method = 'serial'; % nrm does not support tran*
@@ -31,9 +31,9 @@ switch options.method
         event = tranSync;
 
         for isf=1:sn.nstateful
-            if size(tranSysState.state{isf},1) > numSamples
-                tranSysState.t = tranSystemState(1:numSamples);
-                tranSysState.state{isf} = tranSysState.state{isf}(1:numSamples,:);
+            if size(tranSysState.state{isf},1) > numEvents
+                tranSysState.t = tranSystemState(1:numEvents);
+                tranSysState.state{isf} = tranSysState.state{isf}(1:numEvents,:);
             end
             [~,tranSysState.state{isf}] = State.toMarginal(sn,sn.statefulToNode(isf),tranSysState.state{isf});
         end

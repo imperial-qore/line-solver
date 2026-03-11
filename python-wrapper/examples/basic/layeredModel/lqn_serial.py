@@ -10,11 +10,9 @@ This example demonstrates:
 
 from line_solver import *
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
 
-    print('This example illustrates the execution on a layered queueing network model.')
-    print('Performance indexes now refer to processors, tasks, entries, and activities.')
+def lqn_serial():
+
 
     model = LayeredNetwork('myLayeredModel')
 
@@ -39,6 +37,13 @@ if __name__ == "__main__":
     # Serial precedence for activities
     T[0].add_precedence(ActivityPrecedence.serial([A[0], A[1]]))
     T[1].add_precedence(ActivityPrecedence.serial([A[2], A[3]]))
+
+    return model
+
+
+if __name__ == '__main__':
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+    model = lqn_serial()
 
     # Solve using LQNS
     solver = SolverLQNS(model, keep=True)

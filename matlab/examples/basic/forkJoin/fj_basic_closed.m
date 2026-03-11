@@ -31,7 +31,7 @@ options.config.fork_join = 'ht';
 options.method = 'amva'; % better than default, smoother fixed point iteration
 %options.lang = 'java';
 solver{end+1} = MVA(model, options);
-%solver{end+1} = DES(model,'seed',23000);
+%solver{end+1} = LDES(model,'seed',23000);
 
 AvgTable = {};
 for s=1:length(solver)

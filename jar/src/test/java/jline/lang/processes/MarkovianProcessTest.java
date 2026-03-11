@@ -15,8 +15,8 @@ import jline.lang.nodes.Sink;
 import jline.lang.nodes.Source;
 import jline.solvers.NetworkAvgTable;
 import jline.solvers.SolverOptions;
-import jline.solvers.des.DESOptions;
-import jline.solvers.des.SolverDES;
+import jline.solvers.ldes.LDESOptions;
+import jline.solvers.ldes.SolverLDES;
 import jline.solvers.mva.MVAOptions;
 import jline.solvers.mva.SolverMVA;
 import jline.util.Maths;
@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Random;
 
 import static jline.lib.butools.ph.CheckRAPRepresentationKt.checkRAPRepresentation;
+import static jline.TestTools.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -45,9 +46,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class MarkovianProcessTest {
 
-    private static final double TOLERANCE = 1e-6;
-    private static final double LOOSE_TOLERANCE = 1e-3;
-    private static final double SAMPLING_TOLERANCE = 0.1; // 10% tolerance for empirical samples
 
     @BeforeAll
     public static void setUp() {
@@ -115,7 +113,7 @@ public class MarkovianProcessTest {
 
             // Verify mean batch size
             double meanBatchSize = 1 * 0.3 + 2 * 0.5 + 3 * 0.2;
-            assertEquals(1.9, meanBatchSize, TOLERANCE);
+            assertEquals(1.9, meanBatchSize, LOOSE_FINE_TOL);
         }
 
         @Test
@@ -179,7 +177,7 @@ public class MarkovianProcessTest {
             // Verify empirical mean is close to theoretical mean
             double theoreticalMean = bmap.getMean();
             double relativeError = Math.abs(empiricalMean - theoreticalMean) / theoreticalMean;
-            assertTrue(relativeError < SAMPLING_TOLERANCE,
+            assertTrue(relativeError < VERY_COARSE_TOL,
                     "BMAP empirical mean should match theoretical mean within tolerance");
         }
 
@@ -212,13 +210,13 @@ public class MarkovianProcessTest {
             P.set(jobClass, jobClass, queue, sink, 1.0);
             model.link(P);
 
-            // Solve with DES
-            DESOptions desOptions = new DESOptions();
+            // Solve with LDES
+            LDESOptions desOptions = new LDESOptions();
             desOptions.samples = 100000;
             desOptions.seed = 23000;
             desOptions.verbose = VerboseLevel.SILENT;
 
-            SolverDES desSolver = new SolverDES(model, desOptions);
+            SolverLDES desSolver = new SolverLDES(model, desOptions);
             NetworkAvgTable desResult = desSolver.getAvgTable();
 
             assertNotNull(desResult);
@@ -310,11 +308,11 @@ public class MarkovianProcessTest {
 
             // Mean should be 1/rate
             double mean = rap.getMean();
-            assertEquals(1.0 / rate, mean, TOLERANCE);
+            assertEquals(1.0 / rate, mean, LOOSE_FINE_TOL);
 
             // SCV should be 1 (for exponential/Poisson)
             double scv = rap.getSCV();
-            assertEquals(1.0, scv, TOLERANCE);
+            assertEquals(1.0, scv, LOOSE_FINE_TOL);
         }
 
         @Test
@@ -332,11 +330,11 @@ public class MarkovianProcessTest {
 
             // Mean should be k/rate
             double mean = rap.getMean();
-            assertEquals((double) k / rate, mean, TOLERANCE);
+            assertEquals((double) k / rate, mean, LOOSE_FINE_TOL);
 
             // SCV for Erlang-k should be 1/k
             double scv = rap.getSCV();
-            assertEquals(1.0 / k, scv, LOOSE_TOLERANCE);
+            assertEquals(1.0 / k, scv, LOOSE_MID_TOL);
         }
 
         @Test
@@ -357,7 +355,7 @@ public class MarkovianProcessTest {
             // Mean of HyperExp-2: p/lambda1 + (1-p)/lambda2
             double expectedMean = p / lambda1 + (1 - p) / lambda2;
             double mean = rap.getMean();
-            assertEquals(expectedMean, mean, TOLERANCE);
+            assertEquals(expectedMean, mean, LOOSE_FINE_TOL);
 
             // SCV of HyperExp-2 should be > 1 (more variable than exponential)
             double scv = rap.getSCV();
@@ -399,7 +397,7 @@ public class MarkovianProcessTest {
             // Verify empirical mean is close to theoretical mean
             double theoreticalMean = rap.getMean();
             double relativeError = Math.abs(empiricalMean - theoreticalMean) / theoreticalMean;
-            assertTrue(relativeError < SAMPLING_TOLERANCE,
+            assertTrue(relativeError < VERY_COARSE_TOL,
                     "RAP empirical mean should match theoretical mean within tolerance");
         }
 
@@ -423,13 +421,13 @@ public class MarkovianProcessTest {
             P.set(jobClass, jobClass, queue, sink, 1.0);
             model.link(P);
 
-            // Solve with DES
-            DESOptions desOptions = new DESOptions();
+            // Solve with LDES
+            LDESOptions desOptions = new LDESOptions();
             desOptions.samples = 100000;
             desOptions.seed = 23000;
             desOptions.verbose = VerboseLevel.SILENT;
 
-            SolverDES desSolver = new SolverDES(model, desOptions);
+            SolverLDES desSolver = new SolverLDES(model, desOptions);
             NetworkAvgTable desResult = desSolver.getAvgTable();
 
             assertNotNull(desResult);
@@ -458,11 +456,11 @@ public class MarkovianProcessTest {
 
             // Verify mean matches
             double mean = rap.getMean();
-            assertEquals(targetMean, mean, LOOSE_TOLERANCE);
+            assertEquals(targetMean, mean, LOOSE_MID_TOL);
 
             // Verify SCV matches
             double scv = rap.getSCV();
-            assertEquals(targetSCV, scv, LOOSE_TOLERANCE);
+            assertEquals(targetSCV, scv, LOOSE_MID_TOL);
         }
 
         @Test

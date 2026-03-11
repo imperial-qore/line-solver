@@ -367,6 +367,8 @@ class Activity:
         self.bound_entry = None
         self.reply_entry = None
         self.calls = []  # List of (entry, mean_calls, call_type)
+        self.think_time = 0.0  # Activity-level think time (LQNX think-time attribute)
+        self.phase = 1  # Phase number (1 or 2), default=1
 
     def _convert_demand(self, demand):
         """Convert external distribution to internal Distribution if needed."""
@@ -464,7 +466,7 @@ class Activity:
 
     def getThinkTimeMean(self) -> float:
         """Get think time mean."""
-        return 0.0  # Activities don't have think time
+        return float(self.think_time) if self.think_time else 0.0
 
     # Snake_case aliases
     get_host_demand = getHostDemand
@@ -630,6 +632,8 @@ class Task:
         self.entries = []
         self.activities = []
         self.precedences = []
+        self._fan_in = {}   # {source_task_name: value}
+        self._fan_out = {}  # {dest_task_name: value}
 
     def _convert_sched_strategy(self, sched):
         """Convert SchedStrategy to SchedStrategy if needed."""
@@ -762,6 +766,24 @@ class Task:
         """Set think time."""
         return self.set_think_time(think_time)
 
+    def setFanIn(self, source: str, value: int) -> 'Task':
+        """Set fan-in from a source task (for replication load distribution)."""
+        self._fan_in[source] = value
+        return self
+
+    def getFanIn(self) -> dict:
+        """Get fan-in mapping {source_task_name: value}."""
+        return self._fan_in
+
+    def setFanOut(self, dest: str, value: int) -> 'Task':
+        """Set fan-out to a destination task (for replication load distribution)."""
+        self._fan_out[dest] = value
+        return self
+
+    def getFanOut(self) -> dict:
+        """Get fan-out mapping {dest_task_name: value}."""
+        return self._fan_out
+
     # Snake_case aliases
     get_multiplicity = getMultiplicity
     get_replication = getReplication
@@ -773,6 +795,10 @@ class Task:
     get_precedences = getPrecedences
     get_setup_time_mean = getSetupTimeMean
     get_delay_off_time_mean = getDelayOffTimeMean
+    set_fan_in = setFanIn
+    get_fan_in = getFanIn
+    set_fan_out = setFanOut
+    get_fan_out = getFanOut
 
     def is_function_task(self) -> bool:
         """Return False for regular Task. FunctionTask overrides this."""
@@ -912,6 +938,8 @@ class CacheTask(Task):
         self.entries = []
         self.activities = []
         self.precedences = []
+        self._fan_in = {}
+        self._fan_out = {}
         # CacheTask specific fields
         self.total_items = total_items
         self.cache_capacity = cache_capacity
@@ -955,6 +983,8 @@ class ItemEntry(Entry):
         self.name = name
         self.task = None
         self.bound_activity = None
+        self._forwarding_dests = []
+        self._forwarding_probs = []
         self.total_items = total_items
         self.access_prob = access_prob
         # Register with model
@@ -1035,9 +1065,13 @@ class LayeredNetworkStruct:
     # Service demands and think times
     hostdem: Dict[int, float] = field(default_factory=dict)
     think: Dict[int, float] = field(default_factory=dict)
+    actthink: Dict[int, float] = field(default_factory=dict)
 
     # Scheduling strategies
     sched: Dict[int, str] = field(default_factory=dict)
+
+    # Fan-out matrix: fanout[source_task_idx, dest_task_idx] = fan-out value
+    fanout: np.ndarray = None
 
 
 class LayeredNetwork:
@@ -1542,6 +1576,18 @@ class LayeredNetwork:
         # We need to cover all indices up to nidx for consistent indexing
         lqn.repl = np.ones((1, nidx + 1))
 
+        # Populate replication factors from processor/task attributes
+        for proc in self.processors:
+            if proc in self._proc_idx:
+                repl = proc.getReplication()
+                if repl > 1:
+                    lqn.repl[0, self._proc_idx[proc]] = repl
+        for task in self.tasks:
+            if task in self._task_idx:
+                repl = task.getReplication()
+                if repl > 1:
+                    lqn.repl[0, self._task_idx[task]] = repl
+
         # Note: maxmult is computed later after the graph is built
 
         # Build reference task flags
@@ -1632,11 +1678,33 @@ class LayeredNetwork:
         # applies to processors, not tasks. Task multiplicity is kept as specified.
         # This matches Java behavior in LayeredNetwork.java.
 
-        lqn.ncalls = len(calls)
-        if calls:
+        # Collect forwarding calls from entries
+        fwd_calls = []
+        for entry in self.entries:
+            if entry._forwarding_dests:
+                source_eidx = self._entry_idx[entry]
+                for i, dest in enumerate(entry._forwarding_dests):
+                    prob = entry._forwarding_probs[i]
+                    if isinstance(dest, str):
+                        # Find target entry by name
+                        target_entry = None
+                        for e in self.entries:
+                            if e.name == dest:
+                                target_entry = e
+                                break
+                        if target_entry is None:
+                            continue
+                    else:
+                        target_entry = dest
+                    target_eidx = self._entry_idx[target_entry]
+                    fwd_calls.append((source_eidx, target_eidx, prob))
+
+        lqn.ncalls = len(calls) + len(fwd_calls)
+        if lqn.ncalls > 0:
             lqn.callpair = np.zeros((lqn.ncalls + 1, 4))
             lqn.calltype = np.zeros(lqn.ncalls + 1, dtype=int)
             lqn.callproc = [None] * (lqn.ncalls + 1)
+            # Add sync/async calls
             for i, (act_idx, entry_idx, mean_calls, call_type) in enumerate(calls, 1):
                 lqn.callpair[i, 1] = act_idx
                 lqn.callpair[i, 2] = entry_idx
@@ -1645,6 +1713,17 @@ class LayeredNetwork:
                 lqn.calltype[i] = 1 if call_type == CallType.SYNC else 2
                 # callproc: distribution for call multiplicity
                 lqn.callproc[i] = Exp.fit_mean(mean_calls) if mean_calls > 0 else Immediate()
+            # Add forwarding calls (calltype=3=FWD, matching JAR CallType.FWD)
+            # Forwarding callpair: col1=source_entry, col2=target_entry, col3=fwd_prob
+            # Note: NOT added to taskgraph, graph, issynccaller, or isasynccaller
+            fwd_start = len(calls) + 1
+            for j, (source_eidx, target_eidx, fwd_prob) in enumerate(fwd_calls):
+                cidx = fwd_start + j
+                lqn.callpair[cidx, 1] = source_eidx
+                lqn.callpair[cidx, 2] = target_eidx
+                lqn.callpair[cidx, 3] = fwd_prob
+                lqn.calltype[cidx] = 3  # CallType.FWD
+                lqn.callproc[cidx] = Exp.fit_mean(fwd_prob)
         else:
             lqn.callpair = np.zeros((1, 4))
             lqn.calltype = np.zeros(1, dtype=int)
@@ -1675,6 +1754,14 @@ class LayeredNetwork:
             act_idx = self._act_idx[act]
             if act.task:
                 lqn.parent[act_idx, 0] = self._task_idx[act.task]
+
+        # Adjust task replication to account for host processor replication.
+        # In LQN, task repl >= host repl. If task repl is 1 (default), inherit host repl.
+        for task in self.tasks:
+            task_idx = self._task_idx[task]
+            host_idx = int(lqn.parent[task_idx, 0])
+            if host_idx > 0:
+                lqn.repl[0, task_idx] = max(lqn.repl[0, task_idx], lqn.repl[0, host_idx])
 
         # Build tasksof mapping (tasks on each host)
         lqn.tasksof = {}
@@ -1738,6 +1825,15 @@ class LayeredNetwork:
             act_idx = self._act_idx[act]
             lqn.hostdem[act_idx] = _get_dist_mean(act.host_demand)
 
+        # Build activity think times (LQNX think-time on activities)
+        lqn.actthink = {}
+        for act in self.activities:
+            act_idx = self._act_idx[act]
+            if act.think_time and act.think_time > 0:
+                lqn.actthink[act_idx] = act.think_time
+            else:
+                lqn.actthink[act_idx] = 0.0
+
         # Build think times
         lqn.think = {}
         for task in self.tasks:
@@ -1761,6 +1857,18 @@ class LayeredNetwork:
                     lqn.setuptime[task_idx] = task.setup_time
                 if task.delay_off_time:
                     lqn.delayofftime[task_idx] = task.delay_off_time
+
+        # Build fan-out matrix from Task objects' fan-out maps
+        lqn.fanout = np.zeros((nidx + 1, nidx + 1))
+        task_name_to_idx = {}
+        for task in self.tasks:
+            task_name_to_idx[task.name] = self._task_idx[task]
+        for task in self.tasks:
+            tidx = self._task_idx[task]
+            for dest_name, fo_val in task.getFanOut().items():
+                if dest_name in task_name_to_idx:
+                    dest_idx = task_name_to_idx[dest_name]
+                    lqn.fanout[tidx, dest_idx] = fo_val
 
         # Build scheduling strategies
         lqn.sched = {}
@@ -2030,6 +2138,27 @@ class LayeredNetwork:
             if hasattr(act, 'phase') and act.phase is not None:
                 if 0 <= act_idx < lqn.nacts:
                     lqn.actphase[act_idx] = act.phase
+
+        # Rebuild actsof for entries using BFS through graph
+        # Matches MATLAB getStruct.m lines 640-658
+        # The initial actsof only includes bound activities, but entries may have
+        # additional reachable activities (e.g., phase 2 post-reply activities)
+        for eoff in range(1, lqn.nentries + 1):
+            eidx = eshift + eoff
+            tidx = int(lqn.parent[eidx])
+            visited = set()
+            stack = [eidx]
+            visited.add(eidx)
+            while stack:
+                v = stack.pop()
+                for nbr in range(1, nidx + 1):
+                    if nbr not in visited and lqn.graph[v, nbr] != 0:
+                        visited.add(nbr)
+                        stack.append(nbr)
+            acts = [idx for idx in visited
+                    if lqn.type[idx] == LayeredNetworkElement.ACTIVITY
+                    and int(lqn.parent[idx]) == tidx]
+            lqn.actsof[eidx] = sorted(acts)
 
         # Build maxmult using lsn_max_multiplicity algorithm (matches MATLAB)
         # This computes the maximum throughput capacity for each node
@@ -2668,6 +2797,31 @@ class LayeredNetwork:
 
             processor = model.add_processor(proc_name, multiplicity, sched)
 
+            # Parse quantum (default 0.001 per Java)
+            quantum_str = proc_elem.get('quantum', '')
+            if quantum_str:
+                try:
+                    processor.setQuantum(float(quantum_str))
+                except ValueError:
+                    pass
+
+            # Parse speed-factor (default 1.0)
+            speed_str = proc_elem.get('speed-factor', '')
+            if speed_str:
+                try:
+                    processor.setSpeedFactor(float(speed_str))
+                except ValueError:
+                    pass
+
+            # Parse processor replication (default 1)
+            proc_repl_str = proc_elem.get('replication', '1')
+            try:
+                proc_replication = int(float(proc_repl_str))
+            except ValueError:
+                proc_replication = 1
+            if proc_replication > 1:
+                processor.setReplication(proc_replication)
+
             for task_elem in proc_elem.findall('./task'):
                 task_name = task_elem.get('name', '')
                 task_sched = task_elem.get('scheduling', 'fcfs').upper()
@@ -2692,6 +2846,38 @@ class LayeredNetwork:
 
                 task = model.add_task(task_name, task_mult, task_sched_enum, processor)
 
+                # Parse task replication (Java uses processor replication for task)
+                task_repl_str = task_elem.get('replication', '')
+                if task_repl_str:
+                    try:
+                        task_repl = int(float(task_repl_str))
+                    except ValueError:
+                        task_repl = proc_replication
+                else:
+                    task_repl = proc_replication
+                if task_repl > 1:
+                    task.setReplication(task_repl)
+
+                # Parse fan-in elements
+                for fan_in_elem in task_elem.findall('./fan-in'):
+                    source = fan_in_elem.get('source', '')
+                    value_str = fan_in_elem.get('value', '')
+                    if source and value_str:
+                        try:
+                            task.setFanIn(source, int(value_str))
+                        except ValueError:
+                            pass
+
+                # Parse fan-out elements
+                for fan_out_elem in task_elem.findall('./fan-out'):
+                    dest = fan_out_elem.get('dest', '')
+                    value_str = fan_out_elem.get('value', '')
+                    if dest and value_str:
+                        try:
+                            task.setFanOut(dest, int(value_str))
+                        except ValueError:
+                            pass
+
                 think_time_str = task_elem.get('think-time', '0')
                 try:
                     think_time = float(think_time_str)
@@ -2704,6 +2890,19 @@ class LayeredNetwork:
                     entry_name = entry_elem.get('name', '')
                     entry = model.add_entry(entry_name, task)
                     entry_map[entry_name] = entry
+
+                    # Parse forwarding calls (must be deferred until all entries are created)
+                    for fwd_elem in entry_elem.findall('./forwarding'):
+                        dest_name = fwd_elem.get('dest', '')
+                        prob_str = fwd_elem.get('prob', '1.0')
+                        try:
+                            prob = float(prob_str)
+                        except ValueError:
+                            prob = 1.0
+                        if dest_name:
+                            if not hasattr(entry, '_pending_forwards'):
+                                entry._pending_forwards = []
+                            entry._pending_forwards.append((dest_name, prob))
 
                     # Handle entry-phase-activities (phase-based entries)
                     # Convert to activity-graph format for consistency
@@ -2721,8 +2920,14 @@ class LayeredNetwork:
                                 demand = Distribution(mean=demand_mean, scv=1.0)
 
                             activity = model.add_activity(act_name, demand, task)
+                            activity.phase = phase  # Store phase number (1 or 2)
                             activity_map[act_name] = activity
                             phase_activities.append((phase, activity))
+
+                            # Parse activity think-time (LQNX think-time attribute)
+                            act_think_time = act_elem.get('think-time', '')
+                            if act_think_time:
+                                activity.think_time = float(act_think_time)
 
                             # Parse calls within phase activity
                             for call_elem in act_elem.findall('./synch-call'):
@@ -2742,14 +2947,21 @@ class LayeredNetwork:
                         # Sort by phase and set up binding/reply
                         phase_activities.sort(key=lambda x: x[0])
                         if phase_activities:
-                            # First activity is bound to entry
+                            # Phase 1 activity is bound to entry (matches MATLAB parseXML line 223-224)
                             first_activity = phase_activities[0][1]
                             first_activity.bound_to(entry)
 
-                            # Last activity replies to entry (for non-REF tasks)
+                            # Last PHASE 1 activity replies to entry (not last overall)
+                            # MATLAB parseXML line 276: newEntry.replyActivity{end+1} = name{1}
+                            # Phase 2 activities are post-reply processing
                             if task_sched_enum != SchedStrategy.REF:
-                                last_activity = phase_activities[-1][1]
-                                last_activity.replies_to(entry)
+                                # Find last phase 1 activity
+                                last_ph1 = None
+                                for ph, act in phase_activities:
+                                    if ph == 1:
+                                        last_ph1 = act
+                                if last_ph1 is not None:
+                                    last_ph1.replies_to(entry)
 
                             # Create serial precedence if multiple phases
                             if len(phase_activities) > 1:
@@ -2769,6 +2981,11 @@ class LayeredNetwork:
 
                         activity = model.add_activity(act_name, demand, task)
                         activity_map[act_name] = activity
+
+                        # Parse activity think-time (LQNX think-time attribute)
+                        act_think_time = act_elem.get('think-time', '')
+                        if act_think_time:
+                            activity.think_time = float(act_think_time)
 
                         bound_entry_name = act_elem.get('bound-to-entry', '')
                         if bound_entry_name and bound_entry_name in entry_map:
@@ -2826,6 +3043,23 @@ class LayeredNetwork:
                                     else:
                                         probs.append(1.0 / len(post_acts))
                                 prec = ActivityPrecedence.OrFork(pre_acts[0], post_acts, probs)
+                            elif post_type == 'post-LOOP':
+                                # Parse LOOP: post_acts = loop body activities
+                                # end attribute = name of end activity
+                                # count attribute on <activity> = mean loop iterations
+                                loop_count = 1.0
+                                for act_ref in post_elem.findall('./activity'):
+                                    count_str = act_ref.get('count', '')
+                                    if count_str:
+                                        loop_count = float(count_str)
+                                        break
+                                end_act_name = post_elem.get('end', '')
+                                if end_act_name and end_act_name in activity_map:
+                                    # Loop(pre_act, [body_acts..., end_act], count)
+                                    loop_acts = list(post_acts) + [activity_map[end_act_name]]
+                                    prec = ActivityPrecedence.Loop(pre_acts[0], loop_acts, loop_count)
+                                else:
+                                    prec = ActivityPrecedence.Serial(pre_acts + post_acts)
                             elif pre_type == 'pre-AND':
                                 prec = ActivityPrecedence.AndJoin(pre_acts, post_acts[0])
                             elif pre_type == 'pre-OR':
@@ -2852,6 +3086,14 @@ class LayeredNetwork:
                         else:
                             activity.asynch_call(entry_map[dest], mean_calls)
                 delattr(activity, '_pending_calls')
+
+        # Resolve pending forwarding calls (must be after all entries created)
+        for entry in model.entries:
+            if hasattr(entry, '_pending_forwards'):
+                for dest_name, prob in entry._pending_forwards:
+                    if dest_name in entry_map:
+                        entry.addForwarding(entry_map[dest_name], prob)
+                delattr(entry, '_pending_forwards')
 
         return model
 

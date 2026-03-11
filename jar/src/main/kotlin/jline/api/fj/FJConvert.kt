@@ -1,10 +1,13 @@
 package jline.api.fj
 
+import jline.api.mam.map_lambda
+import jline.api.mam.map_pie
 import jline.lang.NetworkStruct
 import jline.lang.constant.ProcessType
 import jline.lib.fjcodes.FJArrival
 import jline.lib.fjcodes.FJService
 import jline.util.matrix.Matrix
+import jline.util.matrix.MatrixCell
 
 /**
  * Convert LINE distributions to FJ_codes format
@@ -17,7 +20,11 @@ import jline.util.matrix.Matrix
  * Extract Fork-Join parameters from network structure
  *
  * Extracts arrival and service processes for each class from the network,
- * converting LINE distributions to FJ_codes format.
+ * converting LINE distributions to FJ_codes format. Supports:
+ * - Exponential arrivals (single-phase MAP)
+ * - General MAP arrivals (multi-phase)
+ * - Exponential service (single-phase PH)
+ * - General PH/APH/Erlang/HyperExp/Coxian service (multi-phase)
  *
  * @param sn Network structure
  * @param fjInfo Fork-Join topology information
@@ -33,47 +40,60 @@ fun extractFJParams(
     // For each class, extract arrival and service parameters
     for (r in 0 until sn.nclasses) {
         // Get arrival process from Source
-        val sourceNode = sn.nodes[fjInfo.sourceIdx]
         val sourceStation = sn.stations[sn.nodeToStation.get(fjInfo.sourceIdx).toInt()]
-
-        // Extract arrival rate
         val arrivalProc = sn.proc[sourceStation]?.get(sn.jobclasses[r])
         val lambda = sn.rates.get(fjInfo.sourceIdx, r)
 
-        // For MVP: assume exponential arrivals
-        // TODO: Support MAP arrivals
-        val arrival = FJArrival(
-            lambda = lambda,
-            lambda0 = Matrix(1, 1).apply { set(0, 0, -lambda) },
-            lambda1 = Matrix(1, 1).apply { set(0, 0, lambda) },
-            ArrChoice = 1  // 1 = Exponential
-        )
+        // Build arrival from process representation
+        val arrival: FJArrival
+        if (arrivalProc != null && arrivalProc.size() >= 2 && arrivalProc.get(0).getNumRows() > 1) {
+            // Multi-phase MAP arrival: use D0, D1 directly
+            arrival = convertToFJArrival(arrivalProc.get(0), arrivalProc.get(1))
+        } else {
+            // Exponential arrival (single-phase)
+            arrival = FJArrival(
+                lambda = lambda,
+                lambda0 = Matrix(1, 1).apply { set(0, 0, -lambda) },
+                lambda1 = Matrix(1, 1).apply { set(0, 0, lambda) },
+                ArrChoice = 1  // 1 = Exponential
+            )
+        }
         arrivals.add(arrival)
 
         // Get service process from first queue
         val firstQueueIdx = fjInfo.queueIndices[0]
         val queueStation = sn.stations[sn.nodeToStation.get(firstQueueIdx).toInt()]
-
-        // Extract service parameters
         val serviceProc = sn.proc[queueStation]?.get(sn.jobclasses[r])
-        val mu_val = sn.mu[queueStation]?.get(sn.jobclasses[r])?.get(0, 0) ?: 1.0
         val procType = sn.procid[queueStation]?.get(sn.jobclasses[r])
+        val mu_val = sn.mu[queueStation]?.get(sn.jobclasses[r])?.get(0, 0) ?: 1.0
 
-        // For MVP: assume exponential service
-        // TODO: Support PH service distributions
-        val service = FJService(
-            mu = mu_val,
-            ST = Matrix(1, 1).apply { set(0, 0, -mu_val) },
-            St = Matrix(1, 1).apply { set(0, 0, mu_val) },
-            tau_st = Matrix(1, 1).apply { set(0, 0, 1.0) },
-            SerChoice = 1  // 1 = Exponential
-        )
+        // Build service from process representation
+        val service: FJService
+        if (serviceProc != null && serviceProc.size() >= 2 &&
+            procType != null && procType != ProcessType.EXP && serviceProc.get(0).getNumRows() > 1) {
+            // Multi-phase PH service: extract sub-generator, exit rates, and initial vector
+            service = convertToFJServiceFromProc(serviceProc)
+        } else {
+            // Exponential service (single-phase)
+            service = FJService(
+                mu = mu_val,
+                ST = Matrix(1, 1).apply { set(0, 0, -mu_val) },
+                St = Matrix(1, 1).apply { set(0, 0, mu_val) },
+                tau_st = Matrix(1, 1).apply { set(0, 0, 1.0) },
+                SerChoice = 1  // 1 = Exponential
+            )
+        }
         services.add(service)
 
-        // Validate stability: lambda < mu
-        if (lambda >= mu_val) {
+        // Validate stability: lambda < mean service rate
+        val meanServiceRate = if (serviceProc != null && serviceProc.size() >= 2 && !serviceProc.get(0).hasNaN()) {
+            map_lambda(serviceProc.get(0), serviceProc.get(1))
+        } else {
+            mu_val
+        }
+        if (lambda >= meanServiceRate) {
             throw IllegalStateException(
-                "Class $r unstable: arrival rate $lambda >= service rate $mu_val"
+                "Class $r unstable: arrival rate $lambda >= service rate $meanServiceRate"
             )
         }
     }
@@ -84,55 +104,90 @@ fun extractFJParams(
 /**
  * Convert LINE MAP to FJ arrival format
  *
+ * Computes the stationary distribution of the underlying Markov chain
+ * to determine the correct arrival rate: lambda = pi * D1 * e.
+ *
  * @param D0 D0 matrix (transitions without arrivals)
  * @param D1 D1 matrix (transitions with arrivals)
  * @return FJArrival
  */
 fun convertToFJArrival(D0: Matrix, D1: Matrix): FJArrival {
-    // Compute arrival rate
-    val pi = Matrix(1, D0.getNumRows())
-    // TODO: Compute stationary distribution properly
-    // For now, use uniform distribution
     val n = D0.getNumRows()
-    for (i in 0 until n) {
-        pi.set(0, i, 1.0 / n)
-    }
 
-    val lambda = pi.mult(D1).elementSum()
+    // Compute arrival rate using MAP stationary distribution
+    // pi is the stationary distribution of D0+D1, lambda = pi * D1 * e
+    val lambda = map_lambda(D0, D1)
 
     return FJArrival(
         lambda = lambda,
         lambda0 = D0,
         lambda1 = D1,
-        ArrChoice = if (D0.getNumRows() == 1) 1 else 2  // 1=Exp, 2=MAP
+        ArrChoice = if (n == 1) 1 else 2  // 1=Exp, 2=MAP
     )
 }
 
 /**
  * Convert LINE PH to FJ service format
  *
- * @param S Sub-generator matrix
- * @param s Exit rate vector
+ * Uses the PH initial vector (pie from MAP representation) as the
+ * initial probability for phase selection. Mean service rate is
+ * computed as mu = 1 / (tau * (-S)^{-1} * e).
+ *
+ * @param S Sub-generator matrix (negative diagonal = phase rates)
+ * @param s Exit rate vector (s = -S * e for absorbing PH)
  * @param tau Initial probability vector
  * @return FJService
  */
 fun convertToFJService(S: Matrix, s: Matrix, tau: Matrix): FJService {
-    // Compute mean service rate
-    val pi = Matrix(1, S.getNumRows())
-    // TODO: Compute stationary distribution properly
     val n = S.getNumRows()
-    for (i in 0 until n) {
-        pi.set(0, i, 1.0 / n)
-    }
 
-    val mu = 1.0 / pi.mult(S.inv().scale(-1.0)).mult(Matrix.ones(n, 1)).get(0, 0)
+    // Compute mean service rate: mu = 1 / (tau * (-S)^{-1} * e)
+    val negSinv = S.scale(-1.0).inv()
+    val ones = Matrix.ones(n, 1)
+    val meanServiceTime = tau.mult(negSinv).mult(ones).get(0, 0)
+    val mu = 1.0 / meanServiceTime
 
     return FJService(
         mu = mu,
         ST = S,
         St = s,
         tau_st = tau,
-        SerChoice = if (S.getNumRows() == 1) 1 else 2  // 1=Exp, 2=PH
+        SerChoice = if (n == 1) 1 else 2  // 1=Exp, 2=PH
+    )
+}
+
+/**
+ * Convert LINE process cell {D0, D1} to FJ service format.
+ *
+ * Extracts the sub-generator S=D0, exit rate vector s=-D0*e (or D1*e),
+ * and initial probability vector tau from the MAP/PH representation.
+ *
+ * @param proc MatrixCell containing {D0, D1}
+ * @return FJService
+ */
+fun convertToFJServiceFromProc(proc: MatrixCell): FJService {
+    val D0 = proc.get(0)  // Sub-generator S
+    val D1 = proc.get(1)  // Completion matrix
+    val n = D0.getNumRows()
+
+    // Exit rate vector: s = -S * e (row sums of -D0)
+    val ones = Matrix.ones(n, 1)
+    val s = D0.scale(-1.0).mult(ones)
+
+    // Initial probability vector: use MAP pie (embedded stationary distribution)
+    val tau = map_pie(D0, D1)
+
+    // Mean service rate
+    val negSinv = D0.scale(-1.0).inv()
+    val meanServiceTime = tau.mult(negSinv).mult(ones).get(0, 0)
+    val mu = 1.0 / meanServiceTime
+
+    return FJService(
+        mu = mu,
+        ST = D0,
+        St = s,
+        tau_st = tau,
+        SerChoice = if (n == 1) 1 else 2  // 1=Exp, 2=PH
     )
 }
 

@@ -161,7 +161,7 @@ end
 %% Check convergence. Do not allow to converge in less than 2 iterations.
 if it==0 && self.options.verbose
     % Debug output removed
-elseif it>2 && self.maxitererr(it) < self.options.iter_tol && self.maxitererr(it-1) < self.options.iter_tol&& self.maxitererr(it-1) < self.options.iter_tol
+elseif it>iter_min && self.maxitererr(it) < self.options.iter_tol && self.maxitererr(it-1) < self.options.iter_tol && self.maxitererr(it-2) < self.options.iter_tol
     if ~self.hasconverged % if potential convergence has just been detected
         % do a hard reset of every layer to check that this is really the fixed point
         for e=1:E

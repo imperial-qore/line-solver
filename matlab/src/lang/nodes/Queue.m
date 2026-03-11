@@ -501,8 +501,8 @@ classdef Queue < ServiceStation
                 line_error(mfilename, 'Invalid number of arguments. Use setPatience(class, distribution) or setPatience(class, impatienceType, distribution)');
             end
 
-            if isa(distribution, 'BMAP') || isa(distribution, 'MAP') || isa(distribution, 'MMPP2')
-                line_error(mfilename, 'Modulated processes (BMAP, MAP, MMPP2) are not supported for patience distributions.');
+            if isa(distribution, 'BMAP') || isa(distribution, 'MAP') || isa(distribution, 'DMAP') || isa(distribution, 'MMPP2')
+                line_error(mfilename, 'Modulated processes (BMAP, MAP, DMAP, MMPP2) are not supported for patience distributions.');
             end
 
             % Validate impatience type
@@ -779,8 +779,8 @@ classdef Queue < ServiceStation
                 maxAttempts = -1;  % Unlimited by default
             end
 
-            if isa(delayDistribution, 'BMAP') || isa(delayDistribution, 'MAP') || isa(delayDistribution, 'MMPP2')
-                line_error(mfilename, 'Modulated processes (BMAP, MAP, MMPP2) are not supported for retrial delay distributions.');
+            if isa(delayDistribution, 'BMAP') || isa(delayDistribution, 'MAP') || isa(delayDistribution, 'DMAP') || isa(delayDistribution, 'MMPP2')
+                line_error(mfilename, 'Modulated processes (BMAP, MAP, DMAP, MMPP2) are not supported for retrial delay distributions.');
             end
 
             if isempty(self.obj)
@@ -863,8 +863,8 @@ classdef Queue < ServiceStation
             % Example:
             %   queue.setOrbitImpatience(jobclass, Exp(0.008));  % gamma = 0.008
 
-            if isa(distribution, 'BMAP') || isa(distribution, 'MAP') || isa(distribution, 'MMPP2')
-                line_error(mfilename, 'Modulated processes (BMAP, MAP, MMPP2) are not supported for orbit impatience distributions.');
+            if isa(distribution, 'BMAP') || isa(distribution, 'MAP') || isa(distribution, 'DMAP') || isa(distribution, 'MMPP2')
+                line_error(mfilename, 'Modulated processes (BMAP, MAP, DMAP, MMPP2) are not supported for orbit impatience distributions.');
             end
 
             if isempty(self.obj)

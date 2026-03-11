@@ -59,9 +59,9 @@ def factln_vec(arr: np.ndarray) -> np.ndarray:
 
 def softmin(a: float, b: float, alpha: float = 20.0) -> float:
     """
-    Compute a smooth approximation to min(a, b).
+    Compute a smooth approximation to min(a, b) using weighted average.
 
-    Uses the log-sum-exp trick for numerical stability.
+    Matches MATLAB formula: (x*exp(-alpha*x) + y*exp(-alpha*y)) / (exp(-alpha*x) + exp(-alpha*y))
 
     Args:
         a: First value
@@ -74,10 +74,15 @@ def softmin(a: float, b: float, alpha: float = 20.0) -> float:
     if alpha <= 0:
         return min(a, b)
 
-    # Use log-sum-exp for numerical stability
+    # Weighted average with exponential weights (matches MATLAB util/softmin.m)
+    # Factor out max exponent for numerical stability
     max_val = max(-alpha * a, -alpha * b)
-    return -1.0 / alpha * (max_val + np.log(np.exp(-alpha * a - max_val) +
-                                              np.exp(-alpha * b - max_val)))
+    ea = np.exp(-alpha * a - max_val)
+    eb = np.exp(-alpha * b - max_val)
+    denom = ea + eb
+    if denom == 0:
+        return min(a, b)
+    return (a * ea + b * eb) / denom
 
 
 def oner(n: np.ndarray, s: int) -> np.ndarray:

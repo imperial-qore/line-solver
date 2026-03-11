@@ -408,10 +408,48 @@ public class SolverLQNS extends Solver {
                         String p2stResStr = firstEntryResult.getAttribute("phase2-service-time");
                         double p2stRes = Double.NaN;
                         if (!p2stResStr.isEmpty()) {
-                            p2stRes = Double.parseDouble(p2uResStr);
+                            p2stRes = Double.parseDouble(p2stResStr);
                         }
                         tRes = Double.parseDouble(firstEntryResult.getAttribute("throughput"));
                         puRes = Double.parseDouble(firstEntryResult.getAttribute("proc-utilization"));
+
+                        /* If phase-specific attributes are missing from result-entry,
+                           extract them from entry-phase-activities result-activity elements */
+                        NodeList entryPhaseActsList = entryElement.getElementsByTagName("entry-phase-activities");
+                        if (entryPhaseActsList.getLength() > 0) {
+                            Element entryPhaseActsElement = (Element) entryPhaseActsList.item(0);
+                            NodeList phaseActList = entryPhaseActsElement.getElementsByTagName("activity");
+                            for (int pa = 0; pa < phaseActList.getLength(); pa++) {
+                                Element phaseActElement = (Element) phaseActList.item(pa);
+                                String phaseStr = phaseActElement.getAttribute("phase");
+                                if (!phaseStr.isEmpty()) {
+                                    int phase = Integer.parseInt(phaseStr);
+                                    NodeList phaseActResult = phaseActElement.getElementsByTagName("result-activity");
+                                    if (phaseActResult.getLength() > 0) {
+                                        Element phaseResult = (Element) phaseActResult.item(0);
+                                        if (phase == 1) {
+                                            if (Double.isNaN(p1stRes)) {
+                                                String stStr = phaseResult.getAttribute("service-time");
+                                                if (!stStr.isEmpty()) p1stRes = Double.parseDouble(stStr);
+                                            }
+                                            if (Double.isNaN(p1uRes)) {
+                                                String uStr = phaseResult.getAttribute("utilization");
+                                                if (!uStr.isEmpty()) p1uRes = Double.parseDouble(uStr);
+                                            }
+                                        } else if (phase == 2) {
+                                            if (Double.isNaN(p2stRes)) {
+                                                String stStr = phaseResult.getAttribute("service-time");
+                                                if (!stStr.isEmpty()) p2stRes = Double.parseDouble(stStr);
+                                            }
+                                            if (Double.isNaN(p2uRes)) {
+                                                String uStr = phaseResult.getAttribute("utilization");
+                                                if (!uStr.isEmpty()) p2uRes = Double.parseDouble(uStr);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         AvgNodesUtilization.set(entryPos - 1, uRes);
                         AvgNodesPhase1Utilization.set(entryPos - 1, p1uRes);
@@ -508,6 +546,67 @@ public class SolverLQNS extends Solver {
                         }
                     }
                 }
+                /* Also parse activity results from entry-phase-activities (PH1PH2 format) */
+                NodeList entryPhaseActsListAll = doc.getElementsByTagName("entry-phase-activities");
+                for (int ep = 0; ep < entryPhaseActsListAll.getLength(); ep++) {
+                    Element epElement = (Element) entryPhaseActsListAll.item(ep);
+                    NodeList epActList = epElement.getElementsByTagName("activity");
+                    for (int l = 0; l < epActList.getLength(); l++) {
+                        Element actElement = (Element) epActList.item(l);
+                        String actName = actElement.getAttribute("name");
+
+                        int actPos = 0;
+                        for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
+                            if (Objects.equals(actName, entry.getValue())) {
+                                actPos = entry.getKey().intValue();
+                            }
+                        }
+                        if (actPos == 0) continue;
+
+                        NodeList actResult = actElement.getElementsByTagName("result-activity");
+                        if (actResult.getLength() == 0) continue;
+                        Element resultEl = (Element) actResult.item(0);
+
+                        String uResStr = resultEl.getAttribute("utilization");
+                        if (!uResStr.isEmpty()) AvgNodesUtilization.set(actPos - 1, Double.parseDouble(uResStr));
+                        String stResStr = resultEl.getAttribute("service-time");
+                        if (!stResStr.isEmpty()) AvgNodesPhase1ServiceTime.set(actPos - 1, Double.parseDouble(stResStr));
+                        String tResStr = resultEl.getAttribute("throughput");
+                        if (!tResStr.isEmpty()) AvgNodesThroughput.set(actPos - 1, Double.parseDouble(tResStr));
+                        String pwResStr = resultEl.getAttribute("proc-waiting");
+                        if (pwResStr != null && !pwResStr.isEmpty()) AvgNodesProcWaiting.set(actPos - 1, Double.parseDouble(pwResStr));
+                        String puResStr = resultEl.getAttribute("proc-utilization");
+                        if (!puResStr.isEmpty()) AvgNodesProcUtilization.set(actPos - 1, Double.parseDouble(puResStr));
+
+                        /* Parse synch-call waiting times */
+                        String actID = lqn.names.get(actPos);
+                        NodeList synchCalls = actElement.getElementsByTagName("synch-call");
+                        for (int m = 0; m < synchCalls.getLength(); m++) {
+                            Element callElement = (Element) synchCalls.item(m);
+                            String destName = callElement.getAttribute("dest");
+                            int destPos = 0;
+                            for (Map.Entry<Integer, String> entry : lqn.names.entrySet()) {
+                                if (Objects.equals(destName, entry.getValue())) {
+                                    destPos = entry.getKey().intValue();
+                                }
+                            }
+                            String destID = lqn.names.get(destPos);
+                            int callPos = 0;
+                            for (Map.Entry<Integer, String> entry : lqn.callnames.entrySet()) {
+                                if (Objects.equals(actID + "->" + destID, entry.getValue())) {
+                                    callPos = entry.getKey().intValue();
+                                }
+                            }
+                            if (callPos > 0) {
+                                NodeList callResult = callElement.getElementsByTagName("result-call");
+                                if (callResult.getLength() > 0) {
+                                    double wRes = Double.parseDouble(((Element) callResult.item(0)).getAttribute("waiting"));
+                                    AvgEdgesWaiting.set(callPos - 1, wRes);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         this.result = new LayeredSolverResult();
@@ -549,6 +648,12 @@ public class SolverLQNS extends Solver {
 
         long t0 = System.nanoTime();
         if (options == null) options = this.options;
+        // Propagate solver verbose level to global
+        if (options != null) {
+            GlobalConstants.Verbose = options.verbose;
+        }
+        line_debug(options.verbose, String.format("LQNS solver starting: method=%s, multiserver=%s",
+            options.method, options.config.multiserver != null ? options.config.multiserver : "default"));
 
         /* --- write .lqnx ------------------------------------------------ */
         String dirPath = null;
@@ -582,24 +687,30 @@ public class SolverLQNS extends Solver {
         switch (options.method.toLowerCase()) {
             case "srvn":
                 cmd = "lqns " + common + " -Playering=srvn";
+                line_debug(options.verbose, "LQNS: using SRVN layering method");
                 break;
             case "exactmva":
                 cmd = "lqns " + common + " -Pmva=exact";
+                line_debug(options.verbose, "LQNS: using exact MVA method");
                 break;
             case "srvn.exactmva":
                 cmd = "lqns " + common + " -Playering=srvn -Pmva=exact";
+                line_debug(options.verbose, "LQNS: using SRVN layering with exact MVA");
                 break;
             case "sim":
             case "lqsim":
                 cmd = "lqsim " + common + " -A " + options.samples + " ";
+                line_debug(options.verbose, String.format("LQNS: using LQSIM simulation, samples=%d", options.samples));
                 break;
             case "lqnsdefault":
                 cmd = "lqns " + verboseFlag + " " + praqmaFlag + " -x " + fileName;
+                line_debug(options.verbose, "LQNS: using lqnsdefault method");
                 break;
             case "default":
             case "lqns":
             default:
                 cmd = "lqns " + common;
+                line_debug(options.verbose, "LQNS: using default analytical method");
                 break;
         }
 
@@ -608,8 +719,10 @@ public class SolverLQNS extends Solver {
         }
 
         /* --- run --------------------------------------------------------- */
+        line_debug(options.verbose, String.format("LQNS: executing command: %s", cmd));
         // Check for remote execution
         if (options.config.remote) {
+            line_debug(options.verbose, String.format("LQNS: using remote execution at %s", options.config.remote_url));
             if (options.verbose == VerboseLevel.DEBUG) {
                 System.out.println("\nUsing remote LQNS at: " + options.config.remote_url);
             }

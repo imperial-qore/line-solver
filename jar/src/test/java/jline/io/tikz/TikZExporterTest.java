@@ -23,6 +23,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static jline.TestTools.*;
 
 /**
  * Tests for TikZ network visualization.
@@ -131,7 +132,7 @@ public class TikZExporterTest {
 
         // Verify source is at layer 0 (leftmost)
         double[] sourcePos = layout.getPosition(source);
-        assertEquals(0.0, sourcePos[0], 0.001);
+        assertEquals(0.0, sourcePos[0], LOOSE_MID_TOL);
 
         // Verify sink is at rightmost layer
         double[] sinkPos = layout.getPosition(sink);

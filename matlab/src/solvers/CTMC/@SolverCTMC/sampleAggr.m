@@ -1,4 +1,4 @@
-function sampleAggr = sampleAggr(self, node, numSamples)
+function sampleAggr = sampleAggr(self, node, numEvents)
 % S = SAMPLEAGGR(NODE, NUMSAMPLES) Returns sample path aggregated over service phases
 %
 % @brief Generates a discrete-event sample path showing job counts per class at a node
@@ -12,17 +12,17 @@ function sampleAggr = sampleAggr(self, node, numSamples)
 %
 % @param self SolverCTMC instance
 % @param node Queue or node object (or node index as integer) to sample
-% @param numSamples Integer number of events/transitions to simulate (e.g., 1000)
+% @param numEvents Integer number of events/transitions to simulate (e.g., 1000)
 %
 % @return sampleAggr Structure containing the aggregated sample path with fields:
 %         - sampleAggr.handle: Reference to the sampled node
 %         - sampleAggr.t: Vector of time points when state changes occurred
 %         - sampleAggr.state: Matrix of aggregated states at each time point
-%           Shape: [numSamples x num_classes] (no phase information)
+%           Shape: [numEvents x num_classes] (no phase information)
 %         - sampleAggr.event: Cell array of events that triggered transitions
 %         - sampleAggr.isaggregate: Boolean flag (true, indicating aggregated)
 %         - sampleAggr.nodeIndex: Index of the sampled node
-%         - sampleAggr.numSamples: Number of samples collected
+%         - sampleAggr.numEvents: Number of samples collected
 %
 % @note Aggregated states contain only job counts per class. For detailed phase
 %       information, use sample() instead. Supported by CTMC, JMT, and SSA solvers.
@@ -74,7 +74,7 @@ D0 = infGen-D1;
 MMAP = mmap_normalize([{D0},{D1},eventFilt(:)']);
 
 % now sampel the MMAP
-[sjt,event,~,~,sts] = mmap_sample(MMAP,numSamples, pi0);
+[sjt,event,~,~,sts] = mmap_sample(MMAP,numEvents, pi0);
 
 sn = self.getStruct;
 sampleAggr = struct();

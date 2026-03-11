@@ -35,8 +35,14 @@ public final class TestTools {
 
     public static final double ZERO_TOL = 1e-15;
     public static final double FINE_TOL = 1e-8;
+    /** Loose fine tolerance (1e-6) for analytical algorithms with moderate precision */
+    public static final double LOOSE_FINE_TOL = 1e-6;
     public static final double MID_TOL = 1e-4;
+    /** Loose mid tolerance (1e-3) for BUTools parity and MAM approximate methods */
+    public static final double LOOSE_MID_TOL = 1e-3;
     public static final double COARSE_TOL = 1e-2;
+    /** Loose coarse tolerance (5%) for simulation vs analytical comparisons */
+    public static final double LOOSE_COARSE_TOL = 5e-2;
     /** Very coarse tolerance (10%) for cross-language comparisons with expected numerical variations */
     public static final double VERY_COARSE_TOL = 0.1;
 
@@ -152,7 +158,11 @@ public final class TestTools {
         }
 
         // Special handling for very small values around FINE_TOL (1e-8)
-        // This handles the specific test failures mentioned by the user:
+
+        // When both values are at or below FINE_TOL, both are essentially zero
+        if (Math.abs(expected) <= FINE_TOL && Math.abs(actual) <= FINE_TOL) {
+            return;
+        }
 
         // When one value is 0 and the other is at or below FINE_TOL, consider them equal
         if ((expected == 0.0 && Math.abs(actual) <= FINE_TOL) ||

@@ -9,13 +9,13 @@ import jline.util.matrix.Matrix;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static jline.TestTools.*;
 
 /**
  * Coverage tests for statistical measures with 0% coverage.
  */
 public class MeasuresCoverageTest {
 
-    private static final double TOL = 1e-6;
 
     // ========== Anderson-Darling ==========
 
@@ -37,7 +37,7 @@ public class MeasuresCoverageTest {
         sample2.set(4, 0, 5.0);
 
         double ad = Ms_anderson_darlingKt.ms_anderson_darling(sample1, sample2);
-        assertEquals(0.0, ad, TOL);
+        assertEquals(0.0, ad, LOOSE_FINE_TOL);
 
         // Create two different samples
         Matrix sample3 = new Matrix(5, 1);
@@ -71,7 +71,7 @@ public class MeasuresCoverageTest {
         sample2.set(4, 0, 5.0);
 
         double ks = Ms_kolmogorov_smirnovKt.ms_kolmogorov_smirnov(sample1, sample2);
-        assertEquals(0.0, ks, TOL);
+        assertEquals(0.0, ks, LOOSE_FINE_TOL);
 
         // Create two completely different samples
         Matrix sample3 = new Matrix(5, 1);
@@ -83,7 +83,7 @@ public class MeasuresCoverageTest {
 
         double ksDiff = Ms_kolmogorov_smirnovKt.ms_kolmogorov_smirnov(sample1, sample3);
         // KS distance should be 1.0 for non-overlapping distributions
-        assertEquals(1.0, ksDiff, TOL);
+        assertEquals(1.0, ksDiff, LOOSE_FINE_TOL);
     }
 
     // ========== Cramer-von Mises ==========
@@ -106,7 +106,7 @@ public class MeasuresCoverageTest {
         sample2.set(4, 0, 5.0);
 
         double cvm = Ms_cramer_von_misesKt.ms_cramer_von_mises(sample1, sample2);
-        assertEquals(0.0, cvm, TOL);
+        assertEquals(0.0, cvm, LOOSE_FINE_TOL);
 
         // Create two different samples
         Matrix sample3 = new Matrix(5, 1);
@@ -140,7 +140,7 @@ public class MeasuresCoverageTest {
         sample2.set(4, 0, 5.0);
 
         double ws = Ms_wassersteinKt.ms_wasserstein(sample1, sample2);
-        assertEquals(0.0, ws, TOL);
+        assertEquals(0.0, ws, LOOSE_FINE_TOL);
 
         // Create a shifted sample
         Matrix sample3 = new Matrix(5, 1);
@@ -175,7 +175,7 @@ public class MeasuresCoverageTest {
         sample2.set(4, 0, 5.0);
 
         double kuiper = Ms_kuiperKt.ms_kuiper(sample1, sample2);
-        assertEquals(0.0, kuiper, TOL);
+        assertEquals(0.0, kuiper, LOOSE_FINE_TOL);
 
         // Create two different samples
         Matrix sample3 = new Matrix(5, 1);
@@ -209,10 +209,10 @@ public class MeasuresCoverageTest {
         sample2.set(4, 0, 5.0); sample2.set(4, 1, 50.0);
 
         // All measures should return 0 for identical samples
-        assertEquals(0.0, Ms_kolmogorov_smirnovKt.ms_kolmogorov_smirnov(sample1, sample2), TOL);
-        assertEquals(0.0, Ms_wassersteinKt.ms_wasserstein(sample1, sample2), TOL);
-        assertEquals(0.0, Ms_kuiperKt.ms_kuiper(sample1, sample2), TOL);
-        assertEquals(0.0, Ms_cramer_von_misesKt.ms_cramer_von_mises(sample1, sample2), TOL);
-        assertEquals(0.0, Ms_anderson_darlingKt.ms_anderson_darling(sample1, sample2), TOL);
+        assertEquals(0.0, Ms_kolmogorov_smirnovKt.ms_kolmogorov_smirnov(sample1, sample2), LOOSE_FINE_TOL);
+        assertEquals(0.0, Ms_wassersteinKt.ms_wasserstein(sample1, sample2), LOOSE_FINE_TOL);
+        assertEquals(0.0, Ms_kuiperKt.ms_kuiper(sample1, sample2), LOOSE_FINE_TOL);
+        assertEquals(0.0, Ms_cramer_von_misesKt.ms_cramer_von_mises(sample1, sample2), LOOSE_FINE_TOL);
+        assertEquals(0.0, Ms_anderson_darlingKt.ms_anderson_darling(sample1, sample2), LOOSE_FINE_TOL);
     }
 }

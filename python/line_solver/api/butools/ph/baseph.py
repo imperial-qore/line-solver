@@ -13,7 +13,6 @@ class _butools_settings:
     checkInput = checkInput
 butools = _butools_settings()
 
-
 def MomentsFromME (alpha, A, K=0):
     """
     Returns the first K moments of a matrix-exponential
@@ -43,9 +42,10 @@ def MomentsFromME (alpha, A, K=0):
 
     if butools.checkInput and not CheckMERepresentation (alpha, A):
         raise Exception("MomentsFromME: Input is not a valid ME representation!")
-        
+
     if K==0:
         K = 2*np.size(alpha,1)-1
+
     return [math.factorial(i)*np.sum(alpha*la.inv(-A)**i) for i in range(1,K+1)]
   
 def MomentsFromPH (alpha, A, K=0):

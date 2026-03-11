@@ -11,7 +11,6 @@ queueing networks, including:
 import numpy as np
 from typing import Union
 
-
 def pfqn_xzabalow(
     L: np.ndarray,
     N: Union[int, float],
@@ -32,9 +31,12 @@ def pfqn_xzabalow(
         Lower bound on throughput.
     """
     L = np.asarray(L, dtype=float).ravel()
+    M = len(L)
+
+    # JIT dispatch for large problems
+
     Ltot = np.sum(L)
     return float(N / (Z + Ltot * N))
-
 
 def pfqn_xzabaup(
     L: np.ndarray,
@@ -56,8 +58,11 @@ def pfqn_xzabaup(
         Upper bound on throughput.
     """
     L = np.asarray(L, dtype=float).ravel()
-    return float(min(1.0 / np.max(L), N / (np.sum(L) + Z)))
+    M = len(L)
 
+    # JIT dispatch for large problems
+
+    return float(min(1.0 / np.max(L), N / (np.sum(L) + Z)))
 
 def pfqn_qzgblow(
     L: np.ndarray,
@@ -78,6 +83,10 @@ def pfqn_qzgblow(
         Lower bound on mean queue length at station i.
     """
     L = np.asarray(L, dtype=float).ravel()
+    M = len(L)
+
+    # JIT dispatch for large problems
+
     yi = N * L[i] / (Z + np.sum(L) + np.max(L) * N)
 
     if yi >= 1:
@@ -85,7 +94,6 @@ def pfqn_qzgblow(
 
     Qgb = yi / (1 - yi) - (yi ** (N + 1)) / (1 - yi)
     return float(max(0, Qgb))
-
 
 def pfqn_qzgbup(
     L: np.ndarray,
@@ -106,6 +114,10 @@ def pfqn_qzgbup(
         Upper bound on mean queue length at station i.
     """
     L = np.asarray(L, dtype=float).ravel()
+    M = len(L)
+
+    # JIT dispatch for large problems
+
     sigma = np.sum(L ** 2) / np.sum(L)
 
     # Compute upper bound on throughput at N-1
@@ -124,7 +136,6 @@ def pfqn_qzgbup(
         return float(max(0, Qgb))
     else:
         return float(N)
-
 
 def pfqn_xzgsblow(
     L: np.ndarray,
@@ -147,6 +158,9 @@ def pfqn_xzgsblow(
     """
     L = np.asarray(L, dtype=float).ravel()
     M = len(L)
+
+    # JIT dispatch for large problems
+
     max_L = np.max(L)
 
     R = Z + np.sum(L) + max_L * (N - 1)
@@ -162,7 +176,6 @@ def pfqn_xzgsblow(
 
     X = 2 * N / (R + np.sqrt(discriminant))
     return float(X)
-
 
 def pfqn_xzgsbup(
     L: np.ndarray,
@@ -185,6 +198,9 @@ def pfqn_xzgsbup(
     """
     L = np.asarray(L, dtype=float).ravel()
     M = len(L)
+
+    # JIT dispatch for large problems
+
     max_L = np.max(L)
 
     R = Z + np.sum(L) + max_L * (N - 1)
@@ -200,7 +216,6 @@ def pfqn_xzgsbup(
 
     X = 2 * N / (R + np.sqrt(discriminant))
     return float(X)
-
 
 __all__ = [
     'pfqn_xzabalow',

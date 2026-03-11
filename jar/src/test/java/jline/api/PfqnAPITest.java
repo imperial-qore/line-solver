@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 import jline.io.Ret;
 import jline.util.matrix.Matrix;
-import jline.TestTools;
+import static jline.TestTools.*;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.List;
@@ -28,7 +28,6 @@ import static jline.api.pfqn.nc.Pfqn_comomrmKt.*;
  * These tests verify that the JAR implementation matches the MATLAB version.
  */
 public class PfqnAPITest {
-    private static final double TOLERANCE = 1e-10;
 
     // ===== MoM Tests =====
 
@@ -108,23 +107,23 @@ public class PfqnAPITest {
         );
         
         // Test throughputs X with exact precision
-        assertEquals(expectedX0.doubleValue(), X.get(0, 0), TestTools.ZERO_TOL, 
+        assertEquals(expectedX0.doubleValue(), X.get(0, 0), ZERO_TOL, 
                     "X[0] should match expected exact value");
-        assertEquals(expectedX1.doubleValue(), X.get(0, 1), TestTools.ZERO_TOL, 
+        assertEquals(expectedX1.doubleValue(), X.get(0, 1), ZERO_TOL, 
                     "X[1] should match expected exact value");
         
         // Test queue lengths Q with exact precision
-        assertEquals(expectedQ00.doubleValue(), Q.get(0, 0), TestTools.ZERO_TOL, 
+        assertEquals(expectedQ00.doubleValue(), Q.get(0, 0), ZERO_TOL, 
                     "Q[0][0] should match expected exact value");
-        assertEquals(expectedQ01.doubleValue(), Q.get(0, 1), TestTools.ZERO_TOL, 
+        assertEquals(expectedQ01.doubleValue(), Q.get(0, 1), ZERO_TOL, 
                     "Q[0][1] should match expected exact value");
-        assertEquals(expectedQ10.doubleValue(), Q.get(1, 0), TestTools.ZERO_TOL, 
+        assertEquals(expectedQ10.doubleValue(), Q.get(1, 0), ZERO_TOL, 
                     "Q[1][0] should match expected exact value");
-        assertEquals(expectedQ11.doubleValue(), Q.get(1, 1), TestTools.ZERO_TOL, 
+        assertEquals(expectedQ11.doubleValue(), Q.get(1, 1), ZERO_TOL, 
                     "Q[1][1] should match expected exact value");
         
         // Test normalizing constant G with exact precision
-        assertEquals(expectedG.doubleValue(), G.doubleValue(), TestTools.ZERO_TOL, 
+        assertEquals(expectedG.doubleValue(), G.doubleValue(), ZERO_TOL, 
                     "G should match expected exact value");
         
         // Test that the exact BigFraction values match (if implementation is correct)
@@ -133,7 +132,7 @@ public class PfqnAPITest {
         
         // Test lG (log of normalizing constant)
         double expectedLG = Math.log(expectedG.doubleValue());
-        assertEquals(expectedLG, lG, TestTools.ZERO_TOL, 
+        assertEquals(expectedLG, lG, ZERO_TOL, 
                     "lG should match expected log value");
         assertTrue(!Double.isNaN(lG) && !Double.isInfinite(lG), 
                   "lG should be a finite number");
@@ -157,9 +156,9 @@ public class PfqnAPITest {
                 new BigInteger("13608000")
             );
             
-            assertEquals(expectedG0.doubleValue(), g[0].doubleValue(), TestTools.ZERO_TOL, 
+            assertEquals(expectedG0.doubleValue(), g[0].doubleValue(), ZERO_TOL, 
                         "g[0] should match expected exact value");
-            assertEquals(expectedG1.doubleValue(), g[1].doubleValue(), TestTools.ZERO_TOL, 
+            assertEquals(expectedG1.doubleValue(), g[1].doubleValue(), ZERO_TOL, 
                         "g[1] should match expected exact value");
         }
         
@@ -176,9 +175,9 @@ public class PfqnAPITest {
                 new BigInteger("216000")
             );
             
-            assertEquals(expectedG1_0.doubleValue(), g_1[0].doubleValue(), TestTools.ZERO_TOL, 
+            assertEquals(expectedG1_0.doubleValue(), g_1[0].doubleValue(), ZERO_TOL, 
                         "g_1[0] should match expected exact value");
-            assertEquals(expectedG1_1.doubleValue(), g_1[1].doubleValue(), TestTools.ZERO_TOL, 
+            assertEquals(expectedG1_1.doubleValue(), g_1[1].doubleValue(), ZERO_TOL, 
                         "g_1[1] should match expected exact value");
         }
         
@@ -201,7 +200,7 @@ public class PfqnAPITest {
             }
             // Account for jobs in think time
             totalQ += X.get(j, 0) * Z.get(j, 0);
-            assertEquals(N.get(j, 0), totalQ, TestTools.FINE_TOL, 
+            assertEquals(N.get(j, 0), totalQ, FINE_TOL, 
                         "Little's law should hold for class " + j + 
                         " (total population conservation)");
         }
@@ -251,7 +250,7 @@ public class PfqnAPITest {
         }
 
         // Sum of all probabilities should be close to 1
-        assertEquals(1.0, sumProb, 0.01,
+        assertEquals(1.0, sumProb, COARSE_TOL,
             "Sum of joint probabilities should be close to 1.0");
     }
 
@@ -295,7 +294,7 @@ public class PfqnAPITest {
         }
 
         // Sum of all probabilities should be close to 1
-        assertEquals(1.0, sumProb, 0.01,
+        assertEquals(1.0, sumProb, COARSE_TOL,
             "Sum of joint probabilities should be close to 1.0");
     }
 
@@ -319,7 +318,7 @@ public class PfqnAPITest {
         double pjoint = pfqn_joint(nVec, L, N, null, null);
 
         // This is the only valid state, so probability should be 1.0
-        assertEquals(1.0, pjoint, TOLERANCE,
+        assertEquals(1.0, pjoint, FINE_TOL,
             "Probability of the only valid state should be 1.0");
 
         assertTrue(pjoint >= 0.0,
@@ -357,7 +356,7 @@ public class PfqnAPITest {
         }
 
         // Sum of probabilities over all valid states should equal 1.0
-        assertEquals(1.0, sumProb, TOLERANCE,
+        assertEquals(1.0, sumProb, FINE_TOL,
             "Sum of probabilities should equal 1.0");
     }
 
@@ -379,7 +378,7 @@ public class PfqnAPITest {
         double pjoint = pfqn_joint(nVec, L, N, null, null);
 
         // With zero population, the probability of empty state should be 1.0
-        assertEquals(1.0, pjoint, TOLERANCE,
+        assertEquals(1.0, pjoint, FINE_TOL,
             "Probability of empty state should be 1.0 when N=0");
     }
 
@@ -428,7 +427,7 @@ public class PfqnAPITest {
         // Compute with provided lGN
         double pjoint2 = pfqn_joint(nVec, L, N, null, lGN);
 
-        assertEquals(pjoint1, pjoint2, TOLERANCE,
+        assertEquals(pjoint1, pjoint2, FINE_TOL,
             "Results should be identical with auto-calculated vs provided lGN");
     }
 

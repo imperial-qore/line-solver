@@ -68,6 +68,16 @@ class SchedStrategy(IntEnum):
     EDF = 23      # Earliest Deadline First
     FORK = 24     # Fork node
     JOIN = 25     # Join node
+    REF = 26      # Reference task
+    EDD = 27      # Earliest Due Date
+    SRPT = 28     # Shortest Remaining Processing Time
+    SRPTPRIO = 29 # SRPT with Priorities
+    LCFSPRIO = 30 # LCFS with Priorities
+    LCFSPRPRIO = 31  # LCFSPR with Priorities
+    LCFSPIPRIO = 32  # LCFSPI with Priorities
+    FCFSPRPRIO = 33  # FCFSPR with Priorities
+    FCFSPIPRIO = 34  # FCFSPI with Priorities
+    FCFSPRIO = 35 # FCFS with Priorities
 
     @staticmethod
     def to_feature(strategy: 'SchedStrategy') -> str:
@@ -98,6 +108,10 @@ class SchedStrategy(IntEnum):
             SchedStrategy.EDF: 'SchedStrategy_EDF',
             SchedStrategy.FORK: 'SchedStrategy_FORK',
             SchedStrategy.JOIN: 'SchedStrategy_JOIN',
+            SchedStrategy.LCFSPRPRIO: 'SchedStrategy_LCFSPRPRIO',
+            SchedStrategy.FCFSPRPRIO: 'SchedStrategy_FCFSPRPRIO',
+            SchedStrategy.LCFSPRIO: 'SchedStrategy_LCFSPRIO',
+            SchedStrategy.FCFSPRIO: 'SchedStrategy_FCFSPRIO',
         }
         return feature_map.get(strategy, f'SchedStrategy_{strategy.name}')
 
@@ -160,6 +174,52 @@ class DropStrategy(IntEnum):
     BAS = 1       # Block After Service
     WaitingQueue = 2  # Block in queue
     WAITQ = 2     # MATLAB-compatible alias for WaitingQueue
+    RETRIAL = 5           # Unlimited retries
+    RETRIAL_WITH_LIMIT = 6  # Retries up to max attempts
+
+
+class BalkingStrategy(IntEnum):
+    """Enumeration of balking strategies."""
+    QUEUE_LENGTH = 1   # Balk based on queue length ranges
+    EXPECTED_WAIT = 2  # Balk based on expected waiting time
+    COMBINED = 3       # Both conditions (OR logic)
+
+    @staticmethod
+    def to_text(strategy):
+        if strategy == BalkingStrategy.QUEUE_LENGTH:
+            return "QUEUE_LENGTH"
+        elif strategy == BalkingStrategy.EXPECTED_WAIT:
+            return "EXPECTED_WAIT"
+        elif strategy == BalkingStrategy.COMBINED:
+            return "COMBINED"
+        return strategy.name
+
+    @classmethod
+    def from_text(cls, text):
+        text = text.upper().replace(" ", "_")
+        return cls[text]
+
+
+class ImpatienceType(IntEnum):
+    """Enumeration of customer impatience types."""
+    RENEGING = 1  # Customer abandons after joining (timer-based)
+    BALKING = 2   # Customer refuses to join based on queue state
+    RETRIAL = 3   # Customer moves to orbit and retries after delay
+
+    @staticmethod
+    def to_text(imp_type):
+        if imp_type == ImpatienceType.RENEGING:
+            return "reneging"
+        elif imp_type == ImpatienceType.BALKING:
+            return "balking"
+        elif imp_type == ImpatienceType.RETRIAL:
+            return "retrial"
+        return imp_type.name.lower()
+
+    @classmethod
+    def from_text(cls, text):
+        text = text.upper()
+        return cls[text]
 
 
 class ReplacementStrategy(IntEnum):
@@ -379,6 +439,7 @@ class JobClass(NetworkElement):
         self._reply_signal_class = None
         self._completes = True  # Whether this class completes a visit (for cycle time calculation)
         self._is_reference_class = False  # Whether this class is the reference class for its chain (for WN computation)
+        self._immediate_feedback = False  # Whether immediate feedback is enabled globally for this class
 
     @property
     def jobclass_type(self) -> JobClassType:
@@ -452,6 +513,29 @@ class JobClass(NetworkElement):
     def isReferenceClass(self) -> bool:
         """Get whether this class is the reference class (MATLAB-compatible name)."""
         return self._is_reference_class
+
+    @property
+    def immediateFeedback(self) -> bool:
+        """Get whether immediate feedback is enabled globally for this class."""
+        return self._immediate_feedback
+
+    @immediateFeedback.setter
+    def immediateFeedback(self, value: bool) -> None:
+        """Set whether immediate feedback is enabled globally for this class."""
+        self._immediate_feedback = bool(value)
+        self._invalidate_java()
+
+    def setImmediateFeedback(self, value: bool) -> None:
+        """Set immediate feedback for this class (MATLAB-compatible name)."""
+        self.immediateFeedback = value
+
+    def hasImmediateFeedback(self) -> bool:
+        """Check if immediate feedback is enabled for this class."""
+        return self._immediate_feedback
+
+    # Snake_case aliases
+    set_immediate_feedback = setImmediateFeedback
+    has_immediate_feedback = hasImmediateFeedback
 
     def set_reference_station(self, station) -> None:
         """
@@ -845,6 +929,8 @@ class Station(StatefulNode):
         self._load_depend_scaling = None
         self._class_depend_scaling = None
         self._joint_depend_scaling = None
+        self._joint_class_depend_scaling = None
+        self._joint_class_depend_cutoffs = None
         self._station_index = -1  # Index among stations
 
     @property
@@ -971,6 +1057,25 @@ class Station(StatefulNode):
         """Get joint scaling and cutoffs."""
         return self._joint_depend_scaling, getattr(self, '_joint_cutoffs', None)
 
+    def set_joint_class_dependence(self, scaling_tables: dict, cutoffs) -> None:
+        """
+        Set per-class joint-dependent (LJCD) scaling tables.
+
+        Args:
+            scaling_tables: Dict mapping JobClass -> 1D numpy array of scaling factors,
+                indexed by ljd_linearize(nvec, cutoffs).
+            cutoffs: Per-class cutoffs as 1D array [N1, N2, ..., NK].
+        """
+        self._joint_class_depend_scaling = {}
+        for cls, table in scaling_tables.items():
+            self._joint_class_depend_scaling[cls] = np.asarray(table).flatten()
+        self._joint_class_depend_cutoffs = np.asarray(cutoffs).flatten()
+        self._invalidate_java()
+
+    def get_joint_class_dependence(self):
+        """Get per-class joint-dependent scaling tables and cutoffs."""
+        return self._joint_class_depend_scaling, self._joint_class_depend_cutoffs
+
     def set_drop_rule(self, rule: DropStrategy) -> None:
         """
         Set drop strategy for finite capacity.
@@ -1015,6 +1120,8 @@ class Station(StatefulNode):
     getClassDependence = get_class_dependence
     setJointDependence = set_joint_dependence
     getJointDependence = get_joint_dependence
+    setJointClassDependence = set_joint_class_dependence
+    getJointClassDependence = get_joint_class_dependence
     setDropRule = set_drop_rule
     getDropRule = get_drop_rule
     getStationIndex = get_station_index

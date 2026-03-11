@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static jline.TestTools.*;
 
 /**
  * Test suite for WfCommonsLoader.
@@ -54,7 +55,7 @@ public class WfCommonsLoaderTest {
         APH ph = wf.toPH();
 
         double expectedMean = 1.0 + 2.0 + 3.0;
-        assertEquals(expectedMean, ph.getMean(), 0.1);
+        assertEquals(expectedMean, ph.getMean(), VERY_COARSE_TOL);
         assertEquals(3, wf.getActivities().size());
     }
 
@@ -109,7 +110,7 @@ public class WfCommonsLoaderTest {
         Workflow wf = WfCommonsLoader.loadFromString(json, options);
         APH ph = wf.toPH();
 
-        assertEquals(5.0, ph.getMean(), 0.1);
+        assertEquals(5.0, ph.getMean(), VERY_COARSE_TOL);
     }
 
     @Test
@@ -191,7 +192,7 @@ public class WfCommonsLoaderTest {
         Workflow wf = WfCommonsLoader.loadFromString(json, options);
         APH ph = wf.toPH();
 
-        assertEquals(3.0, ph.getMean(), 0.1);
+        assertEquals(3.0, ph.getMean(), VERY_COARSE_TOL);
     }
 
     @Test
@@ -223,7 +224,7 @@ public class WfCommonsLoaderTest {
         Workflow wf = WfCommonsLoader.load(tempFile.getAbsolutePath());
         APH ph = wf.toPH();
 
-        assertEquals(3.0, ph.getMean(), 0.1);
+        assertEquals(3.0, ph.getMean(), VERY_COARSE_TOL);
     }
 
     @Test
@@ -285,7 +286,7 @@ public class WfCommonsLoaderTest {
         Workflow wf = Workflow.fromWfCommons(tempFile.getAbsolutePath());
         APH ph = wf.toPH();
 
-        assertEquals(3.0, ph.getMean(), 0.1);
+        assertEquals(3.0, ph.getMean(), VERY_COARSE_TOL);
     }
 
     @Test

@@ -756,7 +756,7 @@ class Network(NetworkBase, Element):
             List of routing matrices, or None if not available
         """
         if not self._has_struct:
-            self.refresh_struct(False)
+            self.refresh_struct()
 
         if self._sn is not None and hasattr(self._sn, 'rtorig') and self._sn.rtorig is not None:
             return self._sn.rtorig
@@ -996,14 +996,39 @@ class Network(NetworkBase, Element):
         """
         Refresh and validate the routing matrix.
 
-        This method validates that routing probabilities are valid
-        (non-negative, stochastic).
+        Validates routing probabilities are non-negative and checks that
+        routing strategies are specified. Matches MATLAB refreshRoutingMatrix
+        checks (enableChecks block and reference station consistency).
         """
         if self._routing_matrix is None:
             return
 
-        # TODO: Add validation for stochasticity, ergodicity
-        # This would call dtmc_stochcomp from MATLAB
+        # Validate routing strategies are specified for each class
+        sn = self._sn
+        if sn is not None and hasattr(sn, 'routing') and sn.routing is not None:
+            routing = np.asarray(sn.routing)
+            K = int(sn.nclasses) if hasattr(sn, 'nclasses') else 0
+            for r in range(K):
+                if r < routing.shape[1] and np.all(routing[:, r] == -1):
+                    import warnings
+                    warnings.warn(
+                        f"Routing strategy in class {r} is unspecified at all nodes.",
+                        UserWarning)
+
+        # Validate reference station consistency within chains
+        if sn is not None and hasattr(sn, 'inchain') and sn.inchain is not None:
+            refstat = sn.refstat if hasattr(sn, 'refstat') else None
+            if refstat is not None:
+                refstat_flat = np.asarray(refstat).flatten()
+                for c, chain_classes in enumerate(sn.inchain):
+                    if chain_classes is not None and len(chain_classes) > 1:
+                        refs = [int(refstat_flat[r]) for r in chain_classes if r < len(refstat_flat)]
+                        if len(set(refs)) > 1:
+                            import warnings
+                            warnings.warn(
+                                f"Classes within chain {c} (classes: {chain_classes}) "
+                                f"have different reference stations.",
+                                UserWarning)
 
     def get_connection_matrix(self) -> np.ndarray:
         """
@@ -1390,22 +1415,13 @@ class Network(NetworkBase, Element):
     # STRUCT COMPILATION METHODS
     # =====================================================================
 
-    def refresh_struct(self, hard: bool = True) -> None:
+    def refresh_struct(self) -> None:
         """
         Compile model to NetworkStruct for solver consumption.
 
-        Args:
-            hard: If True, recompute everything; if False, update only changed parts
+        Always performs a full rebuild of the struct from scratch.
         """
-        if self._sn is None:
-            hard = True
-
-        if hard:
-            self._build_struct_from_scratch()
-        else:
-            # TODO: Implement incremental updates
-            self._build_struct_from_scratch()
-
+        self._build_struct_from_scratch()
         self._has_struct = True
 
     def refresh_rates(self) -> None:
@@ -1594,6 +1610,8 @@ class Network(NetworkBase, Element):
             sn.regionrule = np.ones((F, K), dtype=float) * DropStrategy.DROP
             sn.regionweight = np.ones((F, K), dtype=float)
             sn.regionsz = np.ones((F, K), dtype=int)
+            sn.regionLinConA = [None] * F
+            sn.regionLinConb = [None] * F
 
             for f, fcr in enumerate(self._regions):
                 region_matrix = -1 * np.ones((M, K + 1), dtype=float)
@@ -1613,6 +1631,11 @@ class Network(NetworkBase, Element):
                     sn.regionsz[f, r] = fcr.get_class_size(job_class)
 
                 sn.region.append(region_matrix)
+
+                # Serialize linear constraints if set
+                if fcr.has_linear_constraints():
+                    sn.regionLinConA[f] = fcr.constraint_A
+                    sn.regionLinConb[f] = fcr.constraint_b
         else:
             sn.nregions = 0
             sn.region = []
@@ -1782,6 +1805,41 @@ class Network(NetworkBase, Element):
                     signaltype[j] = jobclass.getSignalType()
         self._sn.issignal = issignal
         self._sn.signaltype = signaltype
+
+        # Signal removal properties
+        signalRemovalDist = [None] * nclasses
+        signalRemovalPolicy = [None] * nclasses
+        isCatastrophe = np.zeros(nclasses, dtype=bool)
+        for j, jobclass in enumerate(self._classes):
+            if issignal[j]:
+                if hasattr(jobclass, '_removal_distribution'):
+                    signalRemovalDist[j] = jobclass._removal_distribution
+                if hasattr(jobclass, '_removal_policy'):
+                    signalRemovalPolicy[j] = jobclass._removal_policy
+                if hasattr(jobclass, '_signal_type'):
+                    from .classes import SignalType
+                    if jobclass._signal_type == SignalType.CATASTROPHE:
+                        isCatastrophe[j] = True
+        self._sn.signalRemovalDist = signalRemovalDist
+        self._sn.signalRemovalPolicy = signalRemovalPolicy
+        self._sn.isCatastrophe = isCatastrophe
+
+        # Immediate feedback matrix (station x class)
+        nstations = len(self._stations)
+        immfeed = np.zeros((nstations, nclasses), dtype=bool)
+        from .nodes import Queue
+        for ist, station in enumerate(self._stations):
+            node = station
+            for r, jobclass in enumerate(self._classes):
+                station_has = False
+                if isinstance(node, Queue) and hasattr(node, '_immediate_feedback_classes'):
+                    if node._immediate_feedback_all:
+                        station_has = True
+                    else:
+                        station_has = r in node._immediate_feedback_classes
+                class_has = jobclass._immediate_feedback
+                immfeed[ist, r] = station_has or class_has
+        self._sn.immfeed = immfeed
 
     def _refresh_rates(self) -> None:
         """Extract service and arrival rates from nodes."""
@@ -2168,6 +2226,33 @@ class Network(NetworkBase, Element):
             self._sn.ljdscaling = None
             self._sn.ljdcutoffs = None
 
+        # Per-class joint-dependent (LJCD) scaling
+        has_ljcd = False
+        ljcdscaling_list = [None] * nstations
+        ljcdcutoffs = np.zeros((nstations, nclasses))
+
+        for i, station in enumerate(self._stations):
+            if hasattr(station, 'get_joint_class_dependence'):
+                scaling, cutoffs = station.get_joint_class_dependence()
+                if scaling is not None and len(scaling) > 0:
+                    has_ljcd = True
+                    # scaling is dict {JobClass: 1D array}; convert to list indexed by class
+                    per_class_tables = [None] * nclasses
+                    for cls, table in scaling.items():
+                        cls_idx = self._classes.index(cls)
+                        per_class_tables[cls_idx] = np.asarray(table).flatten()
+                    ljcdscaling_list[i] = per_class_tables
+                    if cutoffs is not None:
+                        cutoffs_arr = np.asarray(cutoffs).flatten()
+                        ljcdcutoffs[i, :len(cutoffs_arr)] = cutoffs_arr
+
+        if has_ljcd:
+            self._sn.ljcdscaling = ljcdscaling_list
+            self._sn.ljcdcutoffs = ljcdcutoffs
+        else:
+            self._sn.ljcdscaling = None
+            self._sn.ljcdcutoffs = None
+
     def _refresh_scheduling(self) -> None:
         """Extract scheduling strategies from stations."""
         nstations = len(self._stations)
@@ -2322,6 +2407,9 @@ class Network(NetworkBase, Element):
                             station_drop_rule = station._drop_rule[jobclass]
                     elif isinstance(station._drop_rule, list) and r < len(station._drop_rule):
                         station_drop_rule = station._drop_rule[r]
+                    elif not isinstance(station._drop_rule, (dict, list)):
+                        # Scalar drop rule (e.g., Station._drop_rule is a single DropStrategy)
+                        station_drop_rule = station._drop_rule
 
                 if station_drop_rule is None:
                     # No explicit rule - default based on capacity
@@ -2332,8 +2420,17 @@ class Network(NetworkBase, Element):
                         # Infinite capacity: keep WAITQ
                         droprule[ist, r] = SnDropStrategy.WAITQ
                 else:
-                    # Convert explicit rule to network_struct DropStrategy value
-                    droprule[ist, r] = station_drop_rule
+                    # Convert base.py DropStrategy to network_struct DropStrategy
+                    from .base import DropStrategy as BaseDropStrategy
+                    if isinstance(station_drop_rule, BaseDropStrategy):
+                        base_to_sn = {
+                            BaseDropStrategy.DROP: SnDropStrategy.DROP,
+                            BaseDropStrategy.BAS: SnDropStrategy.BAS,
+                            BaseDropStrategy.WaitingQueue: SnDropStrategy.WAITQ,
+                        }
+                        droprule[ist, r] = base_to_sn.get(station_drop_rule, SnDropStrategy.DROP)
+                    else:
+                        droprule[ist, r] = int(station_drop_rule)
 
         self._sn.cap = capacity
         self._sn.classcap = classcap
@@ -2780,6 +2877,13 @@ class Network(NetworkBase, Element):
                         for m in others_in_chain:
                             prob = arv_rates[m] / total_arv if arv_rates[m] > 0 else 0
                             self._sn.rtnodes[idx_sink * nclasses + k, idx_source * nclasses + m] = prob
+                else:
+                    # All rates are zero (e.g., all arrivals disabled): use equal probabilities
+                    # to avoid NaN/missing entries in Sink->Source routing
+                    n_chain = len(others_in_chain)
+                    for k in others_in_chain:
+                        for m in others_in_chain:
+                            self._sn.rtnodes[idx_sink * nclasses + k, idx_source * nclasses + m] = 1.0 / n_chain
 
             # Compute rt_visits with Sink->Source for ergodic visit calculation
             if len(stateful_nodes_classes) > 0:
@@ -2808,11 +2912,18 @@ class Network(NetworkBase, Element):
                     else:
                         self._sn.routing[i, class_idx] = int(strategy)
             # If node has explicit probabilistic routing via set_prob_routing(),
-            # set the routing strategy to PROB for those classes
+            # set the routing strategy to PROB for those classes UNLESS the node
+            # has an explicit non-PROB strategy (e.g., RROBIN, WRROBIN).
             # This matches MATLAB behavior where setProbRouting sets RoutingStrategy.PROB
             if hasattr(node, '_prob_routing') and node._prob_routing:
                 for jobclass in node._prob_routing.keys():
                     class_idx = jobclass._index if hasattr(jobclass, '_index') else self._classes.index(jobclass)
+                    # Don't override explicit routing strategy (RROBIN, WRROBIN, etc.)
+                    if hasattr(node, '_routing_strategies') and jobclass in node._routing_strategies:
+                        explicit = node._routing_strategies[jobclass]
+                        ev = explicit.value if hasattr(explicit, 'value') else int(explicit)
+                        if ev != int(RoutingStrategy.RAND) and ev != int(RoutingStrategy.PROB):
+                            continue  # keep the explicit strategy
                     self._sn.routing[i, class_idx] = int(RoutingStrategy.PROB)
 
             # ClassSwitch nodes MUST use PROB routing to correctly apply class switching
@@ -3664,6 +3775,20 @@ class Network(NetworkBase, Element):
         if sn.fj is None or not np.any(sn.fj):
             return
 
+        # Check for advanced join strategies (QUORUM, CANDJOIN) which are not fully supported
+        from .base import JoinStrategy
+        for node in self._nodes:
+            if hasattr(node, '_join_strategy') and node._join_strategy:
+                for cls, strategy in node._join_strategy.items():
+                    if strategy != JoinStrategy.STD:
+                        import warnings
+                        warnings.warn(
+                            f"Join node '{node.name}' uses {strategy.name} strategy which "
+                            f"has limited analytical support. Use SolverJMT for reliable results.",
+                            UserWarning
+                        )
+                        break
+
         # Import ModelAdapter for MMT transformation
         try:
             from ..io.model_adapter import ModelAdapter
@@ -4315,8 +4440,17 @@ class Network(NetworkBase, Element):
     # =====================================================================
 
     def to_java(self):
-        """Convert Network for JPype interop (future)."""
-        raise NotImplementedError("Java interop not yet implemented")
+        """Convert Network for JVM interoperability.
+
+        Not available in the native Python implementation. The native Python
+        solver operates independently of the JVM. Use the python-wrapper
+        package for JVM interoperability.
+        """
+        raise NotImplementedError(
+            "to_java() is not available in the native Python implementation. "
+            "The native Python solver operates independently of the JVM. "
+            "Use the python-wrapper package for JVM interoperability."
+        )
 
     def __repr__(self) -> str:
         return (
@@ -4987,25 +5121,45 @@ class Network(NetworkBase, Element):
         """
         return self.jsimgView()
 
-    def modelView(self) -> None:
+    def modelView(self) -> bool:
         """
-        Open the model in ModelVisualizer.
+        Open the model in JSIMgraph viewer.
 
-        Note: ModelVisualizer is a Java Swing GUI component that is not
-        available in the Python native implementation. Use jsimgView() or
-        view() for visualization, which opens the model in JMT's graphical
-        editor.
+        Exports the network to JSIMG format and launches JMT's JSIMgraph
+        as a subprocess to display an interactive visualization.
 
-        Raises:
-            NotImplementedError: ModelVisualizer requires Java GUI
+        Returns:
+            True if the viewer was launched successfully, False otherwise
 
         References:
             MATLAB: matlab/src/lang/@MNetwork/modelView.m
         """
-        raise NotImplementedError(
-            "modelView() requires Java GUI (ModelVisualizer). "
-            "Use view() or jsimgView() to open the model in JMT's graphical editor."
-        )
+        import tempfile
+        import os
+        from ..api.io import jsimg_view, line_printf
+        # from ..api.io import line_viewer_view
+        from ..api.solvers.jmt.handler import _write_jsim_file, SolverJMTOptions
+
+        # Compile model if needed
+        if not self._has_struct:
+            self.link(self._routing_matrix)
+
+        # Get NetworkStruct
+        sn = self.get_struct()
+
+        # Create temp file for JSIMG
+        fd, jsimg_file = tempfile.mkstemp(suffix='.jsimg', prefix='model_')
+        os.close(fd)
+
+        # Write model to JSIMG format
+        options = SolverJMTOptions()
+        _write_jsim_file(sn, jsimg_file, options)
+
+        line_printf('JSIMgraph Model: %s\n', jsimg_file)
+
+        # Open in JSIMgraph
+        return jsimg_view(jsimg_file)
+        # return line_viewer_view(jsimg_file)
 
     # snake_case alias
     model_view = modelView

@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Tuple
 import pandas as pd
 
+from ...api.io.logging import line_debug
 from ..base import Solver
 
 
@@ -154,6 +155,9 @@ class SolverLQNS(Solver):
         Raises:
             RuntimeError: If lqns is not available or fails
         """
+        multiserver = self.options.multiserver or 'default'
+        line_debug("LQNS: starting (method=%s, multiserver=%s)", self.options.method, multiserver, options=self.options)
+
         import time
         start_time = time.time()
 
@@ -177,12 +181,14 @@ class SolverLQNS(Solver):
 
             # Check for remote execution
             if self.options.remote:
+                line_debug("LQNS: using remote execution at %s", self.options.remote_url, options=self.options)
                 if self.options.verbose:
                     print(f"Using remote LQNS at: {self.options.remote_url}")
                 self._run_remote_lqns(lqnx_file)
             else:
                 # Build and execute command locally
                 cmd = self._build_command(lqnx_file)
+                line_debug("LQNS: using local execution, command: %s", cmd, options=self.options)
 
                 if self.options.verbose:
                     print(f"LQNS command: {cmd}")

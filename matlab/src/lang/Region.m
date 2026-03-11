@@ -19,6 +19,8 @@ classdef Region < handle
         dropRule;
         classWeight;
         classSize;
+        constraintA;  % Linear constraint matrix A (C x K), An <= b
+        constraintB;  % Linear constraint vector b (C x 1)
     end
 
     methods
@@ -33,6 +35,8 @@ classdef Region < handle
             self.classSize = ones(1,length(self.classes));
             self.classMaxJobs = Region.UNBOUNDED * ones(1,length(self.classes));
             self.classMaxMemory = Region.UNBOUNDED * ones(1,length(self.classes));
+            self.constraintA = [];
+            self.constraintB = [];
         end
 
         function self = setGlobalMaxJobs(self, njobs)
@@ -88,6 +92,22 @@ classdef Region < handle
 
         function name = getName(self)
             name = self.name;
+        end
+
+        function self = setLinearConstraints(self, A, b)
+            % SELF = SETLINEARCONSTRAINTS(A, B)
+            % Set general linear admission constraints An <= b.
+            %   A: Constraint matrix (C x K) where C is the number of
+            %      constraints and K is the number of classes.
+            %   b: Capacity vector (C x 1) or (1 x C).
+            self.constraintA = A;
+            self.constraintB = b(:);  % Ensure column vector
+        end
+
+        function tf = hasLinearConstraints(self)
+            % TF = HASLINEARCONSTRAINTS()
+            % Returns true if linear constraints have been set.
+            tf = ~isempty(self.constraintA) && ~isempty(self.constraintB);
         end
     end
 

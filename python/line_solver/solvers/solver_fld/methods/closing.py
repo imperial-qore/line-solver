@@ -376,33 +376,64 @@ class ClosingMethod:
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Build ODE jump matrix and rate base.
 
-        Port of ode_rate_base.m and ode_jumps_new.m
+        Port of MATLAB ode_jumps_new.m and ode_rate_base.m.
+        Matches JAR PassageTimeODE.calculateJumps/calculateRateBaseAndEventIdxs.
         """
-        # Count events
-        n_events = 0
         state_dim = int(np.sum(Kic))
 
-        # Count departure events (phase completions that route to another station)
+        # Get pie (initial phase probabilities) and proc (PH matrices) per station-class
+        pie_all = [[None for _ in range(K)] for _ in range(M)]
+        proc_all = [[None for _ in range(K)] for _ in range(M)]
+        for j in range(M):
+            for l in range(K):
+                # Extract pie from sn.pie
+                if hasattr(self.sn, 'pie') and self.sn.pie is not None:
+                    if j < len(self.sn.pie) and self.sn.pie[j] is not None:
+                        if l < len(self.sn.pie[j]) and self.sn.pie[j][l] is not None:
+                            pie_all[j][l] = np.asarray(self.sn.pie[j][l]).flatten()
+                # Extract proc from sn.proc (D0, D1 matrices)
+                if hasattr(self.sn, 'proc') and self.sn.proc is not None:
+                    if j < len(self.sn.proc) and self.sn.proc[j] is not None:
+                        if l < len(self.sn.proc[j]) and self.sn.proc[j][l] is not None:
+                            proc_ir = self.sn.proc[j][l]
+                            if isinstance(proc_ir, (list, tuple)) and len(proc_ir) >= 2:
+                                proc_all[j][l] = proc_ir
+
+                # Default pie: all probability on phase 0
+                if pie_all[j][l] is None:
+                    n_ph = Kic[j, l]
+                    if n_ph > 0:
+                        pie_all[j][l] = np.zeros(n_ph)
+                        pie_all[j][l][0] = 1.0
+                    else:
+                        pie_all[j][l] = np.array([1.0])
+
+        # Count events
+        # Departure events: for each (i,k,ki) -> (j,l,kj) where rt > 0
+        n_events = 0
         for i in range(M):
             for k in range(K):
                 if enabled[i, k]:
-                    for f in range(Kic[i, k]):
-                        for j in range(M):
-                            for l in range(K):
-                                idx_from = i * K + k
-                                idx_to = j * K + l
-                                if idx_from < rt.shape[0] and idx_to < rt.shape[1]:
-                                    if rt[idx_from, idx_to] > 0:
-                                        n_events += 1
+                    for j in range(M):
+                        for l in range(K):
+                            idx_from = i * K + k
+                            idx_to = j * K + l
+                            if idx_from < rt.shape[0] and idx_to < rt.shape[1]:
+                                if rt[idx_from, idx_to] > 0:
+                                    # One event per source phase * destination phase
+                                    n_events += Kic[i, k] * Kic[j, l]
 
-        # Count internal phase transitions
+        # Internal phase transitions: for each (i,k,ki) -> (i,k,kip) where ki != kip
         for i in range(M):
             for k in range(K):
                 if enabled[i, k] and Kic[i, k] > 1:
-                    n_events += Kic[i, k] - 1
+                    # From each phase ki (0..Kic-2) to each other phase kip (0..Kic-1)
+                    for ki in range(Kic[i, k] - 1):
+                        for kip in range(Kic[i, k]):
+                            if ki != kip:
+                                n_events += 1
 
         if n_events == 0:
-            # No events - return identity system
             return np.eye(state_dim), np.ones(state_dim), np.arange(state_dim)
 
         # Build jump matrix and rates
@@ -412,55 +443,73 @@ class ClosingMethod:
 
         event_count = 0
 
-        # Departure events
+        # Departure events (matching MATLAB ode_jumps_new + ode_rate_base)
         for i in range(M):
             for k in range(K):
                 if not enabled[i, k]:
                     continue
                 xik = q_indices[i, k]
 
-                for f in range(Kic[i, k]):
-                    for j in range(M):
-                        for l in range(K):
-                            idx_from = i * K + k
-                            idx_to = j * K + l
-                            if idx_from < rt.shape[0] and idx_to < rt.shape[1]:
-                                p_route = rt[idx_from, idx_to]
-                                if p_route > 0 and enabled[j, l]:
-                                    xjl = q_indices[j, l]
+                for j in range(M):
+                    for l in range(K):
+                        idx_from = i * K + k
+                        idx_to = j * K + l
+                        if idx_from >= rt.shape[0] or idx_to >= rt.shape[1]:
+                            continue
+                        p_route = rt[idx_from, idx_to]
+                        if p_route <= 0 or not enabled[j, l]:
+                            continue
 
-                                    # Rate = mu * phi * P
-                                    mu_f = Mu[i][k][f] if f < len(Mu[i][k]) else 0
-                                    phi_f = Phi[i][k][f] if Phi[i][k] is not None and f < len(Phi[i][k]) else 1.0
+                        xjl = q_indices[j, l]
+                        pie_jl = pie_all[j][l]
 
-                                    if mu_f > 0 and event_count < n_events:
-                                        rateBase[event_count] = mu_f * phi_f * p_route
-                                        eventIdx[event_count] = xik + f
+                        for ki in range(Kic[i, k]):
+                            mu_f = Mu[i][k][ki] if ki < len(Mu[i][k]) else 0
+                            phi_f = Phi[i][k][ki] if Phi[i][k] is not None and ki < len(Phi[i][k]) else 1.0
 
-                                        # Jump: -1 from source, +1 to destination
-                                        all_jumps[xik + f, event_count] = -1
-                                        all_jumps[xjl, event_count] = 1
-                                        event_count += 1
+                            for kj in range(Kic[j, l]):
+                                pie_kj = pie_jl[kj] if kj < len(pie_jl) else 0.0
 
-        # Internal phase transitions
+                                # Rate = mu * phi * P * pie
+                                rateBase[event_count] = mu_f * phi_f * p_route * pie_kj
+                                eventIdx[event_count] = xik + ki
+
+                                # Jump: -1 from source phase, +1 to destination phase
+                                all_jumps[xik + ki, event_count] = -1
+                                all_jumps[xjl + kj, event_count] = 1
+                                event_count += 1
+
+        # Internal phase transitions (matching MATLAB ode_rate_base using D0 matrix)
         for i in range(M):
             for k in range(K):
                 if not enabled[i, k] or Kic[i, k] <= 1:
                     continue
                 xik = q_indices[i, k]
 
-                for f in range(Kic[i, k] - 1):
-                    mu_f = Mu[i][k][f] if f < len(Mu[i][k]) else 0
-                    phi_f = Phi[i][k][f] if Phi[i][k] is not None and f < len(Phi[i][k]) else 1.0
+                for ki in range(Kic[i, k] - 1):
+                    for kip in range(Kic[i, k]):
+                        if ki == kip:
+                            continue
 
-                    if mu_f > 0 and event_count < n_events:
-                        rateBase[event_count] = mu_f * (1.0 - phi_f)
-                        eventIdx[event_count] = xik + f
+                        # Use D0 matrix entry if available, else mu*(1-phi) for sequential
+                        if proc_all[i][k] is not None:
+                            D0 = np.asarray(proc_all[i][k][0])
+                            rate = D0[ki, kip] if ki < D0.shape[0] and kip < D0.shape[1] else 0.0
+                        else:
+                            # Fallback: sequential transitions only
+                            if kip == ki + 1:
+                                mu_f = Mu[i][k][ki] if ki < len(Mu[i][k]) else 0
+                                phi_f = Phi[i][k][ki] if Phi[i][k] is not None and ki < len(Phi[i][k]) else 1.0
+                                rate = mu_f * (1.0 - phi_f)
+                            else:
+                                rate = 0.0
 
-                        # Jump: -1 from current phase, +1 to next phase
-                        all_jumps[xik + f, event_count] = -1
-                        all_jumps[xik + f + 1, event_count] = 1
-                        event_count += 1
+                        if rate > 0:
+                            rateBase[event_count] = rate
+                            eventIdx[event_count] = xik + ki
+                            all_jumps[xik + ki, event_count] = -1
+                            all_jumps[xik + kip, event_count] = 1
+                            event_count += 1
 
         # Trim to actual event count
         all_jumps = all_jumps[:, :event_count]

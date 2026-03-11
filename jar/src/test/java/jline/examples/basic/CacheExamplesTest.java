@@ -38,7 +38,6 @@ public class CacheExamplesTest {
     // MATLAB uses: CTMC (cutoff=1), SSA, MVA, NC
     
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testCacheReplcRRCTMC() {
         // Test the cache_replc_rr example with CTMC solver
         Network model = CacheModel.cache_replc_rr();
@@ -72,7 +71,6 @@ public class CacheExamplesTest {
     }
     
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testCacheReplcRRSSA() {
         // Test the cache_replc_rr example with SSA solver
         Network model = CacheModel.cache_replc_rr();
@@ -105,7 +103,6 @@ public class CacheExamplesTest {
                           expectedResidT, expectedArvR, expectedTput);
     }
 
-    //@Disabled
     @Test
     public void testCacheReplcRRMVA() {
         // Test the cache_replc_rr example with MVA solver
@@ -241,7 +238,6 @@ public class CacheExamplesTest {
     }
     
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testCacheReplcFIFOSSA() {
         // Test the cache_replc_fifo example with SSA solver
         Network model = CacheModel.cache_replc_fifo();
@@ -377,7 +373,6 @@ public class CacheExamplesTest {
     }
     
     @Test
-    // @Disabled - MAPE was 0.0580%, Max APE was 0.9087%
     public void testCacheReplcLRUSSA() {
         // Test the cache_replc_lru example with SSA solver
         Network model = CacheModel.cache_replc_lru();
@@ -480,7 +475,6 @@ public class CacheExamplesTest {
     // MATLAB uses: CTMC (cutoff=1), MVA, NC (if supported)
     
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testCacheCompareReplcCTMC() {
         // Test the cache_compare_replc example with CTMC solver
         Network model = CacheModel.cache_compare_replc();
@@ -512,7 +506,6 @@ public class CacheExamplesTest {
                           expectedResidT, expectedArvR, expectedTput);
     }
 
-    //@Disabled
     @Test
     public void testCacheCompareReplcMVA() {
         // Test the cache_compare_replc example with MVA solver

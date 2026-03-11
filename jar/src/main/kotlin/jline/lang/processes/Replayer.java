@@ -145,6 +145,15 @@ public class Replayer extends Distribution {
         return varValue;
     }
 
+    /**
+     * Returns the raw data array backing this Replayer distribution.
+     *
+     * @return the trace data as a double array
+     */
+    public double[] getData() {
+        return data;
+    }
+
     @Override
     public double[] sample(int n) {
         return null;

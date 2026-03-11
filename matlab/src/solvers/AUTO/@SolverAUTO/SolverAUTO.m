@@ -37,7 +37,7 @@ classdef SolverAUTO
         CANDIDATE_JMT = 5;
         CANDIDATE_SSA = 6;
         CANDIDATE_CTMC = 7;
-        CANDIDATE_DES = 8;
+        CANDIDATE_LDES = 8;
         % LayeredNetwork solvers
         CANDIDATE_LQNS = 1;
         CANDIDATE_LN_NC = 2;
@@ -147,9 +147,9 @@ classdef SolverAUTO
                 case 'ctmc'
                     self.options.method = 'default';
                     self.solvers{1,1} = SolverCTMC(model,self.options);
-                case 'des'
+                case 'ldes'
                     self.options.method = 'default';
-                    self.solvers{1,1} = SolverDES(model,self.options);
+                    self.solvers{1,1} = SolverLDES(model,self.options);
                 case 'env'
                     self.options.method = 'default';
                     self.solvers{1,1} = SolverENV(model,@(m) SolverMVA(m,'verbose',false),self.options);
@@ -171,7 +171,7 @@ classdef SolverAUTO
                             self.solvers{1,self.CANDIDATE_JMT} = SolverJMT(model);
                             self.solvers{1,self.CANDIDATE_SSA} = SolverSSA(model);
                             self.solvers{1,self.CANDIDATE_CTMC} = SolverCTMC(model);
-                            self.solvers{1,self.CANDIDATE_DES} = SolverDES(model);
+                            self.solvers{1,self.CANDIDATE_LDES} = SolverLDES(model);
                             boolSolver = false(length(self.solvers),1);
                             for s=1:length(self.solvers)
                                 boolSolver(s) = self.solvers{s}.supports(self.model);
@@ -515,20 +515,20 @@ classdef SolverAUTO
             [Pi_t, SSsysa] = self.delegate('getTranProbSysAggr', 2);
         end
 
-        function sampleNodeState = sample(self, node, numSamples)
-            sampleNodeState = self.delegate('sample', 1, node, numSamples);
+        function sampleNodeState = sample(self, node, numEvents)
+            sampleNodeState = self.delegate('sample', 1, node, numEvents);
         end
 
-        function stationStateAggr = sampleAggr(self, node, numSamples)
-            stationStateAggr = self.delegate('sampleAggr', 1, node, numSamples);
+        function stationStateAggr = sampleAggr(self, node, numEvents)
+            stationStateAggr = self.delegate('sampleAggr', 1, node, numEvents);
         end
 
-        function tranSysState = sampleSys(self, numSamples)
-            tranSysState = self.delegate('sampleSys', 1, numSamples);
+        function tranSysState = sampleSys(self, numEvents)
+            tranSysState = self.delegate('sampleSys', 1, numEvents);
         end
 
-        function sysStateAggr = sampleSysAggr(self, numSamples)
-            sysStateAggr = self.delegate('sampleSysAggr', 1, numSamples);
+        function sysStateAggr = sampleSysAggr(self, numEvents)
+            sysStateAggr = self.delegate('sampleSysAggr', 1, numEvents);
         end
 
         function RD = getCdfRespT(self, R)

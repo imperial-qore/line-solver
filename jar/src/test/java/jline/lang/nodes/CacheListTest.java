@@ -3,14 +3,13 @@ package jline.lang.nodes;
 import jline.lang.ClosedClass;
 import jline.lang.Network;
 import jline.lang.RoutingMatrix;
-import static jline.TestTools.COARSE_TOL;
-import static jline.TestTools.ZERO_TOL;
+import static jline.TestTools.*;
 import jline.lang.constant.ReplacementStrategy;
 import jline.lang.processes.Exp;
 import jline.lang.processes.Immediate;
 import jline.lang.processes.Zipf;
 import jline.solvers.ctmc.SolverCTMC;
-import jline.solvers.des.SolverDES;
+import jline.solvers.ldes.SolverLDES;
 import jline.solvers.jmt.SolverJMT;
 import jline.solvers.nc.SolverNC;
 import jline.solvers.ssa.SolverSSA;
@@ -32,7 +31,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class CacheListTest {
 
-    private static final double TOLERANCE_SSA = 0.05; // 5% tolerance for SSA vs CTMC
     private static final double TOLERANCE_EXACT = ZERO_TOL; // Exact tolerance for CTMC hit ratios
 
     @Test
@@ -223,9 +221,9 @@ class CacheListTest {
             // Verify SSA accuracy against CTMC (if CTMC was valid)
             if (ctmcValid) {
                 double relativeError = Math.abs(ssaHitRatio - ctmcHitRatio) / ctmcHitRatio;
-                assertTrue(relativeError <= TOLERANCE_SSA, 
+                assertTrue(relativeError <= LOOSE_COARSE_TOL, 
                     String.format("SSA hit ratio relative error %.4f exceeds tolerance %.2f (SSA: %.6f, CTMC: %.6f)", 
-                        relativeError, TOLERANCE_SSA, ssaHitRatio, ctmcHitRatio));
+                        relativeError, LOOSE_COARSE_TOL, ssaHitRatio, ctmcHitRatio));
 
                 
             } else {
@@ -242,10 +240,10 @@ class CacheListTest {
         }
     }
 
-    // ========== DES Solver Tests ==========
+    // ========== LDES Solver Tests ==========
 
     /**
-     * DES simulation tests for cache configurations.
+     * LDES simulation tests for cache configurations.
      * Validates hit ratios are within reasonable bounds.
      */
     @Nested
@@ -294,7 +292,6 @@ class CacheListTest {
         }
 
         @Test
-        @org.junit.jupiter.api.Disabled("DES solver has a bug with small cache configurations (n=4, capacity=3) - missClass throughput incorrectly reported as 0")
         void testDES_LRU_n4() {
             double[] cap = {1,1,1};
             double hitRatio = runDES(4, cap, ReplacementStrategy.LRU, 1.0);
@@ -366,7 +363,7 @@ class CacheListTest {
             options.seed = 1;
             options.samples = 1000000;
 
-            SolverDES solver = new SolverDES(model, options);
+            SolverLDES solver = new SolverLDES(model, options);
             NetworkAvgTable avgTable = solver.getAvgTable();
 
             double hitTput = avgTable.getTput().get(1);
@@ -553,14 +550,6 @@ class CacheListTest {
         void testNC_LRU_n7_config4() {
             double[] cap = {1,1,1};
             double hitRatio = runNC(7, cap, ReplacementStrategy.LRU, 1.0);
-            assertTrue(hitRatio >= 0.0 && hitRatio <= 1.0, "Hit ratio should be between 0 and 1");
-        }
-
-        @Test
-        @org.junit.jupiter.api.Disabled("NC requires n >= capacity + 2, so n=4 with capacity=3 is invalid (need n >= 5)")
-        void testNC_LRU_n4() {
-            double[] cap = {1,1,1};
-            double hitRatio = runNC(4, cap, ReplacementStrategy.LRU, 1.0);
             assertTrue(hitRatio >= 0.0 && hitRatio <= 1.0, "Hit ratio should be between 0 and 1");
         }
 

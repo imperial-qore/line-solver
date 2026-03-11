@@ -22,13 +22,13 @@ import java.math.BigDecimal;
 import java.util.function.UnaryOperator;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static jline.TestTools.*;
 
 /**
  * Coverage tests for utility functions with 0% coverage.
  */
 public class UtilityCoverageTest {
 
-    private static final double TOL = 1e-6;
 
     // ========== CheckGenerator ==========
 
@@ -115,11 +115,11 @@ public class UtilityCoverageTest {
         assertNotNull(result);
 
         double expected = Math.exp(-1.0) - Math.exp(-2.0);
-        assertEquals(expected, result.doubleValue(), 1e-4);  // Romberg numerical tolerance
+        assertEquals(expected, result.doubleValue(), MID_TOL);  // Romberg numerical tolerance
 
         // Test hn method
         BigDecimal hn = customromberg.INSTANCE.hn(0.0, 1.0, 4);
-        assertEquals(0.25, hn.doubleValue(), TOL);
+        assertEquals(0.25, hn.doubleValue(), LOOSE_FINE_TOL);
     }
 
     // ========== function_wrapper ==========
@@ -134,13 +134,13 @@ public class UtilityCoverageTest {
         Apcomplex input = new Apcomplex(new Apfloat(2.0));
         Apcomplex result = sum.apply(input);
         // f1(2) + f2(2) = 2 + 1 = 3
-        assertEquals(3.0, result.real().doubleValue(), TOL);
+        assertEquals(3.0, result.real().doubleValue(), LOOSE_FINE_TOL);
 
         // Test multiply function
         UnaryOperator<Apcomplex> product = function_wrapper.INSTANCE.multiply(f1, f2);
         result = product.apply(input);
         // f1(2) * f2(2) = 2 * 1 = 2
-        assertEquals(2.0, result.real().doubleValue(), TOL);
+        assertEquals(2.0, result.real().doubleValue(), LOOSE_FINE_TOL);
     }
 
     // ========== NaivePermanent ==========
@@ -156,12 +156,12 @@ public class UtilityCoverageTest {
         m.set(1, 1, 4.0);
 
         NaivePermanent np = new NaivePermanent(m, true);  // solve immediately
-        assertEquals(10.0, np.getValue(), TOL);
+        assertEquals(10.0, np.getValue(), LOOSE_FINE_TOL);
 
         // Test with solve=false then call solve()
         NaivePermanent np2 = new NaivePermanent(m, false);
         np2.solve();
-        assertEquals(10.0, np2.getValue(), TOL);
+        assertEquals(10.0, np2.getValue(), LOOSE_FINE_TOL);
     }
 
     // ========== RyzerPermanent ==========
@@ -177,16 +177,16 @@ public class UtilityCoverageTest {
 
         // Test graycode mode (default)
         RyzerPermanent rp1 = new RyzerPermanent(m, "graycode", true);
-        assertEquals(10.0, rp1.getValue(), TOL);
+        assertEquals(10.0, rp1.getValue(), LOOSE_FINE_TOL);
 
         // Test naive mode
         RyzerPermanent rp2 = new RyzerPermanent(m, "naive", true);
-        assertEquals(10.0, rp2.getValue(), TOL);
+        assertEquals(10.0, rp2.getValue(), LOOSE_FINE_TOL);
 
         // Test without immediate solve
         RyzerPermanent rp3 = new RyzerPermanent(m, "graycode", false);
         rp3.solve();
-        assertEquals(10.0, rp3.getValue(), TOL);
+        assertEquals(10.0, rp3.getValue(), LOOSE_FINE_TOL);
     }
 
     // ========== HeuristicPermanent ==========

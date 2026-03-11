@@ -33,11 +33,18 @@ from .approximations import (
     qsys_gig1_approx_whitt,
     qsys_gig1_approx_heyman,
     qsys_gig1_approx_kobayashi,
+    qsys_gig1_approx_klb,
     qsys_gig1_approx_gelenbe,
     qsys_gig1_approx_kimura,
+    qsys_gig1_approx_myskja,
+    qsys_gig1_approx_myskja2,
     qsys_gigk_approx,
     qsys_gig1_ubnd_kingman,
     qsys_gigk_approx_kingman,
+    qsys_gg1,
+    qsys_gig1_lbnd,
+    qsys_gigk_approx_cosmetatos,
+    qsys_gigk_approx_whitt,
 )
 
 from .scheduling import (
@@ -77,6 +84,13 @@ from .retrial import (
     qsys_bmapphnn_retrial,
     qsys_is_retrial,
     RetrialInfo,
+    RenegingInfo,
+    detect_reneging_topology,
+    has_reneging_patience,
+    extract_bmap_matrices,
+    extract_ph_params,
+    convert_patience_to_regimes,
+    solver_mam_retrial,
 )
 
 __all__ = [
@@ -97,10 +111,19 @@ __all__ = [
     'qsys_gig1_approx_whitt',
     'qsys_gig1_approx_heyman',
     'qsys_gig1_approx_kobayashi',
+    'qsys_gig1_approx_klb',
     'qsys_gig1_approx_gelenbe',
     'qsys_gig1_approx_kimura',
+    'qsys_gig1_approx_myskja',
+    'qsys_gig1_approx_myskja2',
+    # G/G/1 analysis
+    'qsys_gg1',
+    # G/G/1 lower bound
+    'qsys_gig1_lbnd',
     # G/G/k approximations
     'qsys_gigk_approx',
+    'qsys_gigk_approx_cosmetatos',
+    'qsys_gigk_approx_whitt',
     # Upper bounds and Kingman multi-server
     'qsys_gig1_ubnd_kingman',
     'qsys_gigk_approx_kingman',
@@ -135,4 +158,11 @@ __all__ = [
     'qsys_bmapphnn_retrial',
     'qsys_is_retrial',
     'RetrialInfo',
+    'RenegingInfo',
+    'detect_reneging_topology',
+    'has_reneging_patience',
+    'extract_bmap_matrices',
+    'extract_ph_params',
+    'convert_patience_to_regimes',
+    'solver_mam_retrial',
 ]

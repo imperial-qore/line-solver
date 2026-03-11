@@ -77,25 +77,35 @@ exact = 0;
 
 if (form == 1 && (r1 < degentol || r2 > 1-degentol || abs(h1 - h2 + h2*r1) < degentol )) || ...
         (form == 2 && (r2 > 1-degentol || abs(h1 - h2 + h2*r1) < degentol ))
-    
-    % TODO: transform into a valid second-order Poisson process
-    
-    % DEGENERATE PHASE_TYPE
-    fprintf('Fitting MAMAP(2,2) F+S: detected Poisson process\n');
-    
-    % return marked poisson process
-    h = map_mean(mmap);
-    mmap = cell(1,2+k);
-    mmap{1} = -1/h;
-    mmap{2} =  1/h;
-    for c = 1:k
-        mmap{2+c} = mmap{2} * p(c);
+
+    % Transform into a valid second-order Poisson process by perturbing
+    % degenerate parameters to maintain 2-state structure
+    fprintf('Fitting MAMAP(2,2) F+S: perturbing degenerate Poisson to second-order\n');
+    if r1 < degentol
+        r1 = degentol;
     end
-    
-    fF = mmap_forward_moment(mmap,1);
-    fS = mmap_sigma(mmap);
-    
-    return;
+    if r2 > 1-degentol
+        r2 = 1 - degentol;
+    end
+    if abs(h1 - h2 + h2*r1) < degentol
+        h1 = h2 * (1 - r1) + degentol;
+    end
+    % Reconstruct MAP with perturbed parameters
+    if form == 1
+        map{1} = [-1/h1, r1/h1; 0, -1/h2];
+        map{2} = [(1-r1)/h1, 0; r2/h2, (1-r2)/h2];
+        map = map_normalize(map);
+        mmap{1} = map{1}; mmap{2} = map{2};
+        [G,U,Y] = mamap2m_can1_coefficients(h1,h2,r1,r2);
+        fit = @fit_can1;
+    else
+        map{1} = [-1/h1, r1/h1; 0, -1/h2];
+        map{2} = [0, (1-r1)/h1; r2/h2, (1-r2)/h2];
+        map = map_normalize(map);
+        mmap{1} = map{1}; mmap{2} = map{2};
+        [E,V,Z] = mamap2m_can2_coefficients(h1,h2,r1,r2);
+        fit = @fit_can2;
+    end
     
 elseif form == 2 && r2 < degentol && abs(1-r1) < degentol
     
@@ -108,29 +118,35 @@ elseif form == 2 && r2 < degentol && abs(1-r1) < degentol
     q3 = p(1);
     
 elseif form == 1 && r2 < degentol
-    
+
     % CANONICAL PHASE_TYPE
     fprintf('Fitting MAMAP(2,2) F+S: detected canonical phase-type form\n');
-    
+
     % convert to phase-type
     aph = map;
     aph{2}(2,2) = 0;
     aph = map_normalize(aph);
-    
+
+    % detect hypoexponential (SCV <= 1) and convert to non-canonical form
+    scv = map_scv(aph);
+    if scv < 1.0 + degentol
+        fprintf('Fitting MAMAP(2,2) F+S: hypoexponential detected (SCV=%.4f), converting to non-canonical form\n', scv);
+        aph = aph2_fit_map(map);
+    end
+
     % the forward moments are always equal to the ordinary moments
     % since the backward moments are not provided as arguments,
     % we set the backward moments to the ordinary moments as well
-    % TODO: if hypoexponential convert to non-canonical phase-type
     B = zeros(2,1);
     B(1) = map_mean(aph);
     B(2) = map_mean(aph);
     warning('Fitting MAMAP(2,2) F+S: setting backward moments to ordinary moments, you should try to fit B+S');
-    
+
     mmap = maph2m_fit_multiclass(aph, p, B, classWeights);
-    
+
     fF = mmap_forward_moment(mmap, 1);
     fS = mmap_sigma(mmap);
-    
+
     return;
     
 elseif (form == 1 && abs(1-r1) < degentol) || ...

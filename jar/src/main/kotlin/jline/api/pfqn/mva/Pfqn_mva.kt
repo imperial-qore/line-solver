@@ -54,14 +54,13 @@ fun pfqn_mva(L: Matrix, N: Matrix, Z: Matrix = Matrix(1, N.numCols), mi: Matrix?
         }
     }
 
-    // Detect and consolidate replicated stations
-    val uniqueResult = pfqn_unique(L)
-    val L_reduced = uniqueResult.L_unique
-    val mapping = uniqueResult.mapping
-    val M = L_reduced.numRows
-
-    // Combine user-provided mi with detected multiplicity
-    mi = pfqn_combine_mi(mi, mapping, M)
+    // Station consolidation disabled: pfqn_unique merges stations with identical
+    // demand rows, but this is incorrect for tandem (serial) networks where distinct
+    // stations happen to have the same service demand. The consolidation treats them
+    // as replicated (parallel) copies, producing wrong queue lengths and response times.
+    val L_reduced = L
+    val mapping = IntArray(M_original) { it }
+    val M = M_original
     if (!N.any()) {
         return Ret.pfqnMVA(Matrix(0, 0), Matrix(0, 0), Matrix(0, 0), Matrix(0, 0), 0.0)
     }

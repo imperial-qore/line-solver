@@ -22,7 +22,9 @@ if ~isempty(sn.cdscaling) && strcmpi(options.method, 'exact')
 end
 
 if sn_has_joint_dependence(sn) && strcmpi(options.method, 'exact')
-    line_error(mfilename,'Exact joint-dependent solver not yet available in NC.');
+    % Route to convolution-based solver for LJCD models (Sauer 1983, Sec. 5.2)
+    [Q,U,R,T,C,X,lG,runtime,iter,method] = solver_nc_conv(sn, options);
+    return
 end
 
 NK = sn.njobs';  % initial population per class

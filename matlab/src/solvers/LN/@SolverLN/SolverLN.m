@@ -25,9 +25,14 @@ classdef SolverLN < EnsembleSolver
         averagingstart; % iteration at which result averaging started
         idxhash; % ensemble model associated to host or task
         servtmatrix; % auxiliary matrix to determine entry servt
-        ptaskcallers; % probability that a task is called by a given task, directly or indirectly (remotely)
-        ptaskcallers_step; % probability that a task is called by a given task, directly or indirectly (remotely) up to a given step distance
         ilscaling; % interlock scalings
+        % LQNS V5-style interlock data structures (built once at init)
+        il_table_all;    % (nentries x nentries) reachability probability, all phases
+        il_table_ph1;    % (nentries x nentries) reachability probability, phase-1 only
+        il_common_entries;  % cell(nhosts+ntasks,1) common parent entry indices per server
+        il_source_tasks_all; % cell(nhosts+ntasks,1) all-phase source tasks per server
+        il_source_tasks_ph2; % cell(nhosts+ntasks,1) phase-2 source tasks per server
+        il_num_sources;  % (nhosts+ntasks,1) total source multiplicity per server
         njobs; % number of jobs for each caller in a given submodel
         njobsorig; % number of jobs for each caller at layer build time
         routereset; % models that require hard reset of service chains
@@ -41,6 +46,8 @@ classdef SolverLN < EnsembleSolver
         tput_prev;          % Previous throughputs for relaxation
         thinkt_prev;        % Previous think times for relaxation
         callservt_prev;     % Previous call service times for relaxation
+        callresidt_prev;    % Previous call residence times for growth rate capping
+        singleReplicaTasks; % Task indices modeled as single representative replica (fan-out)
         % MOL (Method of Layers) properties for hierarchical iteration
         hostLayerIndices;   % Indices of host (processor) layers in ensemble
         taskLayerIndices;   % Indices of task layers in ensemble
@@ -75,6 +82,7 @@ classdef SolverLN < EnsembleSolver
         callservt;
         callservtproc;
         callservtcdf;
+        joint; % join times at AND-Join activities (synchronization delay)
         ignore; % elements to be ignored (e.g., components disconnected from a REF node)
     end
 
@@ -134,6 +142,7 @@ classdef SolverLN < EnsembleSolver
                 end
 
                 self.construct();
+                line_debug('LN: solver factory=%s, constructing layers', func2str(solverFactory));
                 for e=1:self.getNumberOfModels
                     if numel(find(self.lqn.isfunction == 1))
                         if ~isempty(self.ensemble{e}.stations{2}.setupTime)
@@ -197,15 +206,12 @@ classdef SolverLN < EnsembleSolver
             % perform layering
             self.njobs = zeros(self.lqn.tshift + self.lqn.ntasks, self.lqn.tshift + self.lqn.ntasks);
             buildLayers(self); % build layers
+            line_debug('LN construct: built %d layers from LQN model (%d hosts, %d tasks, %d entries, %d activities)', ...
+                length(self.ensemble), self.lqn.nhosts, self.lqn.ntasks, self.lqn.nentries, self.lqn.nacts);
             self.njobsorig = self.njobs;
             self.nlayers = length(self.ensemble);
 
-            % initialize data structures for interlock correction
-            self.ptaskcallers = zeros(self.lqn.nhosts+self.lqn.ntasks, self.lqn.nhosts+self.lqn.ntasks);
-            self.ptaskcallers_step = cell(1,self.nlayers+1);
-            for step=1:self.nlayers % upper bound on maximum dag height
-                self.ptaskcallers_step{step} = zeros(self.lqn.nhosts+self.lqn.ntasks, self.lqn.nhosts+self.lqn.ntasks);
-            end
+            % interlock data structures are built in init() via initInterlock()
 
             % layering generates update maps that we use here to cache the elements that need reset
             self.routereset = unique(self.idxhash(self.route_prob_updmap(:,1)))';
@@ -243,12 +249,20 @@ classdef SolverLN < EnsembleSolver
                     self.relax_omega = 1.0; % No relaxation
             end
             self.relax_err_history = [];
+            line_debug('LN init: %d layers, relaxation=%s (omega=%.3f)', ...
+                self.nlayers, self.options.config.relax, self.relax_omega);
             self.servt_prev = NaN(self.lqn.nidx, 1);
             self.residt_prev = NaN(self.lqn.nidx, 1);
             self.tput_prev = NaN(self.lqn.nidx, 1);
             self.thinkt_prev = NaN(self.lqn.nidx, 1);
             self.thinkt = zeros(self.lqn.nidx, 1); % Initialize to zeros (Python parity)
             self.callservt_prev = NaN(self.lqn.ncalls, 1);
+            self.callresidt_prev = NaN(self.lqn.ncalls, 1);
+
+            % Build interlock tables (LQNS V5 static analysis)
+            if self.options.config.interlocking
+                self.initInterlock();
+            end
 
             % Initialize MOL-specific state
             self.mol_it_host_outer = 0;
@@ -266,6 +280,7 @@ classdef SolverLN < EnsembleSolver
         function [result, runtime] = analyze(self, it, e) %#ok<INUSD>
             % [RESULT, RUNTIME] = ANALYZE(IT, E)
             T0 = tic;
+            line_debug('LN analyze: iteration %d, layer %d (%s)', it, e, class(self.solvers{e}));
             result = struct();
             %jresult = struct();
             if e==1 && self.solvers{e}.options.verbose
@@ -304,17 +319,18 @@ classdef SolverLN < EnsembleSolver
 
         function post(self, it) % operations after an iteration
             % POST(IT) % OPERATIONS AFTER AN ITERATION
+            line_debug('LN post: iteration %d, updating metrics and layer parameters', it);
             % convert the results of QNs into layer metrics
 
             self.updateMetrics(it);
 
-            % recompute think times
-            self.updateThinkTimes(it);
-
             if self.options.config.interlocking
-                % recompute layer populations
+                % apply interlock correction to call residence times
                 self.updatePopulations(it);
             end
+
+            % recompute think times
+            self.updateThinkTimes(it);
 
             % update the model parameters
             self.updateLayers(it);
@@ -345,12 +361,8 @@ classdef SolverLN < EnsembleSolver
                 self.solvers{e}.reset(); % commenting this out des not seem to produce a problem, but it goes faster with it
             end
 
-            % this is required to handle population changes due to interlocking
-            if self.options.config.interlocking
-                for e=1:self.nlayers
-                    self.ensemble{e}.refreshJobs();
-                end
-            end
+            % Note: interlock correction is done via callresidt adjustment
+            % in updatePopulations, no population changes needed
 
             if it==1
                 % now disable all solver support checks for future iterations
@@ -363,6 +375,7 @@ classdef SolverLN < EnsembleSolver
 
         function finish(self) % operations after iterations are completed
             % FINISH() % OPERATIONS AFTER INTERATIONS ARE COMPLETED
+            line_debug('LN finish: final analysis of %d layers', size(self.results,2));
             E = size(self.results,2);
             for e=1:E
                 s = self.solvers{e};
@@ -505,6 +518,7 @@ classdef SolverLN < EnsembleSolver
     methods (Hidden)
         buildLayers(self, lqn, resptproc, callservtproc);
         buildLayersRecursive(self, idx, callers, ishostlayer);
+        initInterlock(self);
         updateLayers(self, it);
         updatePopulations(self, it);
         updateThinkTimes(self, it);
@@ -575,10 +589,10 @@ classdef SolverLN < EnsembleSolver
             % Updates think times, layer parameters, and routing probabilities
             % after task layer analysis, then resets task layer solvers.
 
-            self.updateThinkTimes(it);
             if self.options.config.interlocking
                 self.updatePopulations(it);
             end
+            self.updateThinkTimes(it);
             self.updateLayers(it);
             self.updateRoutingProbabilities(it);
 
@@ -598,11 +612,6 @@ classdef SolverLN < EnsembleSolver
                 self.solvers{e}.reset();
             end
 
-            if self.options.config.interlocking
-                for e = self.taskLayerIndices
-                    self.ensemble{e}.refreshJobs();
-                end
-            end
         end
 
         function postHostLayers(self, it)
@@ -611,10 +620,10 @@ classdef SolverLN < EnsembleSolver
             % Updates think times, layer parameters, and routing probabilities
             % after host layer analysis, then resets host layer solvers.
 
-            self.updateThinkTimes(it);
             if self.options.config.interlocking
                 self.updatePopulations(it);
             end
+            self.updateThinkTimes(it);
             self.updateLayers(it);
             self.updateRoutingProbabilities(it);
 
@@ -627,12 +636,6 @@ classdef SolverLN < EnsembleSolver
                         self.ensemble{e}.refreshProcesses();
                 end
                 self.solvers{e}.reset();
-            end
-
-            if self.options.config.interlocking
-                for e = self.hostLayerIndices
-                    self.ensemble{e}.refreshJobs();
-                end
             end
         end
     end
@@ -688,13 +691,13 @@ classdef SolverLN < EnsembleSolver
             state.tput_prev = self.tput_prev;
             state.thinkt_prev = self.thinkt_prev;
             state.callservt_prev = self.callservt_prev;
+            state.callresidt_prev = self.callresidt_prev;
 
             % Results from last iteration
             state.results = self.results;
 
             % Interlock data
             state.njobs = self.njobs;
-            state.ptaskcallers = self.ptaskcallers;
             state.ilscaling = self.ilscaling;
         end
 
@@ -706,7 +709,7 @@ classdef SolverLN < EnsembleSolver
             % a previous solver left off.
             %
             % This enables hybrid solving schemes where fast solvers (MVA)
-            % provide initial estimates and accurate solvers (JMT, DES)
+            % provide initial estimates and accurate solvers (JMT, LDES)
             % refine the solution.
             %
             % Example:
@@ -763,6 +766,9 @@ classdef SolverLN < EnsembleSolver
             if isfield(state, 'callservt_prev')
                 self.callservt_prev = state.callservt_prev;
             end
+            if isfield(state, 'callresidt_prev')
+                self.callresidt_prev = state.callresidt_prev;
+            end
 
             % Results
             if isfield(state, 'results')
@@ -772,9 +778,6 @@ classdef SolverLN < EnsembleSolver
             % Interlock data
             if isfield(state, 'njobs')
                 self.njobs = state.njobs;
-            end
-            if isfield(state, 'ptaskcallers')
-                self.ptaskcallers = state.ptaskcallers;
             end
             if isfield(state, 'ilscaling')
                 self.ilscaling = state.ilscaling;
@@ -789,6 +792,8 @@ classdef SolverLN < EnsembleSolver
 
             % Refresh all layer solvers with new parameters
             for e = 1:self.nlayers
+                % Ensure layer model struct is fully built before refresh
+                self.ensemble{e}.getStruct(false);
                 self.ensemble{e}.refreshChains();
                 switch self.solvers{e}.name
                     case {'SolverMVA', 'SolverNC'}
@@ -807,7 +812,7 @@ classdef SolverLN < EnsembleSolver
             % new solvers created by the given factory function.
             %
             % This allows switching between different solving methods
-            % (e.g., from MVA to JMT/DES) while preserving the current
+            % (e.g., from MVA to JMT/LDES) while preserving the current
             % solution state.
             %
             % Example:

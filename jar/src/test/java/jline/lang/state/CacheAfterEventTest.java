@@ -1,6 +1,5 @@
 package jline.lang.state;
 
-import jline.GlobalConstants;
 import jline.io.Ret;
 import jline.lang.*;
 import jline.lang.constant.EventType;
@@ -13,6 +12,7 @@ import jline.lang.processes.Zipf;
 import jline.util.matrix.Matrix;
 import org.junit.jupiter.api.Test;
 
+import static jline.TestTools.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -46,7 +46,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class CacheAfterEventTest {
 
-    private static final double TOL = GlobalConstants.FineTol;
 
     // ==================== n=5, m=[3] ====================
 
@@ -72,7 +71,7 @@ public class CacheAfterEventTest {
         double totalRate = result.outrate.elementSum();
         assertTrue(totalRate > 0, "Total rate should be positive");
         for (int i = 0; i < 3; i++) {
-            assertEquals(1.0/3.0, result.outrate.get(i, 0) / totalRate, TOL,
+            assertEquals(1.0/3.0, result.outrate.get(i, 0) / totalRate, FINE_TOL,
                 "Each outcome should have probability 1/3");
         }
     }

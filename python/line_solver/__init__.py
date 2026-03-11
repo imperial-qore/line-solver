@@ -143,6 +143,7 @@ from .environment import Environment, SolverENV, ENV
 
 # Import I/O functions (native only)
 from .api.io import qn2jsimg, lqn2qn
+from .io.linemodel_io import save_model, load_model
 
 # Import gallery after lang and distributions to avoid circular import
 from .gallery import *

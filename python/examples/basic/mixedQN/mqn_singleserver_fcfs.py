@@ -53,7 +53,7 @@ if __name__ == "__main__":
     # solver = np.append(solver, FLD(model, keep=False, verbose=True, cutoff=3, seed=23000))
     solver = np.append(solver, MVA(model, method='lin'))
     solver = np.append(solver, NC(model, keep=False, verbose=True, cutoff=3, seed=23000))
-    solver = np.append(solver, DES(model, keep=False, verbose=True, cutoff=3, seed=23000, samples=20000))
+    solver = np.append(solver, LDES(model, keep=False, verbose=True, cutoff=3, seed=23000, samples=20000))
 
     avg_table = np.empty(len(solver), dtype=object)
     for s in range(len(solver)):

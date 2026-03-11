@@ -39,6 +39,11 @@ public abstract class ServiceNode extends StatefulNode implements Serializable {
         return this.schedStrategy;
     }
 
+    public double getSchedStrategyPar(JobClass jobClass) {
+        Double val = this.schedStrategyPar.get(jobClass);
+        return (val != null) ? val : 1.0;
+    }
+
     public Distribution getServiceProcess(JobClass jobClass) {
         for (ServiceBinding serviceProcess : this.serviceProcesses) {
             // Use index comparison instead of object identity to handle Signal resolution

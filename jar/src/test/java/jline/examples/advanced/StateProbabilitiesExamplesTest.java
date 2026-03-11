@@ -102,7 +102,6 @@ public class StateProbabilitiesExamplesTest {
     // MATLAB uses: CTMC and NC solvers
     
     @Test
-    // Testing singular matrix issue: @Disabled("CTMC solver error: Matrix is singular and system cannot be solved")
     public void testStatePrAggrLargeCTMC() {
         // Test the statepr_aggr_large example with CTMC solver
         Network model = StateProbabilitiesModel.statepr_aggr_large();

@@ -36,7 +36,7 @@ public class GlobalConstants {
     /** Negative infinity constant */
     public static final double NegInf = Double.NEGATIVE_INFINITY;
     /** LINE solver version */
-    public static final String Version = "3.0.3";
+    public static final String Version = "3.0.5";
     /** Threshold below which values are considered zero (1e-14) */
     public static final double Zero = 1.0000e-14;
     /** Global verbosity level for solver output */

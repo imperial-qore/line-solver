@@ -16,6 +16,7 @@ import jline.solvers.SolverOptions;
 import jline.io.Ret.ProbabilityResult;
 import jline.solvers.ctmc.analyzers.RewardResult;
 import jline.solvers.ctmc.analyzers.Solver_ctmc_analyzer;
+import jline.solvers.ctmc.analyzers.Solver_ctmc_qrf_analyzer;
 import jline.solvers.ctmc.analyzers.Solver_ctmc_reward;
 import jline.solvers.ctmc.handlers.Solver_ctmc;
 import jline.solvers.ctmc.handlers.Solver_ctmc_joint;
@@ -98,6 +99,12 @@ public class SolverCTMC extends NetworkSolver {
         List<String> methods = new ArrayList<String>();
         methods.add("default");
         methods.add("gpu");
+        methods.add("qrf.mmi");
+        methods.add("qrf.mem");
+        methods.add("qrf.mmi.ld");
+        methods.add("qrf.mmi.linear");
+        methods.add("qrf.bas");
+        methods.add("qrf.rsrd");
         return methods;
     }
 
@@ -107,6 +114,7 @@ public class SolverCTMC extends NetworkSolver {
                 "Source", "Sink",
                 "ClassSwitch", "Delay", "DelayStation", "Queue",
                 "MAP", "APH", "MMPP2", "PH", "Coxian", "Erlang", "Exp", "HyperExp",
+                "Det", "Gamma", "Weibull", "Lognormal", "Pareto", "Uniform",
                 "StatelessClassSwitcher", "InfiniteServer", "SharedServer", "Buffer", "Dispatcher",
                 "Cache", "CacheClassSwitcher",
                 "Server", "JobSink", "RandomSource", "ServiceTunnel",
@@ -115,11 +123,12 @@ public class SolverCTMC extends NetworkSolver {
                 "SchedStrategy_SIRO", "SchedStrategy_SEPT",
                 "SchedStrategy_LEPT", "SchedStrategy_FCFS",
                 "SchedStrategy_HOL", "SchedStrategy_LCFS",
-                "SchedStrategy_LCFSPR",
+                "SchedStrategy_LCFSPR", "SchedStrategy_LCFSPRPRIO", "SchedStrategy_FCFSPRPRIO",
                 "RoutingStrategy_RROBIN",
                 "RoutingStrategy_PROB", "RoutingStrategy_RAND",
                 "ReplacementStrategy_RR", "ReplacementStrategy_FIFO", "ReplacementStrategy_SFIFO", "ReplacementStrategy_LRU",
-                "ClosedClass", "SelfLoopingClass", "OpenClass", "Replayer"
+                "ClosedClass", "SelfLoopingClass", "OpenClass", "Replayer",
+                "Place", "Transition", "Linkage", "Enabling", "Timing", "Firing", "Storage"
         });
         return featSupported;
     }
@@ -954,6 +963,8 @@ public class SolverCTMC extends NetworkSolver {
         }
 
         //this.runAnalyzerChecks(options);
+        // Propagate solver verbose level to global
+        GlobalConstants.Verbose = options.verbose;
         this.resetRandomGeneratorSeed(options.seed);
 
         // Force struct rebuild to get a fresh copy, matching MATLAB's value-copy semantics.
@@ -1018,6 +1029,27 @@ public class SolverCTMC extends NetworkSolver {
         }
 
         if (Double.isInfinite(options.timespan[0])) {
+            // QRF dispatch: intercept qrf.* methods before CTMC state-space path
+            if (options.method != null && options.method.startsWith("qrf")) {
+                line_debug(options.verbose, "QRF approximation method: " + options.method);
+                AnalyzerResult qrfResult = Solver_ctmc_qrf_analyzer.solver_ctmc_qrf_analyzer(sn, options);
+                Matrix QN = qrfResult.QN;
+                Matrix UN = qrfResult.UN;
+                Matrix RN = qrfResult.RN;
+                Matrix TN = qrfResult.TN;
+                Matrix CN = qrfResult.CN;
+                Matrix XN = qrfResult.XN;
+                ((CTMCResult) this.result).method = options.method;
+                double runtime = (System.nanoTime() - T0) / 1000000000.0;
+                M = sn.nstations;
+                int R = sn.nclasses;
+                AvgHandle T = getAvgTputHandles();
+                Matrix AN = snGetArvRFromTput(sn, TN, T);
+                Matrix WN = new Matrix(0, 0);
+                this.setAvgResults(QN, UN, RN, TN, AN, WN, CN, XN, runtime, options.method, 0);
+                return;
+            }
+
             Map<StatefulNode, Matrix> s0 = sn.state;
             Map<StatefulNode, Matrix> s0prior = sn.stateprior;
             for (int ind = 1; ind < sn.nnodes; ind++) {
@@ -1074,8 +1106,12 @@ public class SolverCTMC extends NetworkSolver {
             M = sn.nstations;
             int R = sn.nclasses;
             AvgHandle T = getAvgTputHandles();
+            Matrix rtRefreshed = sn.rt;
             sn.rt = rtOrig;
             Matrix AN = snGetArvRFromTput(sn, TN, T);
+            if (rtRefreshed != null) {
+                sn.rt = rtRefreshed;
+            }
             Matrix WN = new Matrix(0, 0);
             this.setAvgResults(QN, UN, RN, TN, AN, WN, CN, XN, runtime, options.method, 0);
         } else {
@@ -1316,7 +1352,7 @@ public class SolverCTMC extends NetworkSolver {
         }
     }
 
-    public SampleResult sample(StatefulNode node, int numSamples) {
+    public SampleResult sample(StatefulNode node, int numEvents) {
         SolverOptions options = this.getOptions();
         options.force = true;
 
@@ -1385,24 +1421,24 @@ public class SolverCTMC extends NetworkSolver {
             // Use MMAP sampling if available and appropriate
             boolean useMMAPSampling = (nodeSpecificMMAP != null && nodeSpecificMMAP.size() > 2);
 
-            result.t = new Matrix(numSamples, 1);
-            result.state = new Matrix(numSamples, sn.space.get(this.model.getStatefulNodes().get(isf)).getNumCols());
+            result.t = new Matrix(numEvents, 1);
+            result.state = new Matrix(numEvents, sn.space.get(this.model.getStatefulNodes().get(isf)).getNumCols());
             result.event = new ArrayList<EventInfo>();
 
             if (useMMAPSampling) {
                 // Use MMAP sampling for better event resolution
                 java.util.Random random = new java.util.Random();
                 jline.io.Ret.mamMMAPSample mmapSample = jline.api.mam.Mmap_sampleKt.mmap_sample(
-                        nodeSpecificMMAP, (long)numSamples, random);
+                        nodeSpecificMMAP, (long)numEvents, random);
 
                 double[] interArrivalTimes = mmapSample.getSamples();
                 int[] eventTypes = mmapSample.getTypes();
 
                 // Also get CTMC states for state information
-                Ret.ctmcSimulation simulation = ctmc_simulate(infGen, pi0, numSamples);
+                Ret.ctmcSimulation simulation = ctmc_simulate(infGen, pi0, numEvents);
 
                 double currentTime = 0.0;
-                for (int i = 0; i < numSamples; i++) {
+                for (int i = 0; i < numEvents; i++) {
                     // Use MMAP inter-arrival times
                     if (i < interArrivalTimes.length) {
                         currentTime += interArrivalTimes[i];
@@ -1439,10 +1475,10 @@ public class SolverCTMC extends NetworkSolver {
                 }
             } else {
                 // Fallback to standard CTMC simulation
-                Ret.ctmcSimulation simulation = ctmc_simulate(infGen, pi0, numSamples);
+                Ret.ctmcSimulation simulation = ctmc_simulate(infGen, pi0, numEvents);
 
                 double currentTime = 0.0;
-                for (int i = 0; i < numSamples; i++) {
+                for (int i = 0; i < numEvents; i++) {
                     // Accumulate sojourn times to get event times
                     currentTime += simulation.sojournTimes[i];
                     result.t.set(i, 0, currentTime);
@@ -1478,15 +1514,15 @@ public class SolverCTMC extends NetworkSolver {
         } catch (Exception e) {
             line_error(mfilename(new Object[]{}), "CTMC sampling failed: " + e.getMessage());
             // Fallback to simple implementation
-            result.t = new Matrix(numSamples, 1);
-            result.state = new Matrix(numSamples, sn.space.get(this.model.getStatefulNodes().get(isf)).getNumCols());
+            result.t = new Matrix(numEvents, 1);
+            result.state = new Matrix(numEvents, sn.space.get(this.model.getStatefulNodes().get(isf)).getNumCols());
             result.event = new ArrayList<EventInfo>();
         }
 
         return result;
     }
 
-    public jline.io.Ret.SampleResult sampleSys(int numSamples) {
+    public jline.io.Ret.SampleResult sampleSys(int numEvents) {
         SolverOptions options = this.getOptions();
         options.force = true;
 
@@ -1571,9 +1607,9 @@ public class SolverCTMC extends NetworkSolver {
             MMAP = jline.api.mam.Mmap_normalizeKt.mmap_normalize(MMAP);
 
             // Sample MMAP (like MATLAB dev/ line 27)
-            // [sjt, event, ~, ~, sts] = mmap_sample(MMAP, numSamples, pi0);
+            // [sjt, event, ~, ~, sts] = mmap_sample(MMAP, numEvents, pi0);
             java.util.Random random = new java.util.Random(options.seed);
-            jline.io.Ret.mamMMAPSample mmapSample = jline.api.mam.Mmap_sampleKt.mmap_sample(MMAP, (long)numSamples, random);
+            jline.io.Ret.mamMMAPSample mmapSample = jline.api.mam.Mmap_sampleKt.mmap_sample(MMAP, (long)numEvents, random);
 
             double[] interArrivalTimes = mmapSample.getSamples();
             int[] eventTypes = mmapSample.getTypes();
@@ -1581,19 +1617,19 @@ public class SolverCTMC extends NetworkSolver {
 
             // Build time series (like MATLAB dev/ line 32)
             // MATLAB: tranSysState.t = cumsum([0,sjt(1:end-1)']');
-            Matrix t = new Matrix(numSamples, 1);
+            Matrix t = new Matrix(numEvents, 1);
             double cumulativeTime = 0.0;
-            for (int i = 0; i < numSamples; i++) {
+            for (int i = 0; i < numEvents; i++) {
                 t.set(i, 0, cumulativeTime);
-                if (i < numSamples - 1) {
+                if (i < numEvents - 1) {
                     cumulativeTime += interArrivalTimes[i];
                 }
             }
 
             // Build state series from MMAP states (like MATLAB dev/ lines 33-36)
             // MATLAB: tranSysState.state{isf} = stateSpace(sts,(nst(isf):nst(isf+1)-1));
-            Matrix state = new Matrix(numSamples, stateSpace.getNumCols());
-            for (int i = 0; i < numSamples; i++) {
+            Matrix state = new Matrix(numEvents, stateSpace.getNumCols());
+            for (int i = 0; i < numEvents; i++) {
                 int stateIdx = (mmapStates != null && i < mmapStates.length) ? mmapStates[i] : 0;
                 if (stateIdx >= 0 && stateIdx < stateSpace.getNumRows()) {
                     for (int j = 0; j < stateSpace.getNumCols(); j++) {
@@ -1607,7 +1643,7 @@ public class SolverCTMC extends NetworkSolver {
             //           for a=1:length(sn.sync{event(e)}.active) ...
             // The eventTypes[i] directly indexes the synchronization event
             List<Event> eventList = new ArrayList<Event>();
-            for (int i = 0; i < numSamples; i++) {
+            for (int i = 0; i < numEvents; i++) {
                 double eventTime = t.get(i, 0);
                 int syncIdx = eventTypes[i];  // Direct index into synchInfo (0-indexed in Java)
 
@@ -1661,7 +1697,7 @@ public class SolverCTMC extends NetworkSolver {
             }
 
             // Create sample result
-            jline.io.Ret.SampleResult result = new jline.io.Ret.SampleResult("ctmc", t, state, event, false, null, numSamples);
+            jline.io.Ret.SampleResult result = new jline.io.Ret.SampleResult("ctmc", t, state, event, false, null, numEvents);
 
             return result;
 
@@ -1670,10 +1706,10 @@ public class SolverCTMC extends NetworkSolver {
             e.printStackTrace();
             // Fallback to empty result
             StateSpace stateSpaceResult = getStateSpace();
-            Matrix t = new Matrix(numSamples, 1);
-            Matrix state = new Matrix(numSamples, stateSpaceResult.stateSpace.getNumCols());
-            Matrix event = new Matrix(numSamples, 3);
-            return new jline.io.Ret.SampleResult("ctmc", t, state, event, false, null, numSamples);
+            Matrix t = new Matrix(numEvents, 1);
+            Matrix state = new Matrix(numEvents, stateSpaceResult.stateSpace.getNumCols());
+            Matrix event = new Matrix(numEvents, 3);
+            return new jline.io.Ret.SampleResult("ctmc", t, state, event, false, null, numEvents);
         }
     }
 
@@ -2224,18 +2260,18 @@ public class SolverCTMC extends NetworkSolver {
         public double t;
     }
 
-    public SampleResult sampleAggr(StatefulNode node, int numSamples) {
-        SampleResult result = sample(node, numSamples);
+    public SampleResult sampleAggr(StatefulNode node, int numEvents) {
+        SampleResult result = sample(node, numEvents);
         if (result != null) {
             result.isaggregate = true;
         }
         return result;
     }
 
-    public jline.io.Ret.SampleResult sampleSysAggr(int numSamples) {
+    public jline.io.Ret.SampleResult sampleSysAggr(int numEvents) {
         // For aggregated system sampling, delegate to regular system sampling
         // In a full implementation, this would use aggregated state space
-        return sampleSys(numSamples);
+        return sampleSys(numEvents);
     }
 
     /**
@@ -2411,6 +2447,147 @@ public class SolverCTMC extends NetworkSolver {
      */
     public void clearRewardResult() {
         this.rewardResult = null;
+    }
+
+    /**
+     * Run the reward analyzer and cache results.
+     * Convenience wrapper calling solver_ctmc_reward and storing results.
+     *
+     * @return RewardResult containing value functions, time vector, names, and steady-state rewards
+     */
+    public RewardResult runRewardAnalyzer() {
+        NetworkStruct sn = this.model.getStruct(true);
+        if (sn.reward == null || sn.reward.isEmpty()) {
+            throw new IllegalStateException(
+                "No rewards defined. Use model.setReward(name, rewardFn) before calling reward analysis.");
+        }
+        this.rewardResult = Solver_ctmc_reward.solver_ctmc_reward(sn, this.options);
+        return this.rewardResult;
+    }
+
+    /**
+     * Get reward value function and state space, with optional filtering by reward name.
+     * Alias matching MATLAB getReward() signature.
+     *
+     * @param rewardName Optional reward name to filter. If null, returns all rewards.
+     * @return RewardResult containing value functions, time vector, names, state space
+     */
+    public RewardResult getReward(String rewardName) {
+        RewardResult result = getRewardResult();
+        if (rewardName == null) {
+            return result;
+        }
+        // Filter to specific reward
+        Matrix V = result.getValueFunction().get(rewardName);
+        if (V == null) {
+            throw new IllegalArgumentException("Reward '" + rewardName + "' not found. Available rewards: " +
+                String.join(", ", result.getRewardNames()));
+        }
+        Map<String, Matrix> filteredV = new HashMap<String, Matrix>();
+        filteredV.put(rewardName, V);
+        Map<String, Double> filteredSS = new HashMap<String, Double>();
+        filteredSS.put(rewardName, result.getSteadyState().get(rewardName));
+        List<String> filteredNames = new ArrayList<String>();
+        filteredNames.add(rewardName);
+        return new RewardResult(filteredV, result.getTime(), filteredNames, result.getStateSpace(), filteredSS, result.getRuntime());
+    }
+
+    /**
+     * Get reward value function and state space for all rewards.
+     *
+     * @return RewardResult containing all rewards
+     */
+    public RewardResult getReward() {
+        return getReward(null);
+    }
+
+    /**
+     * Get transient expected reward E[r(X(t))] over time.
+     *
+     * Computes transient expected rewards using:
+     *   E[r(X(t))] = sum_s pi_t(s) * r(s)
+     *
+     * where pi_t is the transient probability distribution at time t.
+     *
+     * Requires a finite timespan set via SolverCTMC(model, options.timespan([0,T])).
+     *
+     * @param rewardName Optional reward name to filter. If null, returns all rewards.
+     * @return Map from reward name to double[] of expected reward values at each time point.
+     *         Use getRewardTimeVector() or the result's time field to get the corresponding time points.
+     */
+    public Map<String, double[]> getTranReward(String rewardName) {
+        if (this.options.timespan == null || !Double.isFinite(this.options.timespan[1])) {
+            throw new RuntimeException(
+                "getTranReward requires a finite timespan. Use SolverCTMC(model, options.timespan([0,T])).");
+        }
+
+        NetworkStruct sn = this.model.getStruct(true);
+        if (sn.reward == null || sn.reward.isEmpty()) {
+            throw new IllegalStateException(
+                "No rewards defined. Use model.setReward(name, rewardFn) before calling getTranReward.");
+        }
+
+        // Get transient probabilities
+        TransientResult transientResult = this.solver_ctmc_transient_analyzer(sn, this.options);
+        Matrix t = transientResult.t;
+        Matrix pit = transientResult.pit;
+        Matrix stateSpaceAggr = transientResult.StateSpaceAggr;
+
+        int nTimePoints = t.getNumRows();
+        int nstates = pit.getNumCols();
+
+        // Clamp negative probabilities to zero
+        for (int i = 0; i < nTimePoints; i++) {
+            for (int j = 0; j < nstates; j++) {
+                if (pit.get(i, j) < 0) {
+                    pit.set(i, j, 0.0);
+                }
+            }
+        }
+
+        // Build reward vectors
+        Map<String, double[]> rewardVectors = new HashMap<String, double[]>();
+        List<String> names = new ArrayList<String>();
+        for (Map.Entry<String, jline.lang.reward.RewardFunction> entry : sn.reward.entrySet()) {
+            String name = entry.getKey();
+            jline.lang.reward.RewardFunction rewardFn = entry.getValue();
+            double[] rv = new double[nstates];
+            for (int s = 0; s < nstates; s++) {
+                Matrix stateRow = stateSpaceAggr.getRow(s);
+                rv[s] = rewardFn.compute(stateRow, sn);
+            }
+            rewardVectors.put(name, rv);
+            names.add(name);
+        }
+
+        // Compute E[r(X(t))] = pit * R' for each time point
+        Map<String, double[]> result = new HashMap<String, double[]>();
+        for (String name : names) {
+            if (rewardName != null && !rewardName.equals(name)) {
+                continue;
+            }
+            double[] rv = rewardVectors.get(name);
+            double[] tranReward = new double[nTimePoints];
+            for (int ti = 0; ti < nTimePoints; ti++) {
+                double sum = 0.0;
+                for (int s = 0; s < nstates; s++) {
+                    sum += pit.get(ti, s) * rv[s];
+                }
+                tranReward[ti] = sum;
+            }
+            result.put(name, tranReward);
+        }
+
+        return result;
+    }
+
+    /**
+     * Get transient expected reward for all rewards.
+     *
+     * @return Map from reward name to transient expected reward time series
+     */
+    public Map<String, double[]> getTranReward() {
+        return getTranReward(null);
     }
 
 }

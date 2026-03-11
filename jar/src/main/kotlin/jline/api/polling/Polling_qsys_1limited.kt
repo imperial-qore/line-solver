@@ -27,9 +27,10 @@ import jline.util.matrix.MatrixCell
 
 /**
  * Computes the exact mean waiting time solution for a polling system with open arrivals.
- * The system assumes that all queues use gated service discipline.
- * The calculation is based on the equations provided by Takagi in ACM Computing Surveys,
- * Vol. 20, No. 1, March 1988, eq (20).
+ * The system assumes that all queues use 1-limited service discipline.
+ * The calculation is based on the station time method by Ferguson and Aminetzah (1985)
+ * as reported by Takagi. Reference: O. J. Boxma and B. Meister, "Waiting-time approximations
+ * for cyclic-service systems with switch-over times", SIGMETRICS/PERFORMANCE '86, pp. 254-262.
  *
  * @param arvMAPs    an array of MatrixCell objects representing the arrival process MAPs.
  * @param svcMAPs    an array of MatrixCell objects representing the service process MAPs.

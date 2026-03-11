@@ -9,6 +9,7 @@ import static jline.io.InputOutputKt.line_warning;
 
 import jline.lang.Model;
 import jline.lang.Network;
+import jline.lang.NetworkStruct;
 import jline.lang.layered.LayeredNetwork;
 import jline.lang.nodes.Node;
 import jline.solvers.AvgTable;
@@ -27,6 +28,11 @@ import jline.solvers.nc.SolverNC;
 import jline.solvers.ssa.SolverSSA;
 import jline.solvers.ssa.SampleNodeState;
 import jline.solvers.ssa.SampleSysState;
+import jline.solvers.ldes.SolverLDES;
+import jline.solvers.ldes.LDESOptions;
+import jline.solvers.ldes.LDESResult;
+import jline.io.LineModelIO;
+import jline.io.LDESResultIO;
 import jline.io.M2M;
 import jline.util.matrix.Matrix;
 import org.apache.commons.io.FilenameUtils;
@@ -88,69 +94,70 @@ public class LineCLI {
         
         System.out.println("-i, --input <format>");
         System.out.println("    Input file format. Supported formats:");
-        System.out.println("    • jsim   - JSIM format (default)");
-        System.out.println("    • jsimg  - JSIM graphics format");
-        System.out.println("    • jsimw  - JSIM workspace format");
-        System.out.println("    • lqnx   - LQN XML format");
-        System.out.println("    • xml    - XML format");
+        System.out.println("      jsim   - JSIM format (default)");
+        System.out.println("      jsimg  - JSIM graphics format");
+        System.out.println("      jsimw  - JSIM workspace format");
+        System.out.println("      lqnx   - LQN XML format");
+        System.out.println("      xml    - XML format");
         System.out.println("    Default: jsim");
         System.out.println();
         
         System.out.println("-o, --output <format>");
         System.out.println("    Output format for results. Supported formats:");
-        System.out.println("    • readable - Human-readable text format (default)");
-        System.out.println("    • json     - JSON format");
+        System.out.println("      readable - Human-readable text format (default)");
+        System.out.println("      json     - JSON format");
         System.out.println("    Default: readable");
         System.out.println();
         
         System.out.println("-s, --solver <solver>");
         System.out.println("    Solver algorithm to use. Available solvers:");
-        System.out.println("    • auto   - Automatic solver selection based on input format");
-        System.out.println("    • mva    - Mean Value Analysis (default)");
-        System.out.println("    • ctmc   - Continuous-Time Markov Chain");
-        System.out.println("    • fluid  - Fluid/Mean-Field ODE Solver");
-        System.out.println("    • jmt    - Java Modelling Tools simulation");
-        System.out.println("    • mam    - Matrix Analytic Methods");
-        System.out.println("    • nc     - Normalizing Constant Analyzer");
-        System.out.println("    • ssa    - Stochastic Simulation Algorithm");
-        System.out.println("    • ln     - Layered Network solver");
-        System.out.println("    • lqns   - LQN solver (for LQN models only)");
+        System.out.println("      auto   - Automatic selection based on input format");
+        System.out.println("      mva    - Mean Value Analysis (default)");
+        System.out.println("      ctmc   - Continuous-Time Markov Chain");
+        System.out.println("      fluid  - Fluid/Mean-Field ODE solver");
+        System.out.println("      jmt    - Java Modelling Tools simulation");
+        System.out.println("      mam    - Matrix Analytic Methods");
+        System.out.println("      nc     - Normalizing Constant analyzer");
+        System.out.println("      ssa    - Stochastic Simulation Algorithm");
+        System.out.println("      ldes   - LINE Discrete Event Simulator");
+        System.out.println("      ln     - Layered Network solver");
+        System.out.println("      lqns   - LQN solver (LQN models only)");
         System.out.println("    Default: mva");
         System.out.println();
         
         System.out.println("-a, --analysis <type>");
-        System.out.println("    Analysis type(s) to perform. Can be comma-separated for multiple.");
+        System.out.println("    Analysis type(s) to perform. Comma-separated for multiple.");
         System.out.println("    Basic:");
-        System.out.println("    • all         - Both avg and sys metrics (default)");
-        System.out.println("    • avg         - Average performance metrics");
-        System.out.println("    • sys         - System-level metrics");
-        System.out.println("    • stage       - Stage-based metrics (multi-stage service)");
-        System.out.println("    • chain       - Chain-level averages");
-        System.out.println("    • node        - Node-level averages");
-        System.out.println("    • nodechain   - Node-chain level averages");
+        System.out.println("      all         - Both avg and sys metrics (default)");
+        System.out.println("      avg         - Average performance metrics");
+        System.out.println("      sys         - System-level metrics");
+        System.out.println("      stage       - Stage-based metrics (multi-stage service)");
+        System.out.println("      chain       - Chain-level averages");
+        System.out.println("      node        - Node-level averages");
+        System.out.println("      nodechain   - Node-chain level averages");
         System.out.println("    Distribution:");
-        System.out.println("    • cdf-respt   - Response time CDF");
-        System.out.println("    • cdf-passt   - Passage time CDF");
-        System.out.println("    • perct-respt - Response time percentiles (MAM solver)");
+        System.out.println("      cdf-respt   - Response time CDF");
+        System.out.println("      cdf-passt   - Passage time CDF");
+        System.out.println("      perct-respt - Response time percentiles (MAM solver)");
         System.out.println("    Transient:");
-        System.out.println("    • tran-avg       - Transient average metrics");
-        System.out.println("    • tran-cdf-respt - Transient response time CDF");
-        System.out.println("    • tran-cdf-passt - Transient passage time CDF");
+        System.out.println("      tran-avg       - Transient average metrics");
+        System.out.println("      tran-cdf-respt - Transient response time CDF");
+        System.out.println("      tran-cdf-passt - Transient passage time CDF");
         System.out.println("    Probability:");
-        System.out.println("    • prob         - State probability at node (requires -n)");
-        System.out.println("    • prob-aggr    - Aggregated state probability (requires -n)");
-        System.out.println("    • prob-marg    - Marginal state probability (requires -n, -c)");
-        System.out.println("    • prob-sys     - System state probability");
-        System.out.println("    • prob-sys-aggr - Aggregated system state probability");
+        System.out.println("      prob         - State probability at node (requires -n)");
+        System.out.println("      prob-aggr    - Aggregated state probability (requires -n)");
+        System.out.println("      prob-marg    - Marginal state probability (requires -n, -c)");
+        System.out.println("      prob-sys     - System state probability");
+        System.out.println("      prob-sys-aggr - Aggregated system state probability");
         System.out.println("    Sampling (SSA solver):");
-        System.out.println("    • sample         - Sample node state trajectory (requires -n)");
-        System.out.println("    • sample-aggr    - Sample aggregated node state (requires -n)");
-        System.out.println("    • sample-sys     - Sample system state trajectory");
-        System.out.println("    • sample-sys-aggr - Sample aggregated system state");
+        System.out.println("      sample         - Sample node state trajectory (requires -n)");
+        System.out.println("      sample-aggr    - Sample aggregated node state (requires -n)");
+        System.out.println("      sample-sys     - Sample system state trajectory");
+        System.out.println("      sample-sys-aggr - Sample aggregated system state");
         System.out.println("    Reward (CTMC solver):");
-        System.out.println("    • reward       - Compute reward metrics");
-        System.out.println("    • reward-steady - Steady-state reward");
-        System.out.println("    • reward-value  - Reward value function (requires --reward-name)");
+        System.out.println("      reward       - Compute reward metrics");
+        System.out.println("      reward-steady - Steady-state reward");
+        System.out.println("      reward-value  - Reward value function (requires --reward-name)");
         System.out.println("    Default: all");
         System.out.println();
         
@@ -162,8 +169,8 @@ public class LineCLI {
         
         System.out.println("-v, --verbosity <level>");
         System.out.println("    Verbosity level for solver output. Options:");
-        System.out.println("    • normal - Standard output (default)");
-        System.out.println("    • silent - Minimal output");
+        System.out.println("      normal - Standard output (default)");
+        System.out.println("      silent - Minimal output");
         System.out.println("    Default: normal");
         System.out.println();
         
@@ -213,12 +220,8 @@ public class LineCLI {
         System.out.println();
         
         System.out.println("SOLVER COMPATIBILITY:");
-        System.out.println("┌─────────────────┬─────────────────────────────────────────────────┐");
-        System.out.println("│ Input Format    │ Compatible Solvers                              │");
-        System.out.println("├─────────────────┼─────────────────────────────────────────────────┤");
-        System.out.println("│ jsim/jsimg/jsimw│ ctmc, fluid, jmt, mva, nc, ssa                  │");
-        System.out.println("│ lqnx/xml        │ ln, lqns, mva (as ln.mva), nc (as ln.comom)     │");
-        System.out.println("└─────────────────┴─────────────────────────────────────────────────┘");
+        System.out.println("  jsim/jsimg/jsimw  ctmc, fluid, jmt, ldes, mam, mva, nc, ssa");
+        System.out.println("  lqnx/xml          ln, ln.mva, ln.comom, lqns, mva, nc");
         System.out.println();
         
         System.out.println("EXAMPLES:");
@@ -299,14 +302,14 @@ public class LineCLI {
      * Validates solver parameter.
      */
     private static boolean validateSolver(String solver) {
-        String[] validSolvers = {"auto", "ctmc", "fluid", "jmt", "mam", "mva", "nc", "ssa", "ln", "lqns"};
+        String[] validSolvers = {"auto", "ctmc", "fluid", "jmt", "ldes", "mam", "mva", "nc", "ssa", "ln", "ln.mva", "ln.comom", "lqns"};
         for (String validSolver : validSolvers) {
             if (validSolver.equals(solver)) {
                 return true;
             }
         }
         System.err.println("Error: Invalid solver '" + solver + "'.");
-        System.err.println("Valid solvers: auto, ctmc, fluid, jmt, mam, mva, nc, ssa, ln, lqns");
+        System.err.println("Valid solvers: auto, ctmc, fluid, jmt, ldes, mam, mva, nc, ssa, ln, ln.mva, ln.comom, lqns");
         return false;
     }
 
@@ -613,17 +616,17 @@ public class LineCLI {
             return true;
         }
         if (inputFormat.equals("lqnx") || inputFormat.equals("xml")) {
-            String[] validLqnSolvers = {"ln", "lqns", "mva", "nc"};
+            String[] validLqnSolvers = {"ln", "ln.mva", "ln.comom", "lqns", "mva", "nc"};
             for (String validSolver : validLqnSolvers) {
                 if (validSolver.equals(solver)) {
                     return true;
                 }
             }
             System.err.println("Error: Solver '" + solver + "' is not compatible with input format '" + inputFormat + "'.");
-            System.err.println("Valid solvers for LQN/XML formats: ln, lqns, mva, nc");
+            System.err.println("Valid solvers for LQN/XML formats: ln, ln.mva, ln.comom, lqns, mva, nc");
             return false;
         } else {
-            String[] validJsimSolvers = {"ctmc", "fluid", "jmt", "mam", "mva", "nc", "ssa"};
+            String[] validJsimSolvers = {"ctmc", "fluid", "jmt", "ldes", "mam", "mva", "nc", "ssa"};
             for (String validSolver : validJsimSolvers) {
                 if (validSolver.equals(solver)) {
                     return true;
@@ -631,7 +634,7 @@ public class LineCLI {
             }
             if (solver.equals("ln") || solver.equals("lqns")) {
                 System.err.println("Error: Solver '" + solver + "' is not compatible with input format '" + inputFormat + "'.");
-                System.err.println("Valid solvers for JSIM formats: ctmc, fluid, jmt, mam, mva, nc, ssa");
+                System.err.println("Valid solvers for JSIM formats: ctmc, fluid, jmt, ldes, mam, mva, nc, ssa");
                 return false;
             }
         }
@@ -907,6 +910,12 @@ public class LineCLI {
                         break;
                     case "ssa":
                         solverObj = new SolverSSA((Network) model, solverOptions);
+                        break;
+                    case "ldes":
+                        LDESOptions ldesOpts = new LDESOptions();
+                        ldesOpts.seed(randomSeed);
+                        ldesOpts.verbose(verbosity.equals("normal"));
+                        solverObj = new SolverLDES((Network) model, ldesOpts);
                         break;
                     default:
                         line_error(mfilename(new Object[]{}), "Unknown solver type: " + solver);
@@ -1513,12 +1522,265 @@ public class LineCLI {
                  .replace("\t", "\\t");
     }
     
+    // ========================================================================
+    // SOLVE subcommand: java -jar ldes.jar solve model.json -o result.json [options]
+    // ========================================================================
+
+    /**
+     * Prints help for the solve subcommand.
+     */
+    private static void printSolveHelp() {
+        System.out.println("USAGE:");
+        System.out.println("  java -jar ldes.jar solve <model.json> -o <result.json> [OPTIONS]");
+        System.out.println();
+        System.out.println("OPTIONS:");
+        System.out.println("  -o <path>              Output result JSON file (required)");
+        System.out.println("  -s, --samples <N>      Number of service completion events (default: 200000)");
+        System.out.println("  --seed <N>             Random seed (default: auto)");
+        System.out.println("  --method <M>           Solution method (default: default)");
+        System.out.println("  --cnvgon               Enable convergence-based stopping");
+        System.out.println("  --cnvgtol <V>          Convergence tolerance (default: 0.05)");
+        System.out.println("  --tranfilter <F>       Transient filter: mser5, fixed, none (default: mser5)");
+        System.out.println("  --warmupfrac <V>       Warmup fraction for fixed filter (default: 0.2)");
+        System.out.println("  --cimethod <M>         CI method: obm, bm, none (default: obm)");
+        System.out.println("  --replications <N>     Number of independent replications (default: 1)");
+        System.out.println("  --numthreads <N>       Parallel threads for replications (default: auto)");
+        System.out.println("  -h, --help             Show this help");
+    }
+
+    /**
+     * Handles the 'solve' subcommand for LDES simulation.
+     *
+     * <p>Expected invocation:
+     * <pre>
+     *   java -jar ldes.jar solve model.json -o result.json [--seed N] [-s samples] ...
+     * </pre>
+     *
+     * @param args command-line arguments after "solve"
+     * @return 0 on success, non-zero on error
+     */
+    private static int handleSolveCommand(String[] args) {
+        if (args.length == 0) {
+            printSolveHelp();
+            return 1;
+        }
+
+        String modelPath = null;
+        String outputPath = null;
+        LDESOptions opts = new LDESOptions();
+        int seed = -1; // -1 means auto
+        double[] timespan = null;
+        boolean trajectory = false;
+
+        for (int i = 0; i < args.length; i++) {
+            switch (args[i]) {
+                case "-h":
+                case "--help":
+                    printSolveHelp();
+                    return 0;
+                case "-o":
+                    if (i + 1 >= args.length) {
+                        System.err.println("Error: -o requires a file path.");
+                        return 1;
+                    }
+                    outputPath = args[++i];
+                    break;
+                case "-s":
+                case "--samples":
+                    if (i + 1 >= args.length) {
+                        System.err.println("Error: -s/--samples requires a number.");
+                        return 1;
+                    }
+                    try {
+                        opts.samples = Integer.parseInt(args[++i]);
+                    } catch (NumberFormatException e) {
+                        System.err.println("Error: Invalid samples value.");
+                        return 1;
+                    }
+                    break;
+                case "--seed":
+                    if (i + 1 >= args.length) {
+                        System.err.println("Error: --seed requires a number.");
+                        return 1;
+                    }
+                    try {
+                        seed = Integer.parseInt(args[++i]);
+                    } catch (NumberFormatException e) {
+                        System.err.println("Error: Invalid seed value.");
+                        return 1;
+                    }
+                    break;
+                case "--method":
+                    if (i + 1 >= args.length) {
+                        System.err.println("Error: --method requires a value.");
+                        return 1;
+                    }
+                    opts.method(args[++i]);
+                    break;
+                case "--cnvgon":
+                    opts.cnvgon = true;
+                    break;
+                case "--cnvgtol":
+                    if (i + 1 >= args.length) {
+                        System.err.println("Error: --cnvgtol requires a value.");
+                        return 1;
+                    }
+                    try {
+                        opts.cnvgtol = Double.parseDouble(args[++i]);
+                    } catch (NumberFormatException e) {
+                        System.err.println("Error: Invalid cnvgtol value.");
+                        return 1;
+                    }
+                    break;
+                case "--tranfilter":
+                    if (i + 1 >= args.length) {
+                        System.err.println("Error: --tranfilter requires a value.");
+                        return 1;
+                    }
+                    opts.tranfilter = args[++i];
+                    break;
+                case "--warmupfrac":
+                    if (i + 1 >= args.length) {
+                        System.err.println("Error: --warmupfrac requires a value.");
+                        return 1;
+                    }
+                    try {
+                        opts.warmupfrac = Double.parseDouble(args[++i]);
+                    } catch (NumberFormatException e) {
+                        System.err.println("Error: Invalid warmupfrac value.");
+                        return 1;
+                    }
+                    break;
+                case "--cimethod":
+                    if (i + 1 >= args.length) {
+                        System.err.println("Error: --cimethod requires a value.");
+                        return 1;
+                    }
+                    opts.cimethod = args[++i];
+                    break;
+                case "--replications":
+                    if (i + 1 >= args.length) {
+                        System.err.println("Error: --replications requires a number.");
+                        return 1;
+                    }
+                    try {
+                        opts.replications = Integer.parseInt(args[++i]);
+                    } catch (NumberFormatException e) {
+                        System.err.println("Error: Invalid replications value.");
+                        return 1;
+                    }
+                    break;
+                case "--numthreads":
+                    if (i + 1 >= args.length) {
+                        System.err.println("Error: --numthreads requires a number.");
+                        return 1;
+                    }
+                    try {
+                        opts.numThreads = Integer.parseInt(args[++i]);
+                    } catch (NumberFormatException e) {
+                        System.err.println("Error: Invalid numthreads value.");
+                        return 1;
+                    }
+                    break;
+                case "--timespan":
+                    if (i + 1 >= args.length) {
+                        System.err.println("Error: --timespan requires T0,T1 values.");
+                        return 1;
+                    }
+                    try {
+                        String[] parts = args[++i].split(",");
+                        if (parts.length != 2) {
+                            System.err.println("Error: --timespan requires exactly two comma-separated values (T0,T1).");
+                            return 1;
+                        }
+                        timespan = new double[]{Double.parseDouble(parts[0]), Double.parseDouble(parts[1])};
+                    } catch (NumberFormatException e) {
+                        System.err.println("Error: Invalid timespan values.");
+                        return 1;
+                    }
+                    break;
+                case "--trajectory":
+                    trajectory = true;
+                    break;
+                default:
+                    if (args[i].startsWith("-")) {
+                        System.err.println("Error: Unknown option: " + args[i]);
+                        printSolveHelp();
+                        return 1;
+                    }
+                    // Positional argument: model file path
+                    if (modelPath == null) {
+                        modelPath = args[i];
+                    } else {
+                        System.err.println("Error: Unexpected argument: " + args[i]);
+                        return 1;
+                    }
+                    break;
+            }
+        }
+
+        if (modelPath == null) {
+            System.err.println("Error: Model file path is required.");
+            printSolveHelp();
+            return 1;
+        }
+        if (outputPath == null) {
+            System.err.println("Error: Output file path (-o) is required.");
+            printSolveHelp();
+            return 1;
+        }
+
+        // Set seed
+        if (seed >= 0) {
+            opts.seed(seed);
+        }
+
+        try {
+            // Load model from line-model JSON
+            Object loaded = LineModelIO.load(modelPath);
+            if (!(loaded instanceof Network)) {
+                System.err.println("Error: solve subcommand currently supports Network models only (not LayeredNetwork).");
+                return 1;
+            }
+            Network model = (Network) loaded;
+
+            // Create and run LDES solver
+            SolverLDES solver = new SolverLDES(model, opts);
+            if (timespan != null) {
+                opts.timespan = timespan;
+                solver.getTranAvg();
+            } else {
+                solver.getAvg();
+            }
+
+            // Save result
+            LDESResult ldesResult = (LDESResult) solver.result;
+            NetworkStruct sn = model.getStruct(false);
+            LDESResultIO.save(ldesResult, sn, outputPath, trajectory);
+
+            return 0;
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+            e.printStackTrace(System.err);
+            return 1;
+        }
+    }
+
     /**
      * Main entry point for the LINE CLI
      * @param args Command line arguments
      */
     public static void main(String[] args) {
         try {
+            // Check for 'solve' subcommand (used by Python native LDES solver)
+            if (args.length > 0 && "solve".equals(args[0])) {
+                String[] solveArgs = new String[args.length - 1];
+                System.arraycopy(args, 1, solveArgs, 0, solveArgs.length);
+                int exitCode = handleSolveCommand(solveArgs);
+                System.exit(exitCode);
+                return;
+            }
+
             String result = parseArgs(args);
             if (result != null) {
                 System.out.println(result);

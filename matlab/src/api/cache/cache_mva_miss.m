@@ -39,15 +39,18 @@ if sum(m)==0 || min(m)<0
     M=p*Mk';
     return
 end
+w = zeros(n, h);
 for j=1:h
     [~,Mj]=cache_mva_miss(p,oner(m,j),R);
     for k=1:n
         w(k,j)=prod(R(1:j,k))*p(k)^j*abs(Mj(k));
     end
 end
+x = zeros(1, h);
 for j=1:h
     x(j) = 1/sum(abs(w(:,j)));
 end
+Mk = zeros(1, n);
 for k=1:n
     Mk(k)=1;
     for j=1:h

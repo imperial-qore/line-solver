@@ -5,6 +5,7 @@
 
 package jline.solvers.mam;
 
+import jline.GlobalConstants;
 import jline.lang.FeatureSet;
 import jline.lang.Network;
 import jline.lang.NetworkStruct;
@@ -103,7 +104,7 @@ public class SolverMAM extends NetworkSolver {
         featSupported.setTrue(new String[]{
                 "Sink", "Source",
                 "Delay", "DelayStation", "Queue",
-                "APH", "Coxian", "Erlang", "Exp", "HyperExp", "MMPP2", "MAP", "ME", "RAP",
+                "APH", "Coxian", "Erlang", "Exp", "HyperExp", "MMPP2", "MAP", "DMAP", "ME", "RAP",
                 "Det", "Gamma", "Lognormal", "Pareto", "Uniform", "Weibull",
                 "StatelessClassSwitcher", "InfiniteServer",
                 "ClassSwitch",
@@ -113,7 +114,8 @@ public class SolverMAM extends NetworkSolver {
                 "SchedStrategy_FCFS",
                 "RoutingStrategy_PROB", "RoutingStrategy_RAND",
                 "ClosedClass", "SelfLoopingClass",
-                "OpenClass"
+                "OpenClass",
+                "Retrial"
         });
         return featSupported;
     }
@@ -123,7 +125,7 @@ public class SolverMAM extends NetworkSolver {
     }
 
     public List<String> listValidMethods(Network model) {
-        return Arrays.asList("default", "dec.source", "dec.mmap", "dec.poisson", "mna", "inap", "inapplus", "exact", "ldqbd");
+        return Arrays.asList("default", "dec.source", "dec.mmap", "dec.poisson", "mna", "inap", "inapplus", "exact", "ldqbd", "retrial");
     }
 
     public List<String> listValidMethods() {
@@ -132,6 +134,10 @@ public class SolverMAM extends NetworkSolver {
 
     @Override
     public void runAnalyzer() {
+        // Propagate solver verbose level to global
+        if (this.options != null) {
+            GlobalConstants.Verbose = options.verbose;
+        }
         double start = System.nanoTime();
         NetworkStruct sn = getStruct();
 
@@ -380,8 +386,9 @@ public class SolverMAM extends NetworkSolver {
 
         if (queueStations > 1) {
             throw new UnsupportedOperationException(
-                "getProbMarg is currently only supported for single queue models in SolverMAM. " +
-                "For networks, this method is not yet implemented.");
+                "getProbMarg is not supported for networks with multiple queues in SolverMAM. " +
+                "The MAM solver uses QBD (quasi-birth-death) analysis, which is fundamentally a single-queue method. " +
+                "Use SolverCTMC or SolverSSA for marginal probabilities in networks with multiple queues.");
         }
 
         if (queueStations == 0) {

@@ -168,12 +168,23 @@ public class Node extends NetworkElement implements Serializable {
      * @return the routing strategy, or RAND if none specified
      */
     public RoutingStrategy getRoutingStrategy(JobClass jobClass) {
+        // First pass: look for global (no destination) strategy entries
         for (OutputStrategy outputStrategy : this.output.getOutputStrategies()) {
             if (outputStrategy.getDestination() != null) {
                 continue;
             }
 
             // Use index comparison to handle Signal resolution (Signal -> OpenSignal/ClosedSignal)
+            if (outputStrategy.getJobClass().getIndex() == jobClass.getIndex()) {
+                return outputStrategy.getRoutingStrategy();
+            }
+        }
+
+        // Second pass: check destination-based entries (e.g., WRROBIN stores strategy per-destination)
+        for (OutputStrategy outputStrategy : this.output.getOutputStrategies()) {
+            if (outputStrategy.getDestination() == null) {
+                continue;
+            }
             if (outputStrategy.getJobClass().getIndex() == jobClass.getIndex()) {
                 return outputStrategy.getRoutingStrategy();
             }

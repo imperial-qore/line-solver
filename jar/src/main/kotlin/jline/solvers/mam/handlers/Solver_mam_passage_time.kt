@@ -136,7 +136,7 @@ fun solver_mam_passage_time(sn: NetworkStruct,
                 }
                 idx_arv = i
 
-            } else if (sn.sched.get(station) == SchedStrategy.FCFS || sn.sched.get(station) == SchedStrategy.HOL) {
+            } else if (sn.sched.get(station) == SchedStrategy.FCFS || sn.sched.get(station) == SchedStrategy.HOL || sn.sched.get(station) == SchedStrategy.FCFSPRIO) {
                 // Process service station
                 val stationProc = PH.get(station) as? Map<*, MatrixCell>
                 if (stationProc != null) {

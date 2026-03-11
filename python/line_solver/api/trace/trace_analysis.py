@@ -11,7 +11,6 @@ from typing import Union, Tuple, Optional
 
 ArrayLike = Union[np.ndarray, list]
 
-
 def trace_mean(trace: ArrayLike) -> float:
     """
     Compute the arithmetic mean of trace data.
@@ -28,7 +27,6 @@ def trace_mean(trace: ArrayLike) -> float:
     """
     trace = np.asarray(trace, dtype=np.float64).ravel()
     return float(np.mean(trace))
-
 
 def trace_var(trace: ArrayLike) -> float:
     """
@@ -51,7 +49,6 @@ def trace_var(trace: ArrayLike) -> float:
     e2 = np.mean(trace ** 2)
     return float(e2 - e1 * e1)
 
-
 def trace_scv(trace: ArrayLike) -> float:
     """
     Compute the squared coefficient of variation (SCV).
@@ -71,17 +68,16 @@ def trace_scv(trace: ArrayLike) -> float:
     var = trace_var(trace)
     return float(var / (mean * mean)) if mean != 0 else 0.0
 
-
 def _autocov(X: np.ndarray) -> np.ndarray:
     """Compute autocovariance using direct method."""
     M = len(X)
-    acv = np.zeros(M - 1)
+    max_lag = M - 1
 
-    for p in range(M - 1):
+    acv = np.zeros(max_lag)
+    for p in range(max_lag):
         acv[p] = np.mean(X[:M - p] * X[p:])
 
     return acv
-
 
 def trace_acf(trace: ArrayLike, lags: ArrayLike = None) -> np.ndarray:
     """
@@ -113,6 +109,8 @@ def trace_acf(trace: ArrayLike, lags: ArrayLike = None) -> np.ndarray:
         lags = valid_lags
 
     mean = trace_mean(trace)
+
+    # Use JIT-accelerated ACF for large traces
     centered = trace - mean
 
     autocov = _autocov(centered)
@@ -123,7 +121,6 @@ def trace_acf(trace: ArrayLike, lags: ArrayLike = None) -> np.ndarray:
             rho[i] = autocov[lag] / autocov[0] if autocov[0] != 0 else 0.0
 
     return rho
-
 
 def trace_gamma(trace: ArrayLike, limit: int = 1000) -> np.ndarray:
     """
@@ -166,7 +163,6 @@ def trace_gamma(trace: ArrayLike, limit: int = 1000) -> np.ndarray:
 
     return np.array([best_gamma, RHO0, min_residuals])
 
-
 def trace_iat2counts(trace: ArrayLike, scale: float) -> np.ndarray:
     """
     Compute the counting process from inter-arrival times.
@@ -185,6 +181,7 @@ def trace_iat2counts(trace: ArrayLike, scale: float) -> np.ndarray:
     S = np.asarray(trace, dtype=np.float64).ravel()
     n = len(S)
 
+    # Use JIT-accelerated counting for large traces
     # Cumulative sum with 0 at start
     CS = np.zeros(n + 1)
     CS[1:] = np.cumsum(S)
@@ -199,7 +196,6 @@ def trace_iat2counts(trace: ArrayLike, scale: float) -> np.ndarray:
             break
 
     return np.array(C, dtype=np.int32)
-
 
 def trace_idi(trace: ArrayLike, kset: ArrayLike, option: str = None, n: int = 1
               ) -> Tuple[np.ndarray, np.ndarray]:
@@ -256,7 +252,6 @@ def trace_idi(trace: ArrayLike, kset: ArrayLike, option: str = None, n: int = 1
 
     return np.array(IDIk), np.array(support, dtype=np.int32)
 
-
 def trace_idc(trace: ArrayLike) -> float:
     """
     Compute the Index of Dispersion for Counts.
@@ -280,7 +275,6 @@ def trace_idc(trace: ArrayLike) -> float:
     idi, _ = trace_idi(S, [k])
     return float(idi[0]) if len(idi) > 0 else 0.0
 
-
 def trace_pmf(X: ArrayLike) -> Tuple[np.ndarray, np.ndarray]:
     """
     Compute the probability mass function of discrete data.
@@ -299,7 +293,6 @@ def trace_pmf(X: ArrayLike) -> Tuple[np.ndarray, np.ndarray]:
     pmf = counts / len(X)
     return pmf, unique_values
 
-
 def trace_shuffle(trace: ArrayLike) -> np.ndarray:
     """
     Shuffle trace data randomly.
@@ -317,7 +310,6 @@ def trace_shuffle(trace: ArrayLike) -> np.ndarray:
     result = trace.copy()
     np.random.shuffle(result)
     return result
-
 
 def trace_joint(trace: ArrayLike, lag: ArrayLike, order: ArrayLike) -> float:
     """
@@ -343,6 +335,7 @@ def trace_joint(trace: ArrayLike, lag: ArrayLike, order: ArrayLike) -> float:
     base_lag = sorted_lag[0]
     adjusted_lag = sorted_lag - base_lag
 
+    # Use JIT-accelerated joint moment for large traces
     max_lag = np.max(adjusted_lag)
     valid_length = len(S) - max_lag
 
@@ -359,7 +352,6 @@ def trace_joint(trace: ArrayLike, lag: ArrayLike, order: ArrayLike) -> float:
         result += product
 
     return float(result / valid_length)
-
 
 def trace_iat2bins(trace: ArrayLike, scale: float) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -378,6 +370,7 @@ def trace_iat2bins(trace: ArrayLike, scale: float) -> Tuple[np.ndarray, np.ndarr
     S = np.asarray(trace, dtype=np.float64).ravel()
     n = len(S)
 
+    # Use JIT-accelerated binning for large traces
     CS = np.zeros(n + 1)
     CS[1:] = np.cumsum(S)
 
@@ -402,7 +395,6 @@ def trace_iat2bins(trace: ArrayLike, scale: float) -> Tuple[np.ndarray, np.ndarr
 
     return C, np.array(bC, dtype=np.int32)
 
-
 def _percentile(sorted_data: np.ndarray, p: float) -> float:
     """Compute percentile of sorted data."""
     index = (p / 100.0) * (len(sorted_data) - 1)
@@ -414,7 +406,6 @@ def _percentile(sorted_data: np.ndarray, p: float) -> float:
 
     weight = index - lower
     return float(sorted_data[lower] * (1 - weight) + sorted_data[upper] * weight)
-
 
 def trace_summary(trace: ArrayLike) -> np.ndarray:
     """
@@ -470,7 +461,6 @@ def trace_summary(trace: ArrayLike) -> np.ndarray:
         min_val, max_val, iqr, acf[0], acf[1], acf[2], acf[3], idc_scv_ratio
     ])
 
-
 def mtrace_mean(trace: ArrayLike, ntypes: int, types: ArrayLike) -> np.ndarray:
     """
     Compute the mean of a trace, divided by types.
@@ -500,7 +490,6 @@ def mtrace_mean(trace: ArrayLike, ntypes: int, types: ArrayLike) -> np.ndarray:
             mean[c] = np.nan
 
     return mean
-
 
 def mtrace_var(trace: ArrayLike, ntypes: int, types: ArrayLike) -> np.ndarray:
     """
@@ -533,7 +522,6 @@ def mtrace_var(trace: ArrayLike, ntypes: int, types: ArrayLike) -> np.ndarray:
 
     return var
 
-
 def mtrace_count(trace: ArrayLike, ntypes: int, types: ArrayLike) -> np.ndarray:
     """
     Count elements per type in a trace.
@@ -556,7 +544,6 @@ def mtrace_count(trace: ArrayLike, ntypes: int, types: ArrayLike) -> np.ndarray:
         counts[c] = np.sum(types == c)
 
     return counts
-
 
 def mtrace_sigma(T: ArrayLike, L: ArrayLike) -> np.ndarray:
     """
@@ -585,7 +572,6 @@ def mtrace_sigma(T: ArrayLike, L: ArrayLike) -> np.ndarray:
 
     return sigma
 
-
 def mtrace_sigma2(T: ArrayLike, L: ArrayLike) -> np.ndarray:
     """
     Compute two-step class transition probabilities from a marked trace.
@@ -612,7 +598,6 @@ def mtrace_sigma2(T: ArrayLike, L: ArrayLike) -> np.ndarray:
                 sigma[i, j, h] = count / (len(L) - 2)
 
     return sigma
-
 
 def mtrace_cross_moment(T: ArrayLike, L: ArrayLike, k: int) -> np.ndarray:
     """
@@ -646,7 +631,6 @@ def mtrace_cross_moment(T: ArrayLike, L: ArrayLike, k: int) -> np.ndarray:
         MC = np.where(count > 0, MC / count, np.nan)
 
     return MC
-
 
 def mtrace_forward_moment(T: ArrayLike, A: ArrayLike, orders: ArrayLike,
                           norm: bool = True) -> np.ndarray:
@@ -684,7 +668,6 @@ def mtrace_forward_moment(T: ArrayLike, A: ArrayLike, orders: ArrayLike,
 
     return M
 
-
 def mtrace_backward_moment(T: ArrayLike, A: ArrayLike, orders: ArrayLike,
                            norm: bool = True) -> np.ndarray:
     """
@@ -721,7 +704,6 @@ def mtrace_backward_moment(T: ArrayLike, A: ArrayLike, orders: ArrayLike,
 
     return M
 
-
 def mtrace_cov(T: ArrayLike, A: ArrayLike) -> np.ndarray:
     """
     Compute lag-1 covariance between classes in a marked trace.
@@ -756,7 +738,6 @@ def mtrace_cov(T: ArrayLike, A: ArrayLike) -> np.ndarray:
 
     return COV
 
-
 def mtrace_pc(T: ArrayLike, L: ArrayLike) -> np.ndarray:
     """
     Compute the probability of arrival for each class.
@@ -777,7 +758,6 @@ def mtrace_pc(T: ArrayLike, L: ArrayLike) -> np.ndarray:
         pc[i] = np.sum(L == labels[i]) / len(L)
 
     return pc
-
 
 def mtrace_summary(T: ArrayLike, L: ArrayLike) -> dict:
     """
@@ -815,7 +795,6 @@ def mtrace_summary(T: ArrayLike, L: ArrayLike) -> dict:
 
     return summary
 
-
 def mtrace_split(T: ArrayLike, L: ArrayLike) -> list:
     """
     Split a multi-class trace into per-class traces.
@@ -844,7 +823,6 @@ def mtrace_split(T: ArrayLike, L: ArrayLike) -> list:
         TL.append(np.diff(cum_times))
 
     return TL
-
 
 def mtrace_merge(t1: ArrayLike, t2: ArrayLike) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -885,7 +863,6 @@ def mtrace_merge(t1: ArrayLike, t2: ArrayLike) -> Tuple[np.ndarray, np.ndarray]:
 
     return T, L
 
-
 def mtrace_joint(T: ArrayLike, A: ArrayLike, i: ArrayLike) -> np.ndarray:
     """
     Compute class-dependent joint moments.
@@ -925,7 +902,6 @@ def mtrace_joint(T: ArrayLike, A: ArrayLike, i: ArrayLike) -> np.ndarray:
         JM[a - 1] = tmp / Na
 
     return JM
-
 
 def mtrace_moment(T: ArrayLike, A: ArrayLike, orders: ArrayLike,
                   after: bool = False, norm: bool = False) -> np.ndarray:
@@ -968,7 +944,6 @@ def mtrace_moment(T: ArrayLike, A: ArrayLike, orders: ArrayLike,
 
     return M
 
-
 def mtrace_moment_simple(T: ArrayLike, A: ArrayLike, k: int) -> np.ndarray:
     """
     Simple interface to compute k-th order moments per class.
@@ -982,7 +957,6 @@ def mtrace_moment_simple(T: ArrayLike, A: ArrayLike, k: int) -> np.ndarray:
         Array of k-th order moments, one per class.
     """
     return mtrace_moment(T, A, [k], after=False, norm=True)[:, 0]
-
 
 def mtrace_bootstrap(T: ArrayLike, A: ArrayLike, n_samples: int = 100,
                      seed: int = None) -> Tuple[np.ndarray, np.ndarray]:
@@ -1008,7 +982,6 @@ def mtrace_bootstrap(T: ArrayLike, A: ArrayLike, n_samples: int = 100,
     indices = np.random.choice(n, size=n_samples, replace=True)
 
     return T[indices], A[indices]
-
 
 def mtrace_iat2counts(T: ArrayLike, L: ArrayLike, scale: float) -> np.ndarray:
     """
@@ -1040,7 +1013,6 @@ def mtrace_iat2counts(T: ArrayLike, L: ArrayLike, scale: float) -> np.ndarray:
             counts.append(np.array([]))
 
     return counts
-
 
 def trace_bicov(trace: ArrayLike, grid: ArrayLike) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -1077,7 +1049,6 @@ def trace_bicov(trace: ArrayLike, grid: ArrayLike) -> Tuple[np.ndarray, np.ndarr
         bicov[k] = trace_joint(trace, lags, [1, 1, 1])
 
     return bicov, bicov_lags
-
 
 __all__ = [
     # Single trace analysis

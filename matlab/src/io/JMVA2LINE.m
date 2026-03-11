@@ -38,8 +38,17 @@ if isfield(xDoc.parameters.stations,'listation')
     end
 end
 
+nLDStations = 0;
 if isfield(xDoc.parameters.stations,'ldstation')
-    line_error(mfilename,'Load-dependent stations not yet supported.');
+    nLDStations = length(xDoc.parameters.stations.ldstation);
+    for i=1:nLDStations
+        nServers = 1;
+        if isfield(xDoc.parameters.stations.ldstation(i).ATTRIBUTE, 'servers')
+            nServers = xDoc.parameters.stations.ldstation(i).ATTRIBUTE.servers;
+        end
+        nodes{end+1} = Queue(model, xDoc.parameters.stations.ldstation(i).ATTRIBUTE.name, SchedStrategy.PS);
+        nodes{end}.setNumberOfServers(nServers);
+    end
 end
 
 %%
@@ -104,6 +113,51 @@ for i=1:nLIStations
     end
 end
 
+
+for i=1:nLDStations
+    ldst = xDoc.parameters.stations.ldstation(i);
+    nodeIdx = nInfStations + nLIStations + i;
+    for r=1:(nOpenClasses+nClosedClasses)
+        visits = ldst.visits.visit(r).CONTENT;
+        servClass = model.getClassByName(ldst.servicetimes.servicetimes(r).ATTRIBUTE.customerclass);
+        % Parse per-population service demands from LD station
+        stData = ldst.servicetimes.servicetimes(r).servicetime;
+        if ischar(stData) || isstring(stData)
+            % Semicolon or comma-separated format: "d(0);d(1);...;d(N)"
+            if contains(char(stData), ';')
+                demands = str2double(strsplit(char(stData), ';'));
+            else
+                demands = str2double(strsplit(char(stData), ','));
+            end
+        elseif isnumeric(stData)
+            demands = stData(:)';
+        else
+            % Array of structured entries
+            demands = arrayfun(@(x) x.CONTENT, stData);
+        end
+        % Remove NaN entries
+        demands = demands(~isnan(demands));
+        % demands(1) is at population 0, demands(2) at population 1, etc.
+        % Skip zero-population entry if present
+        if length(demands) > 1 && demands(1) == 0
+            demands = demands(2:end); % now demands(n) = demand at population n
+        end
+        if visits > 0 && ~isempty(demands) && demands(1) > 0
+            baseDemand = demands(1) * visits;
+            nodes{nodeIdx}.setService(servClass, Exp(1/baseDemand));
+            visited(nodeIdx, servClass) = true;
+            % Set load-dependent scaling: alpha(n) = baseDemand / (demands(n)*visits)
+            if length(demands) > 1
+                alpha = demands(1) ./ demands;
+                alpha(demands <= 0) = 0;
+                nodes{nodeIdx}.setLoadDependence(alpha);
+            end
+        else
+            nodes{nodeIdx}.setService(servClass, Disabled.getInstance());
+            visited(nodeIdx, servClass) = false;
+        end
+    end
+end
 
 P = model.initRoutingMatrix;
 for r=1:nOpenClasses

@@ -144,7 +144,6 @@ public class MixedExamplesTest {
     }
     
     @Test
-    // @Disabled - MAPE was 0.0149%, Max APE was 0.0401%
     public void testMqnBasicSSA() {
         // Test mqn_basic with SSA solver
         Network model = MixedModel.mqn_basic();
@@ -276,7 +275,6 @@ public class MixedExamplesTest {
     }
     
     @Test
-    //@Disabled("Expected values mismatch - needs investigation")
     public void testMqnMultiserverPSJMT() {
         // Test mqn_multiserver_ps with JMT solver
         Network model = MixedModel.mqn_multiserver_ps();
@@ -420,7 +418,6 @@ public class MixedExamplesTest {
     }
     
     @Test
-    //@Disabled("Expected values mismatch - needs investigation")
     public void testMqnMultiserverFCFSJMT() {
         // Test mqn_multiserver_fcfs with JMT solver
         Network model = MixedModel.mqn_multiserver_fcfs();
@@ -457,7 +454,6 @@ public class MixedExamplesTest {
     }
     
     @Test
-    //@Disabled("Expected values mismatch - needs investigation")
     public void testMqnMultiserverFCFSSSA() {
         // Test mqn_multiserver_fcfs with SSA solver
         Network model = MixedModel.mqn_multiserver_fcfs();
@@ -676,7 +672,6 @@ public class MixedExamplesTest {
     }
 
     @Test
-    // @Disabled - MAPE was 0.0346%, Max APE was 0.2165%
     public void testMqnSingleserverFCFSNC() {
         // Test mqn_singleserver_fcfs with NC solver
         Network model = MixedModel.mqn_singleserver_fcfs();
@@ -787,7 +782,6 @@ public class MixedExamplesTest {
     }
     
     @Test
-    //@Disabled("Expected values mismatch - needs investigation")
     public void testMqnSingleserverPSJMT() {
         // Test mqn_singleserver_ps with JMT solver
         Network model = MixedModel.mqn_singleserver_ps();
@@ -824,7 +818,6 @@ public class MixedExamplesTest {
     }
     
     @Test
-    // @Disabled - MAPE was 2.0906%, Max APE was 7.4293%
     public void testMqnSingleserverPSSSA() {
         // Test mqn_singleserver_ps with SSA solver
         Network model = MixedModel.mqn_singleserver_ps();

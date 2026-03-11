@@ -324,27 +324,13 @@ def _egflinearizer_forward_mva(
     Q = np.zeros((M, R))
 
     # Compute residence times
+    # For exponential FCFS the per-visit response time equals the PS formula,
+    # this is the correct approach for the chain-level linearizer since only
+    # demands D (=V*S) are available, not per-visit service times S.
     for i in range(M):
         for r in range(R):
-            # Normalize scheduling type to string for comparison
-            sched_val = sched_type[i]
-            if isinstance(sched_val, str):
-                sched_str = sched_val.upper()
-            elif hasattr(sched_val, 'name'):
-                # Handle enum values (SchedStrategy.FCFS, etc.) - use name for IntEnum
-                sched_str = sched_val.name.upper()
-            else:
-                sched_str = str(sched_val).upper()
-
-            if sched_str == 'FCFS':
-                W[i, r] = L[i, r]
-                if L[i, r] != 0:
-                    for s in range(R):
-                        W[i, r] += L[i, s] * Q_1[i][s, 1 + r]
-            else:
-                # PS or other strategies
-                sum_Q = np.sum(Q_1[i][:, 1 + r])
-                W[i, r] = L[i, r] * (1 + sum_Q)
+            sum_Q = np.sum(Q_1[i][:, 1 + r])
+            W[i, r] = L[i, r] * (1 + sum_Q)
 
     # Compute throughputs and queue lengths
     for r in range(R):

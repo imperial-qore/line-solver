@@ -9,18 +9,7 @@ import numpy as np
 from math import factorial
 from typing import Dict, Optional, Any
 
-try:
-    from numba import njit
-    NUMBA_AVAILABLE = True
-except ImportError:
-    NUMBA_AVAILABLE = False
-    def njit(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator
 
-
-@njit(cache=True)
 def _erlang_c(k: int, rho: float) -> float:
     """
     Erlang-C formula (probability all servers busy).
@@ -52,7 +41,6 @@ def _erlang_c(k: int, rho: float) -> float:
     return C
 
 
-@njit(cache=True)
 def _erlang_b(k: int, a: float) -> float:
     """
     Erlang-B formula (blocking probability for M/M/k/k).
@@ -69,7 +57,6 @@ def _erlang_b(k: int, a: float) -> float:
     for i in range(1, k + 1):
         B = a * B / (i + a * B)
     return B
-
 
 def qsys_mm1(lambda_val: float, mu: float) -> Dict[str, float]:
     """
@@ -116,7 +103,6 @@ def qsys_mm1(lambda_val: float, mu: float) -> Dict[str, float]:
         'Wq': Wq,
         'rho': rho
     }
-
 
 def qsys_mmk(lambda_val: float, mu: float, k: int) -> Dict[str, float]:
     """
@@ -189,7 +175,6 @@ def qsys_mmk(lambda_val: float, mu: float, k: int) -> Dict[str, float]:
         'P0': P0
     }
 
-
 def qsys_mg1(lambda_val: float, mu: float, cs: float) -> Dict[str, float]:
     """
     Analyze M/G/1 queue using Pollaczek-Khinchine formula.
@@ -241,7 +226,6 @@ def qsys_mg1(lambda_val: float, mu: float, cs: float) -> Dict[str, float]:
         'Wq': Wq,
         'rho': rho
     }
-
 
 def qsys_gm1(lambda_val: float, mu: float, ca: float) -> Dict[str, float]:
     """
@@ -306,7 +290,6 @@ def qsys_gm1(lambda_val: float, mu: float, ca: float) -> Dict[str, float]:
         'rho': rho
     }
 
-
 def qsys_mminf(lambda_val: float, mu: float) -> Dict[str, float]:
     """
     Analyze M/M/inf queue (infinite servers / delay station).
@@ -332,7 +315,6 @@ def qsys_mminf(lambda_val: float, mu: float) -> Dict[str, float]:
         'Wq': 0.0,
         'P0': np.exp(-rho)
     }
-
 
 def qsys_mginf(lambda_val: float, mu: float, k: Optional[int] = None) -> Dict[str, Any]:
     """

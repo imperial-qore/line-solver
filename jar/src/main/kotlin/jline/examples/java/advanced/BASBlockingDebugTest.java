@@ -6,8 +6,8 @@ import jline.lang.constant.SchedStrategy;
 import jline.lang.constant.DropStrategy;
 import jline.lang.processes.Exp;
 import jline.lang.nodes.Queue;
-import jline.solvers.des.SolverDES;
-import jline.solvers.des.DESOptions;
+import jline.solvers.ldes.SolverLDES;
+import jline.solvers.ldes.LDESOptions;
 import jline.solvers.NetworkAvgTable;
 
 /**
@@ -55,18 +55,18 @@ public class BASBlockingDebugTest {
         // Serial routing: Queue1 -> Queue2 -> Queue1 (cyclic)
         model.link(Network.serialRouting(queue1, queue2));
 
-        // Configure DES options
-        DESOptions options = new DESOptions();
+        // Configure LDES options
+        LDESOptions options = new LDESOptions();
         options.seed = 23000;
         options.samples = 1000000;  // Large sample for accuracy
 
-        System.out.println("Running DES with " + options.samples + " samples...\n");
+        System.out.println("Running LDES with " + options.samples + " samples...\n");
 
         // Run solver
-        SolverDES solver = new SolverDES(model, options);
+        SolverLDES solver = new SolverLDES(model, options);
         NetworkAvgTable avgTable = (NetworkAvgTable) solver.getAvgTable(true);
 
-        System.out.println("\n=== DES Results ===");
+        System.out.println("\n=== LDES Results ===");
         System.out.println("Queue1 QLen: " + avgTable.getQLen().get(0));
         System.out.println("Queue2 QLen: " + avgTable.getQLen().get(1));
         System.out.println("Queue1 Util: " + avgTable.getUtil().get(0));

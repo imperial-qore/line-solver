@@ -12,7 +12,9 @@ import jline.lang.processes.Exp;
 import jline.lang.processes.Immediate;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static jline.io.InputOutputKt.line_error;
 import static jline.io.InputOutputKt.mfilename;
@@ -54,6 +56,7 @@ public class Task extends LayeredNetworkElement {
     protected int priority = 0;  // Priority level (0 = default/no priority)
     protected String fanInSource = "";  // Source task for fan-in
     protected int fanInValue = 0;  // Fan-in value (load distribution count)
+    protected Map<String, Integer> fanOutMap = new HashMap<>();  // {dest_task_name: value}
     protected Distribution thinkTime;
     protected double thinkTimeMean;
     protected double thinkTimeSCV;
@@ -388,6 +391,15 @@ public class Task extends LayeredNetworkElement {
 
     public int getFanInValue() {
         return this.fanInValue;
+    }
+
+    public Task setFanOut(String dest, int value) {
+        this.fanOutMap.put(dest, value);
+        return this;
+    }
+
+    public Map<String, Integer> getFanOutMap() {
+        return this.fanOutMap;
     }
 
 }

@@ -49,6 +49,8 @@ import static jline.api.sn.SnGetProductFormParamsKt.snGetProductFormParams;
 import jline.io.Ret;
 import static jline.api.pfqn.nc.Pfqn_stdfKt.pfqn_stdf;
 import static jline.api.pfqn.nc.Pfqn_stdf_heurKt.pfqn_stdf_heur;
+import static jline.api.pfqn.nc.Pfqn_procomomKt.pfqn_procomom;
+import static jline.api.sn.SnGetDemandsChainKt.snGetDemandsChain;
 import static jline.api.mam.Map_cdfKt.map_cdf;
 
 
@@ -232,6 +234,176 @@ public class SolverNC extends NetworkSolver {
     }
 
     /**
+     * Get marginal queue-length probability distribution at a node.
+     *
+     * Returns P(n total jobs) for n=0,1,...,N, summing over all class combinations.
+     * When method is "comom", uses pfqn_procomom directly for efficiency.
+     * Otherwise falls back to enumeration via getProbAggr.
+     *
+     * @param node The node to compute marginal probability for
+     * @return Matrix of marginal probabilities where element j = P(j total jobs at node)
+     */
+    public ProbabilityResult getProbMarg(Node node) {
+        if (GlobalConstants.DummyMode) {
+            return new ProbabilityResult();
+        }
+
+        NetworkStruct sn = getStruct();
+        int ist = (int) sn.nodeToStation.get(node.getNodeIndex());
+
+        // Check that all classes are closed
+        Matrix N = sn.njobs;
+        for (int r = 0; r < sn.nclasses; r++) {
+            if (Utils.isInf(N.get(r))) {
+                line_error(mfilename(new Object(){}), "getProbMarg not yet implemented for models with open classes.");
+                return new ProbabilityResult();
+            }
+        }
+
+        int R = sn.nclasses;
+        int Ntotal = (int) N.elementSum();
+
+        // Fast path: comom method uses pfqn_procomom directly
+        if (options.method != null && options.method.equalsIgnoreCase("comom")) {
+            int M = sn.nstations;
+            int C = sn.nchains;
+            Matrix nservers = sn.nservers;
+
+            Ret.snGetDemands ret = snGetDemandsChain(sn);
+            Matrix Lchain = ret.Dchain;
+            Matrix Nchain = ret.Nchain;
+
+            // Replace non-finite values with 0
+            for (int i = 0; i < Lchain.getNumRows(); i++) {
+                for (int j = 0; j < Lchain.getNumCols(); j++) {
+                    if (!Double.isFinite(Lchain.get(i, j))) {
+                        Lchain.set(i, j, 0.0);
+                    }
+                }
+            }
+
+            // Separate queue vs delay stations (matching solver_nc.m / MATLAB getProbMarg)
+            Matrix Lms = new Matrix(M, C);
+            Lms.fill(0.0);
+            Matrix Ztotal = new Matrix(1, C);
+            Ztotal.fill(0.0);
+            Matrix Zms = new Matrix(1, C);
+            Zms.fill(0.0);
+            List<Integer> queueStations = new ArrayList<>();
+
+            for (int i = 0; i < M; i++) {
+                if (Utils.isInf(nservers.get(i))) {
+                    // Delay station: accumulate into Ztotal
+                    for (int c = 0; c < C; c++) {
+                        Ztotal.set(0, c, Ztotal.get(0, c) + Lchain.get(i, c));
+                    }
+                } else {
+                    queueStations.add(i);
+                    for (int c = 0; c < C; c++) {
+                        Lms.set(i, c, Lchain.get(i, c) / nservers.get(i));
+                        Zms.set(0, c, Zms.get(0, c) + Lchain.get(i, c) * (nservers.get(i) - 1) / nservers.get(i));
+                    }
+                }
+            }
+
+            // Build L_queues (only queue station rows from Lms)
+            int Mq = queueStations.size();
+            Matrix L_queues = new Matrix(Mq, C);
+            for (int qi = 0; qi < Mq; qi++) {
+                int origIdx = queueStations.get(qi);
+                for (int c = 0; c < C; c++) {
+                    L_queues.set(qi, c, Lms.get(origIdx, c));
+                }
+            }
+
+            // Z_total = Ztotal + Zms
+            Matrix Z_total = new Matrix(1, C);
+            for (int c = 0; c < C; c++) {
+                Z_total.set(0, c, Ztotal.get(0, c) + Zms.get(0, c));
+            }
+
+            // Call pfqn_procomom
+            Ret.pfqnProcomom procomom = pfqn_procomom(L_queues, Nchain, Z_total);
+            Matrix Pr = procomom.Pr;
+
+            // Find queue index for the requested station
+            int queueIdx = queueStations.indexOf(ist);
+            if (queueIdx >= 0) {
+                int sumNchain = (int) Nchain.elementSum();
+                Matrix Pmarg = new Matrix(1, Ntotal + 1);
+                Pmarg.fill(0.0);
+                int len = Math.min(sumNchain + 1, Ntotal + 1);
+                for (int j = 0; j < len; j++) {
+                    Pmarg.set(0, j, Pr.get(queueIdx, j));
+                }
+                return new ProbabilityResult(Pmarg);
+            } else {
+                // Delay station: fall through to enumeration
+                line_warning(mfilename(new Object(){}), "comom method does not directly support delay stations, using enumeration.");
+                // Fall through to enumeration below
+            }
+        }
+
+        // Enumeration-based fallback: sum getProbAggr over all class partitions
+        Matrix Pmarg = new Matrix(1, Ntotal + 1);
+        Pmarg.fill(0.0);
+
+        for (int n = 0; n <= Ntotal; n++) {
+            List<int[]> partitions = generatePartitions(n, R, N);
+            double probN = 0.0;
+            for (int[] partition : partitions) {
+                Matrix stateVec = new Matrix(1, R);
+                for (int r = 0; r < R; r++) {
+                    stateVec.set(0, r, partition[r]);
+                }
+                Double prob = getProbAggr(node, stateVec);
+                if (prob != null && prob > 0) {
+                    probN += prob;
+                }
+            }
+            Pmarg.set(0, n, probN);
+        }
+
+        // Normalize
+        double totalProb = 0.0;
+        for (int j = 0; j <= Ntotal; j++) {
+            totalProb += Pmarg.get(0, j);
+        }
+        if (totalProb > 0 && FastMath.abs(totalProb - 1.0) > 1e-10) {
+            for (int j = 0; j <= Ntotal; j++) {
+                Pmarg.set(0, j, Pmarg.get(0, j) / totalProb);
+            }
+        }
+
+        return new ProbabilityResult(Pmarg);
+    }
+
+    /**
+     * Generate all partitions of n into R non-negative integers,
+     * each bounded by the corresponding element of Nmax.
+     */
+    private List<int[]> generatePartitions(int n, int R, Matrix Nmax) {
+        List<int[]> result = new ArrayList<>();
+        generatePartitionsHelper(n, R, 0, Nmax, new int[R], result);
+        return result;
+    }
+
+    private void generatePartitionsHelper(int remaining, int R, int idx, Matrix Nmax, int[] current, List<int[]> result) {
+        if (idx == R - 1) {
+            if (remaining <= (int) Nmax.get(idx)) {
+                current[idx] = remaining;
+                result.add(current.clone());
+            }
+            return;
+        }
+        int maxVal = (int) Math.min(remaining, Nmax.get(idx));
+        for (int v = 0; v <= maxVal; v++) {
+            current[idx] = v;
+            generatePartitionsHelper(remaining - v, R, idx + 1, Nmax, current, result);
+        }
+    }
+
+    /**
      * Get the log normalization constant for aggregated probabilities
      *
      * @return The log normalization constant
@@ -372,6 +544,7 @@ public class SolverNC extends NetworkSolver {
                 if (sn.nstations == 2 && !sn.nodetype.contains(NodeType.Cache) &&
                         sn.nodetype.contains(NodeType.Delay) && hasFiniteMultiServer) {
                     options.method = "comomld";
+                    line_debug(options.verbose, "NC: default method for 2-station multiserver Delay network, switching to comomld");
                 }
                 break;
             case "exact":
@@ -397,6 +570,7 @@ public class SolverNC extends NetworkSolver {
         // Check for non-reentrant cache model
         List<NodeType> nonReentrant = new ArrayList<>(Arrays.asList(NodeType.Source, NodeType.Cache, NodeType.Sink));
         if (sn.nclosedjobs == 0 && sn.nodetype.size() == 3 && sn.nodetype.containsAll(nonReentrant)) {
+            line_debug(options.verbose, "NC: detected non-reentrant cache model (Source-Cache-Sink), calling solver_nc_cache_analyzer");
             // Initialize cache nodes
             for (int ind = 0; ind < sn.nnodes; ind++) {
                 if (sn.nodetype.get(ind) == NodeType.Cache) {
@@ -471,6 +645,7 @@ public class SolverNC extends NetworkSolver {
             // Regular queueing network
             if (sn.nodetype.contains(NodeType.Cache)) {
                 // Cache-queueing network
+                line_debug(options.verbose, "NC: detected cache-queueing network, calling solver_nc_cache_qn_analyzer");
                 ret = solver_nc_cache_qn_analyzer(this.sn, this.options.copy());
                 actualMethod = ret.method;
                 iter = ret.iter;
@@ -519,6 +694,7 @@ public class SolverNC extends NetworkSolver {
                         // Single delay node in FCR - check drop rule
                         if (sn.regionrule.get(0) == DropStrategy.Drop.getID()) {
                             // Use loss network solver
+                            line_debug(options.verbose, "NC: detected loss network (single Delay in FCR with Drop), calling solver_nc_lossn_analyzer");
                             ret = solver_nc_lossn_analyzer(this.sn, this.options.copy());
                             actualMethod = ret.method;
                             iter = ret.iter;
@@ -529,6 +705,7 @@ public class SolverNC extends NetworkSolver {
                     }
                 }
                 if (ret == null && ((sn.lldscaling != null && !sn.lldscaling.isEmpty()) || (sn.cdscaling != null && !sn.cdscaling.isEmpty()))) {
+                    line_debug(options.verbose, "NC: detected load-dependent or class-dependent scaling, calling solver_ncld_analyzer");
                     ret = solver_ncld_analyzer(this.sn, this.options.copy());
                     actualMethod = ret.method;
                     iter = ret.iter;
@@ -536,10 +713,12 @@ public class SolverNC extends NetworkSolver {
                     switch (options.method) {
                         case "exact":
                             if (!this.model.hasOpenClasses()) {
+                                line_debug(options.verbose, "NC: exact method for closed model, calling solver_ncld_analyzer");
                                 ret = solver_ncld_analyzer(this.sn, this.options.copy());
                                 actualMethod = ret.method;
                                 iter = ret.iter;
                             } else {
+                                line_debug(options.verbose, "NC: exact method for open model, calling solver_nc_analyzer");
                                 ret = solver_nc_analyzer(this.sn, this.options.copy());
                                 actualMethod = ret.method;
                                 iter = ret.iter;
@@ -549,6 +728,7 @@ public class SolverNC extends NetworkSolver {
                         case "nrp":
                         case "nrl":
                         case "comomld":
+                            line_debug(options.verbose, String.format("NC: load-dependent method=%s, calling solver_ncld_analyzer", options.method));
                             ret = solver_ncld_analyzer(this.sn, this.options.copy());
                             actualMethod = ret.method;
                             iter = ret.iter;
@@ -586,10 +766,14 @@ public class SolverNC extends NetworkSolver {
 
         // Compute arrival rates
         AvgHandle T = getAvgTputHandles();
+        Matrix rtRefreshed = sn.rt;
         if (rtOrig != null) {
             sn.rt = rtOrig;
         }
         Matrix AN = snGetArvRFromTput(sn, ret.TN, T);
+        if (rtRefreshed != null) {
+            sn.rt = rtRefreshed;
+        }
 
         double finish = System.nanoTime();
         ret.runtime = (finish - start) / 1000000000.0;
@@ -598,6 +782,7 @@ public class SolverNC extends NetworkSolver {
         String resultMethod = actualMethod;
         if (origMethod.equals("default") && !actualMethod.equals("default")) resultMethod = "default/" + actualMethod;
 
+        line_debug(options.verbose, String.format("NC solver completed: method=%s, runtime=%.3fs", resultMethod, ret.runtime));
         this.setAvgResults(ret.QN, ret.UN, ret.RN, ret.TN, AN, new Matrix(0,0), ret.CN, ret.XN, ret.runtime, resultMethod, iter);
 
         // Store probability results
@@ -629,7 +814,7 @@ public class SolverNC extends NetworkSolver {
     public String[] listValidMethods() {
         return new String[]{
             "default", "exact", "imci", "ls", "le", "mmint2", "gleint",
-            "panacea", "ca", "kt", "sampling", "propfair", "comomrm", "cub",
+            "panacea", "ca", "kt", "sampling", "propfair", "comom", "comomrm", "cub",
             "rd", "nrp", "nrl", "gm", "mem"
         };
     }
@@ -806,10 +991,10 @@ public class SolverNC extends NetworkSolver {
      * Sample node state trajectory
      *
      * @param node The node to sample
-     * @param numSamples Number of samples to generate
+     * @param numEvents Number of samples to generate
      * @return Sample result containing state trajectory
      */
-    public Object sample(Node node, int numSamples) {
+    public Object sample(Node node, int numEvents) {
         if (GlobalConstants.DummyMode) {
             return null;
         }

@@ -16,7 +16,7 @@ import jline.lang.Network;
 import jline.lang.NetworkStruct;
 import jline.lang.constant.NodeType;
 import jline.solvers.ctmc.SolverCTMC;
-import jline.solvers.des.SolverDES;
+import jline.solvers.ldes.SolverLDES;
 import jline.solvers.fluid.SolverFluid;
 import jline.solvers.jmt.SolverJMT;
 import jline.solvers.mam.SolverMAM;
@@ -88,7 +88,7 @@ public abstract class NetworkSolver extends Solver {
     protected NetworkSolver(Network model, String name, SolverOptions options) {
         super(name, options);
         this.model = model;
-        // Allow null model for LayeredNetwork-based solvers (e.g., SolverDES with LQN)
+        // Allow null model for LayeredNetwork-based solvers (e.g., SolverLDES with LQN)
         if (model != null) {
             if (model.getNumberOfNodes() == 0) {
                 throw new RuntimeException("The model supplied in input is empty.");
@@ -119,7 +119,7 @@ public abstract class NetworkSolver extends Solver {
         SolverOptions options = new SolverOptions();
         List<NetworkSolver> solvers = new ArrayList<>();
         solvers.add(new SolverCTMC(model, options));
-        solvers.add(new SolverDES(model, options));
+        solvers.add(new SolverLDES(model, options));
         solvers.add(new SolverFluid(model, options));
         solvers.add(new SolverJMT(model, options));
         solvers.add(new SolverMAM(model, options));
@@ -3338,6 +3338,22 @@ public abstract class NetworkSolver extends Solver {
         Matrix TN = this.result.TN;
         Matrix AN = this.result.AN;
 
+        // For transient analysis, RN/WN/AN may not be computed (e.g., FLD passes empty WN).
+        // Match MATLAB getAvgTable.m line 114: [RN, WN, AN] = deal(zeros(size(QN)))
+        if (Double.isFinite(options.timespan[1]) && QN != null && !QN.isEmpty()) {
+            int rows = QN.getNumRows();
+            int cols = QN.getNumCols();
+            if (RN == null || RN.isEmpty() || RN.getNumRows() != rows || RN.getNumCols() != cols) {
+                RN = new Matrix(rows, cols);
+            }
+            if (WN == null || WN.isEmpty() || WN.getNumRows() != rows || WN.getNumCols() != cols) {
+                WN = new Matrix(rows, cols);
+            }
+            if (AN == null || AN.isEmpty() || AN.getNumRows() != rows || AN.getNumCols() != cols) {
+                AN = new Matrix(rows, cols);
+            }
+        }
+
         if (QN == null || QN.isEmpty()) {
             throw new RuntimeException(
                     "Unable to compute results and therefore unable to print AvgTable.");
@@ -3501,6 +3517,22 @@ public abstract class NetworkSolver extends Solver {
         Matrix AN = this.result.AN;
         Matrix WN = this.result.WN;
 
+
+        // For transient analysis, RN/WN/AN may not be computed (e.g., FLD passes empty WN).
+        // Match MATLAB getAvgTable.m line 114: [RN, WN, AN] = deal(zeros(size(QN)))
+        if (Double.isFinite(options.timespan[1]) && QN != null && !QN.isEmpty()) {
+            int rows = QN.getNumRows();
+            int cols = QN.getNumCols();
+            if (RN == null || RN.isEmpty() || RN.getNumRows() != rows || RN.getNumCols() != cols) {
+                RN = new Matrix(rows, cols);
+            }
+            if (WN == null || WN.isEmpty() || WN.getNumRows() != rows || WN.getNumCols() != cols) {
+                WN = new Matrix(rows, cols);
+            }
+            if (AN == null || AN.isEmpty() || AN.getNumRows() != rows || AN.getNumCols() != cols) {
+                AN = new Matrix(rows, cols);
+            }
+        }
         if (QN == null || QN.isEmpty()) {
             throw new RuntimeException(
                     "Unable to compute results and therefore unable to print AvgTable.");
@@ -4034,25 +4066,25 @@ public abstract class NetworkSolver extends Solver {
 
     /**
      * Returns a table of average stage metrics organized by job classes.
-     * Note: This method is not yet fully implemented and will throw an exception.
+     * For non-environment models, this returns the same as getAvgTable()
+     * since there is only one implicit stage.
      *
      * @return table containing stage-level metrics for each class
-     * @throws UnsupportedOperationException indicating this method is not yet implemented
      */
     public NetworkAvgTable getStageTable() {
-        throw new UnsupportedOperationException("getStageTable is not yet implemented in NetworkSolver");
+        return getAvgTable();
     }
 
     /**
      * Returns a table of average stage metrics organized by job classes with keepDisabled option.
-     * Note: This method is not yet fully implemented and will throw an exception.
+     * For non-environment models, this returns the same as getAvgTable(keepDisabled)
+     * since there is only one implicit stage.
      *
      * @param keepDisabled whether to include disabled metrics in the table
      * @return table containing stage-level metrics for each class
-     * @throws UnsupportedOperationException indicating this method is not yet implemented
      */
     public NetworkAvgTable getStageTable(boolean keepDisabled) {
-        throw new UnsupportedOperationException("getStageTable is not yet implemented in NetworkSolver");
+        return getAvgTable(keepDisabled);
     }
 
     /**
@@ -4319,6 +4351,11 @@ public abstract class NetworkSolver extends Solver {
      * @throws RuntimeException if model contains unsupported features or method is invalid
      */
     public void runAnalyzerChecks(SolverOptions options) {
+        // Propagate solver verbose level to global so that model-level
+        // messages (e.g., priority info in refreshStruct) respect it
+        if (options != null) {
+            GlobalConstants.Verbose = options.verbose;
+        }
         // Basic model validation - check for empty model
         if (model == null) {
             throw new RuntimeException("Model cannot be null");

@@ -42,6 +42,7 @@ import static jline.api.mam.Aph_simplifyKt.aph_simplify;
 import static jline.api.mc.Dtmc_makestochasticKt.dtmc_makestochastic;
 import jline.io.Ret.DistributionResult;
 import jline.util.Pair;
+import static jline.io.InputOutputKt.line_debug;
 import static jline.io.InputOutputKt.line_error;
 import static jline.io.InputOutputKt.line_warning;
 import static jline.io.InputOutputKt.mfilename;
@@ -135,7 +136,9 @@ public class SolverLN extends EnsembleSolver {
     public Matrix residt_prev;        // Previous residence times for relaxation
     public Matrix tput_prev;          // Previous throughputs for relaxation
     public Matrix thinkt_prev;        // Previous think times for relaxation
+    public java.util.Set<Integer> singleReplicaTasks; // Task indices modeled as single representative replica (fan-out)
     public Matrix callservt_prev;     // Previous call service times for relaxation
+    public Matrix callresidt_prev;    // Previous call residence times for growth rate capping
 
     // MOL (Method of Layers) properties for hierarchical iteration
     public List<Integer> hostLayerIndices;   // Indices of host (processor) layers in ensemble
@@ -153,6 +156,14 @@ public class SolverLN extends EnsembleSolver {
     public Matrix util_ph1;             // Phase-1 utilization per entry
     public Matrix util_ph2;             // Phase-2 utilization per entry
     public Matrix prOvertake;           // Overtaking probability per entry (nentries x 1)
+
+    // LQNS V5-style interlock data structures (built once at init)
+    public double[][] il_table_all;              // (nentries x nentries) reachability, all phases
+    public double[][] il_table_ph1;              // (nentries x nentries) reachability, phase-1 only
+    public List<Integer>[] il_common_entries;     // common parent entry abs-indices per server
+    public List<Integer>[] il_source_tasks_all;   // all-phase source tasks per server
+    public List<Integer>[] il_source_tasks_ph2;   // phase-2 source tasks per server
+    public double[] il_num_sources;              // total source multiplicity per server
 
     public SolverLN(LayeredNetwork lqnmodel) {
         this(lqnmodel, new SolverOptions(SolverType.LN));
@@ -236,6 +247,12 @@ public class SolverLN extends EnsembleSolver {
             solvers[i] = solverFactory.at(ensemble[i]);
         }
         this.solverFactory = solverFactory; // Store for later use
+        line_debug(options.verbose, String.format("LN: constructed %d layers, nhosts=%d, ntasks=%d, nentries=%d, nacts=%d",
+            nlayers, lqn.nhosts, lqn.ntasks, lqn.nentries, lqn.nacts));
+        for (int i = 0; i < nlayers; i++) {
+            line_debug(options.verbose, String.format("LN: layer %d solver=%s, nstations=%d, nclasses=%d",
+                i, solvers[i].getName(), ensemble[i].getNumberOfStations(), ensemble[i].getNumberOfClasses()));
+        }
     }
 
     public static SolverOptions defaultOptions() {
@@ -371,7 +388,45 @@ public class SolverLN extends EnsembleSolver {
         nlayers++;
         Matrix jobPosKey = new Matrix(1, lqn.nidx + 1);
         Map<Integer, JobClass> curClassKey = new HashMap<>(lqn.nidx);
-        int nreplicas = (int) lqn.repl.get(0, idx);
+        // Fan-out check: when all callers have fan-out >= nreplicas for this task,
+        // each replica sees the full caller traffic (fork-join semantics).
+        // Model a single representative replica; updateThinkTimes multiplies by K.
+        // For host layers: if all caller tasks have the same replication as the host,
+        // the host is co-replicated with the task, so also use single-replica modeling.
+        final int nreplicas;
+        {
+            int rawReplicas = (int) lqn.repl.get(0, idx);
+            boolean reduceFanout = false;
+            if (rawReplicas > 1 && !callers.isEmpty()) {
+                if (!ishostlayer && lqn.fanout != null) {
+                    // Task layer: check if all callers fan-out to all replicas
+                    reduceFanout = true;
+                    for (int caller : callers) {
+                        double fo = lqn.fanout.get(caller, idx);
+                        if (fo < rawReplicas) {  // 0 means not set (default=1)
+                            reduceFanout = false;
+                            break;
+                        }
+                    }
+                } else if (ishostlayer) {
+                    // Host layer: if all caller tasks have the same replication as the host,
+                    // model a single representative host replica (co-replicated with tasks)
+                    reduceFanout = true;
+                    for (int caller : callers) {
+                        if ((int) lqn.repl.get(0, caller) != rawReplicas) {
+                            reduceFanout = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            nreplicas = reduceFanout ? 1 : rawReplicas;
+        }
+        final boolean singleReplicaMode = (nreplicas == 1 && (int) lqn.repl.get(0, idx) > 1);
+        // If this is a task layer with fan-out reduction, record the server task as single-replica
+        if (singleReplicaMode && !ishostlayer) {
+            this.singleReplicaTasks.add(idx);
+        }
         Matrix mult = lqn.maxmult.copy(); // this removes spare capacity that cannot be used
         lqn.mult = mult.copy(); // using maxmult as in MATLAB version
         Network model = new Network(lqn.hashnames.get(idx));
@@ -601,7 +656,10 @@ public class SolverLN extends EnsembleSolver {
             }
             if ((ishostlayer && hasDirectCallers) || isSyncCallerToEntries) {
                 if (this.njobs.get(tidx_caller, idx) == 0) {
-                    njobs = mult.get(0, tidx_caller) * lqn.repl.get(0, tidx_caller);
+                    // Use single-replica njobs if either: (1) this layer is in single-replica mode,
+                    // or (2) the caller task itself is in single-replica mode
+                    boolean callerIsSingleReplica = singleReplicaMode || this.singleReplicaTasks.contains(tidx_caller);
+                    njobs = mult.get(0, tidx_caller) * (callerIsSingleReplica ? 1.0 : lqn.repl.get(0, tidx_caller));
                     if (isInf(njobs)) {
                         njobs = 0;
                         for (int row = 0; row < lqn.taskgraph.getNumRows(); row++) {
@@ -864,8 +922,22 @@ public class SolverLN extends EnsembleSolver {
                         }
                     }
                 }
+                // Save curClass/jobPos before fork branch loop so each branch
+                // starts with the same pre-fork state (prevents curClass
+                // corruption across parallel branches)
+                JobClass forkSaveCurClass = null;
+                int forkSaveJobPos = 0;
+                if (!nextaidxs.isEmpty() && isNextPrecFork.get(0, aidx) != 0) {
+                    forkSaveCurClass = curClass;
+                    forkSaveJobPos = jobPos;
+                }
                 if (!nextaidxs.isEmpty()) {
                     for (int nextaidx : nextaidxs) {
+                        // Restore pre-fork state for each branch iteration
+                        if (isNextPrecFork.get(0, aidx) != 0) {
+                            curClass = forkSaveCurClass;
+                            jobPos = forkSaveJobPos;
+                        }
                         boolean isLoop = lqn.graph.get(aidx, nextaidx) != lqn.dag.get(aidx, nextaidx);
                         // in the activity graph, the following if is entered only
                         // by an edge that is the return from a LOOP activity
@@ -1349,7 +1421,11 @@ public class SolverLN extends EnsembleSolver {
                                 }
                             }
                             if (aidx != nextaidx && !isLoop) {
+                                // Save curClassC before recursion - it's a class-level field
+                                // but in MATLAB it's local to each recurActGraph call scope
+                                JobClass savedCurClassC = curClassC;
                                 recurActGraphReturnType returnType = recurActGraph(P, tidx_caller, nextaidx, curClass, jobPos, sourceStation, clientDelay, sinkStation, joinNode, forkNode, forkClassStack);
+                                curClassC = savedCurClassC;
                                 P = returnType.P;
                                 curClass = returnType.curClass;
                                 jobPos = returnType.jobPos;
@@ -1463,6 +1539,7 @@ public class SolverLN extends EnsembleSolver {
 
         // initialize internal data structures
         this.nlayers = 0;
+        this.singleReplicaTasks = new java.util.HashSet<>();
         this.entrycdfrespt = new Matrix(lqn.nentries, 1);
         this.hasconverged = false;
 
@@ -1492,6 +1569,11 @@ public class SolverLN extends EnsembleSolver {
         buildLayers();
         this.solvers = new NetworkSolver[nlayers + 1];
         this.njobsorig = new Matrix(this.njobs);
+
+        // Build interlock tables (LQNS V5 static analysis)
+        if (this.options.config.interlocking) {
+            initInterlock();
+        }
 
         // initialize data structures for interlock correction
         this.ptaskcallers = new Matrix(lqn.nhosts + lqn.ntasks + 1, lqn.nhosts + lqn.ntasks + 1, lqn.nidx * lqn.nidx);
@@ -1694,9 +1776,13 @@ public class SolverLN extends EnsembleSolver {
         }
 
         // Check convergence. Do not allow to converge in less than 2 iterations.
+        if (it > 1 && this.maxitererr != null) {
+            line_debug(options.verbose, String.format("LN convergence check: it=%d, maxerr=%e, tol=%e",
+                it, this.maxitererr.get(it), this.options.iter_tol));
+        }
         if (it == 0 && (this.options.verbose != VerboseLevel.SILENT)) {
             // Debug output removed
-        } else if ((it > 2) && (this.maxitererr.get(it) < this.options.iter_tol) && (this.maxitererr.get(it - 1) < this.options.iter_tol) && (this.maxitererr.get(it - 1) < this.options.iter_tol)) {
+        } else if ((it > iter_min) && (this.maxitererr.get(it) < this.options.iter_tol) && (this.maxitererr.get(it - 1) < this.options.iter_tol) && (this.maxitererr.get(it - 2) < this.options.iter_tol)) {
             // if potential convergence has just been detected, do a hard reset of every layer to check that this is
             // really the fixed point
             if (!this.hasconverged) {
@@ -1728,6 +1814,7 @@ public class SolverLN extends EnsembleSolver {
     }
 
     public void finish() {
+        line_debug(options.verbose, String.format("LN finish: collecting final results from %d layers", this.ensemble.length));
         for (int e = 0; e < this.ensemble.length; e++) {
             solvers[e].getAvg();
         }
@@ -1775,6 +1862,7 @@ public class SolverLN extends EnsembleSolver {
         if (this.ensemble == null || this.ensemble.length == 0) {
             return null;
         }
+        line_debug(options.verbose, String.format("LN: starting ensemble iteration with %d layers", nlayers));
         try {
             this.iterate();
         } catch (Exception e) {
@@ -2107,6 +2195,91 @@ public class SolverLN extends EnsembleSolver {
             }
             }
         }
+        // Derive forwarding targets' throughputs and service times
+        // Forwarding targets don't have their own task layers, so their metrics
+        // must be derived from the source entry's throughput * forwarding probability
+        for (int fwd_cidx = 1; fwd_cidx <= this.lqn.ncalls; fwd_cidx++) {
+            if (this.lqn.calltype.get(fwd_cidx) == CallType.FWD) {
+                int source_eidx = (int) this.lqn.callpair.get(fwd_cidx, 1);
+                int target_eidx = (int) this.lqn.callpair.get(fwd_cidx, 2);
+                double fwd_prob = this.lqn.callproc_mean.getOrDefault(fwd_cidx, 1.0);
+                int target_tidx = (int) this.lqn.parent.get(0, target_eidx);
+
+                // Derive target throughput = source throughput * forwarding probability
+                double source_tput = Double.isNaN(TN.get(source_eidx)) ? 0 : TN.get(source_eidx);
+
+                if (source_tput > GlobalConstants.FineTol) {
+                    double target_tput = source_tput * fwd_prob;
+                    if (Double.isNaN(TN.get(target_eidx)) || TN.get(target_eidx) == 0) {
+                        TN.set(target_eidx, target_tput);
+                    }
+                    if (target_tidx > 0 && (Double.isNaN(TN.get(target_tidx)) || TN.get(target_tidx) == 0)) {
+                        TN.set(target_tidx, target_tput);
+                    }
+                    // Set activity throughputs
+                    List<Integer> acts = this.lqn.actsof.get(target_eidx);
+                    if (acts != null) {
+                        for (int aidx : acts) {
+                            if (Double.isNaN(TN.get(aidx)) || TN.get(aidx) == 0) {
+                                TN.set(aidx, target_tput);
+                            }
+                        }
+                    }
+                }
+
+                // Set service time from servt vector (computed in updateMetricsDefault)
+                double target_servt_val = this.servt.get(target_eidx - 1);
+                if (target_servt_val == 0 || Double.isNaN(target_servt_val)) {
+                    // Fallback to host demands sum
+                    target_servt_val = 0;
+                    List<Integer> acts = this.lqn.actsof.get(target_eidx);
+                    if (acts != null) {
+                        for (int aidx : acts) {
+                            if (this.lqn.hostdem_mean.containsKey(aidx)) {
+                                target_servt_val += this.lqn.hostdem_mean.get(aidx);
+                            }
+                        }
+                    }
+                }
+                if (Double.isNaN(SN.get(target_eidx)) || SN.get(target_eidx) == 0) {
+                    SN.set(target_eidx, target_servt_val);
+                }
+                // Set activity service times and processor utilization
+                List<Integer> acts = this.lqn.actsof.get(target_eidx);
+                if (acts != null) {
+                    for (int aidx : acts) {
+                        if (Double.isNaN(SN.get(aidx)) || SN.get(aidx) == 0) {
+                            double act_servt = this.lqn.hostdem_mean.containsKey(aidx) ? this.lqn.hostdem_mean.get(aidx) : 0;
+                            SN.set(aidx, act_servt);
+                        }
+                    }
+                }
+                // Derive processor utilization (PN) for forwarding targets
+                // PN = throughput * host demand
+                double target_tput_for_pn = Double.isNaN(TN.get(target_eidx)) ? 0 : TN.get(target_eidx);
+                if (target_tput_for_pn > GlobalConstants.FineTol) {
+                    double host_demand = 0;
+                    if (acts != null) {
+                        for (int aidx : acts) {
+                            double act_dem = this.lqn.hostdem_mean.containsKey(aidx) ? this.lqn.hostdem_mean.get(aidx) : 0;
+                            if (Double.isNaN(PN.get(aidx))) PN.set(0, aidx, 0);
+                            PN.set(0, aidx, PN.get(aidx) + target_tput_for_pn * act_dem);
+                            host_demand += act_dem;
+                        }
+                    }
+                    double entry_pn = target_tput_for_pn * host_demand;
+                    if (Double.isNaN(PN.get(target_tidx))) PN.set(0, target_tidx, 0);
+                    PN.set(0, target_tidx, PN.get(target_tidx) + entry_pn);
+                    // Set host processor utilization
+                    int target_hidx = (target_tidx > 0) ? (int) this.lqn.parent.get(0, target_tidx) : -1;
+                    if (target_hidx > 0) {
+                        if (Double.isNaN(PN.get(target_hidx))) PN.set(0, target_hidx, 0);
+                        PN.set(0, target_hidx, PN.get(target_hidx) + entry_pn);
+                    }
+                }
+            }
+        }
+
         for (int e = 1; e <= this.lqn.nentries; e++) {
             int eidx = this.lqn.eshift + e;
             int tidx = (int) this.lqn.parent.get(0, eidx);
@@ -2134,7 +2307,27 @@ public class SolverLN extends EnsembleSolver {
             }
         }
 
-        for (double idx : this.ignore.find().toList1D()) {
+        // Un-ignore forwarding targets for metric reporting: they're reachable via
+        // forwarding calls even though FWD edges are not in lqn.graph. We do this here
+        // (not in construct()) because forwarding targets should NOT have layers built.
+        Matrix ignoreForMetrics = new Matrix(this.ignore);
+        for (int cidx = 1; cidx <= this.lqn.ncalls; cidx++) {
+            if (this.lqn.calltype.get(cidx) == CallType.FWD) {
+                int target_eidx = (int) this.lqn.callpair.get(cidx, 2);
+                int target_tidx = (int) this.lqn.parent.get(0, target_eidx);
+                int target_hidx = (target_tidx > 0) ? (int) this.lqn.parent.get(0, target_tidx) : -1;
+                ignoreForMetrics.set(target_eidx, 0, 0.0);
+                if (target_tidx > 0) ignoreForMetrics.set(target_tidx, 0, 0.0);
+                if (target_hidx > 0) ignoreForMetrics.set(target_hidx, 0, 0.0);
+                List<Integer> acts = this.lqn.actsof.get(target_eidx);
+                if (acts != null) {
+                    for (int aidx : acts) {
+                        ignoreForMetrics.set(aidx, 0, 0.0);
+                    }
+                }
+            }
+        }
+        for (double idx : ignoreForMetrics.find().toList1D()) {
             int idxInt = (int) idx;
             if (idxInt >= 0 && idxInt <= this.lqn.nidx) {
                 QN.set(idxInt, 0.0);
@@ -2202,7 +2395,7 @@ public class SolverLN extends EnsembleSolver {
         AvgTable.setNodeNames(nodeNames);
         AvgTable.setNodeTypes(nodeTypes);
         AvgTable.setOptions(this.options);
-        if (this.options.verbose == VerboseLevel.DEBUG) {
+        if (this.options.verbose == VerboseLevel.STD || this.options.verbose == VerboseLevel.DEBUG) {
             AvgTable.print(true);
         }
         return AvgTable;
@@ -2280,6 +2473,8 @@ public class SolverLN extends EnsembleSolver {
 
     public void init() {
         //operation before starting to iterate
+        line_debug(options.verbose, String.format("LN init: nlayers=%d, iter_max=%d, iter_tol=%e",
+            nlayers, options.iter_max, options.iter_tol));
 
         List<Double> numSet = new ArrayList<Double>();
         if (this.route_prob_updmap.getNonZeroLength() == 0) {
@@ -2338,6 +2533,8 @@ public class SolverLN extends EnsembleSolver {
         this.thinkt_prev.fill(Double.NaN);
         this.callservt_prev = new Matrix(1, this.lqn.ncalls, this.lqn.ncalls);
         this.callservt_prev.fill(Double.NaN);
+        this.callresidt_prev = new Matrix(1, this.lqn.ncalls, this.lqn.ncalls);
+        this.callresidt_prev.fill(Double.NaN);
     }
 
     public Matrix integerMapToMatrix(Map<Integer, List<Integer[]>> cell) {
@@ -2366,9 +2563,11 @@ public class SolverLN extends EnsembleSolver {
     }
 
     public void post(int it) {
+        line_debug(options.verbose, String.format("LN post: iteration %d", it));
 
         updateMetrics(it);
         updateThinkTimes(it);
+
 
         if (this.options.config.interlocking) {
             updatePopulations(it);
@@ -2482,8 +2681,8 @@ public class SolverLN extends EnsembleSolver {
                     node.setService(tmp_class, this.servtproc.get((int) aidx));
                 }
             }
-            // Case 2
-            if ((int) nodeidx == this.ensemble[this.idxhash.get((int) idx).intValue() - 1].getAttribute().getServerIdx()) {
+            // Case 2 - server replica (any of them)
+            else {
                 node.setService(tmp_class, this.servtproc.get((int) aidx));
             }
         }
@@ -2531,9 +2730,8 @@ public class SolverLN extends EnsembleSolver {
             if ((int) nodeidx == this.ensemble[this.idxhash.get((int) idx).intValue() - 1].getAttribute().getClientIdx()) {
                 node.setService(tmp_class, this.callservtproc.get((int) cidx));
             }
-
-            // Case 2 - the call is processed by the server, then replace with the svc time
-            if ((int) nodeidx == this.ensemble[this.idxhash.get((int) idx).intValue() - 1].getAttribute().getServerIdx()) {
+            // Case 2 - server replica (any of them)
+            else {
                 double eidx = this.lqn.callpair.get((int) cidx, 2);
                 node.setService(tmp_class, this.servtproc.get((int) eidx));
             }
@@ -2598,7 +2796,7 @@ public class SolverLN extends EnsembleSolver {
                 this.servt.set(aidx - 1, 0);
                 this.residt.set(aidx - 1, 0);
                 this.tput.set(aidx - 1, 0);
-                for (int w = 1; w < wnd_size; w++) {
+                for (int w = 0; w < wnd_size; w++) {
                     this.servt.set(aidx - 1, this.servt.get(aidx - 1) + this.results.get(rLen - w).get(layerIdx_0).RN.get(nodeidx - 1, classidx - 1) / wnd_size);
                     double TN_ref_w = this.results.get(rLen - w).get(layerIdx_0).TN.get(refstat_k, refclass_c);
                     if (TN_ref_w > GlobalConstants.FineTol) {
@@ -2611,8 +2809,9 @@ public class SolverLN extends EnsembleSolver {
             } else {
                 this.servt.set(aidx - 1, this.results.get(results.size()).get(layerIdx_0).RN.get(nodeidx - 1, classidx - 1));
                 double TN_ref = this.results.get(results.size()).get(layerIdx_0).TN.get(refstat_k, refclass_c);
+                double QN_val = this.results.get(results.size()).get(layerIdx_0).QN.get(nodeidx - 1, classidx - 1);
                 if (TN_ref > GlobalConstants.FineTol) {
-                    this.residt.set(aidx - 1, this.results.get(results.size()).get(layerIdx_0).QN.get(nodeidx - 1, classidx - 1) / TN_ref);
+                    this.residt.set(aidx - 1, QN_val / TN_ref);
                 } else {
                     this.residt.set(aidx - 1, this.results.get(results.size()).get(layerIdx_0).WN.get(nodeidx - 1, classidx - 1));
                 }
@@ -2658,6 +2857,18 @@ public class SolverLN extends EnsembleSolver {
                 }
             }
 
+            // Recover from Inf/NaN: snap back to previous iteration's value
+            if (it > 1) {
+                if ((Double.isInfinite(this.servt.get(aidx - 1)) || Double.isNaN(this.servt.get(aidx - 1))) && !Double.isNaN(this.servt_prev.get(aidx - 1))) {
+                    this.servt.set(aidx - 1, this.servt_prev.get(aidx - 1));
+                }
+                if ((Double.isInfinite(this.residt.get(aidx - 1)) || Double.isNaN(this.residt.get(aidx - 1))) && !Double.isNaN(this.residt_prev.get(aidx - 1))) {
+                    this.residt.set(aidx - 1, this.residt_prev.get(aidx - 1));
+                }
+                if ((Double.isInfinite(this.tput.get(aidx - 1)) || Double.isNaN(this.tput.get(aidx - 1))) && !Double.isNaN(this.tput_prev.get(aidx - 1))) {
+                    this.tput.set(aidx - 1, this.tput_prev.get(aidx - 1));
+                }
+            }
             // Apply under-relaxation if enabled and not first iteration
             double omega = this.relax_omega;
             if (omega < 1.0 && it > 1) {
@@ -2677,9 +2888,11 @@ public class SolverLN extends EnsembleSolver {
             this.tput_prev.set(aidx - 1, this.tput.get(aidx - 1));
 
             // Preserve Immediate type for activities that originally had Immediate service times
+            // Safeguard against MVA numerical instability producing extreme values
+            double max_servt = 1e10;
             if (lqn.hostdem.get(aidx) instanceof Immediate) {
                 this.servtproc.put(aidx, Immediate.getInstance());
-            } else {
+            } else if (this.servt.get(aidx - 1) > 0 && this.servt.get(aidx - 1) <= max_servt) {
                 this.servtproc.put(aidx, Exp.fitMean(this.servt.get(aidx - 1)));
             }
             this.tputproc.put(aidx, Exp.fitRate(this.tput.get(aidx - 1)));
@@ -2734,7 +2947,7 @@ public class SolverLN extends EnsembleSolver {
                 if (this.averagingstart != null && it >= iter_min) {
                     int wnd_size = it - this.averagingstart + 1;
                     this.tput.set(aidx - 1, 0);
-                    for (int w = 1; w < wnd_size; w++) {
+                    for (int w = 0; w < wnd_size; w++) {
                         this.tput.set(aidx - 1, this.tput.get(aidx - 1) + this.results.get(rLen - w).get(this.idxhash.get(idx).intValue() - 1).TN.get(nodeidx - 1, classidx - 1) / wnd_size);
                     }
                 } else {
@@ -2760,12 +2973,25 @@ public class SolverLN extends EnsembleSolver {
                     this.callservt.set(cidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).RN.get(nodeidx - 1, classidx - 1) * this.lqn.callproc_mean.getOrDefault(cidx, 1.0));
                     this.callresidt.set(cidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).WN.get(nodeidx - 1, classidx - 1));
                 }
+                // Growth rate capping removed - it prevents callservt from converging
+                // to the correct value when initial values are near-zero (Immediate)
+                // (matches MATLAB updateMetricsDefault.m)
+                // Recover from Inf/NaN: snap back to previous iteration's value
+                if (it > 1) {
+                    if ((Double.isInfinite(this.callservt.get(cidx - 1)) || Double.isNaN(this.callservt.get(cidx - 1))) && !Double.isNaN(this.callservt_prev.get(cidx - 1))) {
+                        this.callservt.set(cidx - 1, this.callservt_prev.get(cidx - 1));
+                    }
+                    if ((Double.isInfinite(this.callresidt.get(cidx - 1)) || Double.isNaN(this.callresidt.get(cidx - 1))) && !Double.isNaN(this.callresidt_prev.get(cidx - 1))) {
+                        this.callresidt.set(cidx - 1, this.callresidt_prev.get(cidx - 1));
+                    }
+                }
                 // Apply under-relaxation to call service times
                 double omega = this.relax_omega;
                 if (omega < 1.0 && it > 1 && !Double.isNaN(this.callservt_prev.get(cidx - 1))) {
                     this.callservt.set(cidx - 1, omega * this.callservt.get(cidx - 1) + (1 - omega) * this.callservt_prev.get(cidx - 1));
                 }
                 this.callservt_prev.set(cidx - 1, this.callservt.get(cidx - 1));
+                this.callresidt_prev.set(cidx - 1, this.callresidt.get(cidx - 1));
             }
         }
 
@@ -2779,6 +3005,61 @@ public class SolverLN extends EnsembleSolver {
             entry_servt.set(i, 0, 0);
         }
 
+        // Forwarding chain delay computation:
+        // When e1 forwards to e2 with probability p, the CALLER of e1 is blocked for
+        // e1's service + p * (e2's response time + e2's own forwarding chain delay).
+        // This delay should NOT inflate e1's entry_servt (used as server service time
+        // in e1's task layer), but instead be added to callresidt for sync calls
+        // targeting e1 (which goes into the CALLER's entry_servt).
+        // Process in REVERSE order so chained targets (e2→e3) are resolved first.
+        Matrix fwd_chain_delay = new Matrix(1, lqn.nidx, lqn.nidx);
+        for (int fwd_cidx = lqn.ncalls; fwd_cidx >= 1; fwd_cidx--) {
+            if (lqn.calltype.get(fwd_cidx) == CallType.FWD) {
+                int source_eidx = (int) lqn.callpair.get(fwd_cidx, 1);
+                int target_eidx = (int) lqn.callpair.get(fwd_cidx, 2);
+                double fwd_prob = this.lqn.callproc_mean.getOrDefault(fwd_cidx, 1.0);
+
+                // Get target entry's response time (local processing + queuing)
+                double target_R = entry_servt.get(target_eidx - 1, 0);
+
+                // If target entry doesn't have computed service time, use host demands
+                if (target_R == 0 || Double.isNaN(target_R)) {
+                    target_R = 0;
+                    List<Integer> acts = lqn.actsof.get(target_eidx);
+                    if (acts != null) {
+                        for (int aidx : acts) {
+                            if (lqn.hostdem_mean.containsKey(aidx)) {
+                                target_R += lqn.hostdem_mean.get(aidx);
+                            }
+                        }
+                    }
+                }
+
+                // Forwarding chain delay from source = prob * (target response + target's chain delay)
+                fwd_chain_delay.set(source_eidx - 1,
+                    fwd_chain_delay.get(source_eidx - 1) + fwd_prob * (target_R + fwd_chain_delay.get(target_eidx - 1)));
+            }
+        }
+
+        // Add forwarding chain delays to callresidt for sync calls targeting forwarding entries
+        for (int cidx = 1; cidx <= lqn.ncalls; cidx++) {
+            if (lqn.calltype.get(cidx) == CallType.SYNC) {
+                int target_eidx = (int) lqn.callpair.get(cidx, 2);
+                double fwd = fwd_chain_delay.get(target_eidx - 1);
+                if (fwd > GlobalConstants.FineTol) {
+                    this.callresidt.set(cidx - 1, this.callresidt.get(cidx - 1) + fwd);
+                }
+            }
+        }
+
+        // Re-compute entry_servt with forwarding-augmented callresidt
+        // Now entry_servt(e1) stays as local processing only, while
+        // entry_servt(e0) includes forwarding via the augmented callresidt
+        Matrix.concatColumns(this.residt, this.callresidt, out);
+        this.servtmatrix.mult(out.transpose(), entry_servt);
+        for (int i = 0; i < lqn.eshift; i++) {
+            entry_servt.set(i, 0, 0);
+        }
 
         // this block fixes the problem that ResidT is scaled so that the task as Vtask = 1,
         // but in call servt the entries need to have Ventry = 1
@@ -2838,8 +3119,13 @@ public class SolverLN extends EnsembleSolver {
                 //double entry_servt_z = entry_refstat.getServiceProcess(ensemble[this.idxhash.get(hidx).intValue() - 1].getClassByIndex(tidxclass.get(0) - 1)).getMean();
                 //entry_servt.set(eidx - 1, ensemble[this.idxhash.get(hidx).intValue() - 1].getClassByIndex(tidxclass.get(0) - 1).getNumberOfJobs() / entry_tput - entry_servt_z);
                 //System.out.println("value: "+entry_servt.get(eidx - 1) * task_tput / FastMath.max(GlobalConstants.Zero, entry_tput));
-                this.servt.set(eidx - 1, entry_servt.get(eidx - 1) * task_tput / FastMath.max(GlobalConstants.Zero, entry_tput));
-                this.residt.set(eidx - 1, entry_servt.get(eidx - 1) * task_tput / FastMath.max(GlobalConstants.Zero, entry_tput));
+                if (entry_tput > GlobalConstants.Zero) {
+                    this.servt.set(eidx - 1, entry_servt.get(eidx - 1) * task_tput / entry_tput);
+                    this.residt.set(eidx - 1, entry_servt.get(eidx - 1) * task_tput / entry_tput);
+                } else {
+                    this.servt.set(eidx - 1, entry_servt.get(eidx - 1));
+                    this.residt.set(eidx - 1, entry_servt.get(eidx - 1));
+                }
             } else {
                 // For async-only targets, use entry_servt directly
                 // No throughput ratio scaling needed since there are no closed classes
@@ -2848,9 +3134,52 @@ public class SolverLN extends EnsembleSolver {
             }
         }
 
-        // Phase-2 support: compute overtaking probability and apply correction
-        // This must happen AFTER entry throughput is available (computed above)
+        // Phase-2 support: recompute entry-level servt_ph1/servt_ph2 to include call
+        // response time contributions (not just activity host demands), then apply
+        // overtaking correction.
         if (this.hasPhase2) {
+            // First, update entry-level servt_ph1/servt_ph2 to include call contributions
+            for (int e = 1; e <= lqn.nentries; e++) {
+                int eidx = lqn.eshift + e;
+                // Only for entries with phase-2 activity
+                if (this.servt_ph2.get(eidx - 1) > GlobalConstants.FineTol ||
+                    this.servt_ph1.get(eidx - 1) > GlobalConstants.FineTol) {
+                    double call_ph1 = 0;
+                    double call_ph2 = 0;
+                    List<Integer> acts = lqn.actsof.get(eidx);
+                    if (acts != null) {
+                        for (int aidx : acts) {
+                            int a = aidx - lqn.ashift;
+                            if (a > 0 && a <= lqn.nacts) {
+                                List<Integer> calls = lqn.callsof.get(aidx);
+                                if (calls != null) {
+                                    for (int call_cidx : calls) {
+                                        if (lqn.calltype.get(call_cidx) != CallType.SYNC) continue;
+                                        double call_rate = lqn.callproc_mean.getOrDefault(call_cidx, 0.0);
+                                        double cr = this.callresidt.get(call_cidx - 1);
+                                        if (lqn.actphase.get(0, a) == 1) {
+                                            call_ph1 += call_rate * cr;
+                                        } else {
+                                            call_ph2 += call_rate * cr;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Raw phase totals = activity host demands + call contributions
+                    double raw_ph1 = this.servt_ph1.get(eidx - 1) + call_ph1;
+                    double raw_ph2 = this.servt_ph2.get(eidx - 1) + call_ph2;
+                    double raw_total = raw_ph1 + raw_ph2;
+                    // Distribute ratio-adjusted this.servt(eidx) proportionally between phases
+                    if (raw_total > GlobalConstants.FineTol) {
+                        this.servt_ph1.set(eidx - 1, this.servt.get(eidx - 1) * raw_ph1 / raw_total);
+                        this.servt_ph2.set(eidx - 1, this.servt.get(eidx - 1) * raw_ph2 / raw_total);
+                    }
+                }
+            }
+
+            // Now compute overtaking probability and apply correction
             for (int e = 1; e <= lqn.nentries; e++) {
                 int eidx = lqn.eshift + e;
                 int tidx = (int) lqn.parent.get(0, eidx);
@@ -2873,10 +3202,8 @@ public class SolverLN extends EnsembleSolver {
                         this.prOvertake.set(e - 1, 0);
                     }
 
-                    // Caller's response time = phase-1 only + P(overtake) * phase-2
+                    // Caller's response time = phase-1 + P(overtake) * phase-2
                     double overtake_delay = this.prOvertake.get(e - 1) * this.servt_ph2.get(eidx - 1);
-
-                    // The caller sees phase-1 + overtaking correction (not full phase-2)
                     this.residt.set(eidx - 1, this.servt_ph1.get(eidx - 1) + overtake_delay);
                 }
             }
@@ -2886,7 +3213,9 @@ public class SolverLN extends EnsembleSolver {
             int cidx = (int) this.call_classes_updmap.get(r, 2);
             int eidx = (int) lqn.callpair.get(cidx, 2);
             if (this.call_classes_updmap.get(r, 3) > 1) {
-                this.servtproc.put(eidx, Exp.fitMean(this.servt.get(eidx - 1)));
+                if (this.servt.get(eidx - 1) > 0) {
+                    this.servtproc.put(eidx, Exp.fitMean(this.servt.get(eidx - 1)));
+                }
             }
         }
 
@@ -2902,7 +3231,9 @@ public class SolverLN extends EnsembleSolver {
                     this.callservtproc.put(cidx, this.servtproc.get(eidx));
                 } else {
                     // note that respt is per visit, so number of calls is 1
-                    this.callservtproc.put(cidx, Exp.fitMean(this.callservt.get(cidx - 1)));
+                    if (this.callservt.get(cidx - 1) > 0) {
+                        this.callservtproc.put(cidx, Exp.fitMean(this.callservt.get(cidx - 1)));
+                    }
                 }
             }
         }
@@ -3088,7 +3419,11 @@ public class SolverLN extends EnsembleSolver {
                 // Use RN as indicated in MATLAB version (with debugging note)
                 this.servt.set(aidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).RN.get(nodeidx - 1, classidx - 1));
                 this.tput.set(aidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).TN.get(nodeidx - 1, classidx - 1));
-                this.servtproc.put(aidx, Exp.fitMean(this.servt.get(aidx - 1)));
+                // Safeguard against MVA numerical instability producing extreme values
+                double max_servt_mb = 1e10;
+                if (this.servt.get(aidx - 1) > 0 && this.servt.get(aidx - 1) <= max_servt_mb) {
+                    this.servtproc.put(aidx, Exp.fitMean(this.servt.get(aidx - 1)));
+                }
 
                 // Compute residt from QN/TN_ref (matching MATLAB updateMetricsMomentBased)
                 int layerIdx_0 = this.idxhash.get(idx).intValue() - 1;
@@ -3131,6 +3466,11 @@ public class SolverLN extends EnsembleSolver {
                         // callresidt uses WN which already includes visit multiplicity
                         this.callresidt.set(cidx - 1, this.results.get(results.size()).get(this.idxhash.get(idx).intValue() - 1).WN.get(nodeidx - 1, classidx - 1));
                     }
+                    // Growth rate capping removed - it prevents callservt from converging
+                    // to the correct value when initial values are near-zero (Immediate)
+                    // (matches MATLAB updateMetricsDefault.m)
+                    this.callservt_prev.set(cidx - 1, this.callservt.get(cidx - 1));
+                    this.callresidt_prev.set(cidx - 1, this.callresidt.get(cidx - 1));
                 }
             }
 
@@ -3150,17 +3490,42 @@ public class SolverLN extends EnsembleSolver {
                 entry_servt.set(i, 0, 0);
             }
 
-            // Propagate forwarding calls: add target entry's service time to source entry
+            // Forwarding chain delay computation (same approach as updateMetricsDefault):
+            // Compute forwarding chain delays and add to callresidt, not entry_servt
+            Matrix fwd_chain_delay_mb = new Matrix(1, lqn.nidx, lqn.nidx);
+            for (int fwd_cidx = lqn.ncalls; fwd_cidx >= 1; fwd_cidx--) {
+                if (lqn.calltype.get(fwd_cidx) == CallType.FWD) {
+                    int source_eidx = (int) lqn.callpair.get(fwd_cidx, 1);
+                    int target_eidx = (int) lqn.callpair.get(fwd_cidx, 2);
+                    double fwd_prob = this.lqn.callproc_mean.getOrDefault(fwd_cidx, 1.0);
+                    double target_R = entry_servt.get(target_eidx - 1, 0);
+                    if (target_R == 0 || Double.isNaN(target_R)) {
+                        target_R = 0;
+                        List<Integer> acts = lqn.actsof.get(target_eidx);
+                        if (acts != null) {
+                            for (int aidx : acts) {
+                                if (lqn.hostdem_mean.containsKey(aidx)) {
+                                    target_R += lqn.hostdem_mean.get(aidx);
+                                }
+                            }
+                        }
+                    }
+                    fwd_chain_delay_mb.set(source_eidx - 1,
+                        fwd_chain_delay_mb.get(source_eidx - 1) + fwd_prob * (target_R + fwd_chain_delay_mb.get(target_eidx - 1)));
+                }
+            }
+            // Add forwarding chain delays to callresidt for sync calls
             for (int cidx = 1; cidx <= lqn.ncalls; cidx++) {
-                if (lqn.calltype.get(cidx) == CallType.FWD) {
-                    int source_eidx = (int) lqn.callpair.get(cidx, 1);
+                if (lqn.calltype.get(cidx) == CallType.SYNC) {
                     int target_eidx = (int) lqn.callpair.get(cidx, 2);
-                    double fwd_prob = this.lqn.callproc_mean.getOrDefault(cidx, 1.0);
-                    entry_servt.set(source_eidx - 1, 0, entry_servt.get(source_eidx - 1, 0) + fwd_prob * entry_servt.get(target_eidx - 1, 0));
+                    double fwd = fwd_chain_delay_mb.get(target_eidx - 1);
+                    if (fwd > GlobalConstants.FineTol) {
+                        this.callresidt.set(cidx - 1, this.callresidt.get(cidx - 1) + fwd);
+                    }
                 }
             }
 
-            // Update servt for entries
+            // Update servt for entries (no forwarding in entry_servt)
             for (int i = lqn.eshift; i < lqn.eshift + lqn.nentries; i++) {
                 this.servt.set(i, entry_servt.get(i, 0));
             }
@@ -3170,7 +3535,7 @@ public class SolverLN extends EnsembleSolver {
                 entry_servt.set(i, 0, 0);
             }
 
-            // Compute entry-level residt using servtmatrix and activity residt
+            // Compute entry-level residt using servtmatrix and forwarding-augmented callresidt
             Matrix residt_out = new Matrix(1, lqn.nidx + lqn.ncalls + 1, lqn.nidx + lqn.ncalls);
             Matrix.concatColumns(this.residt, this.callresidt, residt_out);
             Matrix entry_residt = new Matrix(this.servtmatrix.getNumRows(), 1, this.servtmatrix.getNumRows());
@@ -3216,8 +3581,12 @@ public class SolverLN extends EnsembleSolver {
                     for (int ii = 0; ii < eidxclass.size(); ii++) {
                         entry_tput += this.results.get(results.size()).get(this.idxhash.get(hidx).intValue() - 1).TN.get(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getClientIdx() - 1, eidxclass.get(ii) - 1);
                     }
-                    this.servt.set(eidx - 1, entry_servt.get(eidx - 1, 0) * task_tput / FastMath.max(GlobalConstants.Zero, entry_tput));
-                    this.residt.set(eidx - 1, entry_residt.get(eidx - 1, 0) * task_tput / FastMath.max(GlobalConstants.Zero, entry_tput));
+                    if (entry_tput > GlobalConstants.Zero) {
+                        this.servt.set(eidx - 1, entry_servt.get(eidx - 1, 0) * task_tput / entry_tput);
+                        this.residt.set(eidx - 1, entry_residt.get(eidx - 1, 0) * task_tput / entry_tput);
+                    } else {
+                        this.residt.set(eidx - 1, entry_residt.get(eidx - 1, 0));
+                    }
                 } else {
                     this.residt.set(eidx - 1, entry_residt.get(eidx - 1, 0));
                 }
@@ -3228,7 +3597,9 @@ public class SolverLN extends EnsembleSolver {
                 int cidx = (int) this.call_classes_updmap.get(r, 2);    // call
                 int eidx = (int) lqn.callpair.get(cidx, 2);             // entry index (1-indexed)
                 if (this.call_classes_updmap.get(r, 3) > 1) {
-                    this.servtproc.put(eidx, Exp.fitMean(this.servt.get(eidx - 1)));
+                    if (this.servt.get(eidx - 1) > 0) {
+                        this.servtproc.put(eidx, Exp.fitMean(this.servt.get(eidx - 1)));
+                    }
                 }
             }
 
@@ -3243,7 +3614,9 @@ public class SolverLN extends EnsembleSolver {
                         this.callservtproc.put(cidx, this.servtproc.get(eidx));
                     } else {
                         // Note that respt is per visit, so number of calls is 1
-                        this.callservtproc.put(cidx, Exp.fitMean(this.callservt.get(cidx - 1)));
+                        if (this.callservt.get(cidx - 1) > 0) {
+                            this.callservtproc.put(cidx, Exp.fitMean(this.callservt.get(cidx - 1)));
+                        }
                     }
                 }
             }
@@ -3554,7 +3927,11 @@ public class SolverLN extends EnsembleSolver {
                     for (int ii = 0; ii < eidxclass.size(); ii++) {
                         entry_tput += this.results.get(results.size()).get(this.idxhash.get(hidx).intValue() - 1).TN.get(ensemble[this.idxhash.get(hidx).intValue() - 1].getAttribute().getClientIdx() - 1, eidxclass.get(ii) - 1);
                     }
-                    this.residt.set(eidx - 1, entry_residt_pc.get(eidx - 1, 0) * task_tput / FastMath.max(GlobalConstants.Zero, entry_tput));
+                    if (entry_tput > GlobalConstants.Zero) {
+                        this.residt.set(eidx - 1, entry_residt_pc.get(eidx - 1, 0) * task_tput / entry_tput);
+                    } else {
+                        this.residt.set(eidx - 1, entry_residt_pc.get(eidx - 1, 0));
+                    }
                 } else {
                     this.residt.set(eidx - 1, entry_residt_pc.get(eidx - 1, 0));
                 }
@@ -3574,166 +3951,714 @@ public class SolverLN extends EnsembleSolver {
         }
     }
 
-    public void updatePopulations(int it) {
-        //task15: updatePopulations function to be written
+    // ========================================================================
+    // LQNS V5 Interlock: Static Analysis (built once at init)
+    // ========================================================================
+
+    /**
+     * Build interlock table and find common entries/sources.
+     * Implements the LQNS V5 static interlock analysis:
+     *   Phase A: Build interlock reachability table (entry-to-entry)
+     *   Phase B: Find common parent entries (branch points) per server
+     *   Phase C: Find source tasks per server (for interlock flow computation)
+     */
+    @SuppressWarnings("unchecked")
+    private void initInterlock() {
         LayeredNetworkStruct lqn = this.lqn;
-        Matrix call_mult_count = this.njobsorig;
-        // interlock scaling factors (not 0-padded)
-        Matrix ilscaling = Matrix.ones(lqn.nhosts + lqn.ntasks, lqn.nhosts + lqn.ntasks);
-        double minremote;
-        for (int h = 1; h <= lqn.nhosts; h++) {
-            minremote = Integer.MAX_VALUE;
-            for (int hops = 1; hops <= this.nlayers; hops++) {
-                int hidx = h;
-                ilscaling.set(hidx - 1, 1.0);
-                if (lqn.isref.get(hidx) == 0) {
-                    //the following are remote (indirect) callers that are certain to be callers
-                    //of task t, hence if they have multiplicity m ten task t cannot have as
-                    //a matter of fact multiplicity more than m
-                    List<Integer> callers = lqn.tasksof.get(hidx);
-                    // caller_conn_components = lqn.conntasks(callers-lqn.tshift);
-                    List<Integer> caller_conn_components = new ArrayList<>();
-                    for (int caller : callers) {
-                        caller_conn_components.add((int) lqn.conntasks.get(0, caller - lqn.tshift - 1));
-                    }
-                    int multcallers = 0;
-                    for (int i : callers) {
-                        multcallers += call_mult_count.get(i, hidx);
-                    }
-                    Matrix indirect_callers = this.ptaskcallers_step.get(hops).getRow(hidx - 1).find();
-                    double multremote = 0;
-                    for (Double remidxDouble : indirect_callers.toList1D()) {
-                        // first we consider the update where the remote caller is an infinite server
-                        // but since the ref task has finite multiplicity it is treated
-                        // as normal
 
-                        int remidx = remidxDouble.intValue() + 1;
-                        if (lqn.sched.get(remidx) == SchedStrategy.INF && lqn.isref.get(remidx) == 0) {
-                            multremote = Integer.MAX_VALUE;
-                        } else {
-                            // now we multiply the probability that a request to hidx
-                            // originates from remidx
-                            multremote += this.ptaskcallers_step.get(hops).get(hidx - 1, remidx - 1) * call_mult_count.get(remidx, hidx);
-                        }
-                    }
-                    if ((multcallers > multremote && multremote > GlobalConstants.CoarseTol) && (multremote != Integer.MAX_VALUE) && multremote < minremote) {
-                        minremote = multremote;
-                        // we spread the scaling proportionally to the direct caller probabilities
-                        List<Double> caller_spreading_ratio = new ArrayList<Double>();
-                        for (int i = 0; i < callers.size(); i++) {
-                            caller_spreading_ratio.add(i, this.ptaskcallers.get(hidx, callers.get(i)));
-                        }
-                        List<Integer> uniqueCallerConnComponents = new ArrayList<>(new HashSet<>(caller_conn_components));
-                        for (int u : uniqueCallerConnComponents) {
-                            double caller_ratio_sum = 0;
-                            for (int i = 0; i < callers.size(); i++) {
-                                if (caller_conn_components.get(i) == u) {
-                                    caller_ratio_sum += caller_spreading_ratio.get(i);
-                                }
-                            }
-                            for (int i = 0; i < callers.size(); i++) {
-                                if (caller_conn_components.get(i) == u) {
-                                    caller_spreading_ratio.set(i, caller_spreading_ratio.get(i) / caller_ratio_sum);
-                                }
-                            }
-                        }
-                        for (int k = 0; k < callers.size(); k++) {
-                            int c = callers.get(k);
-                            double num = FastMath.min(1, multremote / (double) multcallers * caller_spreading_ratio.get(k));
-                            ilscaling.set(c - 1, hidx - 1, num);
-                        }
-                    }
-                }
-            }
+        // Phase A: Build interlock reachability table
+        int nentries = lqn.nentries;
+        double[][] il_all = new double[nentries][nentries];
+        double[][] il_ph1 = new double[nentries][nentries];
+
+        for (int e = 1; e <= nentries; e++) {
+            int eidx = lqn.eshift + e;
+            boolean[] visited = new boolean[nentries];
+            traceInterlockPaths(lqn, eidx, e, 1.0, 1.0, visited, il_all, il_ph1, 0);
         }
 
+        this.il_table_all = il_all;
+        this.il_table_ph1 = il_ph1;
 
-        int maxhops = this.nlayers;
+        // Phase B+C: Find common entries and sources per server entity
+        int arraySize = lqn.tshift + lqn.ntasks + 1;
+        this.il_common_entries = new List[arraySize];
+        this.il_source_tasks_all = new List[arraySize];
+        this.il_source_tasks_ph2 = new List[arraySize];
+        this.il_num_sources = new double[arraySize];
+
+        // Process task servers
         for (int t = 1; t <= lqn.ntasks; t++) {
-            minremote = Integer.MAX_VALUE;
-            for (int hops = 1; hops <= maxhops; hops++) { // hops <= this.nlayers
-                int tidx = lqn.tshift + t;
-                if (lqn.isref.get(tidx) == 0) {
-                    // the following are remote (indirect) callers that certain to be
-                    // callers of task t, hence if they have multiplicity m then task t
-                    // cannot have as a matter of fact multiplicity more than m
-                    // [calling_idx, called_entries] = find(lqn.iscaller(:, lqn.entriesof{tidx}));
-                    List<Integer> calling_idx = new ArrayList<>();
-                    for (int eidx : lqn.entriesof.get(tidx)) {
-                        for (int i = 0; i < lqn.iscaller.getNumRows(); i++) {
-                            if (lqn.iscaller.get(i, eidx) != 0) {
-                                calling_idx.add(i);
-                            }
-                        }
+            int tidx = lqn.tshift + t;
+            if (lqn.isref.get(tidx) != 0 || lqn.sched.get(tidx) == SchedStrategy.INF) {
+                continue;
+            }
+            int[][] result = findInterlockForServer(lqn, tidx, il_all, il_ph1);
+            this.il_common_entries[tidx] = toIntList(result[0]);
+            this.il_source_tasks_all[tidx] = toIntList(result[1]);
+            this.il_source_tasks_ph2[tidx] = toIntList(result[2]);
+            this.il_num_sources[tidx] = result[3].length > 0 ? result[3][0] : 0;
+        }
+
+        // Process host servers
+        for (int h = 1; h <= lqn.nhosts; h++) {
+            int hidx = h;
+            if (lqn.sched.get(hidx) == SchedStrategy.INF) {
+                continue;
+            }
+            int[][] result = findInterlockForServer(lqn, hidx, il_all, il_ph1);
+            this.il_common_entries[hidx] = toIntList(result[0]);
+            this.il_source_tasks_all[hidx] = toIntList(result[1]);
+            this.il_source_tasks_ph2[hidx] = toIntList(result[2]);
+            this.il_num_sources[hidx] = result[3].length > 0 ? result[3][0] : 0;
+        }
+    }
+
+    private static List<Integer> toIntList(int[] arr) {
+        List<Integer> list = new ArrayList<Integer>();
+        for (int v : arr) {
+            list.add(v);
+        }
+        return list;
+    }
+
+    /**
+     * Phase A: Recursive path tracing for interlock reachability.
+     */
+    private void traceInterlockPaths(LayeredNetworkStruct lqn, int eidx, int root_e,
+                                      double prob_all, double prob_ph1, boolean[] visited,
+                                      double[][] il_all, double[][] il_ph1, int depth) {
+        int e = eidx - lqn.eshift;
+        if (e < 1 || e > lqn.nentries) return;
+        if (visited[e - 1]) return;
+        visited[e - 1] = true;
+
+        // Record reachability from root to this entry
+        il_all[root_e - 1][e - 1] += prob_all;
+        il_ph1[root_e - 1][e - 1] += prob_ph1;
+
+        // Follow synchronous calls from activities of this entry
+        List<Integer> acts = lqn.actsof.get(eidx);
+        if (acts != null) {
+            for (int aidx : acts) {
+                if (aidx <= lqn.ashift || aidx > lqn.ashift + lqn.nacts) continue;
+                int a = aidx - lqn.ashift;
+
+                // Pruning: at non-root entries (depth > 0), skip phase-2+ activities
+                if (depth > 0 && lqn.actphase != null && lqn.actphase.get(0, a) > 1) {
+                    continue;
+                }
+
+                boolean is_ph1 = true;
+                if (lqn.actphase != null && lqn.actphase.get(0, a) > 1) {
+                    is_ph1 = false;
+                }
+
+                // Follow calls from this activity
+                List<Integer> calls_from_act = lqn.callsof.get(aidx);
+                if (calls_from_act != null) {
+                    for (int cidx : calls_from_act) {
+                        if (cidx < 1 || cidx > lqn.ncalls) continue;
+                        if (lqn.calltype.get(cidx) != CallType.SYNC) continue;
+                        double call_mean = lqn.callproc_mean.getOrDefault(cidx, 0.0);
+                        if (call_mean <= 0) continue;
+                        int dst_eidx = (int) lqn.callpair.get(cidx, 2);
+                        int dst_e = dst_eidx - lqn.eshift;
+                        if (dst_e < 1 || dst_e > lqn.nentries) continue;
+
+                        double next_all = prob_all * call_mean;
+                        double next_ph1 = is_ph1 ? prob_ph1 * call_mean : 0;
+
+                        traceInterlockPaths(lqn, dst_eidx, root_e, next_all, next_ph1, visited, il_all, il_ph1, depth + 1);
                     }
-                    // callers = intersect(lqn.tshift+(1:lqn.ntasks), unique(calling_idx)');
-                    List<Integer> taskRange = new ArrayList<>();
-                    for (int i = lqn.tshift + 1; i <= lqn.tshift + lqn.ntasks; i++) {
-                        taskRange.add(i);
+                }
+            }
+        }
+
+        visited[e - 1] = false;
+    }
+
+    /**
+     * Phase B+C: Find interlock for a single server.
+     * Returns int[4][] where [0]=commonEntries, [1]=srcAll, [2]=srcPh2, [3]={numSources}.
+     */
+    private int[][] findInterlockForServer(LayeredNetworkStruct lqn, int serverIdx,
+                                            double[][] il_all, double[][] il_ph1) {
+        int[][] empty = new int[][] { new int[0], new int[0], new int[0], new int[0] };
+
+        // Get server entry numbers
+        List<Integer> serverEntryNums = getServerEntryNums(lqn, serverIdx);
+        if (serverEntryNums.isEmpty()) return empty;
+
+        // Get client tasks
+        List<Integer> clientTasks = getClientTasks(lqn, serverIdx);
+        if (clientTasks.size() < 1) return empty;
+
+        // Get client entries that reach the server
+        List<int[]> clientEntryPairs = new ArrayList<int[]>(); // [taskIdx, entryNum]
+        for (int ct : clientTasks) {
+            List<Integer> entries = lqn.entriesof.get(ct);
+            if (entries == null) continue;
+            for (int ce : entries) {
+                int ce_num = ce - lqn.eshift;
+                if (ce_num < 1 || ce_num > lqn.nentries) continue;
+                for (int se_num : serverEntryNums) {
+                    if (il_all[ce_num - 1][se_num - 1] > 0) {
+                        clientEntryPairs.add(new int[] { ct, ce_num });
+                        break;
                     }
-                    List<Integer> callers = new ArrayList<>();
-                    for (int idx : calling_idx) {
-                        if (taskRange.contains(idx) && !callers.contains(idx)) {
-                            callers.add(idx);
-                        }
-                    }
-                    // caller_conn_components = lqn.conntasks(callers-lqn.tshift);
-                    List<Integer> caller_conn_components = new ArrayList<>();
-                    for (int caller : callers) {
-                        caller_conn_components.add((int) lqn.conntasks.get(0, caller - lqn.tshift - 1));
-                    }
-                    int multcallers = 0;
-                    for (int i : callers) {
-                        multcallers += this.njobsorig.get(i, tidx);
-                    }
-                    Matrix rowhidx = new Matrix(1, this.ptaskcallers_step.get(hops).getNumCols(), this.ptaskcallers_step.get(hops).getNumCols());
-                    Matrix.extractRows(this.ptaskcallers_step.get(hops), tidx - 1, tidx, rowhidx);
-                    Matrix indirect_callers = rowhidx.find(); // not 0-padded
-                    double multremote = 0;
-                    for (Double remidxDouble : indirect_callers.toList1D()) {
-                        int remidx = remidxDouble.intValue() + 1;
-                        if (lqn.sched.get(remidx) == SchedStrategy.INF) {
-                            multremote = Integer.MAX_VALUE;
-                        } else {
-                            multremote += this.ptaskcallers_step.get(hops).get(tidx - 1, remidx - 1) * call_mult_count.get(remidx, tidx);
-                        }
-                    }
-                    if ((multcallers > multremote && multremote > GlobalConstants.CoarseTol) && (multremote != Integer.MAX_VALUE) && multremote < minremote) {
-                        minremote = multremote;
-                        // we spread the scaling proportionally to the direct caller probabilities
-                        List<Double> caller_spreading_ratio = new ArrayList<Double>();
-                        for (int i = 0; i < callers.size(); i++) {
-                            caller_spreading_ratio.add(i, this.ptaskcallers.get(tidx, callers.get(i)));
-                        }
-                        List<Integer> uniqueCallerConnComponents = new ArrayList<>(new HashSet<>(caller_conn_components));
-                        for (int u : uniqueCallerConnComponents) {
-                            double caller_ratio_sum = 0;
-                            for (int i = 0; i < callers.size(); i++) {
-                                if (caller_conn_components.get(i) == u) {
-                                    caller_ratio_sum += caller_spreading_ratio.get(i);
+                }
+            }
+        }
+
+        if (clientEntryPairs.size() < 2) return empty;
+
+        // Find common parent entries (branch points)
+        Set<Integer> commonEntriesSet = new LinkedHashSet<Integer>();
+        int nPairs = clientEntryPairs.size();
+        for (int i = 0; i < nPairs; i++) {
+            for (int j = i + 1; j < nPairs; j++) {
+                if (clientEntryPairs.get(i)[0] == clientEntryPairs.get(j)[0]) continue; // Same task
+                int entryA_num = clientEntryPairs.get(i)[1];
+                int entryC_num = clientEntryPairs.get(j)[1];
+
+                // Search all tasks for common parents
+                for (int t = 1; t <= lqn.ntasks; t++) {
+                    int tidx = lqn.tshift + t;
+                    List<Integer> entries_of_task = lqn.entriesof.get(tidx);
+                    if (entries_of_task == null) continue;
+                    for (int ex : entries_of_task) {
+                        for (int ey : entries_of_task) {
+                            int ex_num = ex - lqn.eshift;
+                            int ey_num = ey - lqn.eshift;
+                            if (ex_num < 1 || ey_num < 1 || ex_num > lqn.nentries || ey_num > lqn.nentries) continue;
+                            if (il_all[ex_num - 1][entryA_num - 1] > 0 && il_all[ey_num - 1][entryC_num - 1] > 0) {
+                                if (isBranchPointCheck(lqn, ex, entryA_num + lqn.eshift, ey, entryC_num + lqn.eshift, il_all)) {
+                                    commonEntriesSet.add(ex);
                                 }
                             }
-                            for (int i = 0; i < callers.size(); i++) {
-                                if (caller_conn_components.get(i) == u) {
-                                    caller_spreading_ratio.set(i, caller_spreading_ratio.get(i) / caller_ratio_sum);
-                                }
-                            }
-                        }
-                        for (int k = 0; k < callers.size(); k++) {
-                            int c = callers.get(k);
-                            double num = FastMath.min(1, multremote / (double) multcallers * caller_spreading_ratio.get(k));
-                            ilscaling.set(c - 1, tidx - 1, num);
                         }
                     }
                 }
             }
         }
-        // this.ilscaling starting from (0,0)
-        // this.njobs starting from (1,1)
-        this.ilscaling = ilscaling.copy();
-        for (int i = 0; i < this.ilscaling.getNumRows(); i++) {
-            for (int j = 0; j < this.ilscaling.getNumCols(); j++) {
-                this.njobs.set(i + 1, j + 1, this.njobsorig.get(i + 1, j + 1) * this.ilscaling.get(i, j));
+
+        if (commonEntriesSet.isEmpty()) return empty;
+
+        List<Integer> commonEntries = new ArrayList<Integer>(commonEntriesSet);
+
+        // Phase C: Find source tasks
+        Set<Integer> interlockedTasksSet = new LinkedHashSet<Integer>();
+        for (int ce_eidx : commonEntries) {
+            List<Integer> itasks = findInterlockedTasks(lqn, ce_eidx, serverIdx, il_all);
+            interlockedTasksSet.addAll(itasks);
+        }
+        List<Integer> interlockedTasks = new ArrayList<Integer>(interlockedTasksSet);
+
+        // All source tasks = tasks owning common entries
+        Set<Integer> allSrcSet = new LinkedHashSet<Integer>();
+        for (int ce_eidx : commonEntries) {
+            int owner_tidx = (int) lqn.parent.get(0, ce_eidx);
+            allSrcSet.add(owner_tidx);
+        }
+
+        // Remove interlocked tasks from allSrcTasks
+        allSrcSet.removeAll(interlockedTasksSet);
+
+        // Ph2 sources: interlocked tasks with phase-2 activities reaching server
+        Set<Integer> ph2SrcSet = new LinkedHashSet<Integer>();
+        for (int it : interlockedTasks) {
+            List<Integer> itEntries = lqn.entriesof.get(it);
+            if (itEntries == null) continue;
+            for (int ie : itEntries) {
+                if (hasPhase2Activities(lqn, ie)) {
+                    int ie_num = ie - lqn.eshift;
+                    if (ie_num >= 1 && ie_num <= lqn.nentries) {
+                        boolean found = false;
+                        for (int se_num : serverEntryNums) {
+                            if (il_all[ie_num - 1][se_num - 1] - il_ph1[ie_num - 1][se_num - 1] > 0) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (found) {
+                            ph2SrcSet.add(it);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add external sources (tasks calling into interlocked paths from outside)
+        for (int it : interlockedTasks) {
+            List<Integer> itEntries = lqn.entriesof.get(it);
+            if (itEntries == null) continue;
+            for (int ie : itEntries) {
+                for (int ci = 0; ci < lqn.iscaller.getNumRows(); ci++) {
+                    if (lqn.iscaller.get(ci, ie) != 0) {
+                        if (ci > lqn.tshift && ci <= lqn.tshift + lqn.ntasks) {
+                            if (!interlockedTasksSet.contains(ci)) {
+                                allSrcSet.add(ci);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Count total source multiplicity
+        double nsrc = 0;
+        for (int st : allSrcSet) {
+            nsrc += lqn.mult.get(st);
+        }
+
+        List<Integer> allSrcTasks = new ArrayList<Integer>(allSrcSet);
+        List<Integer> ph2SrcTasks = new ArrayList<Integer>(ph2SrcSet);
+
+        return new int[][] {
+            listToIntArray(commonEntries),
+            listToIntArray(allSrcTasks),
+            listToIntArray(ph2SrcTasks),
+            new int[] { (int) nsrc }
+        };
+    }
+
+    private static int[] listToIntArray(List<Integer> list) {
+        int[] arr = new int[list.size()];
+        for (int i = 0; i < list.size(); i++) {
+            arr[i] = list.get(i);
+        }
+        return arr;
+    }
+
+    /** Get server entry numbers (1-based entry numbers, not absolute indices). */
+    private List<Integer> getServerEntryNums(LayeredNetworkStruct lqn, int serverIdx) {
+        List<Integer> nums = new ArrayList<Integer>();
+        if (serverIdx <= lqn.nhosts) {
+            List<Integer> tasks = lqn.tasksof.get(serverIdx);
+            if (tasks != null) {
+                for (int tidx : tasks) {
+                    List<Integer> entries = lqn.entriesof.get(tidx);
+                    if (entries != null) {
+                        for (int se : entries) {
+                            nums.add(se - lqn.eshift);
+                        }
+                    }
+                }
+            }
+        } else {
+            List<Integer> entries = lqn.entriesof.get(serverIdx);
+            if (entries != null) {
+                for (int se : entries) {
+                    nums.add(se - lqn.eshift);
+                }
+            }
+        }
+        return nums;
+    }
+
+    /** Get client tasks for a server. */
+    private List<Integer> getClientTasks(LayeredNetworkStruct lqn, int serverIdx) {
+        if (serverIdx <= lqn.nhosts) {
+            List<Integer> tasks = lqn.tasksof.get(serverIdx);
+            return tasks != null ? tasks : new ArrayList<Integer>();
+        } else {
+            Set<Integer> clientSet = new LinkedHashSet<Integer>();
+            List<Integer> server_entries = lqn.entriesof.get(serverIdx);
+            if (server_entries != null) {
+                for (int se : server_entries) {
+                    for (int ci = 0; ci < lqn.iscaller.getNumRows(); ci++) {
+                        if (lqn.iscaller.get(ci, se) != 0) {
+                            if (ci > lqn.tshift && ci <= lqn.tshift + lqn.ntasks) {
+                                clientSet.add(ci);
+                            }
+                        }
+                    }
+                }
+            }
+            return new ArrayList<Integer>(clientSet);
+        }
+    }
+
+    /** Branch point check. */
+    private boolean isBranchPointCheck(LayeredNetworkStruct lqn, int srcX_eidx, int entryA_eidx,
+                                        int srcY_eidx, int entryB_eidx, double[][] il_all) {
+        int taskA = (int) lqn.parent.get(0, entryA_eidx);
+        int taskB = (int) lqn.parent.get(0, entryB_eidx);
+        int taskX = (int) lqn.parent.get(0, srcX_eidx);
+
+        // Multiserver client: if X, A, B same task => not branch point
+        if (taskX == taskA && taskX == taskB) return false;
+
+        // Quick check: direct call
+        if (srcX_eidx == entryA_eidx || srcY_eidx == entryB_eidx) return true;
+
+        int entryA_num = entryA_eidx - lqn.eshift;
+        int entryB_num = entryB_eidx - lqn.eshift;
+
+        // Check downstream calls diverge to different tasks
+        List<Integer> dstTasks_X = getCallDstTasks(lqn, srcX_eidx, entryA_num, il_all);
+        List<Integer> dstTasks_Y = getCallDstTasks(lqn, srcY_eidx, entryB_num, il_all);
+
+        for (int dx : dstTasks_X) {
+            for (int dy : dstTasks_Y) {
+                if (dx != dy) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Get destination tasks of sync calls from an entry reaching a target. */
+    private List<Integer> getCallDstTasks(LayeredNetworkStruct lqn, int src_eidx, int target_e_num, double[][] il_all) {
+        Set<Integer> dstTasks = new LinkedHashSet<Integer>();
+        List<Integer> acts = lqn.actsof.get(src_eidx);
+        if (acts == null) return new ArrayList<Integer>(dstTasks);
+        for (int aidx : acts) {
+            if (aidx <= lqn.ashift || aidx > lqn.ashift + lqn.nacts) continue;
+            List<Integer> calls = lqn.callsof.get(aidx);
+            if (calls == null) continue;
+            for (int cidx : calls) {
+                if (cidx < 1 || cidx > lqn.ncalls) continue;
+                if (lqn.calltype.get(cidx) != CallType.SYNC) continue;
+                int dst_eidx = (int) lqn.callpair.get(cidx, 2);
+                int dst_e = dst_eidx - lqn.eshift;
+                if (dst_e >= 1 && dst_e <= lqn.nentries && il_all[dst_e - 1][target_e_num - 1] > 0) {
+                    dstTasks.add((int) lqn.parent.get(0, dst_eidx));
+                }
+            }
+        }
+        return new ArrayList<Integer>(dstTasks);
+    }
+
+    /** Get interlocked tasks on paths from an entry to a server. */
+    private List<Integer> findInterlockedTasks(LayeredNetworkStruct lqn, int src_eidx, int serverIdx, double[][] il_all) {
+        boolean[] visited = new boolean[lqn.nentries];
+        List<Integer> itasks = new ArrayList<Integer>();
+        traceToServerRec(lqn, src_eidx, serverIdx, il_all, visited, itasks, true);
+        return itasks;
+    }
+
+    private void traceToServerRec(LayeredNetworkStruct lqn, int eidx, int serverIdx,
+                                   double[][] il_all, boolean[] visited, List<Integer> itasks, boolean isHead) {
+        int e = eidx - lqn.eshift;
+        if (e < 1 || e > lqn.nentries || visited[e - 1]) return;
+
+        int ownerTask = (int) lqn.parent.get(0, eidx);
+
+        // Check if we reached the server
+        if (ownerTask == serverIdx) return;
+        if (serverIdx <= lqn.nhosts && (int) lqn.parent.get(0, ownerTask) == serverIdx) return;
+
+        visited[e - 1] = true;
+
+        // Follow synchronous calls from ALL phases
+        List<Integer> acts = lqn.actsof.get(eidx);
+        boolean found = false;
+        if (acts != null) {
+            for (int aidx : acts) {
+                if (aidx <= lqn.ashift || aidx > lqn.ashift + lqn.nacts) continue;
+                List<Integer> calls = lqn.callsof.get(aidx);
+                if (calls == null) continue;
+                for (int cidx : calls) {
+                    if (cidx < 1 || cidx > lqn.ncalls || lqn.calltype.get(cidx) != CallType.SYNC) continue;
+                    int dst_eidx = (int) lqn.callpair.get(cidx, 2);
+                    int dst_task = (int) lqn.parent.get(0, dst_eidx);
+
+                    // Check if destination reaches server
+                    boolean reachesServer = false;
+                    if (dst_task == serverIdx) {
+                        reachesServer = true;
+                    } else if (serverIdx <= lqn.nhosts && (int) lqn.parent.get(0, dst_task) == serverIdx) {
+                        reachesServer = true;
+                    } else {
+                        int dst_e = dst_eidx - lqn.eshift;
+                        List<Integer> serverEntryNums = getServerEntryNums(lqn, serverIdx);
+                        for (int se_num : serverEntryNums) {
+                            if (dst_e >= 1 && dst_e <= lqn.nentries && il_all[dst_e - 1][se_num - 1] > 0) {
+                                reachesServer = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (reachesServer) {
+                        traceToServerRec(lqn, dst_eidx, serverIdx, il_all, visited, itasks, false);
+                        found = true;
+                    }
+                }
+            }
+        }
+
+        if (found && !isHead) {
+            if (!itasks.contains(ownerTask)) {
+                itasks.add(ownerTask);
+            }
+        }
+
+        visited[e - 1] = false;
+    }
+
+    /** Check if entry has phase-2 activities. */
+    private boolean hasPhase2Activities(LayeredNetworkStruct lqn, int eidx) {
+        if (lqn.actphase == null) return false;
+        List<Integer> acts = lqn.actsof.get(eidx);
+        if (acts == null) return false;
+        for (int aidx : acts) {
+            int a = aidx - lqn.ashift;
+            if (a > 0 && a <= lqn.nacts && lqn.actphase.get(0, a) > 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ========================================================================
+    // LQNS V5 Interlock: Dynamic Flow Computation (called each iteration)
+    // ========================================================================
+
+    /**
+     * Compute interlock probability for a (client, server) pair.
+     */
+    private double computeInterlockProb(LayeredNetworkStruct lqn, int client_tidx, int server_idx) {
+        List<Integer> commonEntries = this.il_common_entries[server_idx];
+        double numSources = this.il_num_sources[server_idx];
+        List<Integer> allSrcTasks = this.il_source_tasks_all[server_idx];
+        List<Integer> ph2SrcTasks = this.il_source_tasks_ph2[server_idx];
+
+        if (numSources == 0 || commonEntries == null || commonEntries.isEmpty()) return 0;
+
+        // Get client entries
+        List<Integer> client_entries = lqn.entriesof.get(client_tidx);
+        if (client_entries == null) return 0;
+
+        // Compute interlocked flow (LQNS interlockedFlow formula)
+        double sum_flow = 0;
+        for (int ce_eidx : commonEntries) {
+            int srcTask = (int) lqn.parent.get(0, ce_eidx);
+            int ce_num = ce_eidx - lqn.eshift;
+
+            for (int dstA_eidx : client_entries) {
+                int dstA_num = dstA_eidx - lqn.eshift;
+                if (dstA_num < 1 || dstA_num > lqn.nentries) continue;
+                if (this.il_table_all[ce_num - 1][dstA_num - 1] <= 0) continue;
+
+                // Get source entry throughput
+                double ce_tput = getEntryTput(lqn, ce_eidx, srcTask);
+                if (ce_tput <= GlobalConstants.FineTol) continue;
+
+                // Check maxPhase for the source entry
+                boolean hasP2 = hasPhase2Activities(lqn, ce_eidx);
+
+                if (!hasP2 && allSrcTasks.contains(srcTask)) {
+                    sum_flow += ce_tput * this.il_table_all[ce_num - 1][dstA_num - 1];
+                } else if (hasP2 && allSrcTasks.contains(srcTask)) {
+                    sum_flow += ce_tput * this.il_table_ph1[ce_num - 1][dstA_num - 1];
+                }
+
+                double ph2 = this.il_table_all[ce_num - 1][dstA_num - 1] - this.il_table_ph1[ce_num - 1][dstA_num - 1];
+                if (ph2 > 0 && ph2SrcTasks.contains(srcTask)) {
+                    sum_flow += ce_tput * ph2;
+                }
+            }
+        }
+
+        // Get client throughput
+        double client_tput = getTaskTput(lqn, client_tidx);
+        if (client_tput <= GlobalConstants.FineTol) return 0;
+
+        double client_threads = lqn.mult.get(client_tidx);
+        double IL = Math.min(sum_flow, client_tput) / (client_tput * client_threads * numSources);
+        double prIL = IL / lqn.mult.get(server_idx);
+        prIL = Math.min(prIL, 1.0);
+        return prIL;
+    }
+
+    /** Helper: get entry throughput. */
+    private double getEntryTput(LayeredNetworkStruct lqn, int eidx, int taskIdx) {
+        double tputVal = this.tput.get(eidx - 1);
+        if (tputVal <= GlobalConstants.FineTol) {
+            List<Integer> acts = lqn.actsof.get(eidx);
+            if (acts != null && !acts.isEmpty()) {
+                tputVal = this.tput.get(acts.get(0) - 1);
+            }
+        }
+        if (tputVal <= GlobalConstants.FineTol) {
+            tputVal = this.tput.get(taskIdx - 1);
+        }
+        return tputVal;
+    }
+
+    /** Helper: get task throughput. */
+    private double getTaskTput(LayeredNetworkStruct lqn, int tidx) {
+        double tputVal = this.tput.get(tidx - 1);
+        if (tputVal <= GlobalConstants.FineTol) {
+            List<Integer> entries = lqn.entriesof.get(tidx);
+            if (entries != null) {
+                for (int eidx : entries) {
+                    double et = this.tput.get(eidx - 1);
+                    if (et <= GlobalConstants.FineTol) {
+                        List<Integer> acts = lqn.actsof.get(eidx);
+                        if (acts != null && !acts.isEmpty()) {
+                            et = this.tput.get(acts.get(0) - 1);
+                        }
+                    }
+                    tputVal += et;
+                }
+            }
+        }
+        return tputVal;
+    }
+
+    public void updatePopulations(int it) {
+        // LQNS V5-style interlock: adjust call/activity residence times
+        // to remove interlocked waiting, rather than modifying populations.
+        LayeredNetworkStruct lqn = this.lqn;
+
+        if (!this.options.config.interlocking || this.il_common_entries == null) {
+            return;
+        }
+
+        // Save originals for proportional entry_servt update
+        Matrix callresidt_orig = this.callresidt.copy();
+        Matrix residt_orig = this.residt.copy();
+        boolean adjusted = false;
+
+        // Pass 1: For each sync call, check if destination server has interlock
+        for (int cidx = 1; cidx <= lqn.ncalls; cidx++) {
+            if (lqn.calltype.get(cidx) != CallType.SYNC) continue;
+
+            int dst_eidx = (int) lqn.callpair.get(cidx, 2);
+            int server_tidx = (int) lqn.parent.get(0, dst_eidx);
+
+            // Find the server entity with interlock data
+            int server_for_il = -1;
+            if (server_tidx < this.il_common_entries.length && this.il_common_entries[server_tidx] != null && !this.il_common_entries[server_tidx].isEmpty()) {
+                server_for_il = server_tidx;
+            } else {
+                // Check host server
+                if (server_tidx > lqn.tshift) {
+                    int host_idx = (int) lqn.parent.get(0, server_tidx);
+                    if (host_idx >= 1 && host_idx < this.il_common_entries.length && this.il_common_entries[host_idx] != null && !this.il_common_entries[host_idx].isEmpty()) {
+                        server_for_il = host_idx;
+                    }
+                }
+            }
+            if (server_for_il < 0) continue;
+
+            // Get client task (activity -> task via parent)
+            int src_aidx = (int) lqn.callpair.get(cidx, 1);
+            int client_tidx = (int) lqn.parent.get(0, src_aidx);
+
+            // Compute prIL using interlockedFlow formula
+            double prIL = computeInterlockProb(lqn, client_tidx, server_for_il);
+            if (prIL <= GlobalConstants.FineTol) continue;
+
+            // Compute waiting time reduction
+            double S = this.servt.get(dst_eidx - 1);  // service time at destination entry
+            double call_mean = lqn.callproc_mean.getOrDefault(cidx, 0.0);
+            if (call_mean <= 0 || this.callservt.get(cidx - 1) <= 0) continue;
+
+            double RN = this.callservt.get(cidx - 1) / call_mean;  // response time per visit
+            double W = Math.max(0, RN - S);  // waiting time per visit
+
+            if (W > GlobalConstants.FineTol) {
+                double RN_adj = S + (1 - prIL) * W;
+                double scale = RN_adj / RN;
+                this.callservt.set(cidx - 1, this.callservt.get(cidx - 1) * scale);
+                this.callresidt.set(cidx - 1, this.callresidt.get(cidx - 1) * scale);
+                if (this.callservt.get(cidx - 1) > 0) {
+                    this.callservtproc.put(cidx, Exp.fitMean(this.callservt.get(cidx - 1)));
+                }
+                adjusted = true;
+            }
+        }
+
+        // Pass 2: Host-level interlock -- reduce processor queueing in residt
+        for (int h = 1; h <= lqn.nhosts; h++) {
+            int hidx = h;
+            if (this.il_common_entries[hidx] == null || this.il_common_entries[hidx].isEmpty()) continue;
+
+            // Compute prIL and processor utilization for each task on this host
+            List<Integer> host_tasks = lqn.tasksof.get(hidx);
+            if (host_tasks == null) continue;
+            double[] task_prIL = new double[host_tasks.size()];
+            double[] task_util = new double[host_tasks.size()];
+            for (int ti = 0; ti < host_tasks.size(); ti++) {
+                int tidx = host_tasks.get(ti);
+                task_prIL[ti] = computeInterlockProb(lqn, tidx, hidx);
+                // Compute task's processor utilization
+                List<Integer> entries = lqn.entriesof.get(tidx);
+                if (entries != null) {
+                    for (int eidx : entries) {
+                        List<Integer> acts = lqn.actsof.get(eidx);
+                        if (acts != null) {
+                            for (int aidx : acts) {
+                                double tputVal = this.tput.get(aidx - 1);
+                                double hostdem = lqn.hostdem_mean.containsKey(aidx) ? lqn.hostdem_mean.get(aidx) : 0;
+                                task_util[ti] += tputVal * hostdem;
+                            }
+                        }
+                    }
+                }
+            }
+
+            double U_total = 0;
+            double U_interlocked = 0;
+            for (int ti = 0; ti < host_tasks.size(); ti++) {
+                U_total += task_util[ti];
+                if (task_prIL[ti] > GlobalConstants.FineTol) {
+                    U_interlocked += task_util[ti];
+                }
+            }
+            if (U_total <= GlobalConstants.FineTol || U_interlocked <= GlobalConstants.FineTol) continue;
+            double il_fraction = U_interlocked / U_total;
+
+            for (int ti = 0; ti < host_tasks.size(); ti++) {
+                if (task_prIL[ti] <= GlobalConstants.FineTol) continue;
+                int tidx = host_tasks.get(ti);
+                // Scale prIL by fraction of utilization that is interlocked
+                double effective_prIL = task_prIL[ti] * il_fraction;
+                List<Integer> entries = lqn.entriesof.get(tidx);
+                if (entries != null) {
+                    for (int eidx : entries) {
+                        List<Integer> acts = lqn.actsof.get(eidx);
+                        if (acts != null) {
+                            for (int aidx : acts) {
+                                double D = lqn.hostdem_mean.containsKey(aidx) ? lqn.hostdem_mean.get(aidx) : 0;
+                                if (D > 0 && this.residt.get(aidx - 1) > D + GlobalConstants.FineTol) {
+                                    double W_proc = this.residt.get(aidx - 1) - D;
+                                    this.residt.set(aidx - 1, D + (1 - effective_prIL) * W_proc);
+                                    adjusted = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!adjusted) return;
+
+        // Recompute entry service times from adjusted callresidt/residt
+        // Use proportional scaling to preserve visit ratio adjustments
+        Matrix out_old = new Matrix(1, lqn.nidx + lqn.ncalls + 1, lqn.nidx + lqn.ncalls);
+        Matrix.concatColumns(residt_orig, callresidt_orig, out_old);
+        Matrix entry_servt_old = new Matrix(this.servtmatrix.getNumRows(), 1, this.servtmatrix.getNumRows());
+        this.servtmatrix.mult(out_old.transpose(), entry_servt_old);
+
+        Matrix out_new = new Matrix(1, lqn.nidx + lqn.ncalls + 1, lqn.nidx + lqn.ncalls);
+        Matrix.concatColumns(this.residt, this.callresidt, out_new);
+        Matrix entry_servt_new = new Matrix(this.servtmatrix.getNumRows(), 1, this.servtmatrix.getNumRows());
+        this.servtmatrix.mult(out_new.transpose(), entry_servt_new);
+
+        for (int eidx = lqn.eshift + 1; eidx <= lqn.eshift + lqn.nentries; eidx++) {
+            if (entry_servt_old.get(eidx - 1, 0) > GlobalConstants.FineTol) {
+                double ratio = entry_servt_new.get(eidx - 1, 0) / entry_servt_old.get(eidx - 1, 0);
+                this.servt.set(eidx - 1, this.servt.get(eidx - 1) * ratio);
+                this.residt.set(eidx - 1, this.residt.get(eidx - 1) * ratio);
+                if (this.servt.get(eidx - 1) > 0) {
+                    this.servtproc.put(eidx, Exp.fitMean(this.servt.get(eidx - 1)));
+                }
             }
         }
     }
@@ -3796,7 +4721,7 @@ public class SolverLN extends EnsembleSolver {
                                     if (hostValue != null && !Double.isNaN(hostValue)) {
                                         Network hostNetwork = this.ensemble[hostValue.intValue() - 1];
                                         // MATLAB: Xtot = sum(self.results{end,self.idxhash(host)}.TN(self.ensemble{self.idxhash(host)}.attribute.serverIdx,:))
-                                        Matrix TN_copy = this.results.get(this.results.size() - 1).get(hostValue.intValue() - 1).TN;
+                                        Matrix TN_copy = this.results.get(this.results.size()).get(hostValue.intValue() - 1).TN;
                                         double Xtot = TN_copy.sumRows(hostNetwork.getAttribute().getServerIdx() - 1);
                                         if (Xtot > 0) {
                                             // MATLAB: hm_tput = sum(self.results{end,self.idxhash(host)}.TN(self.ensemble{self.idxhash(host)}.attribute.serverIdx,classidxto))
@@ -3829,25 +4754,28 @@ public class SolverLN extends EnsembleSolver {
                                     if (tidxCallerValue != null && !Double.isNaN(tidxCallerValue)) {
                                         Network callerNetwork = this.ensemble[tidxCallerValue.intValue() - 1];
                                         // MATLAB: Xtot = sum(self.results{end,self.idxhash(tidx_caller)}.TN(self.ensemble{self.idxhash(tidx_caller)}.attribute.serverIdx,:))
-                                        Matrix TN_copy = this.results.get(this.results.size() - 1).get(tidxCallerValue.intValue() - 1).TN;
+                                        Matrix TN_copy = this.results.get(this.results.size()).get(tidxCallerValue.intValue() - 1).TN;
                                         double Xtot = TN_copy.sumRows(callerNetwork.getAttribute().getServerIdx() - 1);
                                         if (Xtot > 0) {
                                             Map<Integer, Integer[]> call_map = callerNetwork.getAttribute().getCalls();
-                                            // Find the entry class for this call - MATLAB: calls(:,4) == eidx
+                                            // Find ALL entry classes for this call - MATLAB: calls(find(calls(:,4) == eidx), 1)
                                             // MATLAB column 4 is 1-indexed, so in Java 0-indexed array it's index 3
-                                            Integer foundEidxclass = null;
+                                            // Must collect ALL matching classes (not just the first) for multi-entry callers
+                                            List<Integer> matchingEidxClasses = new ArrayList<>();
                                             for (Map.Entry<Integer, Integer[]> entry : call_map.entrySet()) {
                                                 Integer[] callInfo = entry.getValue();
                                                 if (callInfo.length > 3 && callInfo[3] == (int) eidx) {
                                                     // MATLAB: calls(..., 1) - column 1 = index 0
-                                                    foundEidxclass = callInfo[0];
-                                                    break;
+                                                    matchingEidxClasses.add(callInfo[0]);
                                                 }
                                             }
-                                            if (foundEidxclass != null) {
-                                                int eidxclass = foundEidxclass;
-                                                // MATLAB: entry_tput = sum(self.results{end,self.idxhash(tidx_caller)}.TN(self.ensemble{self.idxhash(tidx_caller)}.attribute.serverIdx,eidxclass))
-                                                double entry_tput = TN_copy.get(callerNetwork.getAttribute().getServerIdx() - 1, eidxclass - 1);
+                                            if (!matchingEidxClasses.isEmpty()) {
+                                                // MATLAB: entry_tput = sum(self.results{...}.TN(serverIdx, eidxclass))
+                                                // Sum throughput across ALL matching entry classes
+                                                double entry_tput = 0;
+                                                for (int eidxclass : matchingEidxClasses) {
+                                                    entry_tput += TN_copy.get(callerNetwork.getAttribute().getServerIdx() - 1, eidxclass - 1);
+                                                }
                                                 double prob = entry_tput / Xtot;
                                                 // MATLAB: P{classidxfrom,classidxto}(nodefrom, nodeto) = entry_tput / Xtot;
                                                 // Directly modify rtorig instead of creating new RoutingMatrix
@@ -3880,8 +4808,8 @@ public class SolverLN extends EnsembleSolver {
                         }
                     }
                 } catch (Exception e) {
-                    // Fallback to avoid breaking existing functionality
-                    // Cache routing logic failed, continue with normal processing
+                    // Log the error for debugging
+                    System.err.println("[WARN] updateRoutingProbabilities exception at row " + r + ": " + e.getMessage());
                 }
             }
 
@@ -4019,7 +4947,8 @@ public class SolverLN extends EnsembleSolver {
 //                            get(this.ensemble[this.idxhash.get(tidx).intValue() - 1].getAttribute().getServerIdx());
 //                    Matrix.extractRows(matrixExtracted, extractRowIndex, extractRowIndex + 1, serverIdxRow);
                     // lqn.repl has padded 0 index, while tput does not.
-                    this.tput.set(tidx - 1, this.lqn.repl.get(0, tidx) * matrixExtracted.sumRows(this.ensemble[this.idxhash.get(tidx).intValue() - 1].getAttribute().getServerIdx() - 1));
+                    double rawTN = matrixExtracted.sumRows(this.ensemble[this.idxhash.get(tidx).intValue() - 1].getAttribute().getServerIdx() - 1);
+                    this.tput.set(tidx - 1, this.lqn.repl.get(0, tidx) * rawTN);
 
                     // obtain total self.utilization of task t
                     Matrix UmatrixExtracted = this.results.get(this.results.size()).get(this.idxhash.get(tidx).intValue() - 1).UN;
@@ -4032,9 +4961,21 @@ public class SolverLN extends EnsembleSolver {
                         // key think time update formula for LQNs, this accounts that in LINE self.utilization is scaled in [0,1] for all queueing stations irrespectively of the number of servers
                         this.thinkt.set(tidx - 1, FastMath.max(GlobalConstants.Zero, njobs * FastMath.abs(1 - this.util.get(tidx - 1)) / this.tput.get(tidx - 1) - tidx_thinktime));
                     }
+                    // Recover from Inf/NaN: snap back to previous iteration's value
+                    if (it > 1 && !Double.isNaN(this.thinkt_prev.get(tidx - 1))) {
+                        if (Double.isInfinite(this.thinkt.get(tidx - 1)) || Double.isNaN(this.thinkt.get(tidx - 1))) {
+                            this.thinkt.set(tidx - 1, this.thinkt_prev.get(tidx - 1));
+                        }
+                    }
                     // Apply under-relaxation to think time if enabled
                     double omega = this.relax_omega;
                     if (omega < 1.0 && it > 1 && !Double.isNaN(this.thinkt_prev.get(tidx - 1))) {
+                        double rawT = this.thinkt.get(tidx - 1);
+                        double prevT = this.thinkt_prev.get(tidx - 1);
+                        // If recovering from crash (prev much larger than raw), snap to raw
+                        if (prevT > 10 * rawT && rawT > GlobalConstants.FineTol) {
+                            this.thinkt_prev.set(tidx - 1, rawT); // reset prev to allow recovery
+                        }
                         this.thinkt.set(tidx - 1, omega * this.thinkt.get(tidx - 1) + (1 - omega) * this.thinkt_prev.get(tidx - 1));
                     }
                     this.thinkt_prev.set(tidx - 1, this.thinkt.get(tidx - 1));
@@ -4175,6 +5116,7 @@ public class SolverLN extends EnsembleSolver {
         state.tputPrev = this.tput_prev != null ? this.tput_prev.copy() : null;
         state.thinktPrev = this.thinkt_prev != null ? this.thinkt_prev.copy() : null;
         state.callservtPrev = this.callservt_prev != null ? this.callservt_prev.copy() : null;
+        state.callresidtPrev = this.callresidt_prev != null ? this.callresidt_prev.copy() : null;
 
         // Results from last iteration
         state.results = this.results != null ? new HashMap<>(this.results) : null;
@@ -4220,6 +5162,7 @@ public class SolverLN extends EnsembleSolver {
         if (state.tputPrev != null) this.tput_prev = state.tputPrev.copy();
         if (state.thinktPrev != null) this.thinkt_prev = state.thinktPrev.copy();
         if (state.callservtPrev != null) this.callservt_prev = state.callservtPrev.copy();
+        if (state.callresidtPrev != null) this.callresidt_prev = state.callresidtPrev.copy();
 
         // Results
         if (state.results != null) this.results = new HashMap<>(state.results);
@@ -4540,6 +5483,7 @@ public class SolverLN extends EnsembleSolver {
         public Matrix tputPrev;
         public Matrix thinktPrev;
         public Matrix callservtPrev;
+        public Matrix callresidtPrev;
 
         public Map<Integer, Map<Integer, SolverResult>> results;
 

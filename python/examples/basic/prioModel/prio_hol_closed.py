@@ -10,8 +10,8 @@ This example demonstrates:
 
 from line_solver import *
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
+
+def prio_hol_closed():
 
     model = Network('MyNetwork')
 
@@ -98,12 +98,19 @@ if __name__ == "__main__":
 
     model.link(P)
 
+    return model
+
+
+if __name__ == '__main__':
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+    model = prio_hol_closed()
+
     # Run solvers
     solver = np.array([], dtype=object)
     solver = np.append(solver, MVA(model, seed=23000, cutoff=1, samples=10000))
     solver = np.append(solver, JMT(model, seed=23000, samples=10000))
     solver = np.append(solver, SSA(model, seed=23000, samples=10000))
-    solver = np.append(solver, DES(model, seed=23000, samples=10000))
+    solver = np.append(solver, LDES(model, seed=23000, samples=10000))
 
     avg_table = np.empty(len(solver), dtype=object)
     for s in range(len(solver)):

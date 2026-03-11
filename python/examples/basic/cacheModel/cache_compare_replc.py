@@ -17,6 +17,38 @@ if _native_path not in sys.path:
 from line_solver import *
 import numpy as np
 
+
+def cache_compare_replc():
+    n = 5
+    m = [2, 1]  # Two-level cache matching MATLAB
+    alpha = 1.0
+
+    model = Network('model')
+    source = Source(model, 'Source')
+    cache_node = Cache(model, 'Cache', n, m, ReplacementStrategy.RR)
+    sink = Sink(model, 'Sink')
+
+    job_class = OpenClass(model, 'InitClass', 0)
+    hit_class = OpenClass(model, 'HitClass', 0)
+    miss_class = OpenClass(model, 'MissClass', 0)
+
+    source.set_arrival(job_class, Exp(2))
+
+    p_access = Zipf(alpha, n)
+    cache_node.set_read(job_class, p_access)
+
+    cache_node.set_hit_class(job_class, hit_class)
+    cache_node.set_miss_class(job_class, miss_class)
+
+    P = model.init_routing_matrix()
+    P.set(job_class, job_class, source, cache_node, 1.0)
+    P.set(hit_class, hit_class, cache_node, sink, 1.0)
+    P.set(miss_class, miss_class, cache_node, sink, 1.0)
+
+    model.link(P)
+    return model
+
+
 if __name__ == "__main__":
     # Use STD verbosity to show warnings (like MATLAB behavior)
     GlobalConstants.set_verbose(VerboseLevel.STD)

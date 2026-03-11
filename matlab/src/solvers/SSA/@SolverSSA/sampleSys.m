@@ -1,4 +1,4 @@
-function tranSysState = sampleSys(self, numSamples, markActivePassive)
+function tranSysState = sampleSys(self, numEvents, markActivePassive)
 % TRANSYSSTATE = SAMPLESYS(NUMSAMPLES)
 options = self.getOptions;
 
@@ -7,10 +7,10 @@ if GlobalConstants.DummyMode
     return
 end
 
-if nargin>=2 %exist('numSamples','var')
-    options.samples = numSamples;
+if nargin>=2 %exist('numEvents','var')
+    options.samples = numEvents;
 else
-    numSamples = options.samples;
+    numEvents = options.samples;
 end
 
 if nargin<3
@@ -30,9 +30,9 @@ switch options.method
         event = tranSysState.event;
         
         for i=1:size(tranSysState.state,2)
-            if size(tranSysState.state{i},1) > numSamples
-                tranSysState.t = tranSystemState(1:numSamples);
-                tranSysState.state = tranSysState.state{i}(1:numSamples,:);
+            if size(tranSysState.state{i},1) > numEvents
+                tranSysState.t = tranSystemState(1:numEvents);
+                tranSysState.state = tranSysState.state{i}(1:numEvents,:);
             end
         end
         sn = self.getStruct;

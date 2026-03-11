@@ -1282,7 +1282,7 @@ def _ctmc_stochcomp(Q: np.ndarray, keep_indices: List[int]) -> Tuple[np.ndarray,
 
 def _find_immediate_states(
     sn: NetworkStruct,
-    state_space: List[List[int]],
+    state_space,
     rrobin_info: dict
 ) -> Tuple[List[int], List[int]]:
     """
@@ -1292,95 +1292,46 @@ def _find_immediate_states(
     NOT a station and NOT a Cache. These states have instant transitions and should
     be eliminated via stochastic complementation.
 
-    This matches MATLAB's solver_ctmc.m lines 286-297:
-    - For non-station stateful nodes that are not Caches
-    - Find states where there's at least 1 job at that node (sum > 0)
+    Matches MATLAB solver_ctmc.m lines 286-297:
+    - For each non-station stateful node (excluding Cache), find states where
+      sum of jobs across classes > 0 at that node.
+
+    In Python, Router job counts are tracked at known offsets in the state vector
+    via router_jobs_offsets in rrobin_info. For each Router, K consecutive entries
+    starting at the offset give per-class job counts.
 
     Args:
         sn: Network structure
-        state_space: List of state vectors
-        rrobin_info: Round-robin and state space info
+        state_space: Array of state vectors (nstates x state_len)
+        rrobin_info: State space info including router_jobs_offsets
 
     Returns:
         Tuple of (non-immediate state indices, immediate state indices)
     """
     K = int(sn.nclasses)
-    I = int(sn.nnodes)
+    router_jobs_offsets = rrobin_info.get('router_jobs_offsets', {})
 
-    # Find immediate (non-station stateful) nodes that are NOT Caches
-    immediate_stateful_indices = []
-    for ind in range(I):
-        is_stateful = sn.isstateful[ind] if ind < len(sn.isstateful) else False
-        is_station = sn.isstation[ind] if ind < len(sn.isstation) else False
-        node_type = sn.nodetype[ind] if ind < len(sn.nodetype) else None
-
-        # MATLAB: sn.isstateful(ind) && ~sn.isstation(ind) && sn.nodetype(ind) ~= NodeType.Cache
-        if is_stateful and not is_station and node_type != NodeType.CACHE:
-            if hasattr(sn, 'nodeToStateful') and sn.nodeToStateful is not None:
-                sf_idx = int(sn.nodeToStateful[ind])
-                if sf_idx >= 0:
-                    immediate_stateful_indices.append(sf_idx)
-
-    if not immediate_stateful_indices:
-        # No immediate nodes
+    if not router_jobs_offsets:
+        # No tracked immediate nodes — all states are non-immediate
         return list(range(len(state_space))), []
 
-    # Get state space structure info
-    # The state vector layout depends on phases and stations
-    # For each state, check if any immediate node has jobs
-    phases = rrobin_info.get('phases', np.ones((int(sn.nstations), K), dtype=int))
-    skip_stations = rrobin_info.get('skip_stations', set())
-    cache_state_offsets = rrobin_info.get('cache_state_offsets', {})
+    imm_indices = []
+    nonimm_indices = []
+    for s_idx in range(len(state_space)):
+        is_immediate = False
+        for isf_r, rj_off in router_jobs_offsets.items():
+            for k_c in range(K):
+                if rj_off + k_c < len(state_space[s_idx]) and int(state_space[s_idx][rj_off + k_c]) > 0:
+                    is_immediate = True
+                    break
+            if is_immediate:
+                break
+        if is_immediate:
+            imm_indices.append(s_idx)
+        else:
+            nonimm_indices.append(s_idx)
 
-    # Build column index mapping: which columns in state vector correspond to which stateful nodes
-    # This is complex because the state vector has different structures for different node types
-    # For now, use a heuristic based on the state_space_aggr structure
-
-    # The aggregated state space should have one entry per stateful node per class
-    # state_space_aggr[s][isf, k] = number of jobs of class k at stateful node isf
-
-    nstateful = int(sn.nstateful) if hasattr(sn, 'nstateful') else int(sn.nstations)
-
-    # For a simpler approach: check if we have state_space_aggr available
-    # Otherwise, we need to infer from the state vector structure
-
-    # For Router nodes specifically:
-    # In the current state space enumeration, Router jobs are tracked in specific columns
-    # Let's identify these by looking at the rrobin_info structure
-
-    # Actually, looking at _enumerate_state_space, the base state is built per station
-    # Router is NOT a station, so its jobs aren't directly in the base state
-    # Instead, jobs pass through Router instantly via routing probabilities
-
-    # The issue is that our current state space enumeration may NOT explicitly track
-    # jobs at Router - they're modeled as immediate transitions in routing.
-
-    # Let me check if state_space tracks Router jobs...
-    # If Router is stateful, there should be columns for it
-
-    # For the current implementation, let's check if we can identify states
-    # where immediate node columns have non-zero values
-
-    # Fallback: if we can't identify immediate states, return all states as non-immediate
-    # This will give the same behavior as before (no stochastic complementation)
-
-    # For now, let's use a different approach:
-    # Look at the state_space_aggr to identify states with jobs at immediate nodes
-
-    # Actually, the state space enumeration uses state_space_aggr which has shape
-    # (nstateful, K) for each state. We need to check states where
-    # state_space_aggr[sf_idx, :].sum() > 0 for any sf_idx in immediate_stateful_indices
-
-    # The issue is that state_space and state_space_aggr may have different structures
-    # Let me return early for now and investigate further
-
-    # For models with Router, jobs don't actually stay at Router (it's immediate)
-    # The MATLAB approach is to enumerate states with Router jobs and remove them
-    # Our Python enumeration may not include these states at all
-
-    # Return all states as non-immediate for now (maintains current behavior)
-    # TODO: Implement proper immediate state identification based on state_space_aggr
-    return list(range(len(state_space))), []
+    return nonimm_indices, imm_indices
 
 
 def _get_rrobin_outlinks(sn: NetworkStruct) -> dict:
@@ -1629,6 +1580,7 @@ class SolverCTMCOptions:
     hide_immediate: bool = True  # Hide immediate transitions
     state_space_gen: str = 'default'  # 'default', 'full', 'reachable'
     force: bool = False  # Force solver to run even if state space may be too large
+    gen_method: str = 'default'  # 'default' = monolithic builder, 'sync' = sync-action-based builder
 
 
 @dataclass
@@ -1663,6 +1615,7 @@ class SolverCTMCReturn:
     space_aggr: Optional[np.ndarray] = None
     station_col_ranges: Optional[List[Tuple[int, int]]] = None
     rrobin_info: Optional[dict] = None
+    eventFilt: Optional[List[np.ndarray]] = None
     runtime: float = 0.0
     method: str = "default"
 
@@ -1900,6 +1853,7 @@ def _enumerate_state_space(
         rrobin_info = _build_rrobin_state_info(sn)
     M = sn.nstations
     K = sn.nclasses
+
     # Use sn_has_open_classes instead of sn_is_open_model to properly handle
     # mixed networks (which have both open and closed classes)
     is_open = sn_has_open_classes(sn)
@@ -3474,6 +3428,468 @@ def _find_state_index_fast(state_map: dict, state: np.ndarray) -> int:
     """
     state_key = tuple(int(x) for x in state)
     return state_map.get(state_key, -1)
+
+
+def _refresh_phase_fields(sn):
+    """
+    Pre-compute phasessz, phaseshift, mu, phi, pie from sn.proc.
+
+    The afterEvent handlers require these fields but getStruct() doesn't
+    populate them in the Python native implementation. This function
+    extracts them from sn.proc (MAP/PH representation).
+    """
+    M = sn.nstations
+    R = sn.nclasses
+
+    if sn.phasessz is None:
+        sn.phasessz = np.ones((M, R), dtype=int)
+    if sn.phaseshift is None:
+        sn.phaseshift = np.zeros((M, R), dtype=int)
+    # Use nested dicts: mu[ist][r] = vec, matching MATLAB cell mu{ist,r}
+    if sn.mu is None or not isinstance(sn.mu, dict):
+        sn.mu = {}
+    if sn.phi is None or not isinstance(sn.phi, dict):
+        sn.phi = {}
+    if sn.pie is None or not isinstance(sn.pie, dict):
+        sn.pie = {}
+    if sn.phases is None:
+        sn.phases = np.ones((M, R), dtype=int)
+
+    for ist in range(M):
+        if ist not in sn.mu:
+            sn.mu[ist] = {}
+        if ist not in sn.phi:
+            sn.phi[ist] = {}
+        if ist not in sn.pie:
+            sn.pie[ist] = {}
+
+        for r in range(R):
+            n_phases = 1
+            D0 = None
+
+            if sn.proc is not None and ist < len(sn.proc) and r < len(sn.proc[ist]):
+                proc_ir = sn.proc[ist][r]
+                if proc_ir is not None:
+                    if isinstance(proc_ir, (list, tuple)) and len(proc_ir) >= 2:
+                        first_elem = np.atleast_2d(np.array(proc_ir[0], dtype=float))
+                        second_elem = np.atleast_2d(np.array(proc_ir[1], dtype=float))
+                        # Check [alpha, T] format vs [D0, D1] format
+                        if first_elem.shape[0] == 1 and second_elem.shape[0] == second_elem.shape[1]:
+                            # [alpha, T] format: convert to D0/D1
+                            alpha = first_elem.flatten()
+                            T = second_elem
+                            D0 = T
+                            exit_rates = -np.sum(T, axis=1)
+                            D1 = np.outer(exit_rates, alpha)
+                        else:
+                            D0 = first_elem
+                            D1 = second_elem
+                        n_phases = D0.shape[0]
+                    elif isinstance(proc_ir, dict):
+                        if 'k' in proc_ir and 'mu' in proc_ir:
+                            # Erlang distribution
+                            n_phases = int(proc_ir['k'])
+                            mu_val = float(proc_ir['mu'])
+                            if n_phases > 1:
+                                D0 = np.zeros((n_phases, n_phases))
+                                D1 = np.zeros((n_phases, n_phases))
+                                for p in range(n_phases):
+                                    D0[p, p] = -mu_val
+                                    if p < n_phases - 1:
+                                        D0[p, p + 1] = mu_val
+                                D1[n_phases - 1, 0] = mu_val
+                            else:
+                                D0 = np.array([[-mu_val]])
+                                D1 = np.array([[mu_val]])
+                        elif 'probs' in proc_ir and 'rates' in proc_ir:
+                            # HyperExponential distribution
+                            probs = np.array(proc_ir['probs'])
+                            rates = np.array(proc_ir['rates'])
+                            n_phases = len(rates)
+                            D0 = np.diag(-rates)
+                            D1 = np.outer(rates, probs)
+                        elif 'rate' in proc_ir:
+                            # Exponential distribution
+                            rate = proc_ir.get('rate', 1.0)
+                            if rate is None or np.isnan(rate):
+                                D0 = np.array([[np.nan]])
+                                D1 = np.array([[np.nan]])
+                            else:
+                                D0 = np.array([[-rate]])
+                                D1 = np.array([[rate]])
+                        else:
+                            n_phases = 1
+
+            # Store converted (D0, D1) back into sn.proc for afterEvent handlers
+            if D0 is not None:
+                proc_ir = sn.proc[ist][r] if (ist < len(sn.proc) and r < len(sn.proc[ist])) else None
+                if isinstance(proc_ir, dict):
+                    sn.proc[ist][r] = [D0, D1]
+                elif isinstance(proc_ir, (list, tuple)) and len(proc_ir) >= 2:
+                    # Ensure [alpha, T] is stored as [D0, D1]
+                    sn.proc[ist][r] = [D0, D1]
+
+            sn.phasessz[ist, r] = max(n_phases, 1)
+            sn.phases[ist, r] = n_phases
+
+            if D0 is not None and not np.any(np.isnan(D0)):
+                mu_vec = -np.diag(D0)
+                sn.mu[ist][r] = mu_vec
+
+                phi_vec = np.zeros(n_phases)
+                for k in range(n_phases):
+                    d1_row_sum = np.sum(D1[k, :])
+                    if mu_vec[k] != 0:
+                        phi_vec[k] = d1_row_sum / mu_vec[k]
+                sn.phi[ist][r] = phi_vec
+
+                # pie: initial phase probability (column sums of D1, normalized)
+                d1_col_sums = np.sum(D1, axis=0)
+                total = np.sum(d1_col_sums)
+                if total > 0:
+                    pie_vec = d1_col_sums / total
+                else:
+                    pie_vec = np.zeros(n_phases)
+                    pie_vec[0] = 1.0
+                sn.pie[ist][r] = pie_vec
+            else:
+                sn.mu[ist][r] = np.array([0.0])
+                sn.phi[ist][r] = np.array([1.0])
+                sn.pie[ist][r] = np.array([1.0])
+
+        # Compute phaseshift: cumulative sum of phases for earlier classes
+        cum = 0
+        for r in range(R):
+            sn.phaseshift[ist, r] = cum
+            cum += int(sn.phasessz[ist, r])
+
+
+def _build_generator_sync(
+    sn: NetworkStruct,
+    state_space: np.ndarray,
+    state_space_hashed: np.ndarray,
+    options: SolverCTMCOptions,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List]:
+    """
+    Build the infinitesimal generator matrix using sync-action-based architecture.
+
+    This uses the afterEvent dispatch mechanism (matching MATLAB/JAR) instead of
+    the monolithic _build_generator. Each sync action pairs an active event
+    (DEP/PHASE/READ) with a passive event (ARV/LOCAL) and iterates over all states.
+
+    Port from MATLAB solver_ctmc.m:52-236 / JAR Solver_ctmc.kt:64-290.
+
+    Args:
+        sn: Network structure
+        state_space: Full state space matrix (one row per global state)
+        state_space_hashed: Hashed state space (one col per stateful node, values = row indices in sn.space)
+        options: Solver options
+
+    Returns:
+        Tuple of (Q, arvRates, depRates, Dfilt):
+        - Q: Infinitesimal generator matrix
+        - arvRates: Arrival rates per (state, stateful_node, class)
+        - depRates: Departure rates per (state, stateful_node, class)
+        - Dfilt: List of per-action rate matrices
+    """
+    from ...state.after_event import after_event_hashed, build_space_hash
+    from ....lang.sync import refresh_sync
+    from ...mc import ctmc_makeinfgen
+    from ....constants import EventType
+
+    nstateful = sn.nstateful
+    nclasses = sn.nclasses
+    nnodes = sn.nnodes
+    local = nnodes  # Sentinel for "no passive node"
+
+    # Build sync actions
+    sync = refresh_sync(sn)
+    A = len(sync)
+
+    # Build hash maps for O(1) state lookup
+    hash_maps = build_space_hash(sn)
+
+    n_states = state_space_hashed.shape[0]
+
+    # Build global state hash for matchrow
+    global_hash = {}
+    for s in range(n_states):
+        key = tuple(state_space_hashed[s].astype(int))
+        global_hash[key] = s
+
+    # Initialize Q and Dfilt
+    Q = np.eye(n_states)  # Will be corrected later
+    Dfilt = [np.zeros((n_states, n_states)) for _ in range(A)]
+
+    arvRates = np.zeros((n_states, nstateful, nclasses))
+    depRates = np.zeros((n_states, nstateful, nclasses))
+
+    # Check class-switching mask
+    csmask = sn.csmask if hasattr(sn, 'csmask') and sn.csmask is not None else np.ones((nclasses, nclasses))
+
+    for a in range(A):
+        act = sync[a]
+        node_a = act.active.node
+        class_a = act.active.job_class
+        event_a = act.active.event
+
+        node_p = act.passive.node
+        class_p = act.passive.job_class
+        event_p = act.passive.event
+
+        if not sn.isstateful[node_a]:
+            continue
+        isf_a = int(sn.nodeToStateful[node_a])
+
+        is_local = (node_p >= nnodes)  # Passive is LOCAL sentinel
+        isf_p = -1
+        if not is_local and sn.isstateful[node_p]:
+            isf_p = int(sn.nodeToStateful[node_p])
+
+        for s in range(n_states):
+            state = state_space_hashed[s].copy().astype(int)
+            state_a = state[isf_a]
+
+            # Fire active event
+            new_state_a, rate_a, outprob_a = after_event_hashed(
+                sn, node_a, state_a, event_a, class_a, hash_maps)
+
+            if np.all(new_state_a < 0):
+                continue
+
+            for ia in range(len(new_state_a)):
+                if new_state_a[ia] < 0 or rate_a[ia] == 0:
+                    continue
+
+                if is_local:
+                    # Local action: only active node changes
+                    new_state = state.copy()
+                    new_state[isf_a] = new_state_a[ia]
+                    ns_key = tuple(new_state)
+                    ns = global_hash.get(ns_key, -1)
+                    if ns >= 0:
+                        prob_sync = 1.0
+                        Dfilt[a][s, ns] += rate_a[ia] * prob_sync
+
+                else:
+                    # Non-local: fire passive event
+                    if isf_p < 0:
+                        continue
+
+                    if node_p == node_a:
+                        # Same node: passive sees post-active state
+                        state_p = int(new_state_a[ia])
+                    else:
+                        state_p = state[isf_p]
+
+                    new_state_p, rate_p, outprob_p = after_event_hashed(
+                        sn, node_p, state_p, event_p, class_p, hash_maps)
+
+                    for ip in range(len(new_state_p)):
+                        if new_state_p[ip] < 0:
+                            continue
+
+                        # Compute sync probability
+                        if callable(act.passive.prob):
+                            # State-dependent routing
+                            # Build state cell arrays for rtfun evaluation
+                            state_before = [None] * nstateful
+                            state_after = [None] * nstateful
+                            for isf in range(nstateful):
+                                state_before[isf] = sn.space[isf][state[isf]:state[isf] + 1] if isf in sn.space else np.array([[]])
+                                state_after[isf] = state_before[isf].copy()
+                            state_after[isf_a] = sn.space[isf_a][new_state_a[ia]:new_state_a[ia] + 1]
+                            if isf_p >= 0:
+                                state_after[isf_p] = sn.space[isf_p][new_state_p[ip]:new_state_p[ip] + 1]
+                            prob_sync = act.passive.prob(state_before, state_after)
+                            if isinstance(prob_sync, np.ndarray):
+                                prob_sync = float(prob_sync.ravel()[0])
+                        else:
+                            prob_sync = float(act.passive.prob) if act.passive.prob is not None else 1.0
+
+                        prob_sync *= outprob_p[ip] if ip < len(outprob_p) else 1.0
+
+                        # Build new global state
+                        new_state = state.copy()
+                        new_state[isf_a] = new_state_a[ia]
+                        new_state[isf_p] = new_state_p[ip]
+
+                        ns_key = tuple(new_state)
+                        ns = global_hash.get(ns_key, -1)
+                        if ns >= 0:
+                            Dfilt[a][s, ns] += rate_a[ia] * prob_sync
+
+        # Accumulate DEP/ARV rates from this action's Dfilt
+        if event_a == EventType.DEP and sn.isstateful[node_a]:
+            row_sums = np.sum(Dfilt[a], axis=1)
+            depRates[:, isf_a, class_a] += row_sums
+        if not is_local and event_p == EventType.ARV and isf_p >= 0:
+            row_sums = np.sum(Dfilt[a], axis=1)
+            arvRates[:, isf_p, class_p] += row_sums
+
+    # Sum all Dfilt into Q
+    for a in range(A):
+        Q = Q + Dfilt[a]
+
+    # Remove initial identity diagonal
+    Q = Q - np.diag(np.diag(Q))
+
+    # Make proper infinitesimal generator (row sums = 0)
+    Q = ctmc_makeinfgen(Q)
+
+    return Q, arvRates, depRates, Dfilt
+
+
+def _find_immediate_states_sync(sn, state_space_hashed):
+    """
+    Find immediate states for stochastic complementation (sync-based path).
+
+    Port from MATLAB solver_ctmc.m lines 286-298.
+    Immediate states are those where a non-station, non-Cache stateful node has jobs.
+
+    Args:
+        sn: NetworkStruct with sn.space populated
+        state_space_hashed: Hashed state space (n_states x nstateful)
+
+    Returns:
+        Tuple of (nonimm_indices, imm_indices) - lists of global state indices
+    """
+    nclasses = sn.nclasses
+    n_states = state_space_hashed.shape[0]
+    cache_val = int(NodeType.CACHE.value) if hasattr(NodeType.CACHE, 'value') else int(NodeType.CACHE)
+
+    imm_set = set()
+
+    for ind in range(sn.nnodes):
+        if not sn.isstateful[ind] or sn.isstation[ind]:
+            continue
+        nt_val = int(sn.nodetype[ind].value) if hasattr(sn.nodetype[ind], 'value') else int(sn.nodetype[ind])
+        if nt_val == cache_val:
+            continue
+
+        isf = int(sn.nodeToStateful[ind])
+        if isf not in sn.space or sn.space[isf] is None:
+            continue
+
+        space_isf = np.atleast_2d(sn.space[isf])
+        # Find per-node states where node has jobs (sum of first nclasses cols > 0)
+        n_cols = min(nclasses, space_isf.shape[1])
+        imm_st = set()
+        for row_idx in range(space_isf.shape[0]):
+            if np.sum(space_isf[row_idx, :n_cols]) > 0:
+                imm_st.add(row_idx)
+
+        if not imm_st:
+            continue
+
+        # Find global states where this node's hash is in imm_st
+        for s in range(n_states):
+            h = int(state_space_hashed[s, isf])
+            if h in imm_st:
+                imm_set.add(s)
+
+    imm_indices = sorted(imm_set)
+    nonimm_indices = sorted(set(range(n_states)) - imm_set)
+    return nonimm_indices, imm_indices
+
+
+def _compute_metrics_sync(sn, pi, arvRates, depRates, state_space_aggr,
+                          state_space, state_space_hashed):
+    """
+    Compute performance metrics from CTMC steady-state distribution (sync-based path).
+
+    Port from MATLAB solver_ctmc_analyzer.m.
+
+    Args:
+        sn: NetworkStruct
+        pi: Steady-state distribution (1D array, length = n_states)
+        arvRates: Arrival rates (n_states x nstateful x nclasses)
+        depRates: Departure rates (n_states x nstateful x nclasses)
+        state_space_aggr: Aggregated state space (n_states x M*R)
+        state_space: Full state space
+        state_space_hashed: Hashed state space
+
+    Returns:
+        Dict with keys 'Q', 'U', 'R', 'T' (same format as _compute_metrics_from_distribution)
+    """
+    M = sn.nstations
+    K = sn.nclasses
+    n_states = len(pi)
+
+    QN = np.zeros((M, K))
+    UN = np.zeros((M, K))
+    RN = np.zeros((M, K))
+    TN = np.zeros((M, K))
+
+    # Ensure pi is 1D
+    pi = pi.ravel()
+    if len(pi) != n_states:
+        return {'Q': QN, 'U': UN, 'R': RN, 'T': TN}
+
+    # Clean up pi
+    pi[pi < 1e-14] = 0
+    pi_sum = np.sum(pi)
+    if pi_sum > 0:
+        pi = pi / pi_sum
+
+    # System throughput: XN(k) = pi * arvRates[:, refsf, k]
+    XN = np.zeros(K)
+    for k in range(K):
+        ref_stat = int(sn.refstat[k]) if hasattr(sn, 'refstat') and k < len(sn.refstat) else 0
+        if ref_stat < M:
+            refsf = int(sn.stationToStateful[ref_stat]) if hasattr(sn, 'stationToStateful') else ref_stat
+            if refsf < arvRates.shape[1]:
+                XN[k] = np.dot(pi, arvRates[:, refsf, k])
+
+    # Per-station metrics
+    for ist in range(M):
+        isf = int(sn.stationToStateful[ist]) if hasattr(sn, 'stationToStateful') else ist
+        ind = int(sn.stationToNode[ist]) if hasattr(sn, 'stationToNode') else ist
+
+        # Check if Source
+        nt_val = int(sn.nodetype[ind].value) if hasattr(sn.nodetype[ind], 'value') else int(sn.nodetype[ind])
+        source_val = int(NodeType.SOURCE.value) if hasattr(NodeType.SOURCE, 'value') else int(NodeType.SOURCE)
+        is_source = (nt_val == source_val)
+
+        for k in range(K):
+            # Throughput: TN = pi * depRates
+            if isf < depRates.shape[1]:
+                TN[ist, k] = np.dot(pi, depRates[:, isf, k])
+
+            # Queue length: QN = pi * stateSpaceAggr
+            if not is_source:
+                col = ist * K + k
+                if col < state_space_aggr.shape[1]:
+                    QN[ist, k] = np.dot(pi, state_space_aggr[:, col])
+
+        if is_source:
+            continue
+
+        # Utilization
+        S = sn.nservers[ist] if hasattr(sn, 'nservers') else 1
+        sched = sn.sched[ist] if hasattr(sn, 'sched') else SchedStrategy.FCFS
+
+        for k in range(K):
+            if sched == SchedStrategy.INF:
+                UN[ist, k] = QN[ist, k]
+            else:
+                # Use sn.rates for mean service time (accounts for all distributions)
+                mean_s = 0.0
+                if hasattr(sn, 'rates') and sn.rates is not None:
+                    rate = sn.rates[ist, k]
+                    if rate > 0 and not np.isnan(rate) and not np.isinf(rate):
+                        mean_s = 1.0 / rate
+
+                if mean_s > 0:
+                    UN[ist, k] = TN[ist, k] * mean_s / S
+
+    # Response time via Little's law
+    for ist in range(M):
+        for k in range(K):
+            if TN[ist, k] > 1e-14:
+                RN[ist, k] = QN[ist, k] / TN[ist, k]
+
+    return {'Q': QN, 'U': UN, 'R': RN, 'T': TN}
 
 
 def _build_generator(
@@ -5072,6 +5488,112 @@ def _build_generator(
                         ns = _find_state_index_fast(state_map, new_state)
                         if ns >= 0:
                             Q[s, ns] += rate
+
+        # === SPN Transition Firings ===
+        # For Stochastic Petri Net models, fire enabled Transitions and update state.
+        # Transitions are represented in nodeparam with enabling conditions and firing outcomes.
+        if hasattr(sn, 'nodeparam') and sn.nodeparam is not None and sn.nodeparam:
+            # Iterate through all nodes, find Transitions (nodetype == TRANSITION)
+            for node_idx, node_param in sn.nodeparam.items():
+                # Check if this node is a Transition
+                if (node_idx >= len(sn.nodetype) or
+                    sn.nodetype[node_idx] != NodeType.TRANSITION):
+                    continue
+
+                # Get Transition properties
+                nmodes = node_param.nmodes
+                enabling = node_param.enabling  # List of arrays, one per mode
+                firing = node_param.firing      # List of arrays, one per mode
+                distributions = node_param.distributions  # List of distributions, one per mode
+
+                # For each mode of this Transition
+                for mode_idx in range(nmodes):
+                    if mode_idx >= len(enabling) or mode_idx >= len(firing):
+                        continue
+
+                    enable_conds = enabling[mode_idx]  # Shape (nnodes, 1)
+                    fire_outcomes = firing[mode_idx]   # Shape (nnodes, 1)
+                    dist = distributions[mode_idx] if mode_idx < len(distributions) else None
+
+                    # Check enabling conditions - all must be satisfied
+                    is_enabled = True
+                    for node_check in range(len(enable_conds)):
+                        required_count = int(enable_conds[node_check, 0]) if enable_conds[node_check, 0] > 0 else 0
+                        if required_count <= 0:
+                            continue
+
+                        # Get actual job count at node_check for class 0 (Petri Net is single-class)
+                        node_check_station = int(node_to_station[node_check]) if (node_to_station is not None and
+                                                                                   node_check < len(node_to_station)) else -1
+                        if node_check_station >= 0:
+                            actual_count = int(state_matrix[node_check_station, 0])
+                        else:
+                            # Non-station node (Transition itself) - doesn't hold jobs
+                            actual_count = 0
+
+                        if actual_count < required_count:
+                            is_enabled = False
+                            break
+
+                    if not is_enabled:
+                        continue
+
+                    # Compute firing rate from distribution
+                    if dist is None:
+                        continue
+
+                    # Get distribution rate parameter
+                    if hasattr(dist, 'rate'):
+                        rate_param = dist.rate if isinstance(dist.rate, (int, float)) else dist.rate()
+                    elif hasattr(dist, 'mean'):
+                        mean_val = dist.mean if isinstance(dist.mean, (int, float)) else dist.mean()
+                        rate_param = 1.0 / mean_val if mean_val > 0 else 1.0
+                    else:
+                        rate_param = 1.0
+
+                    # Firing rate is multiplied by number of jobs enabling the transition
+                    # For simplicity, use rate_param directly (unit token count)
+                    firing_rate = rate_param
+
+                    if firing_rate <= 0:
+                        continue
+
+                    # Create destination state by applying firing outcomes
+                    new_state = state.copy()
+                    source_station = -1
+                    source_class = 0  # Petri Net is single-class
+
+                    # Apply firing outcomes (add/remove tokens from places)
+                    for node_update in range(len(fire_outcomes)):
+                        delta = int(fire_outcomes[node_update, 0])  # +1 to add, -1 to remove
+                        if delta == 0:
+                            continue
+
+                        # Determine if this is a station (Place)
+                        node_update_station = int(node_to_station[node_update]) if (node_to_station is not None and
+                                                                                     node_update < len(node_to_station)) else -1
+                        if node_update_station >= 0:
+                            # Update job count at this station
+                            if delta < 0:
+                                # Removing token: this is the source Place
+                                if source_station < 0:
+                                    source_station = node_update_station
+                                new_state = set_job_count(new_state, node_update_station, source_class, delta)
+                            else:
+                                # Adding token: destination Place
+                                new_state = set_job_count(new_state, node_update_station, source_class, delta)
+
+                    # Validate new state (no negative job counts)
+                    if np.any(new_state[:state_dim] < 0):
+                        continue
+
+                    # Add transition to Q
+                    ns = _find_state_index_fast(state_map, new_state)
+                    if ns >= 0:
+                        Q[s, ns] += firing_rate
+                        # Update departure rates for the source Place
+                        if source_station >= 0 and source_station < M:
+                            depRates[s, source_station, source_class] += firing_rate
 
         # === Phase-type (non-MAP) phase transitions (D0 off-diagonal) at FCFS stations ===
         # For PH/APH/Erlang/HyperExp, phase counts are tracked in the state vector directly
@@ -7437,6 +7959,129 @@ def solver_ctmc_basic(
     M = int(sn.nstations)
     K = int(sn.nclasses)
 
+    # ---- Sync-action-based builder path ----
+    if options.gen_method == 'sync':
+        from ...state.ctmc_ssg import ctmc_ssg as ctmc_ssg_fn
+
+        # Mandatory truncation warning for open/mixed models
+        if sn_has_open_classes(sn):
+            print(f"CTMC solver using state space cutoff = {options.cutoff} for open/mixed model.")
+            warnings.warn(
+                "State space truncation may cause inaccurate results. "
+                "Consider varying cutoff to assess sensitivity.",
+                UserWarning
+            )
+
+        # Pre-compute phase fields (mu, phi, pie, phasessz, phaseshift)
+        # needed by afterEvent handlers
+        _refresh_phase_fields(sn)
+
+        state_space, state_space_aggr, state_space_hashed, sn = ctmc_ssg_fn(sn, options.cutoff)
+
+        if state_space_hashed.size == 0:
+            raise RuntimeError("CTMC sync builder: empty state space generated.")
+
+        if options.verbose:
+            print(f"CTMC sync state space size: {state_space_hashed.shape[0]} states, "
+                  f"{state_space_hashed.shape[1]} stateful nodes")
+
+        # Build generator matrix using sync actions
+        Q, arvRates, depRates, Dfilt = _build_generator_sync(
+            sn, state_space, state_space_hashed, options)
+
+        if options.verbose:
+            print(f"  Q matrix shape: {Q.shape}, nnz: {np.count_nonzero(Q)}")
+
+        # Apply stochastic complementation to eliminate immediate states
+        nonimm_indices, imm_indices = _find_immediate_states_sync(sn, state_space_hashed)
+
+        if imm_indices:
+            Q_dense = np.asarray(Q)
+            imm = np.array(imm_indices, dtype=int)
+            nonimm = np.array(nonimm_indices, dtype=int)
+
+            Q11 = Q_dense[np.ix_(nonimm, nonimm)]
+            Q12 = Q_dense[np.ix_(nonimm, imm)]
+            Q21 = Q_dense[np.ix_(imm, nonimm)]
+            Q22 = Q_dense[np.ix_(imm, imm)]
+
+            try:
+                T = np.linalg.solve(-Q22, Q21)
+                T = Q12 @ T
+                Q_reduced = Q11 + T
+            except np.linalg.LinAlgError:
+                Q_reduced = Q11 + Q12 @ np.linalg.pinv(-Q22) @ Q21
+
+            # Also apply stochcomp to Dfilt for accurate rates
+            for a in range(len(Dfilt)):
+                Q21a = Dfilt[a][np.ix_(imm, nonimm)]
+                try:
+                    Ta = np.linalg.solve(-Q22, Q21a)
+                    Ta = Q12 @ Ta
+                except np.linalg.LinAlgError:
+                    Ta = Q12 @ np.linalg.pinv(-Q22) @ Q21a
+                Dfilt[a] = Dfilt[a][np.ix_(nonimm, nonimm)] + Ta
+
+            depRates = depRates[nonimm_indices, :, :]
+            arvRates = arvRates[nonimm_indices, :, :]
+            state_space = state_space[nonimm_indices]
+            state_space_aggr = state_space_aggr[nonimm_indices]
+            state_space_hashed = state_space_hashed[nonimm_indices]
+
+            Q = Q_reduced
+
+            if options.verbose:
+                print(f"  Stochcomp: {len(imm_indices)} immediate states eliminated, "
+                      f"{len(nonimm_indices)} non-immediate states remain.")
+
+        # Solve for steady-state distribution
+        pi = ctmc_solve(Q)
+
+        # Compute metrics from sync-based data
+        metrics = _compute_metrics_sync(
+            sn, pi, arvRates, depRates, state_space_aggr,
+            state_space, state_space_hashed)
+
+        QN = metrics['Q']
+        UN = metrics['U']
+        RN = metrics['R']
+        TN = metrics['T']
+
+        CN = np.sum(RN, axis=0).reshape(1, -1)
+        XN = np.zeros((1, K))
+        for k in range(K):
+            ref_stat = int(sn.refstat[k]) if hasattr(sn, 'refstat') and k < len(sn.refstat) else 0
+            if ref_stat < M:
+                XN[0, k] = TN[ref_stat, k]
+
+        QN = np.nan_to_num(QN, nan=0.0)
+        UN = np.nan_to_num(UN, nan=0.0)
+        RN = np.nan_to_num(RN, nan=0.0)
+        TN = np.nan_to_num(TN, nan=0.0)
+        CN = np.nan_to_num(CN, nan=0.0)
+        XN = np.nan_to_num(XN, nan=0.0)
+
+        result = SolverCTMCReturn()
+        result.Q = QN
+        result.U = UN
+        result.R = RN
+        result.T = TN
+        result.C = CN
+        result.X = XN
+        result.pi = pi
+        result.infgen = Q
+        result.space = state_space
+        result.space_aggr = state_space_aggr
+        result.station_col_ranges = []
+        result.depRates = depRates
+        result.rrobin_info = {}
+        result.eventFilt = Dfilt
+        result.runtime = time.time() - start_time
+        result.method = "sync"
+
+        return result
+
+    # ---- Default monolithic builder path ----
     state_space, state_space_aggr, rrobin_info = _enumerate_state_space(sn, options.cutoff)
 
     # Mandatory truncation warning for open/mixed models
@@ -7462,71 +8107,50 @@ def solver_ctmc_basic(
 
     # Apply stochastic complementation (stochcomp) to eliminate immediate states.
     # Immediate states are those where a tracked Router has jobs.
-    # This matches MATLAB's solver_ctmc.m which builds the full Q, identifies
-    # immediate states where non-station non-Cache stateful nodes have jobs,
-    # and applies ctmc_stochcomp(Q, nonimm).
+    # This matches MATLAB's solver_ctmc.m lines 286-302 which builds the full Q,
+    # identifies immediate states where non-station non-Cache stateful nodes have
+    # jobs, and applies ctmc_stochcomp(Q, nonimm).
     # S = Q11 + Q12 * (-Q22)^{-1} * Q21
-    # where Q11 = Q[nonimm, nonimm], Q12 = Q[nonimm, imm],
-    #       Q21 = Q[imm, nonimm], Q22 = Q[imm, imm]
-    router_jobs_offsets = rrobin_info.get('router_jobs_offsets', {})
-    if router_jobs_offsets:
-        # Identify immediate states: states where any Router has a job
-        imm_indices = []
-        nonimm_indices = []
-        for s_idx in range(len(state_space)):
-            is_immediate = False
-            for isf_r, rj_off in router_jobs_offsets.items():
-                for k_c in range(K):
-                    if rj_off + k_c < len(state_space[s_idx]) and int(state_space[s_idx][rj_off + k_c]) > 0:
-                        is_immediate = True
-                        break
-                if is_immediate:
-                    break
-            if is_immediate:
-                imm_indices.append(s_idx)
-            else:
-                nonimm_indices.append(s_idx)
+    nonimm_indices, imm_indices = _find_immediate_states(sn, state_space, rrobin_info)
 
-        if imm_indices:
-            try:
-                from scipy import sparse as sp_sparse
-                Q_dense = Q.toarray() if sp_sparse.issparse(Q) else np.asarray(Q)
-            except ImportError:
-                Q_dense = np.asarray(Q)
+    if imm_indices:
+        try:
+            from scipy import sparse as sp_sparse
+            Q_dense = Q.toarray() if sp_sparse.issparse(Q) else np.asarray(Q)
+        except ImportError:
+            Q_dense = np.asarray(Q)
 
-            imm = np.array(imm_indices, dtype=int)
-            nonimm = np.array(nonimm_indices, dtype=int)
+        imm = np.array(imm_indices, dtype=int)
+        nonimm = np.array(nonimm_indices, dtype=int)
 
-            Q11 = Q_dense[np.ix_(nonimm, nonimm)]
-            Q12 = Q_dense[np.ix_(nonimm, imm)]
-            Q21 = Q_dense[np.ix_(imm, nonimm)]
-            Q22 = Q_dense[np.ix_(imm, imm)]
+        Q11 = Q_dense[np.ix_(nonimm, nonimm)]
+        Q12 = Q_dense[np.ix_(nonimm, imm)]
+        Q21 = Q_dense[np.ix_(imm, nonimm)]
+        Q22 = Q_dense[np.ix_(imm, imm)]
 
-            # Stochcomp: S = Q11 + Q12 * (-Q22)^{-1} * Q21
-            # Matches MATLAB: T = (-Q22) \ Q21; T = Q12*T; S = Q11+T;
-            try:
-                T = np.linalg.solve(-Q22, Q21)
-                T = Q12 @ T
-                Q_reduced = Q11 + T
-            except np.linalg.LinAlgError:
-                # Fallback: use pseudo-inverse
-                Q_reduced = Q11 + Q12 @ np.linalg.pinv(-Q22) @ Q21
+        # Stochcomp: S = Q11 + Q12 * (-Q22)^{-1} * Q21
+        # Matches MATLAB: T = (-Q22) \ Q21; T = Q12*T; S = Q11+T;
+        try:
+            T = np.linalg.solve(-Q22, Q21)
+            T = Q12 @ T
+            Q_reduced = Q11 + T
+        except np.linalg.LinAlgError:
+            # Fallback: use pseudo-inverse
+            Q_reduced = Q11 + Q12 @ np.linalg.pinv(-Q22) @ Q21
 
-            # Apply stochcomp to depRates as well
-            # MATLAB also stochcomps Dfilt (per-action filter) but we just
-            # remove immediate depRates since Router states don't contribute
-            # station departure rates directly.
-            depRates = depRates[nonimm_indices, :, :]
+        # Remove immediate rows from depRates — Router states don't
+        # contribute station departure rates directly.
+        depRates = depRates[nonimm_indices, :, :]
 
-            # Update state_space: remove immediate states
-            state_space = state_space[nonimm_indices]
-            state_space_aggr = state_space_aggr[nonimm_indices] if state_space_aggr is not None and len(state_space_aggr) > len(nonimm_indices) - 1 else state_space_aggr
+        # Update state_space: remove immediate states
+        state_space = state_space[nonimm_indices]
+        state_space_aggr = state_space_aggr[nonimm_indices] if state_space_aggr is not None and len(state_space_aggr) > len(nonimm_indices) - 1 else state_space_aggr
 
-            Q = Q_reduced
+        Q = Q_reduced
 
-            if options.verbose:
-                print(f"  Stochcomp: {len(imm_indices)} immediate states eliminated, "
-                      f"{len(nonimm_indices)} non-immediate states remain.")
+        if options.verbose:
+            print(f"  Stochcomp: {len(imm_indices)} immediate states eliminated, "
+                  f"{len(nonimm_indices)} non-immediate states remain.")
 
     # Solve for steady-state distribution
     pi = ctmc_solve(Q)
@@ -7594,6 +8218,7 @@ def solver_ctmc_basic(
     result.station_col_ranges = station_col_ranges
     result.depRates = depRates  # Include departure rates for debugging
     result.rrobin_info = rrobin_info  # Include cache state info for hit ratio computation
+    result.eventFilt = None  # Default builder doesn't decompose by event
     result.runtime = time.time() - start_time
     result.method = "basic"
 

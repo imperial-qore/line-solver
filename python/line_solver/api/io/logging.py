@@ -202,12 +202,18 @@ class LineLogger:
         """
         # Check if debug mode is enabled
         is_debug = self.verbose == VerboseLevel.DEBUG
-        if options is not None and 'verbose' in options:
-            opt_verbose = options['verbose']
-            if isinstance(opt_verbose, VerboseLevel):
-                is_debug = is_debug or (opt_verbose == VerboseLevel.DEBUG)
-            elif isinstance(opt_verbose, int):
-                is_debug = is_debug or (opt_verbose == VerboseLevel.DEBUG.value)
+        if options is not None:
+            # Support both dict-like options and dataclass/object options
+            opt_verbose = None
+            if isinstance(options, dict):
+                opt_verbose = options.get('verbose')
+            elif hasattr(options, 'verbose'):
+                opt_verbose = options.verbose
+            if opt_verbose is not None:
+                if isinstance(opt_verbose, VerboseLevel):
+                    is_debug = is_debug or (opt_verbose == VerboseLevel.DEBUG)
+                elif isinstance(opt_verbose, (int, bool)):
+                    is_debug = is_debug or (int(opt_verbose) == VerboseLevel.DEBUG.value)
 
         if not is_debug:
             return

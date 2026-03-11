@@ -5,14 +5,20 @@
 
 package jline.lang.processes;
 
+import jline.io.Ret;
 import jline.util.matrix.Matrix;
 import jline.util.RandomManager;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Random;
 
 import static jline.api.mc.Ctmc_makeinfgenKt.ctmc_makeinfgen;
 import static jline.api.mc.Ctmc_randKt.ctmc_rand;
 import static jline.api.mc.Ctmc_solveKt.ctmc_solve;
 import static jline.api.mc.Ctmc_timereverseKt.ctmc_timereverse;
+import static jline.api.mc.Dtmc_makestochasticKt.dtmc_makestochastic;
 
 /**
  * A class for a continuous time Markov chain
@@ -364,15 +370,122 @@ public class MarkovProcess extends Process {
     }
 
     /**
-     * Create CTMC from sample system aggregation (legacy interface)
-     * @param sa the sample aggregation object
+     * Create CTMC from a SampleResult containing multi-node state trajectories.
+     * Matches MATLAB MarkovProcess.fromSampleSysAggr(sa) where sa has .state{} and .t fields.
+     *
+     * @param sa the SampleResult from sampleSysAggr()
+     * @return CTMC constructed from sampled state trajectories
+     */
+    @SuppressWarnings("unchecked")
+    public static MarkovProcess fromSampleSysAggr(Ret.SampleResult sa) {
+        // Build combined state matrix via Cartesian product of per-node states
+        // MATLAB: sampleState = sa.state{1}; for r=2:length(sa.state), sampleState = State.cartesian(sampleState, sa.state{r}); end
+        Matrix sampleState;
+        if (sa.state instanceof List) {
+            List<Matrix> stateList = (List<Matrix>) sa.state;
+            if (stateList.isEmpty()) {
+                throw new IllegalArgumentException("SampleResult state list is empty");
+            }
+            sampleState = stateList.get(0).copy();
+            for (int r = 1; r < stateList.size(); r++) {
+                sampleState = Matrix.cartesian(sampleState, stateList.get(r));
+            }
+        } else if (sa.state instanceof Matrix) {
+            sampleState = ((Matrix) sa.state).copy();
+        } else {
+            throw new IllegalArgumentException("SampleResult state must be Matrix or List<Matrix>");
+        }
+
+        // Extract unique states and build hash: MATLAB [stateSpace,~,stateHash] = unique(sampleState,'rows')
+        int nTimePoints = sampleState.getNumRows();
+        int nDims = sampleState.getNumCols();
+        Map<String, Integer> rowToIndex = new HashMap<>();
+        List<double[]> uniqueRows = new ArrayList<>();
+        int[] stateHash = new int[nTimePoints]; // 0-based indices
+
+        for (int i = 0; i < nTimePoints; i++) {
+            StringBuilder key = new StringBuilder();
+            for (int d = 0; d < nDims; d++) {
+                if (d > 0) key.append(",");
+                key.append(sampleState.get(i, d));
+            }
+            String keyStr = key.toString();
+            Integer idx = rowToIndex.get(keyStr);
+            if (idx == null) {
+                idx = uniqueRows.size();
+                rowToIndex.put(keyStr, idx);
+                double[] row = new double[nDims];
+                for (int d = 0; d < nDims; d++) {
+                    row[d] = sampleState.get(i, d);
+                }
+                uniqueRows.add(row);
+            }
+            stateHash[i] = idx;
+        }
+
+        int nStates = uniqueRows.size();
+
+        // Build transition count matrix and hold times
+        // MATLAB: dtmc(stateHash(i-1),stateHash(i)) += 1; holdTime(stateHash(i-1)) += sa.t(i) - sa.t(i-1)
+        Matrix dtmc = new Matrix(nStates, nStates);
+        double[] holdTime = new double[nStates];
+
+        for (int i = 1; i < nTimePoints; i++) {
+            int from = stateHash[i - 1];
+            int to = stateHash[i];
+            dtmc.set(from, to, dtmc.get(from, to) + 1.0);
+            holdTime[from] += sa.t.get(i, 0) - sa.t.get(i - 1, 0);
+        }
+
+        // Normalize hold time by transition count: MATLAB holdTime = holdTime ./ sum(dtmc,2)
+        for (int i = 0; i < nStates; i++) {
+            double rowSum = 0;
+            for (int j = 0; j < nStates; j++) {
+                rowSum += dtmc.get(i, j);
+            }
+            if (rowSum > 0) {
+                holdTime[i] = holdTime[i] / rowSum;
+            }
+        }
+
+        // Make stochastic and divide by hold times, then make infgen
+        // MATLAB: infGen = ctmc_makeinfgen(dtmc_makestochastic(dtmc)./(holdTime*ones(1,length(stateSpace))))
+        Matrix stochDtmc = dtmc_makestochastic(dtmc);
+        for (int i = 0; i < nStates; i++) {
+            if (holdTime[i] > 0) {
+                for (int j = 0; j < nStates; j++) {
+                    stochDtmc.set(i, j, stochDtmc.get(i, j) / holdTime[i]);
+                }
+            }
+        }
+        Matrix infGen = ctmc_makeinfgen(stochDtmc);
+
+        // Build state space matrix
+        Matrix stateSpace = new Matrix(nStates, nDims);
+        for (int i = 0; i < nStates; i++) {
+            double[] row = uniqueRows.get(i);
+            for (int d = 0; d < nDims; d++) {
+                stateSpace.set(i, d, row[d]);
+            }
+        }
+
+        return new MarkovProcess(infGen, true, stateSpace);
+    }
+
+    /**
+     * Create CTMC from sample system aggregation (dispatches based on input type).
+     * @param sa the sample aggregation object (Matrix or SampleResult)
      * @return CTMC constructed from samples
      */
     public static MarkovProcess fromSampleSysAggr(Object sa) {
         if (sa instanceof Matrix) {
             return fromSampleSysAggr((Matrix) sa);
+        } else if (sa instanceof Ret.SampleResult) {
+            return fromSampleSysAggr((Ret.SampleResult) sa);
         } else {
-            throw new UnsupportedOperationException("fromSampleSysAggr only supports Matrix input currently");
+            throw new UnsupportedOperationException(
+                "fromSampleSysAggr supports Matrix and Ret.SampleResult inputs, got: " +
+                (sa == null ? "null" : sa.getClass().getName()));
         }
     }
 }

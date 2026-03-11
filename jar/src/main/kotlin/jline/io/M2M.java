@@ -15,6 +15,7 @@ import jline.lang.constant.RoutingStrategy;
 import jline.lang.constant.SchedStrategy;
 import jline.lang.constant.TimingStrategy;
 import jline.lang.NetworkStruct;
+import jline.lang.RoutingMatrix;
 import jline.lang.nodes.*;
 import jline.lang.nodes.Queue;
 import jline.lang.processes.*;
@@ -77,9 +78,7 @@ public class M2M {
 
         switch (fext) {
             case "jmva":
-                line_error(mfilename(new Object() {
-                }), "JMVA files not yet supported.");
-                // return JMVA2LINE(filename);
+                return JMVA2LINE(filename);
             case "jsim":
             case "jsimg":
             case "jsimw":
@@ -113,9 +112,7 @@ public class M2M {
 
         switch (fext) {
             case "jmva":
-                line_error(mfilename(new Object() {
-                }), "JMVA files not yet supported.");
-                // return JMVA2LINE(filename, modelName);
+                return JMVA2LINE(filename, modelName);
             case "jsim":
             case "jsimg":
             case "jsimw":
@@ -772,12 +769,12 @@ public class M2M {
                             }
                         }
                         
-                        int firingPriorities = Integer.parseInt(((Element) getSubParameter(
+                        int firingPriorities = (int) Double.parseDouble(((Element) getSubParameter(
                                 ((Element) xsection.get(i).item(1)).getElementsByTagName("parameter").item(3), m))
                                 .getElementsByTagName("value").item(0).getTextContent());
                         ((Transition) node.get(i)).setFiringPriorities(mode, firingPriorities);
-                        
-                        int firingWeights = Integer.parseInt(((Element) getSubParameter(
+
+                        int firingWeights = (int) Double.parseDouble(((Element) getSubParameter(
                                 ((Element) xsection.get(i).item(1)).getElementsByTagName("parameter").item(4), m))
                                 .getElementsByTagName("value").item(0).getTextContent());
                         ((Transition) node.get(i)).setFiringWeights(mode, firingWeights);
@@ -1556,7 +1553,9 @@ public class M2M {
                                 List<List<Node>> xprob = getChildNodes("value", xroutprobdest.get(j));
                                 int target = node_name.indexOf(xprob.get(0).get(0).getTextContent());
                                 double prob = Double.parseDouble(xprob.get(1).get(0).getTextContent());
-                                node.get(from).setProbRouting(jobclass.get(r), node.get(target), prob);
+                                if (target >= 0) {
+                                    node.get(from).setProbRouting(jobclass.get(r), node.get(target), prob);
+                                }
                             }
                             break;
                         case "Power of k":
@@ -1915,5 +1914,295 @@ public class M2M {
             return outputFileName;
         }
         return null;
+    }
+
+    /**
+     * Converts a JMVA file to a LINE Network object.
+     *
+     * <p>This method parses the JMVA XML file and extracts the model name from the filename.
+     * JMVA files describe queueing models with delay stations, load-independent (LI) stations,
+     * open and closed job classes, service times, and visit ratios.</p>
+     *
+     * @param filename The path to the JMVA file to import
+     * @return A LINE Network object representing the imported JMVA model
+     * @throws RuntimeException if the XML document cannot be read or parsing fails
+     */
+    public Network JMVA2LINE(String filename) {
+        String modelName = FilenameUtils.getBaseName(filename);
+        return JMVA2LINE(filename, modelName);
+    }
+
+    /**
+     * Converts a JMVA file to a LINE Network object with a custom model name.
+     *
+     * <p>Parses the JMVA XML format which contains:
+     * <ul>
+     *   <li>Stations: delaystation (infinite server), listation (load-independent)</li>
+     *   <li>Classes: openclass (with arrival rate), closedclass (with population)</li>
+     *   <li>Service times and visit ratios per station per class</li>
+     *   <li>Reference stations for closed classes</li>
+     * </ul>
+     * </p>
+     *
+     * @param filename The path to the JMVA file to import
+     * @param modelName The name to assign to the resulting LINE Network model
+     * @return A LINE Network object representing the imported JMVA model
+     * @throws RuntimeException if parsing fails or unsupported features are encountered
+     */
+    public Network JMVA2LINE(String filename, String modelName) {
+        Document xDoc = xml_read(filename);
+        if (xDoc == null) {
+            throw new RuntimeException("Failed to read JMVA file: " + filename);
+        }
+
+        // Navigate to parameters element (may be under <sim> or directly under root)
+        Element root = xDoc.getDocumentElement();
+        Element parameters;
+        NodeList simList = root.getElementsByTagName("sim");
+        if (simList.getLength() > 0) {
+            parameters = getChildElement((Element) simList.item(0), "parameters");
+        } else {
+            parameters = getChildElement(root, "parameters");
+        }
+        if (parameters == null) {
+            throw new RuntimeException("JMVA file missing <parameters> element: " + filename);
+        }
+
+        Network model = new Network(modelName);
+        List<jline.lang.nodes.Node> nodes = new ArrayList<jline.lang.nodes.Node>();
+
+        // Parse stations
+        Element stationsEl = getChildElement(parameters, "stations");
+        if (stationsEl == null) {
+            throw new RuntimeException("JMVA file missing <stations> element: " + filename);
+        }
+
+        // Delay stations (infinite server)
+        List<Element> delayStations = getChildElements(stationsEl, "delaystation");
+        for (Element ds : delayStations) {
+            String name = ds.getAttribute("name");
+            nodes.add(new Delay(model, name));
+        }
+        int nInfStations = delayStations.size();
+
+        // Load-independent stations (queue with PS scheduling)
+        List<Element> liStations = getChildElements(stationsEl, "listation");
+        for (Element ls : liStations) {
+            String name = ls.getAttribute("name");
+            nodes.add(new Queue(model, name, SchedStrategy.PS));
+        }
+        int nLIStations = liStations.size();
+
+        // Check for unsupported station types
+        List<Element> ldStations = getChildElements(stationsEl, "ldstation");
+        if (!ldStations.isEmpty()) {
+            throw new RuntimeException("Load-dependent stations not yet supported in JMVA2LINE.");
+        }
+
+        // Parse classes
+        Element classesEl = getChildElement(parameters, "classes");
+        if (classesEl == null) {
+            throw new RuntimeException("JMVA file missing <classes> element: " + filename);
+        }
+
+        List<JobClass> jobClasses = new ArrayList<JobClass>();
+        Source source = null;
+        Sink sink = null;
+
+        // Open classes
+        List<Element> openClasses = getChildElements(classesEl, "openclass");
+        int nOpenClasses = openClasses.size();
+        if (nOpenClasses > 0) {
+            source = new Source(model, "Source");
+            sink = new Sink(model, "Sink");
+        }
+        for (Element oc : openClasses) {
+            String name = oc.getAttribute("name");
+            double rate = Double.parseDouble(oc.getAttribute("rate"));
+            OpenClass oClass = new OpenClass(model, name, 0);
+            jobClasses.add(oClass);
+            source.setArrival(oClass, new Exp(rate));
+        }
+
+        // Closed classes
+        List<Element> closedClasses = getChildElements(classesEl, "closedclass");
+        int nClosedClasses = closedClasses.size();
+        for (Element cc : closedClasses) {
+            String name = cc.getAttribute("name");
+            int population = Integer.parseInt(cc.getAttribute("population"));
+            // Use first station as reference (cast to Station required by ClosedClass constructor)
+            Station refStation = null;
+            if (!nodes.isEmpty() && nodes.get(0) instanceof Station) {
+                refStation = (Station) nodes.get(0);
+            }
+            ClosedClass cClass = new ClosedClass(model, name, population, refStation, 0);
+            jobClasses.add(cClass);
+        }
+
+        int nClasses = nOpenClasses + nClosedClasses;
+
+        // Track which station-class pairs are visited
+        boolean[][] visited = new boolean[nInfStations + nLIStations][nClasses];
+
+        // Set service times for delay stations
+        for (int i = 0; i < nInfStations; i++) {
+            Element ds = delayStations.get(i);
+            Element servicetimes = getChildElement(ds, "servicetimes");
+            Element visitsEl = getChildElement(ds, "visits");
+            if (servicetimes == null || visitsEl == null) continue;
+
+            List<Element> stEntries = getChildElements(servicetimes, "servicetime");
+            List<Element> visitEntries = getChildElements(visitsEl, "visit");
+
+            for (int r = 0; r < nClasses; r++) {
+                double servTime = 0;
+                double visitCount = 0;
+                String className = jobClasses.get(r).getName();
+
+                // Find matching servicetime entry
+                for (Element st : stEntries) {
+                    if (className.equals(st.getAttribute("customerclass"))) {
+                        servTime = parseDoubleContent(st);
+                        break;
+                    }
+                }
+                // Find matching visit entry
+                for (Element v : visitEntries) {
+                    if (className.equals(v.getAttribute("customerclass"))) {
+                        visitCount = parseDoubleContent(v);
+                        break;
+                    }
+                }
+
+                double demand = servTime * visitCount;
+                if (visitCount > 0 && demand > 0) {
+                    ((Delay) nodes.get(i)).setService(jobClasses.get(r), new Exp(1.0 / demand));
+                    visited[i][r] = true;
+                } else {
+                    ((Delay) nodes.get(i)).setService(jobClasses.get(r), jline.lang.processes.Disabled.getInstance());
+                    visited[i][r] = false;
+                }
+            }
+        }
+
+        // Set service times for LI stations
+        for (int i = 0; i < nLIStations; i++) {
+            Element ls = liStations.get(i);
+            Element servicetimes = getChildElement(ls, "servicetimes");
+            Element visitsEl = getChildElement(ls, "visits");
+            if (servicetimes == null || visitsEl == null) continue;
+
+            List<Element> stEntries = getChildElements(servicetimes, "servicetime");
+            List<Element> visitEntries = getChildElements(visitsEl, "visit");
+
+            for (int r = 0; r < nClasses; r++) {
+                double servTime = 0;
+                double visitCount = 0;
+                String className = jobClasses.get(r).getName();
+
+                for (Element st : stEntries) {
+                    if (className.equals(st.getAttribute("customerclass"))) {
+                        servTime = parseDoubleContent(st);
+                        break;
+                    }
+                }
+                for (Element v : visitEntries) {
+                    if (className.equals(v.getAttribute("customerclass"))) {
+                        visitCount = parseDoubleContent(v);
+                        break;
+                    }
+                }
+
+                int stationIdx = nInfStations + i;
+                double demand = servTime * visitCount;
+                if (visitCount > 0 && demand > 0) {
+                    ((Queue) nodes.get(stationIdx)).setService(jobClasses.get(r), new Exp(1.0 / demand));
+                    visited[stationIdx][r] = true;
+                } else {
+                    ((Queue) nodes.get(stationIdx)).setService(jobClasses.get(r), jline.lang.processes.Disabled.getInstance());
+                    visited[stationIdx][r] = false;
+                }
+            }
+        }
+
+        // Build routing matrix using RoutingMatrix
+        RoutingMatrix P = model.initRoutingMatrix();
+        for (int r = 0; r < nOpenClasses; r++) {
+            JobClass jc = jobClasses.get(r);
+            // Build serial route: Source -> visited stations -> Sink
+            List<jline.lang.nodes.Node> route = new ArrayList<jline.lang.nodes.Node>();
+            route.add(source);
+            for (int i = 0; i < nodes.size(); i++) {
+                if (visited[i][r]) {
+                    route.add(nodes.get(i));
+                }
+            }
+            route.add(sink);
+            P.set(jc, Network.serialRouting(jc, route));
+        }
+        for (int r = 0; r < nClosedClasses; r++) {
+            int classIdx = nOpenClasses + r;
+            JobClass jc = jobClasses.get(classIdx);
+            List<jline.lang.nodes.Node> route = new ArrayList<jline.lang.nodes.Node>();
+            for (int i = 0; i < nodes.size(); i++) {
+                if (visited[i][classIdx]) {
+                    route.add(nodes.get(i));
+                }
+            }
+            if (!route.isEmpty()) {
+                P.set(jc, Network.serialRouting(jc, route));
+            }
+        }
+        model.link(P);
+
+        return model;
+    }
+
+    /**
+     * Gets a direct child element by tag name.
+     */
+    private Element getChildElement(Element parent, String tagName) {
+        NodeList children = parent.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            if (children.item(i) instanceof Element) {
+                Element child = (Element) children.item(i);
+                if (tagName.equals(child.getTagName())) {
+                    return child;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Gets all direct child elements with the given tag name.
+     */
+    private List<Element> getChildElements(Element parent, String tagName) {
+        List<Element> result = new ArrayList<Element>();
+        NodeList children = parent.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            if (children.item(i) instanceof Element) {
+                Element child = (Element) children.item(i);
+                if (tagName.equals(child.getTagName())) {
+                    result.add(child);
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Parses the text content of an element as a double.
+     */
+    private double parseDoubleContent(Element el) {
+        String text = el.getTextContent();
+        if (text == null || text.trim().isEmpty()) {
+            return 0.0;
+        }
+        try {
+            return Double.parseDouble(text.trim());
+        } catch (NumberFormatException e) {
+            return 0.0;
+        }
     }
 }

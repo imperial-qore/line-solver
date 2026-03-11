@@ -54,7 +54,7 @@ Accessing results:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Tuple
+from typing import Any, Optional, Dict, List, Tuple
 import numpy as np
 
 
@@ -105,11 +105,10 @@ class SolverFLDOptions:
         Smaller values increase accuracy but runtime.
         Recommended: 0.001-0.01 for diffusion method.
 
-    pstar : float or None, default=None
+    pstar : float or None, default=20.0
         P-norm smoothing parameter for matrix method.
-        When None (default), the standard min(1, c/x) constraint is used,
-        matching MATLAB's default behavior. Set to a positive value to enable
-        p-norm smoothing: min(1, c/x) ≈ ghat(x, c, p).
+        Set to a positive value to enable p-norm smoothing:
+        min(1, c/x) ≈ ghat(x, c, p).
         - p=2: Smooth approximation (fast but less accurate)
         - p=20: Good balance
         - p=100: Very smooth but slower
@@ -121,9 +120,9 @@ class SolverFLDOptions:
         Larger values → sharper transitions, smaller values → smoother approximation.
         Recommended range: [1, 100]
 
-    hide_immediate : bool, default=True
+    hide_immediate : bool, default=False
         Eliminate immediate transitions in network analysis.
-        Recommended to keep True for most networks.
+        Disabled by default as stiff ODE solver handles immediate rates accurately.
 
     verbose : bool, default=False
         Print detailed progress information during solution.
@@ -178,9 +177,10 @@ class SolverFLDOptions:
     stiff: bool = True
     timespan: Tuple[float, float] = (0.0, float('inf'))
     timestep: Optional[float] = None
-    pstar: Optional[float] = None
+    pstar: Optional[float] = 20.0
     softmin_alpha: float = 20.0
-    hide_immediate: bool = True
+    hide_immediate: bool = False
+    aoi_preemption: Optional[float] = None
     verbose: bool = False
     init_sol: Optional[np.ndarray] = None  # Initial state for ODE (for transient analysis)
     # Common solver parameters (for compatibility)
@@ -339,3 +339,5 @@ class FLDResult:
     iterations: int = 0
     runtime: float = 0.0
     method: str = 'matrix'
+    aoiResults: Optional[Dict[str, Any]] = None
+    aoiConfig: Optional[Dict[str, Any]] = None

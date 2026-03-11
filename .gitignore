@@ -79,7 +79,7 @@ doc/.sphinx-venv/
 logs/
 
 # Local planning and test files (not tracked)
-PLAN-DES-EXTENSIONS.md
+PLAN-LDES-EXTENSIONS.md
 matlab/test_des_forkjoin.m
 python/test-output.txt
 

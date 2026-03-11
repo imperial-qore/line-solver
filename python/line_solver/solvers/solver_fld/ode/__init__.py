@@ -1,7 +1,3 @@
-"""
-ODE system implementations for FLD solver.
-
-Different smoothing and capacity constraint methods.
-"""
+"""ODE system implementations for FLD solver."""
 
 __all__ = []

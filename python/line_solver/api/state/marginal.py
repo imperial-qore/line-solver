@@ -1030,3 +1030,124 @@ def _generate_state_space_with_started(sched: int, S: int, n: np.ndarray, s: np.
             kstate[0, col] = s[r]
             col += int(phases[r])
         return kstate
+
+
+def toMarginalAggr(sn, ind: int, state_i: np.ndarray,
+                   K: np.ndarray = None, Ks: np.ndarray = None,
+                   space_buf: np.ndarray = None, space_srv: np.ndarray = None,
+                   space_var: np.ndarray = None) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Fast extraction of aggregated marginal (ni, nir) from state vector.
+
+    Unlike toMarginal which also computes sir and kir, this only computes
+    the total jobs per class (nir) and total jobs (ni), which is sufficient
+    for most afterEvent rate computations.
+
+    Port from JAR ToMarginal.java:toMarginalAggr().
+
+    Args:
+        sn: NetworkStruct
+        ind: Node index (0-based)
+        state_i: State vector(s), shape (n_states, n_cols)
+        K: Phase counts per class, shape (R,)
+        Ks: Phase shift per class, shape (R,)
+        space_buf: Buffer portion of state
+        space_srv: Server portion of state
+        space_var: Variable portion of state
+
+    Returns:
+        Tuple of (ni, nir):
+        - ni: Total jobs per state row, shape (n_states,)
+        - nir: Jobs per class per state row, shape (n_states, R)
+    """
+    if hasattr(sn, 'getStruct'):
+        sn = sn.getStruct()
+
+    state_i = np.atleast_2d(state_i)
+    n_states = state_i.shape[0]
+    R = sn.nclasses
+
+    # Non-station stateful nodes (Router, Cache, Transition)
+    if not sn.isstation[ind] and sn.isstateful[ind]:
+        V = int(np.sum(sn.nvars[ind])) if sn.nvars is not None else 0
+        n_cols = max(0, state_i.shape[1] - V)
+        nir = np.zeros((n_states, max(1, n_cols)))
+        for i in range(n_states):
+            for j in range(min(n_cols, state_i.shape[1])):
+                if j < nir.shape[1]:
+                    nir[i, j] = state_i[i, j]
+        ni = np.sum(nir, axis=1)
+        return ni, nir
+
+    ist = int(sn.nodeToStation[ind])
+
+    # Default K, Ks from sn if not provided
+    if K is None:
+        K = np.array(sn.phasessz[ist], dtype=int)
+    K = np.atleast_1d(K).astype(int)
+    if Ks is None:
+        Ks = np.array(sn.phaseshift[ist], dtype=int)
+    Ks = np.atleast_1d(Ks).astype(int)
+
+    sumK = int(np.sum(K))
+    V = int(np.sum(sn.nvars[ind])) if sn.nvars is not None else 0
+
+    # Decompose state if not provided
+    if space_var is None:
+        if V > 0:
+            space_var = state_i[:, -V:]
+        else:
+            space_var = np.zeros((n_states, 0))
+
+    if space_srv is None:
+        srv_start = state_i.shape[1] - sumK - V
+        srv_end = state_i.shape[1] - V
+        space_srv = state_i[:, srv_start:srv_end]
+
+    if space_buf is None:
+        buf_end = state_i.shape[1] - sumK - V
+        space_buf = state_i[:, :buf_end] if buf_end > 0 else np.zeros((n_states, 0))
+
+    # Compute nir from server phases
+    nir = np.zeros((n_states, R))
+    for r in range(R):
+        for k in range(K[r]):
+            col = Ks[r] + k
+            if col < space_srv.shape[1]:
+                nir[:, r] += space_srv[:, col]
+
+    # Add buffer contributions based on scheduling strategy
+    sched = sn.sched[ist]
+
+    if sched == SchedStrategy.EXT:
+        nir[:] = np.inf
+
+    elif sched in (SchedStrategy.FCFS, SchedStrategy.HOL, SchedStrategy.LCFS):
+        # Buffer stores 1-based class IDs
+        if space_buf.size > 0 and not (space_buf.shape == (1, 1) and space_buf[0, 0] == 0):
+            for r in range(R):
+                if space_buf.ndim == 1:
+                    nir[:, r] += np.sum(space_buf == (r + 1))
+                else:
+                    nir[:, r] += np.sum(space_buf == (r + 1), axis=1)
+
+    elif sched in (SchedStrategy.SIRO,):
+        # Buffer stores per-class job counts
+        for r in range(R):
+            if space_buf.ndim >= 2 and r < space_buf.shape[1]:
+                nir[:, r] += space_buf[:, r]
+            elif space_buf.ndim == 1 and r < len(space_buf):
+                nir[:, r] += space_buf[r]
+
+    # Zero out disabled classes
+    if hasattr(sn, 'rates') and sn.rates is not None:
+        for r in range(R):
+            if np.isnan(sn.rates[ist, r]):
+                nt = sn.nodetype[ind]
+                nt_val = int(nt.value) if hasattr(nt, 'value') else int(nt)
+                place_val = int(NodeType.PLACE.value) if hasattr(NodeType.PLACE, 'value') else int(NodeType.PLACE)
+                if nt_val != place_val:
+                    nir[:, r] = 0
+
+    ni = np.sum(nir, axis=1)
+    return ni, nir

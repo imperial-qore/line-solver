@@ -159,13 +159,29 @@ ARGS{1}{1} = coder.typeof(0);
 ARGS{1}{2} = coder.typeof(0);
 ARGS{1}{3} = coder.typeof(0);
 codegen -config cfg softmin -args ARGS{1}
+%% 'logsumexp'.
+ARGS = cell(1,1);
+ARGS{1} = cell(1,1);
+ARGS{1}{1} = coder.typeof(0,[1 Inf],[0 1]); %x
+codegen -config cfg logsumexp -args ARGS{1}
+%% 'pnorm_smooth'.
+ARGS = cell(1,1);
+ARGS{1} = cell(3,1);
+ARGS{1}{1} = coder.typeof(0); %x
+ARGS{1}{2} = coder.typeof(0); %c
+ARGS{1}{3} = coder.typeof(0); %p
+codegen -config cfg pnorm_smooth -args ARGS{1}
+%% 'enorm'.
+ARGS = cell(1,1);
+ARGS{1} = cell(1,1);
+ARGS{1}{1} = coder.typeof(0,[Inf Inf],[1 1]); %matrix
+codegen -config cfg enorm -args ARGS{1}
 %% 'sumfinite'.
-% ARGS = cell(1,1);
-% ARGS{1} = cell(2,1);
-% ARG = coder.typeof(0,[Inf Inf],[1 1]);
-% ARGS{1}{1} = coder.typeof(0,[1 Inf],[0 1]); %y
-% ARGS{1}{2} = coder.typeof(0);
-% codegen -config cfg sumfinite -args ARGS{1}
+ARGS = cell(1,1);
+ARGS{1} = cell(2,1);
+ARGS{1}{1} = coder.typeof(0,[Inf Inf],[1 1]); %v
+ARGS{1}{2} = coder.typeof(0); %dim
+codegen -config cfg sumfinite -args ARGS{1}
 %% 'tget'
 % cell arrays
 %% 'weaklyconncomp'

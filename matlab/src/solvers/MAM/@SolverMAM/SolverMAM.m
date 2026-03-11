@@ -37,7 +37,7 @@ classdef SolverMAM < NetworkSolver
             % Note: Method order must match expected values in test files.
             % New methods should be added at the end to preserve index alignment.
             % 'exact' method removed - autocat moved to line-legacy.git
-            allMethods = {'default','dec.source','dec.mmap','dec.poisson','mna','inap','ldqbd','inapplus'};
+            allMethods = {'default','dec.source','dec.mmap','dec.poisson','mna','inap','ldqbd','inapplus','dec.source.fj'};
         end
 end
     
@@ -52,7 +52,7 @@ end
             featSupported.setTrue({'Sink','Source',...
                 'Fork','Join','Forker','Joiner',... % Fork-Join support (via FJ_codes)
                 'Delay','DelayStation','Queue',...
-                'APH','Coxian','Erlang','Exp','HyperExp','MMPP2','MAP',...
+                'APH','Coxian','Erlang','Exp','HyperExp','MMPP2','MAP','DMAP',...
                 'Det','Gamma','Lognormal','Pareto','Uniform','Weibull',...
                 'StatelessClassSwitcher','InfiniteServer',...
                 'ClassSwitch', ...
@@ -101,7 +101,7 @@ end
 
             % MAMSolver used for matrix-analytic methods (M/G/1, GI/M/1 types)
             % This includes default and decomposition methods
-            if ismember(options.method, {'default', 'dec.source', 'dec.mmap', 'dec.poisson'})
+            if ismember(options.method, {'default', 'dec.source', 'dec.mmap', 'dec.poisson', 'dec.source.fj'})
                 libs{end+1} = 'MAMSolver';
             end
 

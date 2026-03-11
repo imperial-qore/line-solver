@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.ejml.data.DMatrixRMaj;
 import static org.junit.jupiter.api.Assertions.*;
 import static jline.TestTools.ZERO_TOL;
+import static jline.TestTools.FINE_TOL;
 
 /**
  * Comprehensive test suite for Matrix and related classes, consolidating all matrix tests.
@@ -781,8 +782,8 @@ public class MatrixTest {
         
         // Verify solution by checking Ax = b
         Matrix product = A.mult(x);
-        assertEquals(5.0, product.get(0, 0), 1e-12);
-        assertEquals(11.0, product.get(1, 0), 1e-12);
+        assertEquals(5.0, product.get(0, 0), FINE_TOL);
+        assertEquals(11.0, product.get(1, 0), FINE_TOL);
     }
     
     @Test
@@ -798,10 +799,10 @@ public class MatrixTest {
         
         // Verify A * A^(-1) = I
         Matrix product = A.mult(inverse);
-        assertEquals(1.0, product.get(0, 0), 1e-12);
-        assertEquals(0.0, product.get(0, 1), 1e-12);
-        assertEquals(0.0, product.get(1, 0), 1e-12);
-        assertEquals(1.0, product.get(1, 1), 1e-12);
+        assertEquals(1.0, product.get(0, 0), FINE_TOL);
+        assertEquals(0.0, product.get(0, 1), FINE_TOL);
+        assertEquals(0.0, product.get(1, 0), FINE_TOL);
+        assertEquals(1.0, product.get(1, 1), FINE_TOL);
     }
     
     // ========== Matrix Choice Tests ==========

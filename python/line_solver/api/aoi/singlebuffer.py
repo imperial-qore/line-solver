@@ -1,20 +1,33 @@
 """
-Single-Buffer AoI Solver for M/PH/1/2 systems.
+Single-buffer AoI solver for M/PH/1/2 systems.
 
-Implements the algorithm from aoi-fluid toolbox for computing Age of Information
-(AoI) and Peak Age of Information (PAoI) distributions in single-buffer systems.
-
-**Algorithm Reference**:
-Dogan, O., Akar, N., & Atay, F. F. (2020). "Age of Information in Markovian
-Fluid Queues". arXiv preprint arXiv:2003.09408, Algorithm 2.
-
-**License**: BSD 2-Clause (aoi-fluid toolbox)
-Copyright (c) 2020, Ozancan Dogan, Nail Akar, Eray Unsal Atay
+This is a direct NumPy/SciPy port of LINE's MATLAB `solveSingleBuffer`
+implementation from the bundled aoi-fluid toolbox.
 """
+
+from __future__ import annotations
+
+from typing import Any, Dict
 
 import numpy as np
 from scipy import linalg
-from typing import Dict, Tuple, Any
+
+
+def _as_row(vec: np.ndarray) -> np.ndarray:
+    return np.asarray(vec, dtype=float).reshape(1, -1)
+
+
+def _as_matrix(mat: np.ndarray) -> np.ndarray:
+    return np.asarray(mat, dtype=float)
+
+
+def _solve_mldivide_transpose(eqn_matrix: np.ndarray, rhs: np.ndarray) -> np.ndarray:
+    sol, _, _, _ = linalg.lstsq(eqn_matrix.T, rhs)
+    return sol
+
+
+def _real_scalar(value: np.ndarray) -> float:
+    return float(np.real_if_close(np.asarray(value).item()))
 
 
 def solve_singlebuffer(
@@ -26,204 +39,190 @@ def solve_singlebuffer(
     """
     Solve single-buffer AoI system (M/PH/1/2 or M/PH/1/2*).
 
-    Computes matrix exponential parameters for Age of Information and Peak Age
-    of Information distributions in a single-buffer queue with exponential
-    (Poisson) arrivals and phase-type service.
-
-    **Algorithm** (from paper, Algorithm 2):
-    Two-stage approach:
-    1. Solve waiting time MFQ system (l+2 states)
-    2. Construct full AoI MFQ system (4l+2 states)
-    3. Extract AoI distribution matrices
-
-    Parameters
-    ----------
-    lambda_rate : float
-        Poisson arrival rate (exponential inter-arrivals)
-    sigma : np.ndarray, shape (l,)
-        Service process initial probability vector
-    S : np.ndarray, shape (l, l)
-        Service process sub-generator matrix
-    r : float, optional
-        Replacement probability (default 0 = FCFS)
-        r=0: FCFS (current service completes)
-        r=1: Replacement policy (waiting customer replaces current)
-
-    Returns
-    -------
-    result : dict
-        Solution dictionary with keys:
-        - 'AoI_g', 'AoI_A', 'AoI_h': Matrix exponential parameters for AoI
-          CDF: F(t) = 1 - g @ expm(A*t) @ h
-        - 'AoI_mean', 'AoI_var': Mean and variance of AoI
-        - 'PAoI_g', 'PAoI_A', 'PAoI_h': Matrix exponential for Peak AoI
-        - 'PAoI_mean', 'PAoI_var': Mean and variance of Peak AoI
-        - 'status': 'success' or error message
+    Returns matrix-exponential parameters for AoI and Peak AoI plus their
+    first two moments.
     """
     try:
-        # Validate inputs
         lambda_rate = float(lambda_rate)
-        sigma = np.asarray(sigma, dtype=float).flatten()
-        S = np.asarray(S, dtype=float)
+        sigma = _as_row(sigma)
+        S = _as_matrix(S)
         r = float(r)
 
-        l = len(sigma)  # Size of service process
-
+        l = S.shape[1]
         if S.shape != (l, l):
-            raise ValueError(f"Dimension mismatch: S shape {S.shape}, expected ({l}, {l})")
+            raise ValueError(f"Dimension mismatch: S {S.shape}")
 
-        # Compute service rates
-        nu = -S @ np.ones(l)  # Service rates per phase
+        ones_l = np.ones((l, 1))
+        nu = -S @ ones_l
 
-        # ==================== Stage 1: Waiting Time MFQ ====================
-        # Construct waiting time MFQ generator (Eqn 16)
-        # Waiting time is the residual time until service completion
+        # Part 1: waiting-time MFQ (MATLAB Eqn. 16 path).
+        z1 = l + 2
+        a1 = 2
+        b1 = l
 
-        Q_wait = np.zeros((l + 2, l + 2))
+        q1 = np.block([
+            [S, nu, np.zeros((l, 1))],
+            [np.zeros((1, l)), np.array([[-lambda_rate, lambda_rate]])],
+            [np.zeros((1, l + 2))],
+        ])
 
-        # Q_wait[0:l, 0:l] = S (service in progress)
-        Q_wait[:l, :l] = S
+        r1 = np.eye(z1)
+        r1[-2, -2] = -1.0
+        r1[-1, -1] = -1.0
 
-        # Q_wait[0:l, l] = lambda * sigma (new arrival)
-        Q_wait[:l, l] = lambda_rate * sigma
+        qtilde1 = np.block([
+            [np.zeros((l, l + 2))],
+            [lambda_rate * sigma, np.array([[-lambda_rate, 0.0]])],
+            [sigma, np.array([[0.0, -1.0]])],
+        ])
 
-        # Q_wait[l, 0:l] = -lambda (waiting, departure transition)
-        Q_wait[l, :l] = -lambda_rate * np.ones(l)
+        e1 = np.ones((z1, 1))
+        pik = linalg.solve((q1 + e1 @ e1.T).T, e1).T
+        qr1 = q1 @ np.linalg.inv(r1)
+        x_r = r1 @ e1
+        x_l = pik
+        a1mat = qr1 + (x_r @ x_l) / float((x_l @ x_r).item())
 
-        # Q_wait[l+1, l] = -lambda (absorbed into normalization state)
-        Q_wait[l, l + 1] = lambda_rate
+        t_schur, z_schur, _ = linalg.schur(
+            a1mat,
+            output='real',
+            sort=lambda eig: np.real(eig) > 0,
+        )
+        p1 = z_schur
 
-        # Compute steady-state waiting time distribution
-        # This is solved via Schur decomposition with right-half-plane ordering
-        T_wait, Z_wait = linalg.schur(Q_wait)
+        ae1 = p1.T @ qr1 @ p1
+        amat1 = ae1[a1:, a1:]
+        hmat1 = p1[:, a1:].T
+        qtildestar1 = qtilde1[b1:, :]
 
-        # Extract eigenvalues for stability check
-        eigenvalues = np.diag(T_wait)
+        amat1_inv = np.linalg.inv(amat1)
+        eqn_matrix1 = np.block([
+            [hmat1 @ r1, -amat1_inv @ hmat1 @ np.ones((z1, 1))],
+            [-qtildestar1, np.ones((a1, 1))],
+        ])
+        rhs1 = np.zeros((z1 + 1, 1))
+        rhs1[-1, 0] = 1.0
+        solution1 = _solve_mldivide_transpose(eqn_matrix1, rhs1)
 
-        # ==================== Stage 2: Full AoI MFQ ====================
-        # Construct full AoI MFQ generator (Eqn 19)
-        # State space for AoI MFQ: follows Eqn (19) in the reference paper
-        # z = 4*l + 2: total system size
-        # Block structure:
-        # [0:l] - B phase (waiting time dynamics)
-        # [l:2l] - Service phase with arrivals
-        # [2l:3l] - Service phase
-        # [3l] - Idle state
-        # [3l+1:4l+1] - Final service phase
-        # [4l+1] - Absorption state
+        wait_g = solution1[:b1, :].T
+        wait_d = solution1[b1:, :].T
+        c0 = wait_d[0, 0]
 
-        z = 4 * l + 2  # Total state dimension
+        wait_a = amat1 - r * lambda_rate * np.eye(l)
+        wait_h = hmat1 @ np.vstack([np.zeros((l, 1)), [[1.0]], [[r]]])
 
-        Q_aoi = np.zeros((z, z))
+        wait_a_inv = np.linalg.inv(wait_a)
+        n1 = 1.0 / _real_scalar(-(wait_g @ wait_a_inv @ wait_h) + c0)
+        wait_g = n1 * wait_g
 
-        # Build B matrix from waiting time analysis (Lemma 1)
-        # B = M^{-1} * wait_A * M where M = diag(-wait_A \ wait_H)
-        wait_A = A - r * arrival_rate * np.eye(l)
-        wait_H = H @ np.array([[0], [1], [r]]).flatten()[:H.shape[1]] if H.shape[1] >= 1 else np.zeros(l)
+        mdiag = (-wait_a_inv @ wait_h).ravel()
+        mmat = np.diag(mdiag)
+        bmat = np.linalg.solve(mmat, wait_a @ mmat)
+        beta = wait_g @ mmat
+        beta0 = 1.0 - float(np.sum(beta))
+        psi = -bmat @ ones_l
 
-        try:
-            Mdiag = np.linalg.solve(-wait_A, wait_H.reshape(-1, 1)).flatten()
-        except np.linalg.LinAlgError:
-            Mdiag = np.ones(l)
+        # Part 2: AoI MFQ (MATLAB Eqn. 19 path).
+        z2 = 4 * l + 2
+        a2 = 1
+        b2 = z2 - 1
 
-        Mdiag = np.maximum(np.abs(Mdiag), 1e-10)
-        M = np.diag(Mdiag)
-        M_inv = np.diag(1.0 / Mdiag)
-        B = M_inv @ wait_A @ M
+        q2 = np.block([
+            [bmat, np.kron(psi, sigma), np.zeros((l, 2 * l + 2))],
+            [
+                np.zeros((l, l)),
+                S - lambda_rate * np.eye(l),
+                lambda_rate * np.eye(l),
+                nu,
+                np.zeros((l, l + 1)),
+            ],
+            [
+                np.zeros((l, 2 * l)),
+                S,
+                np.zeros((l, 1)),
+                np.kron(nu, sigma),
+                np.zeros((l, 1)),
+            ],
+            [np.zeros((1, 3 * l)), np.array([[-lambda_rate]]), lambda_rate * sigma, np.zeros((1, 1))],
+            [np.zeros((l, 3 * l + 1)), S, nu],
+            [np.zeros((1, z2))],
+        ])
 
-        # Compute psi for transitions
-        psi = -B @ np.ones(l)
+        r2 = np.eye(z2)
+        r2[-1, -1] = -1.0
 
-        # Construction of Q matrix following Eqn (19)
-        # Block (1,1): B
-        Q_aoi[:l, :l] = B
-        # Block (1,2): kron(psi, sigma)
-        Q_aoi[:l, l:2*l] = np.outer(psi, sigma)
-        # Block (2,2): S - lambda*I
-        Q_aoi[l:2*l, l:2*l] = S - arrival_rate * np.eye(l)
-        # Block (2,3): lambda*I
-        Q_aoi[l:2*l, 2*l:3*l] = arrival_rate * np.eye(l)
-        # Block (2,4): nu
-        Q_aoi[l:2*l, 3*l:3*l+1] = nu.reshape(-1, 1)
-        # Block (3,3): S
-        Q_aoi[2*l:3*l, 2*l:3*l] = S
-        # Block (3,5): kron(nu, sigma)
-        Q_aoi[2*l:3*l, 3*l+1:4*l+1] = np.outer(nu, sigma)
-        # Block (4,4): -lambda
-        Q_aoi[3*l, 3*l] = -arrival_rate
-        # Block (4,5): lambda*sigma
-        Q_aoi[3*l, 3*l+1:4*l+1] = arrival_rate * sigma
-        # Block (5,5): S
-        Q_aoi[3*l+1:4*l+1, 3*l+1:4*l+1] = S
-        # Block (5,6): nu
-        Q_aoi[3*l+1:4*l+1, 4*l+1:4*l+2] = nu.reshape(-1, 1)
+        qtilde2 = q2.copy()
+        qtilde2[-1, :l] = beta
+        qtilde2[-1, l:2 * l] = beta0 * sigma
+        qtilde2[-1, -1] = -1.0
 
-        # Service dynamics (blocks [l:2l])
-        # This is complex; simplified version for now
-        # Full implementation would follow paper Eqn 19 exactly
+        u1 = np.vstack([np.ones((z2 - 1, 1)), [[-1.0]]])
+        u2 = np.vstack([[[1.0]], np.zeros((z2 - 1, 1))])
+        u = u1 - np.linalg.norm(u1, ord=2) * u2
+        p2 = np.eye(z2) - (2.0 * (u @ u.T)) / float((u.T @ u).item())
 
-        # For now: use simpler extraction based on waiting time MFQ
-        # Extract steady-state vectors from waiting time system
-        exit_rates = -Q_wait @ np.ones(l + 2)
+        qr2 = q2 @ np.linalg.inv(r2)
+        ae2 = p2.T @ qr2 @ p2
+        amat2 = ae2[a2:, a2:]
+        hmat2 = p2[:, a2:].T
+        qtildestar2 = qtilde2[b2:, :]
 
-        # Normalize and extract distribution
-        A_sys = Q_wait.copy()
-        A_sys[-1, :] = np.ones(l + 2)
-        b_sys = np.zeros(l + 2)
-        b_sys[-1] = 1.0
+        amat2_inv = np.linalg.inv(amat2)
+        eqn_matrix2 = np.block([
+            [hmat2 @ r2, -amat2_inv @ hmat2 @ np.ones((z2, 1))],
+            [-qtildestar2, np.ones((a2, 1))],
+        ])
+        rhs2 = np.zeros((z2 + 1, 1))
+        rhs2[-1, 0] = 1.0
+        solution2 = _solve_mldivide_transpose(eqn_matrix2, rhs2)
 
-        try:
-            pi_wait = linalg.solve(A_sys, b_sys)
-        except linalg.LinAlgError:
-            pi_wait = linalg.lstsq(A_sys, b_sys)[0]
+        g = solution2[:b2, :].T
 
-        # Extract AoI parameters from waiting time solution
-        # Simplified: map back to phases 3 and 4 from paper
-        aoi_idx = list(range(l))  # Service phases
-        paoi_idx = list(range(l))  # Peak AoI subset
+        selected_aoi = np.vstack([
+            np.zeros((3 * l, 1)),
+            np.ones((l + 1, 1)),
+            [[0.0]],
+        ])
+        aoi_h = hmat2 @ selected_aoi
+        norm_constant = -(g @ amat2_inv @ aoi_h)
+        aoi_g = g / norm_constant
+        aoi_a = amat2
 
-        aoi_g = pi_wait[:l]
-        aoi_A = S
-        aoi_h = nu
+        amat2_inv2 = amat2_inv @ amat2_inv
+        amat2_inv3 = amat2_inv2 @ amat2_inv
+        aoi_mean = _real_scalar(aoi_g @ amat2_inv2 @ aoi_h)
+        aoi_var = max(0.0, _real_scalar(-2.0 * aoi_g @ amat2_inv3 @ aoi_h - aoi_mean ** 2))
 
-        paoi_g = pi_wait[:l]  # Subset of AoI phases
-        paoi_A = S
-        paoi_h = nu
-
-        # Compute moments
-        aoi_mean = -aoi_g @ linalg.inv(aoi_A) @ np.ones(l)
-        paoi_mean = -paoi_g @ linalg.inv(paoi_A) @ np.ones(l)
-
-        # Compute variances
-        try:
-            aoi_second = 2 * aoi_g @ linalg.inv(aoi_A) @ linalg.inv(aoi_A) @ np.ones(l)
-            aoi_var = aoi_second - aoi_mean ** 2
-        except linalg.LinAlgError:
-            aoi_var = 0.0
-
-        try:
-            paoi_second = 2 * paoi_g @ linalg.inv(paoi_A) @ linalg.inv(paoi_A) @ np.ones(l)
-            paoi_var = paoi_second - paoi_mean ** 2
-        except linalg.LinAlgError:
-            paoi_var = 0.0
+        selected_paoi = np.vstack([
+            np.zeros((3 * l + 1, 1)),
+            nu,
+            [[0.0]],
+        ])
+        paoi_h = hmat2 @ selected_paoi
+        norm_constant = -(g @ amat2_inv @ paoi_h)
+        paoi_g = g / norm_constant
+        paoi_a = amat2
+        paoi_mean = _real_scalar(paoi_g @ amat2_inv2 @ paoi_h)
+        paoi_var = max(0.0, _real_scalar(-2.0 * paoi_g @ amat2_inv3 @ paoi_h - paoi_mean ** 2))
 
         return {
-            'AoI_g': aoi_g,
-            'AoI_A': aoi_A,
-            'AoI_h': aoi_h,
-            'AoI_mean': float(aoi_mean),
-            'AoI_var': float(aoi_var),
-            'PAoI_g': paoi_g,
-            'PAoI_A': paoi_A,
-            'PAoI_h': paoi_h,
-            'PAoI_mean': float(paoi_mean),
-            'PAoI_var': float(paoi_var),
+            'AoI_g': np.real_if_close(aoi_g).ravel(),
+            'AoI_A': np.real_if_close(aoi_a),
+            'AoI_h': np.real_if_close(aoi_h).ravel(),
+            'AoI_mean': aoi_mean,
+            'AoI_var': aoi_var,
+            'PAoI_g': np.real_if_close(paoi_g).ravel(),
+            'PAoI_A': np.real_if_close(paoi_a),
+            'PAoI_h': np.real_if_close(paoi_h).ravel(),
+            'PAoI_mean': paoi_mean,
+            'PAoI_var': paoi_var,
+            'systemType': 'singlebuffer',
+            'preemption': r,
             'status': 'success',
         }
-
-    except Exception as e:
+    except Exception as err:
         return {
             'status': 'error',
-            'error_message': str(e),
-            'traceback': type(e).__name__,
+            'error_message': str(err),
+            'traceback': type(err).__name__,
         }

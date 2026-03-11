@@ -89,5 +89,7 @@ def main():
         print(stage_table)
 
 
+tut11_random_env = main
+
 if __name__ == '__main__':
     main()

@@ -75,7 +75,7 @@ fun solver_mam(sn: NetworkStruct, options: SolverOptions): MAMResult {
     // Check for non-FCFS queues
     for (ist in 0..<sn.nstations) {
         val sched = sn.sched.get(sn.stations.get(ist))
-        if (sched != SchedStrategy.EXT && sched != SchedStrategy.FCFS && sched != SchedStrategy.HOL) {
+        if (sched != SchedStrategy.EXT && sched != SchedStrategy.FCFS && sched != SchedStrategy.HOL && sched != SchedStrategy.FCFSPRIO) {
             if (options.verbose != VerboseLevel.SILENT) {
                 line_warning(mfilename(object : Any() {}), "The dec.mmap method does not support non-FCFS queues.")
             }
@@ -113,7 +113,7 @@ fun solver_mam(sn: NetworkStruct, options: SolverOptions): MAMResult {
                         TN.set(ist, i, sn.rates.get(ist, i))
                     }
                 }
-            } else if (sn.sched.get(sn.stations.get(ist)) == SchedStrategy.FCFS || sn.sched.get(sn.stations.get(ist)) == SchedStrategy.HOL) {
+            } else if (sn.sched.get(sn.stations.get(ist)) == SchedStrategy.FCFS || sn.sched.get(sn.stations.get(ist)) == SchedStrategy.HOL || sn.sched.get(sn.stations.get(ist)) == SchedStrategy.FCFSPRIO) {
                 for (k in 0..<K) {
                     val D0_ = PH.get(sn.stations.get(ist))!!.get(sn.jobclasses.get(k))!!.get(0).copy()
                     D0_.scaleEq(1.0 / sn.nservers.get(ist))

@@ -28,6 +28,7 @@ sn = getStruct(self);
 
 switch options.lang
     case 'java'
+        line_debug(options, 'SSA: using lang=java, delegating to JLINE');
         switch options.method
             case {'default','serial','parallel'}
                 switch options.method
@@ -50,6 +51,28 @@ switch options.lang
                 TN = reshape(TN',R,M)';
                 WN = reshape(WN',R,M)';
                 AN = reshape(AN',R,M)';
+                % Extract cache hit/miss probabilities from Java model
+                for ind = 1:sn.nnodes
+                    if sn.nodetype(ind) == NodeType.Cache
+                        hitRatioVec = JLINE.from_jline_matrix(jmodel.getNodeByIndex(ind-1).getHitRatio());
+                        missRatioVec = JLINE.from_jline_matrix(jmodel.getNodeByIndex(ind-1).getMissRatio());
+                        hitClass = self.model.nodes{ind}.getHitClass;
+                        nk = length(hitClass);
+                        hitprob = zeros(1, nk);
+                        missprob = zeros(1, nk);
+                        for k = 1:nk
+                            if hitClass(k) > 0 && k <= length(hitRatioVec)
+                                hitprob(k) = hitRatioVec(k);
+                                missprob(k) = missRatioVec(k);
+                            end
+                        end
+                        self.model.nodes{ind}.setResultHitProb(hitprob);
+                        self.model.nodes{ind}.setResultMissProb(missprob);
+                    end
+                end
+                if any(sn.nodetype == NodeType.Cache)
+                    self.model.refreshStruct(true);
+                end
                 self.setAvgResults(QN,UN,RN,TN,AN,WN,CN,XN,runtime);
 
                 % Extract confidence intervals from Java solver results
@@ -100,6 +123,7 @@ switch options.lang
                 line_error(mfilename, ['the ',options.method',' method is not available.']);
         end
     case 'matlab'
+        line_debug(options, 'SSA: using lang=matlab');
         [QN,UN,RN,TN,CN,XN,~,actualmethod,tranSysState, tranSync, sn, QNCI, UNCI, RNCI, TNCI, ANCI, WNCI] = solver_ssa_analyzer(sn, options);
 
         for isf=1:sn.nstateful
@@ -111,6 +135,7 @@ switch options.lang
                     self.model.refreshChains();
             end
         end
+        line_debug(options, 'SSA analysis complete: extracting results (nstations=%d, nclasses=%d)', sn.nstations, sn.nclasses);
         runtime = toc(T0);
         T = getAvgTputHandles(self);
         AN = sn_get_arvr_from_tput(sn, TN, T);

@@ -40,7 +40,7 @@ fun solver_mna(sn: NetworkStruct, options: SolverOptions): SolverResult {
     val T = Matrix(M, K, M * K)
     val X = Matrix(1, K, K)
     for (ist in 0..<M) {
-        if (sn.sched.get(sn.getStations().get(ist)) == SchedStrategy.FCFS || sn.sched.get(sn.getStations().get(ist)) == SchedStrategy.HOL || sn.sched.get(
+        if (sn.sched.get(sn.getStations().get(ist)) == SchedStrategy.FCFS || sn.sched.get(sn.getStations().get(ist)) == SchedStrategy.HOL || sn.sched.get(sn.getStations().get(ist)) == SchedStrategy.FCFSPRIO || sn.sched.get(
                 sn.getStations().get(ist)) == SchedStrategy.PS) {
             pie.put(ist, MatrixCell())
             DO.put(ist, MatrixCell())

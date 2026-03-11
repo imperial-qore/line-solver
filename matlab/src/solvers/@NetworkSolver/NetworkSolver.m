@@ -80,14 +80,14 @@ classdef NetworkSolver < Solver
                     if ~isempty(self.model.obj) % java model
                         % no-op
                     else  % matlab model
-                        self.model.obj = JLINE.line_to_jline(self.model.copy());
+                        self.model.obj = JLINE.line_to_jline(self.model);
                     end
                     switch self.name
                         case 'SolverCTMC'
                             self.obj = JLINE.SolverCTMC(self.model.obj, joptions);
-                        case 'SolverDES'
-                            self.obj = JLINE.SolverDES(self.model.obj, joptions);
-                        case 'SolverFluid'
+                        case 'SolverLDES'
+                            self.obj = JLINE.SolverLDES(self.model.obj, joptions);
+                        case {'SolverFluid','SolverFLD'}
                             self.obj = JLINE.SolverFluid(self.model.obj, joptions);
                         case 'SolverJMT'
                             self.obj = JLINE.SolverJMT(self.model.obj, joptions);
@@ -123,12 +123,13 @@ classdef NetworkSolver < Solver
             [Qt,Ut,Tt] = self.model.getTranHandles;
             self.setTranHandles(Qt,Ut,Tt);
 
-            if ~self.model.hasStruct
-                self.model.refreshStruct(); % force model to refresh
-            end
+            % refreshStruct is called lazily by model.getStruct() when first needed
         end
 
         function self = runAnalyzerChecks(self, options)
+            % Propagate solver verbose level to global so that model-level
+            % messages (e.g., priority info in refreshStruct) respect it
+            GlobalConstants.setVerbose(options.verbose);
             if self.enableChecks && ~self.supports(self.model)
                 line_error(mfilename,'This model contains features not supported by the solver.\n');
             end
@@ -410,7 +411,7 @@ classdef NetworkSolver < Solver
                 catch
                     solvername = self.result.solver(7:end);
                 end
-                if isnan(iter) || iter==1 || strcmp(solvername,'DES') || strcmp(solvername,'SSA')
+                if isnan(iter) || iter==1 || strcmp(solvername,'LDES') || strcmp(solvername,'SSA')
                     line_printf('%s analysis [method: %s, lang: %s, env: %s] completed in %fs.',solvername,self.result.Avg.method,self.options.lang,version("-release"),runtime);
                 else
                     line_printf('%s analysis [method: %s, lang: %s, env: %s] completed in %fs. Iterations: %d.',solvername,self.result.Avg.method,self.options.lang,version("-release"),runtime,iter);

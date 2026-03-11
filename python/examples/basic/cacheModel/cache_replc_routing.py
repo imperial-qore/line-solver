@@ -17,9 +17,7 @@ if _native_path not in sys.path:
 
 from line_solver import *
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
-
+def cache_replc_routing():
     model = Network('model')
 
     n = 5  # number of items
@@ -73,6 +71,13 @@ if __name__ == "__main__":
 
     delay2.set_prob_routing(hit_class, sink, 1.0)
     delay2.set_prob_routing(miss_class, sink, 1.0)
+
+    return model
+
+
+if __name__ == "__main__":
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+    model = cache_replc_routing()
 
     # Run multiple solvers
     solver = np.array([], dtype=object)

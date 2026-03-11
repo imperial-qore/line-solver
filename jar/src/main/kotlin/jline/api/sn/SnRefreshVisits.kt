@@ -361,7 +361,6 @@ fun snRefreshVisits(sn: NetworkStruct, chains: Matrix?, rt: Matrix, rtnodes: Mat
 
     sn.visits = visits
     sn.nodevisits = nodeVisits
-    sn.isslc = Matrix(sn.nclasses, 1)
     sn.refstat = refstat
 
     return sn

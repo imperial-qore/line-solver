@@ -36,10 +36,13 @@ end
 % Identify timed states
 timed_states = setdiff(1:size(W,1), imm_states);
 
-% Check that we have some timed states remaining
-if isempty(timed_states)
-    error('LINE:Fluid:AllImmediate', ...
-        'All states have immediate transitions - cannot eliminate');
+% Check that we have enough timed states remaining
+if isempty(timed_states) || length(timed_states) <= 1
+    % Too few timed states - elimination would produce a trivial system.
+    % Fall back to the original system without elimination.
+    W_red = W;
+    state_map = 1:size(W, 1);
+    return;
 end
 
 try

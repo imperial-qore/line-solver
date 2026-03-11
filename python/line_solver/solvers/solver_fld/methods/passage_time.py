@@ -425,81 +425,128 @@ def compute_passage_time_cdf(
 
         return W @ (x * ghat)
 
-    # Solve ODE
+    # Solve ODE - match MATLAB solver_fluid_passage_time.m integration strategy
     tol = options.tol if options.tol else 1e-6
     iter_max = options.iter_max if options.iter_max else 100
+    ode_method = 'LSODA' if options.stiff else 'RK45'
 
-    full_t = []
-    full_y = []
-    t_current = 0.0
+    fullt = np.array([], dtype=float)
+    fully = np.empty((0, total_phases_c), dtype=float)
+    iter_count = 1
+    finished = False
+    tref = 0.0
     y_current = y0_c.copy()
-    T_step = T / 10
 
-    for iteration in range(iter_max):
-        t_end = min(t_current + T_step, T * (1 + iteration * 0.5))
-
+    # Match MATLAB: integrate [0, T] per iteration, offset by tref
+    while iter_count <= iter_max and not finished:
         try:
-            method = 'LSODA' if options.stiff else 'RK45'
-            odeopt = {'rtol': tol, 'atol': tol * 1e-3}
             sol = solve_ivp(
                 ode_rhs,
-                [t_current, t_end],
+                [0.0, T],
                 y_current,
-                method=method,
-                **odeopt,
-                dense_output=True,
-                max_step=(t_end - t_current) / 10,
+                method=ode_method,
+                rtol=tol,
+                atol=tol,
             )
-
-            if len(full_t) == 0:
-                full_t.extend(sol.t.tolist())
-                full_y.extend(sol.y.T.tolist())
-            else:
-                full_t.extend(sol.t[1:].tolist())
-                full_y.extend(sol.y.T[1:].tolist())
-
-            y_current = sol.y[:, -1]
-            t_current = sol.t[-1]
-
-            # Check if transient fluid is depleted
-            transient_fluid = np.sum(np.maximum(y_current[transient_indices], 0))
-            if transient_fluid < 1e-10 * fluid_c:
+            t_iter = sol.t
+            y_iter = sol.y.T
+        except Exception:
+            try:
+                sol = solve_ivp(
+                    ode_rhs, [0.0, T], y_current,
+                    method='RK45', rtol=tol, atol=tol,
+                )
+                t_iter = sol.t
+                y_iter = sol.y.T
+            except Exception:
                 break
 
-        except Exception as e:
-            warnings.warn(f"ODE integration failed: {str(e)}")
-            break
+        iter_count += 1
+        if len(fullt) == 0:
+            fullt = t_iter + tref
+            fully = y_iter
+        else:
+            fullt = np.concatenate([fullt, t_iter[1:] + tref])
+            fully = np.vstack([fully, y_iter[1:]])
 
-    if len(full_t) == 0:
+        # Check if transient fluid is depleted (MATLAB: sum < 10e-10)
+        if np.sum(np.maximum(y_iter[-1][transient_indices], 0)) < 1e-9:
+            finished = True
+
+        tref += t_iter[-1]
+        y_current = y_iter[-1]
+
+    if len(fullt) == 0:
         return _exponential_cdf_fallback(service_rate, t_span)
 
-    t = np.array(full_t)
-    y = np.array(full_y)
-
     # Compute CDF: F(t) = 1 - transient_fluid(t) / initial_fluid
-    transient_over_time = np.sum(np.maximum(y[:, transient_indices], 0), axis=1)
+    transient_over_time = np.sum(np.maximum(fully[:, transient_indices], 0), axis=1)
     cdf = 1.0 - transient_over_time / fluid_c
-    cdf = np.clip(cdf, 0.0, 1.0)
 
-    # Ensure CDF is monotonically increasing
-    for i in range(1, len(cdf)):
-        cdf[i] = max(cdf[i], cdf[i-1])
+    # Adaptive CDF Refinement - match MATLAB: re-solve ODE for refined points
+    if fluid_c > 0:
+        max_cdf_jump = 0.0005
+        max_refinement_iterations = 5
+        refinement_iter = 0
 
-    # Adaptive refinement for large CDF jumps
-    t, cdf = _refine_cdf_jumps(t, cdf, max_jump=0.0005)
+        keep_refining = True
+        while keep_refining and refinement_iter < max_refinement_iterations:
+            keep_refining = False
+            for row in range(1, len(cdf)):
+                cdf_jump = cdf[row] - cdf[row - 1]
+                if cdf_jump > max_cdf_jump:
+                    refinement_iter += 1
+                    t1 = fullt[row - 1]
+                    t2 = fullt[row]
+                    n_refined = 20
+                    refined_t = np.linspace(t1, t2, n_refined)
+                    refined_states = np.zeros((n_refined, fully.shape[1]))
+                    start_state = fully[row - 1]
 
-    # Extend time if CDF doesn't reach high enough
-    if len(cdf) > 0 and cdf[-1] < 0.995:
-        remaining = 1.0 - cdf[-1]
-        if remaining > 0.001:
-            t_extend = np.linspace(t[-1], t[-1] * 3, 50)
-            # Exponential decay of remaining mass
-            lambda_tail = service_rate
-            cdf_extend = 1.0 - remaining * np.exp(-lambda_tail * (t_extend - t[-1]))
-            t = np.concatenate([t, t_extend[1:]])
-            cdf = np.concatenate([cdf, cdf_extend[1:]])
+                    for rp in range(n_refined):
+                        try:
+                            if refined_t[rp] > t1:
+                                sol_ref = solve_ivp(
+                                    ode_rhs, [t1, refined_t[rp]], start_state,
+                                    method=ode_method, rtol=tol, atol=tol,
+                                )
+                                refined_states[rp] = np.maximum(0, sol_ref.y[:, -1])
+                            else:
+                                refined_states[rp] = start_state
+                        except Exception:
+                            alpha = (refined_t[rp] - t1) / (t2 - t1) if t2 > t1 else 0.0
+                            refined_states[rp] = fully[row - 1] + alpha * (fully[row] - fully[row - 1])
 
-    return t, cdf
+                    # Merge refined points
+                    fullt = np.concatenate([fullt[:row], refined_t[1:], fullt[row + 1:]])
+                    fully = np.vstack([fully[:row], refined_states[1:], fully[row + 1:]])
+
+                    # Recompute CDF
+                    transient_over_time = np.sum(np.maximum(fully[:, transient_indices], 0), axis=1)
+                    cdf = 1.0 - transient_over_time / fluid_c
+
+                    keep_refining = True
+                    break  # Restart inner loop with updated arrays
+
+        # Extended Time Interval Logic - match MATLAB: re-solve if first CDF > 1%
+        max_extend_iterations = 10
+        extend_iter = 0
+        while cdf[0] > 0.01 and extend_iter < max_extend_iterations:
+            extend_iter += 1
+            extended_T = T * (1 + extend_iter)
+            try:
+                sol_ext = solve_ivp(
+                    ode_rhs, [0.0, extended_T], y0_c,
+                    method=ode_method, rtol=tol, atol=tol,
+                )
+                fullt = sol_ext.t
+                fully = sol_ext.y.T
+                transient_over_time = np.sum(np.maximum(fully[:, transient_indices], 0), axis=1)
+                cdf = 1.0 - transient_over_time / fluid_c
+            except Exception:
+                break
+
+    return fullt, cdf
 
 
 def _build_augmented_W(
@@ -670,50 +717,6 @@ def _exponential_cdf_fallback(
     t = np.linspace(t_span[0], t_span[1], 100)
     cdf = 1.0 - np.exp(-service_rate * t)
     return t, cdf
-
-
-def _refine_cdf_jumps(
-    t: np.ndarray,
-    cdf: np.ndarray,
-    max_jump: float = 0.001
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Adaptively refine CDF at large jumps.
-
-    Detects jumps in CDF exceeding max_jump threshold and interpolates
-    additional points to smoothly capture dynamics.
-    """
-    if len(t) < 2:
-        return t, cdf
-
-    # Detect jumps
-    jumps = np.abs(np.diff(cdf))
-    large_jump_indices = np.where(jumps > max_jump)[0]
-
-    if len(large_jump_indices) == 0:
-        return t, cdf
-
-    # Refine around large jumps
-    t_refined = [t[0]]
-    cdf_refined = [cdf[0]]
-
-    for i in range(len(t) - 1):
-        t_refined.append(t[i])
-        cdf_refined.append(cdf[i])
-
-        if i in large_jump_indices:
-            # Insert refined points (linear interpolation)
-            n_refine = 20
-            t_fine = np.linspace(t[i], t[i + 1], n_refine + 2)[1:-1]
-            cdf_fine = np.interp(t_fine, [t[i], t[i + 1]], [cdf[i], cdf[i + 1]])
-
-            t_refined.extend(t_fine)
-            cdf_refined.extend(cdf_fine)
-
-    t_refined.append(t[-1])
-    cdf_refined.append(cdf[-1])
-
-    return np.array(t_refined), np.array(cdf_refined)
 
 
 class PassageTimeMethod:

@@ -309,6 +309,21 @@ public abstract class Station extends ServiceNode implements Serializable {
                     map.put(jobclass, aph.getProcess());
                     mu.put(jobclass, aph.getMu());
                     phi.put(jobclass, aph.getPhi());
+                } else if (queue.getServiceProcess(jobclass) instanceof Prior) {
+                    // Prior distributions are handled by the Posterior solver;
+                    // use the prior-weighted mean rate as a placeholder for getStruct()
+                    Prior priorDist = (Prior) this.server.getServiceDistribution(jobclass);
+                    double rate = 1.0 / priorDist.getMean();
+                    Matrix map_matrix_1 = new Matrix(1, 1, 1);
+                    map_matrix_1.set(0, 0, -rate);
+                    Matrix map_matrix_2 = new Matrix(1, 1, 1);
+                    map_matrix_2.set(0, 0, rate);
+                    MatrixCell tmp = new MatrixCell();
+                    tmp.set(0, map_matrix_1);
+                    tmp.set(1, map_matrix_2);
+                    map.put(jobclass, tmp);
+                    mu.put(jobclass, Matrix.singleton(rate));
+                    phi.put(jobclass, Matrix.singleton(1.0));
                 } else if (!(queue.getServiceProcess(jobclass) instanceof Disabled)) {
                     Distribution distr = this.server.getServiceDistribution(jobclass);
                     map.put(jobclass, ((Markovian) distr).getProcess());
@@ -629,14 +644,17 @@ public abstract class Station extends ServiceNode implements Serializable {
             throw new IllegalArgumentException("Invalid impatience type. Use ImpatienceType.RENEGING or ImpatienceType.BALKING.");
         }
 
-        // Only RENEGING is currently supported
+        // BALKING through setPatience is not supported - use setBalking() with BalkingStrategy instead
         if (impatienceType == ImpatienceType.BALKING) {
-            throw new UnsupportedOperationException("BALKING impatience type is not yet supported. Use ImpatienceType.RENEGING.");
+            throw new UnsupportedOperationException(
+                "BALKING is not supported via setPatience (timer-based). " +
+                "Use setBalking(jobClass, BalkingStrategy, thresholds) for state-based balking, " +
+                "or use ImpatienceType.RENEGING for timer-based abandonment.");
         }
 
         // Validate distribution type
         if (distribution instanceof BMAP || distribution instanceof MAP ||
-            distribution instanceof MMPP2) {
+            distribution instanceof DMAP || distribution instanceof MMPP2) {
             throw new IllegalArgumentException(
                 "Modulated processes (BMAP, MAP, MMPP2) are not supported for patience distributions.");
         }
@@ -886,7 +904,7 @@ public abstract class Station extends ServiceNode implements Serializable {
             throw new IllegalArgumentException("Retrial delay distribution cannot be null");
         }
         if (delayDistribution instanceof BMAP || delayDistribution instanceof MAP ||
-            delayDistribution instanceof MMPP2) {
+            delayDistribution instanceof DMAP || delayDistribution instanceof MMPP2) {
             throw new IllegalArgumentException(
                 "Modulated processes (BMAP, MAP, MMPP2) are not supported for retrial distributions.");
         }

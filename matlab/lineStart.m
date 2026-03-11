@@ -10,6 +10,7 @@ global LINEStdOut LINEVerbose LINEVersion LINEDoChecks LINEDummyMode
 global LINECoarseTol LINEFineTol LINEImmediate LINEZero LINEMaxInt
 global BuToolsVerbose BuToolsCheckInput BuToolsCheckPrecision
 global LINELibraryAttributionShown
+global LINEDefaultLang
 
 %% --- Setup Workspace Environment ---
 cwd = fileparts(mfilename('fullpath'));
@@ -28,7 +29,7 @@ end
 warning on backtrace
 
 %% --- Default Configuration Values ---
-LINE_VERSION     = '3.0.3';
+LINE_VERSION     = '3.0.5';
 LINE_STDOUT      = 1;        % 1 = console
 LINE_VERBOSE     = VerboseLevel.STD;
 LINE_DO_CHECKS   = true;
@@ -54,9 +55,27 @@ if ~exist(jlineJarPath, 'file')
     error('jline.jar not found in %s', common_dir);
 end
 
+% Load ldes.jar before jline.jar (overrides bundled LDES)
+ldesJarPath = fullfile(common_dir, 'ldes.jar');
+if ~exist(ldesJarPath, 'file')
+    fprintf('ldes.jar not found in %s\nAttempting to download ldes.jar...\n', common_dir);
+    try
+        ldesUrl = 'https://line-solver.sourceforge.net/latest/ldes.jar';
+        websave(ldesJarPath, ldesUrl);
+        fprintf('Successfully downloaded ldes.jar to %s\n', common_dir);
+    catch ME
+        fprintf('Warning: Failed to download ldes.jar: %s\nLDES solver will use the version bundled in jline.jar\n', ME.message);
+        ldesJarPath = '';
+    end
+end
+if ~isempty(ldesJarPath) && exist(ldesJarPath, 'file') && ~any(strcmp(javaclasspath('-dynamic'), ldesJarPath))
+    javaaddpath(ldesJarPath);
+end
+
 if ~any(strcmp(javaclasspath('-dynamic'), jlineJarPath))
     javaaddpath(jlineJarPath);
 end
+
 import org.ejml.*; %#ok<SIMPT>
 
 %% --- Assign Global Settings ---

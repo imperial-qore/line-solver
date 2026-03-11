@@ -42,6 +42,11 @@ end
 Q=cell(1,K+1);
 R=cell(1,K+1);
 X=cell(1,K+1);
+for t=1:K+1
+    Q{t} = zeros(M, 1);
+    R{t} = zeros(M, K);
+    X{t} = zeros(1, K);
+end
 gamma = zeros(M,K);
 
 for t=0:K
@@ -80,6 +85,9 @@ while 1
 end
 XN = X{1};
 RN = R{1};
+UN = zeros(M, K);
+QN = zeros(M, K);
+AN = zeros(M, K);
 for k=1:M
     for s=1:K
         UN(k,s) = XN(s)*L(k,s);

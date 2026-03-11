@@ -18,22 +18,28 @@ end
 % fit underlying AMAP(2)
 [~,MAPS] = amap2_fit_gamma(M1, M2, M3, GAMMA);
 
-% TODO: if it is a Poisson process then use second-order Poisson process
-% with (h2 - h1 r2 = 0)
-
-% fit marked Poisson process
+% If Poisson (1 state), try to convert to second-order process
+% with constraint (h2 - h1*r2 = 0) for forward moment fitting
 if length(MAPS) == 1 && size(MAPS{1}{1},1) == 1
-    MAP = MAPS{1};
-    % number of classes
-    m = length(P);
-    % fit class probabilities
-    MMAP = cell(1,2+m);
-    MMAP{1} = MAP{1};
-    MMAP{2} = MAP{2};
-    for c = 1:m
-        MMAP{2+c} = MMAP{2} .* P(c);
+    M2a = M2 * (1 + 1e-4);
+    M3a = M3 * (M2a/M2)^(3/2);
+    MAPS2 = amap2_fitall_gamma(M1, M2a, M3a, GAMMA);
+    if ~isempty(MAPS2)
+        for j = 1:length(MAPS2)
+            MAPS2{j} = map_normalize(MAPS2{j});
+        end
+        MAPS = MAPS2;
+    else
+        MAP = MAPS{1};
+        m = length(P);
+        MMAP = cell(1,2+m);
+        MMAP{1} = MAP{1};
+        MMAP{2} = MAP{2};
+        for c = 1:m
+            MMAP{2+c} = MMAP{2} .* P(c);
+        end
+        return;
     end
-    return;
 end
 
 % fit the MAMAP(2,m) using the underlying AMAP(2) form which produces the

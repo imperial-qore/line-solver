@@ -58,6 +58,11 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     ZZ = params.ZZ(:);
     ZM = params.ZM;
     MM1 = params.MM1;
+    if isfield(params, 'verbose')
+        verbose = params.verbose;
+    else
+        verbose = true;
+    end
 
     % Compute transition rates q(i,j,k,h)
     % q{i,j} is a K(i) x K(i) array (not load-dependent for BAS)
@@ -82,7 +87,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     %                                 i in 1:M, ni in 0:N, hi in 1:K(i), m in 1:MR
     % e(i, ki) for i in 1:M, ki in 1:K(i)
 
-    fprintf('Building variable index map...\n');
+    if verbose; fprintf('Building variable index map...\n'); end
     varCount = 0;
 
     % p2 variables
@@ -117,7 +122,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     end
 
     nVars = varCount;
-    fprintf('Total variables: %d\n', nVars);
+    if verbose; fprintf('Total variables: %d\n', nVars); end
 
     %% Build constraints
     Aeq = [];
@@ -129,14 +134,14 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     getP2Idx = @(j, nj, kj, i, ni, hi, m) p2idx{j}{nj+1, kj, i, m}(ni+1, hi);
     getEIdx = @(i, ki) eidx{i}(ki);
 
-    fprintf('Building constraints...\n');
+    if verbose; fprintf('Building constraints...\n'); end
 
     %% Initialize bounds
     lb = zeros(nVars, 1);
     ub = inf(nVars, 1);
 
     %% ZERO constraints - fix infeasible states
-    fprintf('  ZERO constraints...\n');
+    if verbose; fprintf('  ZERO constraints...\n'); end
     for j = 1:M
         for nj = 0:N
             for kj = 1:K(j)
@@ -208,7 +213,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     end
 
     %% ONE: Normalization
-    fprintf('  ONE constraints...\n');
+    if verbose; fprintf('  ONE constraints...\n'); end
     for j = 1:M
         row = zeros(1, nVars);
         for nj = 0:N
@@ -224,7 +229,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     end
 
     %% SYMMETRY
-    fprintf('  SYMMETRY constraints...\n');
+    if verbose; fprintf('  SYMMETRY constraints...\n'); end
     for j = 1:M
         for nj = 0:min(N, F(j))
             for kj = 1:K(j)
@@ -259,7 +264,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     end
 
     %% MARGINALS
-    fprintf('  MARGINALS constraints...\n');
+    if verbose; fprintf('  MARGINALS constraints...\n'); end
     for j = 1:M
         for kj = 1:K(j)
             for nj = 0:min(N, F(j))
@@ -286,7 +291,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     end
 
     %% UEFF: e(i,ki) = sum of p2 where queue i is not blocked
-    fprintf('  UEFF constraints...\n');
+    if verbose; fprintf('  UEFF constraints...\n'); end
     for i = 1:M
         for ki = 1:K(i)
             row = zeros(1, nVars);
@@ -313,7 +318,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
 
     %% THM1: Phase balance (Theorem 1)
     % sum {j, h: j<>i or h<>k} q(i,j,k,h)*e(i,k) = sum {j, h: j<>i or h<>k} q(i,j,h,k)*e(i,h)
-    fprintf('  THM1 (Phase balance) constraints...\n');
+    if verbose; fprintf('  THM1 (Phase balance) constraints...\n'); end
     for i = 1:M
         for ki = 1:K(i)
             row = zeros(1, nVars);
@@ -341,7 +346,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     end
 
     %% THM2: Population constraint (Theorem 2)
-    fprintf('  THM2 (Population) constraints...\n');
+    if verbose; fprintf('  THM2 (Population) constraints...\n'); end
     for j = 1:M
         for kj = 1:K(j)
             for nj = 0:F(j)
@@ -368,7 +373,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
 
     %% COR1: Second moment constraint (Corollary to Theorem 2)
     % sum_{m,i,j,nj,ni,ki,kj} ni*nj*p2(j,nj,kj,i,ni,ki,m) = N^2
-    fprintf('  COR1 (Second moment) constraint...\n');
+    if verbose; fprintf('  COR1 (Second moment) constraint...\n'); end
     row = zeros(1, nVars);
     for m = 1:MR
         for i = 1:M
@@ -390,7 +395,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     beq = [beq; N^2];
 
     %% THM30: Marginal balance for ni=0 (per phase), i<>f
-    fprintf('  THM30 (Marginal balance ni=0) constraints...\n');
+    if verbose; fprintf('  THM30 (Marginal balance ni=0) constraints...\n'); end
     for i = 1:M
         if i == f
             continue;
@@ -482,7 +487,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     end
 
     %% THM3: Marginal balance for ni in 1:F(i)-1, i<>f
-    fprintf('  THM3 (Marginal balance) constraints...\n');
+    if verbose; fprintf('  THM3 (Marginal balance) constraints...\n'); end
     for i = 1:M
         if i == f
             continue;
@@ -584,7 +589,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     end
 
     %% THM3f: Marginal balance for i==f
-    fprintf('  THM3f (Marginal balance for finite queue) constraints...\n');
+    if verbose; fprintf('  THM3f (Marginal balance for finite queue) constraints...\n'); end
     for ni = 0:(F(f)-1)
         row = zeros(1, nVars);
         % LHS: arrivals from j<>f with BB(m,j)==0 and ni<F(f)
@@ -634,7 +639,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     end
 
     %% THM3I: Blocking depth balance (Theorem 4)
-    fprintf('  THM3I (Blocking depth balance) constraints...\n');
+    if verbose; fprintf('  THM3I (Blocking depth balance) constraints...\n'); end
     for z = 0:(ZM-1)
         row = zeros(1, nVars);
         % LHS: arrivals to f at F(f) from j<>f with BB(m,j)==0 and ZZ(m)==z
@@ -683,7 +688,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     end
 
     %% THM3L: Maximum blocking depth constraint
-    fprintf('  THM3L (Max blocking depth) constraints...\n');
+    if verbose; fprintf('  THM3L (Max blocking depth) constraints...\n'); end
     for m = 1:MR
         if ZZ(m) ~= ZM - 1
             continue;
@@ -728,7 +733,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     end
 
     %% THM4: Queue-length bound inequality (Theorem 5)
-    fprintf('  THM4 (Queue-length bound) constraints...\n');
+    if verbose; fprintf('  THM4 (Queue-length bound) constraints...\n'); end
     for j = 1:M
         for kj = 1:K(j)
             for i = 1:M
@@ -762,7 +767,7 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     end
 
     %% Build objective function
-    fprintf('Building objective function...\n');
+    if verbose; fprintf('Building objective function...\n'); end
     c = zeros(nVars, 1);
 
     if ischar(objective)
@@ -790,10 +795,14 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
     end
 
     %% Solve LP
-    fprintf('Solving LP with %d variables and %d equality + %d inequality constraints...\n', ...
-        nVars, size(Aeq, 1), size(Aineq, 1));
+    if verbose; fprintf('Solving LP with %d variables and %d equality + %d inequality constraints...\n', ...
+        nVars, size(Aeq, 1), size(Aineq, 1)); end
 
-    options = optimoptions('linprog', 'Display', 'final', 'Algorithm', 'interior-point');
+    if verbose
+        options = optimoptions('linprog', 'Display', 'final', 'Algorithm', 'interior-point');
+    else
+        options = optimoptions('linprog', 'Display', 'off', 'Algorithm', 'interior-point');
+    end
 
     [x, fval, exitflag] = linprog(c, Aineq, bineq, Aeq, beq, lb, ub, options);
 
@@ -827,10 +836,10 @@ function [result, x, fval, exitflag] = qrf_bas(params, objective, sense)
         end
     end
 
-    fprintf('\n=== Results ===\n');
-    fprintf('Objective value: %f\n', fval);
-    fprintf('Exit flag: %d\n', exitflag);
-    if exitflag > 0
+    if verbose; fprintf('\n=== Results ===\n'); end
+    if verbose; fprintf('Objective value: %f\n', fval); end
+    if verbose; fprintf('Exit flag: %d\n', exitflag); end
+    if exitflag > 0 && verbose
         fprintf('\nUtilizations:\n');
         for i = 1:M
             fprintf('  Queue %d: U = %.6f\n', i, result.U(i));

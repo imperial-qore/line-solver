@@ -502,23 +502,107 @@ def lib_butools_dph_moments(sigma, D, K=3):
 # These functions are not implemented in the JAR backend.
 
 def lib_butools_transform_ph_to_me(alpha, A):
-    """Transform PH representation to matrix-exponential form."""
-    raise NotImplementedError("phToMe is not implemented in the JAR backend")
+    """Transform PH representation to matrix-exponential form.
+
+    A phase-type (PH) distribution is already a valid matrix-exponential (ME)
+    distribution, so this transformation returns the input unchanged (identity map).
+
+    Args:
+        alpha: Initial probability vector (1 x M).
+        A: Transient generator matrix (M x M).
+
+    Returns:
+        (beta, B) tuple where beta = alpha and B = A.
+    """
+    alpha = np.asarray(alpha, dtype=float)
+    A = np.asarray(A, dtype=float)
+    return alpha.copy(), A.copy()
 
 
-def lib_butools_transform_me_to_ph(D0, D1):
-    """Transform matrix-exponential representation to PH form."""
-    raise NotImplementedError("meToPh is not implemented in the JAR backend")
+def lib_butools_transform_me_to_ph(alpha, A):
+    """Transform matrix-exponential representation to PH form.
+
+    Uses the JAR backend's PHFromME implementation which applies elementary
+    similarity transformations to obtain a Markovian representation.
+
+    Args:
+        alpha: Initial vector of the ME distribution (1 x M).
+        A: Matrix parameter of the ME distribution (M x M).
+
+    Returns:
+        (beta, B) tuple of the PH representation.
+    """
+    alpha = np.asarray(alpha, dtype=float)
+    A = np.asarray(A, dtype=float)
+    try:
+        ph = jpype.JPackage('jline').lib.butools.ph
+        result = ph.PHFromMEKt.phFromME(
+            jlineMatrixFromArray(alpha), jlineMatrixFromArray(A)
+        )
+        beta = jlineMatrixToArray(result.getAlpha())
+        B = jlineMatrixToArray(result.getA())
+        return np.asarray(beta), np.asarray(B)
+    except Exception as e:
+        raise RuntimeError(f"meToPh failed: {str(e)}")
 
 
 def lib_butools_transform_ph_to_dph(alpha, A):
-    """Transform PH to discrete PH representation."""
-    raise NotImplementedError("phToDph is not implemented in the JAR backend")
+    """Transform continuous PH to discrete PH representation via uniformization.
+
+    Given PH(alpha, A), computes DPH(sigma, D) where:
+        lambda = max(-diag(A))  (uniformization rate)
+        sigma = alpha
+        D = I + A / lambda
+
+    Args:
+        alpha: Initial probability vector (1 x M).
+        A: Transient generator matrix (M x M).
+
+    Returns:
+        (sigma, D) tuple of the discrete PH representation.
+    """
+    alpha = np.asarray(alpha, dtype=float)
+    A = np.asarray(A, dtype=float)
+    # Uniformization rate: maximum exit rate
+    lam = np.max(-np.diag(A))
+    if lam <= 0:
+        raise ValueError("phToDph: All diagonal elements of A must be negative.")
+    sigma = alpha.copy()
+    D = np.eye(A.shape[0]) + A / lam
+    return sigma, D
 
 
 def lib_butools_transform_dph_to_ph(sigma, D):
-    """Transform discrete PH to continuous PH representation."""
-    raise NotImplementedError("dphToPh is not implemented in the JAR backend")
+    """Transform discrete PH to continuous PH representation.
+
+    Reverse of uniformization. Given DPH(sigma, D), computes PH(alpha, A) where:
+        lambda = 1 / (1 - max(eigenvalues of D))  (ensures valid generator)
+        alpha = sigma
+        A = lambda * (D - I)
+
+    Args:
+        sigma: Initial probability vector (1 x M).
+        D: Discrete-time transition matrix (M x M).
+
+    Returns:
+        (alpha, A) tuple of the continuous PH representation.
+    """
+    sigma = np.asarray(sigma, dtype=float)
+    D = np.asarray(D, dtype=float)
+    # Use spectral radius to determine the uniformization rate
+    eigvals = np.linalg.eigvals(D)
+    max_eig = np.max(np.abs(eigvals))
+    if max_eig >= 1.0:
+        # Fallback: use 1/(1 - max diagonal) as rate
+        max_diag = np.max(np.diag(D))
+        if max_diag >= 1.0:
+            raise ValueError("dphToPh: D matrix has diagonal elements >= 1.")
+        lam = 1.0 / (1.0 - max_diag)
+    else:
+        lam = 1.0 / (1.0 - max_eig)
+    alpha = sigma.copy()
+    A = lam * (D - np.eye(D.shape[0]))
+    return alpha, A
 
 
 # ========== DISCRETE MAP (DMAP) FUNCTIONS ==========

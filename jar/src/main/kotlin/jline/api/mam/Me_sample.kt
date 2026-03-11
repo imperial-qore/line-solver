@@ -120,10 +120,35 @@ fun me_sample(alpha: Matrix, A: Matrix, n: Long, random: Random): DoubleArray {
  * @return Array of n samples from the ME distribution
  */
 fun me_sample(ME: MatrixCell, n: Long, random: Random): DoubleArray {
-    // For now, delegate to map_sample which works with the process representation
-    // This is less accurate for non-normalized alpha, but works with the MatrixCell format
-    // TODO: Extract alpha from the process representation for better accuracy
-    return map_sample(ME[0], ME[1], n, random)
+    // Alpha extraction from ME process representation: {D0=A, D1=-A*e*alpha'},
+    // where D1[i,j] = (-A*e)_i * alpha_j. Each row of D1 is proportional to alpha.
+    val A = ME[0]
+    val D1 = ME[1]
+    val nPhases = A.numRows
+
+    // Extract alpha from D1: find a row with nonzero sum
+    var alpha: Matrix? = null
+    for (i in 0 until nPhases) {
+        var rowSum = 0.0
+        for (j in 0 until nPhases) {
+            rowSum += D1[i, j]
+        }
+        if (Math.abs(rowSum) > 1e-14) {
+            alpha = Matrix(1, nPhases)
+            for (j in 0 until nPhases) {
+                alpha[0, j] = D1[i, j] / rowSum
+            }
+            break
+        }
+    }
+
+    // If alpha extraction succeeded, use the explicit (alpha, A) overload
+    if (alpha != null) {
+        return me_sample(alpha, A, n, random)
+    }
+
+    // Fallback: use map_sample with the process representation
+    return map_sample(A, D1, n, random)
 }
 
 /**

@@ -44,9 +44,11 @@ if self.enableChecks
 end
 
 sn = getStruct(self);
+line_debug(options, 'CTMC: using lang=matlab');
 
 % Convert non-Markovian distributions to PH
 sn = sn_nonmarkov_toph(sn, options);
+line_debug(options, 'CTMC: converted non-Markovian distributions to PH (nstations=%d, nclasses=%d)', sn.nstations, sn.nclasses);
 
 M = sn.nstations;
 K = sn.nclasses;
@@ -61,6 +63,7 @@ if any(isinf(sn.njobs))
         line_warning(mfilename,sprintf('The model has open chains, it is recommended to specify a finite cutoff value, e.g., SolverCTMC(model,''cutoff'',1).\n'));
         self.options.cutoff= ceil(6000^(1/(M*K)));
         options.cutoff= ceil(6000^(1/(M*K)));
+        line_debug(options, 'Open/mixed model: auto-setting cutoff=%d for %d stations, %d classes', options.cutoff, M, K);
         line_warning(mfilename,sprintf('Setting cutoff=%d.\n',self.options.cutoff));
     end
     % Mandatory truncation warning for open/mixed models
@@ -69,6 +72,7 @@ if any(isinf(sn.njobs))
 end
 
 if sizeEstimator > 6
+    line_debug(options, 'State space size estimate: exp(%f), may be too large', sizeEstimator);
     if ~isfield(options,'force') || options.force == false
         %        line_error(mfilename,'CTMC size may be too large to solve. Stopping SolverCTMC. Set options.force=true to bypass this control.');
         line_error(mfilename,'CTMC size may be too large to solve. Stopping SolverCTMC. Set options.force=true or use SolverCTMC(...,''force'',true) to bypass this control.\n');
@@ -79,6 +83,15 @@ end
 % we compute all metrics anyway because CTMC has essentially
 % the same cost
 if isinf(options.timespan(1))
+    if startsWith(options.method, 'qrf')
+        line_debug(options, 'Using QRF method for steady-state CTMC analysis');
+        [QN,UN,RN,TN,CN,XN,~] = solver_ctmc_qrf_analyzer(sn, options);
+        runtime = toc(T0);
+        T = getAvgTputHandles(self);
+        AN = sn_get_arvr_from_tput(sn, TN, T);
+        self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,runtime,options.method);
+    else
+    line_debug(options, 'Using standard CTMC method for steady-state analysis');
     s0 = sn.state;
     s0prior = sn.stateprior;
     for ind=1:sn.nnodes
@@ -111,7 +124,9 @@ if isinf(options.timespan(1))
     T = getAvgTputHandles(self);
     AN=sn_get_arvr_from_tput(sn, TN, T);
     self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,runtime,options.method);
+    end % if startsWith(options.method, 'qrf')
 else
+    line_debug(options, 'Transient analysis: timespan=[%f,%f]', options.timespan(1), options.timespan(2));
     lastSol= [];
     s0 = sn.space;
     s0prior = sn.stateprior;

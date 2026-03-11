@@ -39,13 +39,15 @@ end
 openClasses = find(isinf(N));
 closedClasses = setdiff(1:length(N), openClasses);
 UN = zeros(M,R);
-for r=closedClasses
+for ridx=1:length(closedClasses)
+    r = closedClasses(ridx);
     for ist=1:M
         UN(ist,r) = XN(r) * D(ist,r)/S(ist);
     end
 end
 
-for r=openClasses
+for ridx=1:length(openClasses)
+    r = openClasses(ridx);
     for ist=1:M
         UN(ist,r) = lambda(r) * D(ist,r)/S(ist);
     end

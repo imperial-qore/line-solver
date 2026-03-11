@@ -475,6 +475,330 @@ def pfqn_comomrm_ms(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
     return ComomResult(lG=result.lG, lGbasis=None)
 
 
+def pfqn_procomom(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
+                  atol: float = 1e-14):
+    """
+    ProCoMoM algorithm for computing marginal queue-length probabilities.
+
+    Computes the marginal queue-length probability distribution at each station
+    using the Probabilistic Convolution Method of Moments. Uses matrix recursion
+    with SVD/QR decomposition for numerical stability, with automatic
+    perturbation on rank deficiency.
+
+    Args:
+        L: Service demand matrix (M x R).
+        N: Population vector (R,).
+        Z: Think time vector (R,), default zeros.
+        atol: Absolute numerical tolerance (default 1e-14).
+
+    Returns:
+        Pr: Marginal probability matrix (M x sumN+1).
+            Pr[k, j] = P(n_k = j) for station k, queue length j.
+        Q: Mean queue length vector (M,).
+
+    References:
+        Original MATLAB: matlab/src/api/pfqn/pfqn_procomom.m
+    """
+    L = np.atleast_2d(np.asarray(L, dtype=float))
+    N = np.asarray(N, dtype=float).flatten().astype(int)
+
+    M, R = L.shape
+
+    if Z is None or (hasattr(Z, '__len__') and len(Z) == 0):
+        Z = np.zeros(R, dtype=float)
+    else:
+        Z = np.asarray(Z, dtype=float).flatten()
+
+    sumN = int(np.sum(N))
+
+    # Rescale demands per class for numerical stability
+    # Normalized probabilities are invariant to per-class demand scaling
+    Lmax = np.max(L, axis=0)
+    Lmax[Lmax < atol] = 1.0
+    L = L / Lmax[np.newaxis, :]
+    Z = Z / Lmax
+
+    # Build Dn basis: multichoose(R, M) with column R zeroed, sorted by nnzpos
+    Dn = multichoose(R, M)
+    Dn[:, R - 1] = 0
+    Dn = _sortbynnzpos_procomom(Dn)
+    numDn = Dn.shape[0]
+    basisSize = numDn * M
+
+    def _phash(dn, i):
+        """Hash function mapping (dn, i) to column index (0-based).
+        i is 1-based station index."""
+        pos = matchrow(Dn, dn)  # 1-based
+        if pos <= 0:
+            return -1
+        return (pos - 1) * M + (i - 1)  # 0-based column
+
+    def _genpmatrix(Ls, Zs, Ncur, r):
+        """Generate probability matrices for ProCoMoM recursion.
+        r is 1-based class index (MATLAB convention)."""
+        # Count rows
+        numRows = 0
+        for d in range(numDn):
+            dn = Dn[d]
+            if r <= R - 1 and np.sum(dn[r - 1:R - 1]) > 0:
+                numRows += M
+            else:
+                if np.sum(dn[:r]) < M:
+                    numRows += M + r - 1  # (M-1) CE + r PC, but actually (M-1) CE + (r-1) PC
+                else:
+                    pass
+                numRows += 1  # extra PC for class r
+
+        A = np.zeros((numRows, basisSize))
+        B = np.zeros((numRows, basisSize))
+        DC = np.zeros((numRows, basisSize))
+        DD = np.zeros((numRows, basisSize))
+        row = 0
+
+        for d in range(numDn):
+            dn = Dn[d]
+            # Check Branch A condition: r <= R-1 and sum(Dn(d, r:R-1)) > 0
+            # MATLAB: r<=R-1 && sum(Dn(d,r:R-1))>0
+            # In MATLAB r is 1-based, Dn columns are 1-based
+            # Dn(d, r:R-1) means columns r to R-1 (1-based)
+            # In Python 0-based: columns (r-1) to (R-2)
+            if r <= R - 1 and np.sum(dn[r - 1:R - 1]) > 0:
+                # Branch A: propagation through class boundaries
+                for k in range(1, M + 1):
+                    colA = _phash(dn, k)
+                    if 0 <= colA < basisSize:
+                        A[row, colA] = 1.0
+
+                    # Check if r+1 <= R-1 and sum(Dn(d, r+1:R-1)) > 0
+                    # MATLAB: r+1<=R-1 && sum(Dn(d,r+1:R-1))>0
+                    # Python: columns r to R-2
+                    if r + 1 <= R - 1 and np.sum(dn[r:R - 1]) > 0:
+                        if 0 <= colA < basisSize:
+                            B[row, colA] = 1.0
+                    else:
+                        shifted = dn.copy()
+                        shifted[r - 1] -= 1  # 0-based index for class r
+                        colB = _phash(shifted, k)
+                        if 0 <= colB < basisSize:
+                            B[row, colB] = 1.0
+                    row += 1
+            else:
+                # Branch B: CE, PC, and extra PC equations
+                if np.sum(dn[:r]) < M:
+                    # CE equations: k=1..M-1
+                    for k in range(1, M):
+                        colKP1 = _phash(dn, k + 1)
+                        col1 = _phash(dn, 1)
+                        if 0 <= colKP1 < basisSize:
+                            A[row, colKP1] = 1.0
+                        if 0 <= col1 < basisSize:
+                            A[row, col1] = -1.0
+
+                        for s in range(1, r):  # s=1..r-1 (MATLAB 1-based)
+                            shifted = dn.copy()
+                            shifted[s - 1] += 1  # UP shift
+                            col = _phash(shifted, k + 1)
+                            if 0 <= col < basisSize:
+                                A[row, col] -= Ls[k - 1, s - 1]
+
+                        if 0 <= colKP1 < basisSize:
+                            B[row, colKP1] = Ls[k - 1, r - 1]
+                        row += 1
+
+                    # PC equations: s=1..r-1 (MATLAB 1-based)
+                    for s in range(1, r):
+                        nd_s = Ncur[s - 1] - dn[s - 1]
+                        col1 = _phash(dn, 1)
+                        if 0 <= col1 < basisSize:
+                            A[row, col1] = float(nd_s)
+
+                        shifted = dn.copy()
+                        shifted[s - 1] += 1  # UP shift
+                        colBase = _phash(shifted, 1)
+                        if 0 <= colBase < basisSize:
+                            A[row, colBase] -= Zs[s - 1]
+                            DC[row, colBase] = Ls[M - 1, s - 1]
+
+                        for k in range(1, M):
+                            col = _phash(shifted, k + 1)
+                            if 0 <= col < basisSize:
+                                A[row, col] -= Ls[k - 1, s - 1]
+                        row += 1
+
+                # Extra PC for class r (always in Branch B)
+                nd_r = Ncur[r - 1] - dn[r - 1]
+                col1 = _phash(dn, 1)
+                if 0 <= col1 < basisSize:
+                    A[row, col1] = float(nd_r)
+                    B[row, col1] = Zs[r - 1]
+                for k in range(1, M):
+                    colKP1 = _phash(dn, k + 1)
+                    if 0 <= colKP1 < basisSize:
+                        B[row, colKP1] = Ls[k - 1, r - 1]
+                if 0 <= col1 < basisSize:
+                    DD[row, col1] = Ls[M - 1, r - 1]
+                row += 1
+
+        return A[:row], B[:row], DC[:row], DD[:row]
+
+    def _solve_station(Ls, Zs):
+        """Solve for a single station (after rotation to last position)."""
+        rankdef = False
+
+        # pk[:, j] holds basis coefficients for queue length n=j
+        pk = np.zeros((basisSize, sumN + 1))
+
+        # Initialize: for empty network, all stations have probability 1 at n=0
+        zero_dn = np.zeros(R, dtype=int)
+        for kk in range(1, M + 1):
+            idx = _phash(zero_dn, kk)
+            if 0 <= idx < basisSize:
+                pk[idx, 0] = 1.0
+
+        Ncur = np.zeros(R, dtype=int)
+        for r in range(1, R + 1):  # 1-based class
+            for Nr in range(1, N[r - 1] + 1):
+                Ncur[r - 1] = Nr
+                pklast = pk.copy()
+                pk = np.zeros((basisSize, sumN + 1))
+
+                Ag, Bg, DCg, DDg = _genpmatrix(Ls, Zs, Ncur, r)
+                numRows_local = Ag.shape[0]
+
+                # SVD for rank-revealing decomposition
+                U, sv, Vt = np.linalg.svd(Ag, full_matrices=False)
+                V = Vt.T  # V is now numCols x min(numRows, numCols)
+
+                tol_svd = max(numRows_local, basisSize) * np.finfo(float).eps * sv[0] if len(sv) > 0 else 0
+                rk = np.sum(sv > tol_svd)
+
+                sumNcur = int(np.sum(Ncur))
+
+                if rk < basisSize:
+                    rankdef = True
+                    # Use minimum-norm solution via truncated SVD
+                    Ur = U[:, :rk]
+                    Vr = V[:, :rk]
+                    Si = np.diag(1.0 / sv[:rk])
+
+                    # pB = Vr * Si * Ur' * Bg
+                    pB = Vr @ Si @ Ur.T @ Bg
+                    pDC = Vr @ Si @ Ur.T @ DCg
+                    pDD = Vr @ Si @ Ur.T @ DDg
+
+                    pk[:, 0] = pB @ pklast[:, 0]
+                    for n in range(1, sumNcur + 1):
+                        pk[:, n] = (pB @ pklast[:, n]
+                                    + n * pDC @ pk[:, n - 1]
+                                    + n * pDD @ pklast[:, n - 1])
+                else:
+                    # Full rank: use QR for speed and accuracy
+                    Qg, Rg = np.linalg.qr(Ag, mode='reduced')
+                    QtB = Qg.T @ Bg
+                    QtDC = Qg.T @ DCg
+                    QtDD = Qg.T @ DDg
+
+                    pk[:, 0] = np.linalg.solve(Rg, QtB @ pklast[:, 0])
+                    for n in range(1, sumNcur + 1):
+                        rhs = (QtB @ pklast[:, n]
+                               + n * QtDC @ pk[:, n - 1]
+                               + n * QtDD @ pklast[:, n - 1])
+                        pk[:, n] = np.linalg.solve(Rg, rhs)
+
+                # Rescale to prevent overflow
+                smax = np.max(np.abs(pk))
+                if smax > 0 and np.isfinite(smax):
+                    pk = pk / smax
+
+        # Extract result: first basis element at zero Dn entry
+        zero_dn = np.zeros(R, dtype=int)
+        idx = _phash(zero_dn, 1)
+        if 0 <= idx < basisSize:
+            dist = pk[idx, :]
+        else:
+            dist = np.zeros(sumN + 1)
+
+        return dist, rankdef
+
+    def _solve_all(Ls_in, Zs_in):
+        """Solve for all stations."""
+        Pr_local = np.zeros((M, sumN + 1))
+        rankdef = False
+
+        for station in range(M):
+            # Rotate: swap station with last (M-1)
+            Lrot = Ls_in.copy()
+            Lrot[[station, M - 1], :] = Lrot[[M - 1, station], :]
+
+            dist, rd = _solve_station(Lrot, Zs_in)
+            if rd:
+                rankdef = True
+            total = np.sum(dist)
+            if abs(total) > 0:
+                Pr_local[station, :] = dist / total
+
+        return Pr_local, rankdef
+
+    # Solve with auto-perturbation on rank deficiency
+    Pr, rankdef = _solve_all(L, Z)
+
+    if rankdef:
+        # Try progressively larger perturbations
+        rng = np.random.RandomState(23000)
+        Lscale = np.max(np.abs(L))
+        if Lscale < atol:
+            Lscale = 1.0
+
+        for delta_exp in [-10, -8, -6, -4]:
+            delta = Lscale * 10 ** delta_exp
+            rng_local = np.random.RandomState(23000)
+            Lp = L + delta * (1 + rng_local.rand(M, R))
+            Zp = Z + delta * (1 + rng_local.rand(R))
+
+            Pr_try, rd = _solve_all(Lp, Zp)
+            if (not rd and np.all(Pr_try >= -1e-6)
+                    and np.all(np.abs(np.sum(Pr_try, axis=1) - 1.0) < 0.01)):
+                Pr = Pr_try
+                break
+            Pr = Pr_try
+
+    Q = Pr @ np.arange(sumN + 1)
+
+    return Pr, Q
+
+
+def _sortbynnzpos_procomom(I: np.ndarray) -> np.ndarray:
+    """Sort rows of I by number of nonzero positions (ascending),
+    with ties broken by position of zeros (rows with leading zeros first).
+
+    Uses bubble sort matching MATLAB's nested loop implementation."""
+    I = I.copy()
+    n = I.shape[0]
+    for ii in range(n - 1):
+        for jj in range(ii + 1, n):
+            if _nnzcmp(I[ii], I[jj]) == 1:
+                I[[ii, jj]] = I[[jj, ii]]
+    return I
+
+
+def _nnzcmp(i1: np.ndarray, i2: np.ndarray) -> int:
+    """Compare two vectors by number of nonzeros, then by position of zeros.
+    Returns 1 if i1 should come after i2, 0 otherwise."""
+    nnz1 = np.count_nonzero(i1)
+    nnz2 = np.count_nonzero(i2)
+    if nnz1 > nnz2:
+        return 1
+    elif nnz1 < nnz2:
+        return 0
+    else:
+        for jj in range(len(i1)):
+            if i1[jj] == 0 and i2[jj] > 0:
+                return 1
+            elif i1[jj] > 0 and i2[jj] == 0:
+                return 0
+        return 0
+
+
 def pfqn_procomom2(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
                    atol: float = 1e-8) -> float:
     """
@@ -515,6 +839,7 @@ __all__ = [
     'pfqn_comomrm',
     'pfqn_comomrm_orig',
     'pfqn_comomrm_ms',
+    'pfqn_procomom',
     'pfqn_procomom2',
     'ComomResult',
 ]

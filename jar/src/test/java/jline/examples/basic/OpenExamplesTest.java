@@ -6,7 +6,7 @@ import jline.examples.java.basic.OpenModel;
 import jline.lang.Network;
 import jline.solvers.NetworkAvgTable;
 import jline.solvers.ctmc.SolverCTMC;
-import jline.solvers.des.SolverDES;
+import jline.solvers.ldes.SolverLDES;
 import jline.solvers.fluid.SolverFluid;
 import jline.solvers.jmt.SolverJMT;
 import jline.solvers.mam.SolverMAM;
@@ -78,7 +78,6 @@ public class OpenExamplesTest {
     }
     
     @Test
-    // @Disabled - MAPE was 0.0048%, Max APE was 0.0230%
     public void testOqnBasicMVA() {
         Network model = OpenModel.oqn_basic();
         
@@ -214,20 +213,20 @@ public class OpenExamplesTest {
 
         final NetworkAvgTable[] avgTableHolder = new NetworkAvgTable[1];
         withSuppressedOutput(() -> {
-            SolverDES solver = new SolverDES(model, "seed", 23000, "samples", 1000000);
+            SolverLDES solver = new SolverLDES(model, "seed", 23000, "samples", 1000000);
             avgTableHolder[0] = solver.getAvgTable();
             // Verify the executed method
             assertNotNull(solver.result, "Solver result should not be null");
             assertEquals("default", solver.result.method,
-                "DES solver should use default method");
+                "LDES solver should use default method");
         });
         NetworkAvgTable avgTable = avgTableHolder[0];
 
         assertNotNull(avgTable);
 
-        // Expected values from JMT baseline - DES compared with 5% relative tolerance
+        // Expected values from JMT baseline - LDES compared with 5% relative tolerance
         // Order: Delay(Class1), Queue1(Class1), Source(Class1)
-        // Note: DES is a simulation solver, results validated against JMT with 5% max relative error
+        // Note: LDES is a simulation solver, results validated against JMT with 5% max relative error
         double[] expectedQLen = {0.0226789994053706, 0.113319721462768, 0};
         double[] expectedUtil = {0.0226789994053706, 0.102223795456197, 0};
         double[] expectedRespT = {0.214832145125023, 1.1075290123417, 0};
@@ -237,13 +236,12 @@ public class OpenExamplesTest {
 
         assertEquals(3, avgTable.getQLen().size(), "Expected 3 entries (3 stations × 1 class)");
 
-        // Use 5% relative tolerance for DES vs JMT comparison
+        // Use 5% relative tolerance for LDES vs JMT comparison
         assertTableMetrics(avgTable, expectedQLen, expectedUtil, expectedRespT,
                           expectedResidT, expectedArvR, expectedTput, 0.05);
     }
 
     @Test
-    // @Disabled - MAPE was 0.0127%, Max APE was 0.0327%
     public void testOqnBasicSSA() {
         Network model = OpenModel.oqn_basic();
         
@@ -277,7 +275,6 @@ public class OpenExamplesTest {
     }
     
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testOqnBasicFluid() {
         Network model = OpenModel.oqn_basic();
         
@@ -345,7 +342,6 @@ public class OpenExamplesTest {
     }
     
     @Test
-    // @Disabled - MAPE was 0.0022%, Max APE was 0.0111%
     public void testOqnCsRoutingMVA() {
         Network model = OpenModel.oqn_cs_routing();
         
@@ -379,7 +375,6 @@ public class OpenExamplesTest {
     }
     
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testOqnCsRoutingMAM() {
         Network model = OpenModel.oqn_cs_routing();
         
@@ -412,7 +407,6 @@ public class OpenExamplesTest {
     }
     
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testOqnCsRoutingNC() {
         Network model = OpenModel.oqn_cs_routing();
         
@@ -445,7 +439,6 @@ public class OpenExamplesTest {
     }
     
     @Test
-    // @Disabled - MAPE was 0.0043%, Max APE was 0.0434%
     public void testOqnCsRoutingFluid() {
         Network model = OpenModel.oqn_cs_routing();
         
@@ -646,7 +639,6 @@ public class OpenExamplesTest {
     }
     
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testOqnFourqueuesJMT() {
         Network model = OpenModel.oqn_fourqueues();
         
@@ -683,7 +675,6 @@ public class OpenExamplesTest {
     // ========== OQN_ONELINE Tests ==========
     
     @Test
-    //@Disabled("Test failing - disabled for investigation")
     public void testOqnOnelineFluid() {
         Network model = OpenModel.oqn_oneline();
         

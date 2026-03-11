@@ -267,6 +267,24 @@ def jlineFromDistribution(distrib):
             python_distrib = Poisson(distrib)
         elif distrib_name == 'Zipf':
             python_distrib = Zipf(distrib)
+        elif distrib_name == 'Normal':
+            python_distrib = Normal(distrib)
+        elif distrib_name == 'EmpiricalCdf':
+            python_distrib = EmpiricalCDF(distrib)
+        elif distrib_name == 'MMPP2':
+            python_distrib = MMPP2(distrib)
+        elif distrib_name == 'Coxian':
+            python_distrib = Coxian(distrib)
+        elif distrib_name == 'Bernoulli':
+            python_distrib = Bernoulli(distrib)
+        elif distrib_name == 'DiscreteUniform':
+            python_distrib = DiscreteUniform(distrib)
+        elif distrib_name == 'MMAP' or distrib_name == 'MarkedMMPP':
+            python_distrib = MarkedMMPP(distrib)
+        elif distrib_name == 'MMDP':
+            python_distrib = MMDP(distrib)
+        elif distrib_name == 'MMDP2':
+            python_distrib = MMDP2(distrib)
     return python_distrib
 
 
@@ -465,7 +483,8 @@ from .distributions import *
 # Import from layered
 from .layered import *
 
-from .io import QN2JSIMG, qn2jsimg, JLINE, LQN2QN, lqn2qn
+from .io import QN2JSIMG, qn2jsimg, JLINE, LQN2QN, lqn2qn, QN2LQN, qn2lqn
+from .linemodel_io import save_model, load_model
 
 # Import gallery after lang and distributions to avoid circular import
 from .gallery import *

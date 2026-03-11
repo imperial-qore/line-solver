@@ -9,8 +9,8 @@ This example demonstrates:
 
 from line_solver import *
 
-if __name__ == "__main__":
-    GlobalConstants.set_verbose(VerboseLevel.STD)
+
+def cqn_twoqueues():
 
     model = Network('model')
 
@@ -33,6 +33,13 @@ if __name__ == "__main__":
     P.set(jobclass, jobclass, node[1], node[1], 1.0)
     P.set(jobclass, jobclass, node[2], node[2], 1.0)
     model.link(P)
+
+    return model
+
+
+if __name__ == '__main__':
+    GlobalConstants.set_verbose(VerboseLevel.STD)
+    model = cqn_twoqueues()
 
     # Solve with MVA
     solver = MVA(model)

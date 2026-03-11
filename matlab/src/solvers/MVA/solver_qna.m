@@ -236,7 +236,10 @@ while max(max(abs(Q-Q_1))) > options.iter_tol && it <= options.iter_max %#ok<max
         else % not a station
             switch sn.nodetype(ind)
                 case NodeType.Fork
-                    line_error(mfilename,'Fork nodes not supported yet by QNA solver.');
+                    % Fork splits traffic; routing and SCV splitting
+                    % are handled by the rt matrix and the splitting
+                    % formula in the main iteration loop. No additional
+                    % processing needed here.
             end
         end
     end

@@ -98,6 +98,7 @@ function [u,d]=pfqn_le_fpi(L,N)
 u=ones(M,1)/M;
 u_1=Inf*u;
 d=[];
+coder.varsize('d');
 while norm(u-u_1,1)>1e-10
     u_1=u;
     for i=1:M
@@ -106,7 +107,7 @@ while norm(u-u_1,1)>1e-10
             u(i)=u(i)+N(r)/(sum(N)+M)*L(i,r)*u_1(i)/(u_1'*L(:,r));
         end
     end
-    d(end+1,:)=abs(u-u_1)';
+    d=[d; abs(u-u_1)'];
 end
 end
 
@@ -121,6 +122,7 @@ v=eta+1;
 u_1=Inf*u;
 v_1=Inf*v; %#ok<NASGU>
 d=[];
+coder.varsize('d');
 while norm(u-u_1,1)>1e-10
     u_1=u;
     v_1=v;
@@ -137,7 +139,7 @@ while norm(u-u_1,1)>1e-10
     for r=1:R
         v=v-xi(r)*Z(r);
     end
-    d(end+1,:)=abs(u-u_1)'+abs(v-v_1);
+    d=[d; abs(u-u_1)'+abs(v-v_1)];
 end
 
 end

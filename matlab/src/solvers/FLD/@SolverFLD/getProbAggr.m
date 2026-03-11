@@ -17,6 +17,7 @@ function [Pnir,logPnir] = getProbAggr(self, ist)
 if nargin<2 %~exist('ist','var')
     line_error(mfilename,'getProbAggr requires to pass a parameter the station of interest.');
 end
+sn = self.getStruct;
 if ist > sn.nstations
     line_error(mfilename,'Station number exceeds the number of stations in the model.');
 end
@@ -24,21 +25,58 @@ if isempty(self.result)
     self.run;
 end
 Q = self.result.Avg.Q;
-sn = self.getStruct;
 N = sn.njobs;
-if all(isfinite(N))
-    state = sn.state{sn.stationToStateful(ist)};
-    [~, nir, ~, ~] = State.toMarginal(sn, ist, state);
-    % Binomial approximation with mean fitted to queue-lengths.
-    % Rainer Schmidt, "An approximate MVA ...", PEVA 29:245-254, 1997.
-    logPnir = 0;
-    for r=1:size(nir,2)
-        logPnir = logPnir + nchoosekln(N(r),nir(r));
-        logPnir = logPnir + nir(r)*log(Q(ist,r)/N(r));
-        logPnir = logPnir + (N(r)-nir(r))*log(1-Q(ist,r)/N(r));
+
+state = sn.state{sn.stationToStateful(ist)};
+[~, nir, ~, ~] = State.toMarginal(sn, ist, state);
+
+openClasses = find(isinf(N));
+closedClasses = find(isfinite(N));
+logPnir = 0;
+
+% Product-form probability for open classes
+if ~isempty(openClasses)
+    U = self.result.Avg.U;
+    if sn.sched(ist) == SchedStrategy.INF
+        % Delay (infinite server): independent Poisson per class
+        for r = openClasses
+            if Q(ist,r) > 0
+                logPnir = logPnir + nir(r)*log(Q(ist,r)) - Q(ist,r) - gammaln(nir(r)+1);
+            elseif nir(r) > 0
+                logPnir = -Inf;
+            end
+        end
+    elseif sn.sched(ist) ~= SchedStrategy.EXT
+        % Queue station: multinomial-geometric product form
+        % P(n_1,...,n_R) = (1-rho) * n!/prod(n_r!) * prod(rho_r^n_r)
+        % where rho_r = U(ist,r) is per-server utilization
+        rho_total = sum(U(ist, openClasses));
+        n_total = sum(nir(openClasses));
+        if rho_total < 1
+            logPnir = logPnir + log(1 - rho_total) + gammaln(n_total + 1);
+            for r = openClasses
+                rho_r = U(ist, r);
+                if nir(r) > 0
+                    if rho_r > 0
+                        logPnir = logPnir + nir(r)*log(rho_r) - gammaln(nir(r)+1);
+                    else
+                        logPnir = -Inf;
+                    end
+                end
+            end
+        else
+            logPnir = -Inf;
+        end
     end
-    Pnir = real(exp(logPnir));
-else
-    line_error(mfilename,'getProbAggr not yet implemented for models with open classes.');
 end
+
+% Binomial approximation for closed classes
+% Rainer Schmidt, "An approximate MVA ...", PEVA 29:245-254, 1997.
+for r = closedClasses
+    logPnir = logPnir + nchoosekln(N(r),nir(r));
+    logPnir = logPnir + nir(r)*log(Q(ist,r)/N(r));
+    logPnir = logPnir + (N(r)-nir(r))*log(1-Q(ist,r)/N(r));
+end
+
+Pnir = real(exp(logPnir));
 end

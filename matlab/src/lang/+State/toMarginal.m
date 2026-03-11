@@ -34,6 +34,27 @@ end
 if ~sn.isstation(ind) && sn.isstateful(ind) % if stateful node
     if sn.nodetype(ind) == NodeType.Transition
         R = sn.nodeparam{ind}.nmodes;
+        if nargin < 5
+            % Initialize phasesz/phaseshift for Transition nodes from firingphases
+            phasesz = sn.nodeparam{ind}.firingphases;
+            if any(isnan(phasesz))
+                phasesz = zeros(1, R);
+                for m = 1:R
+                    if iscell(sn.nodeparam{ind}.firingproc) && ~isempty(sn.nodeparam{ind}.firingproc{m})
+                        phasesz(m) = size(sn.nodeparam{ind}.firingproc{m}{1}, 1);
+                    else
+                        phasesz(m) = 1;
+                    end
+                end
+            end
+            phaseshift = [0,cumsum(phasesz(1:end-1))];
+        end
+        if nargin < 8
+            nmodes = R;
+            space_buf = state_i(:,1:nmodes);
+            space_srv = state_i(:,(nmodes+1):(nmodes+sum(phasesz)));
+            space_var = state_i(:,(nmodes+sum(phasesz)+1):end);
+        end
         sir = zeros(size(state_i,1),R); % class-r jobs in service
         kir = zeros(size(state_i,1),R,max(phasesz)); % class-r jobs in service in phase k
         for r=1:R

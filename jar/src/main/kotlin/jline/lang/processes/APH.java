@@ -40,6 +40,11 @@ public class APH extends Markovian {
         this.setProcess(rep);
     }
 
+    @Override
+    public Matrix getSubgenerator() {
+        return (Matrix) this.getParam(3).getValue();
+    }
+
     public static APH fit(double mean, double scv, double skew) {
         if (mean <= GlobalConstants.FineTol) {
             Matrix alpha = new Matrix(1, 1, 1);

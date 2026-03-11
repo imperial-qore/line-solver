@@ -21,8 +21,11 @@ from .solver_ln import SolverLN, SolverLNOptions
 from .solver_auto import SolverAuto, SolverAutoOptions, ModelAnalyzer
 from .solver_qns import SolverQNS, QNSOptions, QNSResult
 from .solver_lqns import SolverLQNS, LQNSOptions, LQNSResult
-from .solver_des.solver_des import SolverDES
-from .solver_des.des_options import DESOptions, DESResult
+try:
+    from .solver_ldes.solver_ldes import SolverLDES
+except ImportError:
+    SolverLDES = None
+from .solver_ldes.ldes_options import LDESOptions, LDESResult
 from .solver_mam import SolverMAM, SolverMAMOptions
 from .solver_fld import SolverFLD
 from .solver_fld.options import SolverFLDOptions, FLDResult
@@ -41,7 +44,7 @@ SSA = SolverSSA
 FLD = SolverFLD
 MAM = SolverMAM
 JMT = SolverJMT
-DES = SolverDES
+LDES = SolverLDES
 AUTO = SolverAuto
 LINE = SolverAuto
 LN = SolverLN
@@ -64,9 +67,9 @@ __all__ = [
     'SolverLQNS',
     'LQNSOptions',
     'LQNSResult',
-    'SolverDES',
-    'DESOptions',
-    'DESResult',
+    'SolverLDES',
+    'LDESOptions',
+    'LDESResult',
     'SolverMAM',
     'SolverMAMOptions',
     'SolverFLD',
@@ -95,7 +98,7 @@ __all__ = [
     'FLD',
     'MAM',
     'JMT',
-    'DES',
+    'LDES',
     'AUTO',
     'LINE',
     'LN',

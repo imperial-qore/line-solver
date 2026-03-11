@@ -142,6 +142,7 @@ end
 
 %% Compute uniformization parameter theta
 theta = max(abs(diag(C)));
+theta_plus_mu = theta + mu;
 
 %% Initialize output
 x = x(:)';  % Ensure row vector
@@ -155,74 +156,81 @@ if nargout > 1
     end
 end
 
-%% Compute sojourn time distribution for each x
+%% Determine global K_max across all x points
+K_max_global = 0;
+L_per_point = zeros(1, num_points);
+K_per_point = zeros(1, num_points);
 for idx = 1:num_points
     x_val = x(idx);
-
-    % Determine truncation points L and R_upper for uniformization
-    % Find L and R_upper such that: sum_{k=L}^R_upper Poisson(theta+mu, x_val) > 1 - epsilon_prime
-    mean_val = (theta + mu) * x_val;
-
-    % Use Poisson quantiles to find L and R_upper
+    mean_val = theta_plus_mu * x_val;
     if mean_val > 0
-        L = max(0, floor(mean_val - 10*sqrt(mean_val)));
+        L_per_point(idx) = max(0, floor(mean_val - 10*sqrt(mean_val)));
         R_upper = ceil(mean_val + 10*sqrt(mean_val));
-
-        % Refine to meet epsilon_prime requirement
-        pmf = poisspdf(L:R_upper, mean_val);
+        pmf = poisspdf(L_per_point(idx):R_upper, mean_val);
         cumsum_pmf = sum(pmf);
         while cumsum_pmf < 1 - epsilon_prime && R_upper < 10000
             R_upper = R_upper + 10;
-            pmf = poisspdf(L:R_upper, mean_val);
+            pmf = poisspdf(L_per_point(idx):R_upper, mean_val);
             cumsum_pmf = sum(pmf);
         end
-    else
-        L = 0;
-        R_upper = 0;
+        K_per_point(idx) = R_upper;
     end
+    K_max_global = max(K_max_global, K_per_point(idx));
+end
 
-    K_max = R_upper;
+if verbose
+    fprintf('  K_max (global uniformization truncation): %d\n', K_max_global);
+    fprintf('Computing h_{n,k} recursion...\n');
+end
 
-    if verbose && idx == 1
-        fprintf('  K(epsilon_prime): %d (uniformization truncation)\n', K_max);
+%% Precompute h_{n,k} using 3D matrix (M x (N+1) x (K+1)) for fast indexing
+h = compute_h_matrix(C, D, mu, M, N_epsilon, K_max_global, theta);
+
+%% Precompute pi_0 * R^n * D weights with early truncation
+% Use iterative R^n multiplication and stop when weight is negligible
+weight_tol = epsilon * 1e-2;
+weights = zeros(N_epsilon + 1, M);  % weights(n+1,:) = pi_0 * R^n * D (row vector)
+R_power = I;  % R^0 = I
+N_actual = N_epsilon;
+for n = 0:N_epsilon
+    w = pi_0 * R_power * D;
+    weights(n+1, :) = w;
+    if n > 0 && norm(w, inf) < weight_tol
+        N_actual = n;
+        break;
     end
+    R_power = R_power * R;
+end
 
-    % Compute h_{n,k} for n=0,...,N_epsilon and k=0,...,K_max
-    if verbose && idx == 1
-        fprintf('Computing h_{n,k} recursion...\n');
-    end
-    h = compute_h_recursive(C, D, mu, N_epsilon, K_max, theta);
+if verbose
+    fprintf('  N_actual (early truncation): %d / %d\n', N_actual, N_epsilon);
+end
 
-    % Compute W_bar(x) using equation (8)
-    % W_bar(x) = (1/lambda) * sum_{n=0}^{N} pi_0 * R^n * D * sum_{k=L}^{R} ...
-    %            [(theta+mu)^k * x^k / k!] * exp(-(theta+mu)*x) * h_{n,k}
+%% Compute sojourn time distribution for each x
+for idx = 1:num_points
+    x_val = x(idx);
+    L = L_per_point(idx);
+    K_max = K_per_point(idx);
 
-    theta_plus_mu = theta + mu;
+    % Precompute Poisson PMF values for this x point
+    poisson_vals = poisspdf(L:K_max, theta_plus_mu * x_val);  % vector
 
-    for n = 0:N_epsilon
-        % Compute pi_0 * R^n * D
-        if n == 0
-            weight = pi_0 * D;
-            R_power_n = 1;
-        else
-            R_power_n = R^n;
-            weight = pi_0 * R_power_n * D;
+    for n = 0:N_actual
+        weight = weights(n+1, :);  % 1 x M row vector
+
+        % Vectorized sum over k: sum_k(m) = sum_j poisson(j) * h(m, n+1, L+j+1)
+        h_slice = squeeze(h(:, n+1, L+1:K_max+1));  % M x (K_max-L+1)
+        if M == 1
+            h_slice = h_slice(:)';  % Ensure row vector for M=1
         end
-
-        % Compute sum over k
-        sum_k = zeros(M, 1);
-        for k = L:K_max
-            % Use poisspdf to avoid numerical overflow with factorial
-            poisson_term = poisspdf(k, theta_plus_mu * x_val);
-            sum_k = sum_k + poisson_term * h{n+1, k+1};
-        end
+        sum_k = h_slice * poisson_vals(:);  % M x 1
 
         term_n = (1/lambda) * weight * sum_k;
         W_bar(idx) = W_bar(idx) + term_n;
 
         % Store conditional distribution if requested
         if nargout > 1
-            W_bar_n{n+1}(idx) = sum(sum_k) / M;  % Average over states
+            W_bar_n{n+1}(idx) = sum(sum_k) / M;
         end
     end
 end
@@ -312,8 +320,8 @@ end
 
 end
 
-function h = compute_h_recursive(C, D, mu, N, K, theta)
-% Recursive computation of h_{n,k} coefficients
+function h = compute_h_matrix(C, D, mu, M, N, K, theta)
+% Compute h_{n,k} coefficients as a 3D matrix h(M, N+1, K+1)
 %
 % The h_{n,k} vectors satisfy the recursion (Theorem 1):
 %   h_{n,0} = e (vector of ones), for n = 0, 1, ...
@@ -321,46 +329,54 @@ function h = compute_h_recursive(C, D, mu, N, K, theta)
 %                                + D * h_{n+1,k}]
 %   where h_{-1,k} = 0 for all k
 
-M = size(C, 1);
-I = eye(M);
 e = ones(M, 1);
-
-% Pre-compute constant matrices
 theta_plus_mu = theta + mu;
-theta_I_plus_C = theta * I + C;
+theta_I_plus_C = theta * eye(M) + C;
+inv_tpm = 1 / theta_plus_mu;
 
-% Initialize cell array to store h_{n,k}
-% h{n+1, k+1} stores h_{n,k} (shift indices by 1)
-h = cell(N+1, K+1);
+% Store h as M x (N+1) x (K+1) matrix
+h = zeros(M, N+1, K+1);
 
 % Base case: h_{n,0} = e for all n
 for n = 0:N
-    h{n+1, 1} = e;
+    h(:, n+1, 1) = e;
+end
+
+% Precompute n*mu/(n+1) coefficients
+nmu_coeff = zeros(N+1, 1);
+for n = 1:N
+    nmu_coeff(n+1) = n * mu / (n + 1);
 end
 
 % Recursive computation: fill column by column (increasing k)
 for k = 0:K-1
-    for n = 0:N
-        % Compute h_{n,k+1} using the recursion formula
-        % h_{n,k+1} = 1/(theta+mu) * [n*mu/(n+1) * h_{n-1,k}
-        %                              + (theta*I + C) * h_{n,k}
-        %                              + D * h_{n+1,k}]
+    % Vectorized over n: extract column k for all n values
+    h_col_k = h(:, :, k+1);  % M x (N+1)
 
-        term1 = zeros(M, 1);
-        term2 = theta_I_plus_C * h{n+1, k+1};
-        term3 = zeros(M, 1);
+    % Compute (theta*I + C) * h_{n,k} for all n at once
+    term2_all = theta_I_plus_C * h_col_k;  % M x (N+1)
+
+    % Compute D * h_{n+1,k} for n=0..N-1
+    term3_all = D * h_col_k(:, 2:end);  % M x N (for n=0..N-1)
+
+    for n = 0:N
+        term2 = term2_all(:, n+1);
 
         % First term: n*mu/(n+1) * h_{n-1,k}
         if n > 0
-            term1 = (n * mu / (n + 1)) * h{n, k+1};
+            term1 = nmu_coeff(n+1) * h_col_k(:, n);
+        else
+            term1 = zeros(M, 1);
         end
 
         % Third term: D * h_{n+1,k}
         if n < N
-            term3 = D * h{n+2, k+1};
+            term3 = term3_all(:, n+1);
+        else
+            term3 = zeros(M, 1);
         end
 
-        h{n+1, k+2} = (term1 + term2 + term3) / theta_plus_mu;
+        h(:, n+1, k+2) = inv_tpm * (term1 + term2 + term3);
     end
 end
 

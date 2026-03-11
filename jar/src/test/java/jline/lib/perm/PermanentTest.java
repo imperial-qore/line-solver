@@ -3,6 +3,7 @@ package jline.lib.perm;
 import jline.util.matrix.Matrix;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
+import static jline.TestTools.*;
 
 /**
  * Unit tests for matrix permanent computation implementations.
@@ -10,7 +11,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class PermanentTest {
 
-    private static final double TOLERANCE = 1e-6;
 
     /**
      * Test 1: Simple 2x2 matrix with known permanent value.
@@ -27,19 +27,19 @@ public class PermanentTest {
 
         // Test exact algorithms
         Permanent perm = new Permanent(matrix, true);
-        assertEquals(expected, perm.getValue(), TOLERANCE,
+        assertEquals(expected, perm.getValue(), LOOSE_FINE_TOL,
             "Permanent (inclusion-exclusion) failed for 2x2 matrix");
 
         NaivePermanent naive = new NaivePermanent(matrix, true);
-        assertEquals(expected, naive.getValue(), TOLERANCE,
+        assertEquals(expected, naive.getValue(), LOOSE_FINE_TOL,
             "NaivePermanent failed for 2x2 matrix");
 
         RyzerPermanent ryzer = new RyzerPermanent(matrix, "graycode", true);
-        assertEquals(expected, ryzer.getValue(), TOLERANCE,
+        assertEquals(expected, ryzer.getValue(), LOOSE_FINE_TOL,
             "RyzerPermanent (graycode) failed for 2x2 matrix");
 
         RyzerPermanent ryzerNaive = new RyzerPermanent(matrix, "naive", true);
-        assertEquals(expected, ryzerNaive.getValue(), TOLERANCE,
+        assertEquals(expected, ryzerNaive.getValue(), LOOSE_FINE_TOL,
             "RyzerPermanent (naive) failed for 2x2 matrix");
     }
 
@@ -59,15 +59,15 @@ public class PermanentTest {
         double expected = 450.0;
 
         Permanent perm = new Permanent(matrix, true);
-        assertEquals(expected, perm.getValue(), TOLERANCE,
+        assertEquals(expected, perm.getValue(), LOOSE_FINE_TOL,
             "Permanent (inclusion-exclusion) failed for 3x3 unique matrix");
 
         NaivePermanent naive = new NaivePermanent(matrix, true);
-        assertEquals(expected, naive.getValue(), TOLERANCE,
+        assertEquals(expected, naive.getValue(), LOOSE_FINE_TOL,
             "NaivePermanent failed for 3x3 unique matrix");
 
         RyzerPermanent ryzer = new RyzerPermanent(matrix, "graycode", true);
-        assertEquals(expected, ryzer.getValue(), TOLERANCE,
+        assertEquals(expected, ryzer.getValue(), LOOSE_FINE_TOL,
             "RyzerPermanent (graycode) failed for 3x3 unique matrix");
     }
 
@@ -89,11 +89,11 @@ public class PermanentTest {
         double permValue = perm.getValue();
 
         NaivePermanent naive = new NaivePermanent(matrix, true);
-        assertEquals(permValue, naive.getValue(), TOLERANCE,
+        assertEquals(permValue, naive.getValue(), LOOSE_FINE_TOL,
             "NaivePermanent should match Permanent for 3x3 matrix with repeated columns");
 
         RyzerPermanent ryzer = new RyzerPermanent(matrix, "graycode", true);
-        assertEquals(permValue, ryzer.getValue(), TOLERANCE,
+        assertEquals(permValue, ryzer.getValue(), LOOSE_FINE_TOL,
             "RyzerPermanent should match Permanent for 3x3 matrix with repeated columns");
 
         // Verify the value is positive
@@ -118,11 +118,11 @@ public class PermanentTest {
         double permValue = perm.getValue();
 
         NaivePermanent naive = new NaivePermanent(matrix, true);
-        assertEquals(permValue, naive.getValue(), TOLERANCE,
+        assertEquals(permValue, naive.getValue(), LOOSE_FINE_TOL,
             "NaivePermanent should match Permanent for 3x3 matrix with repeated rows");
 
         RyzerPermanent ryzer = new RyzerPermanent(matrix, "graycode", true);
-        assertEquals(permValue, ryzer.getValue(), TOLERANCE,
+        assertEquals(permValue, ryzer.getValue(), LOOSE_FINE_TOL,
             "RyzerPermanent should match Permanent for 3x3 matrix with repeated rows");
 
         // Verify the value is positive
@@ -147,11 +147,11 @@ public class PermanentTest {
         double permValue = perm.getValue();
 
         NaivePermanent naive = new NaivePermanent(matrix, true);
-        assertEquals(permValue, naive.getValue(), TOLERANCE,
+        assertEquals(permValue, naive.getValue(), LOOSE_FINE_TOL,
             "NaivePermanent should match Permanent for 3x3 matrix with repeated rows and columns");
 
         RyzerPermanent ryzer = new RyzerPermanent(matrix, "graycode", true);
-        assertEquals(permValue, ryzer.getValue(), TOLERANCE,
+        assertEquals(permValue, ryzer.getValue(), LOOSE_FINE_TOL,
             "RyzerPermanent should match Permanent for 3x3 matrix with repeated rows and columns");
 
         // Verify the value is positive
@@ -170,15 +170,15 @@ public class PermanentTest {
         double expected = 1.0;
 
         Permanent perm = new Permanent(identity, true);
-        assertEquals(expected, perm.getValue(), TOLERANCE,
+        assertEquals(expected, perm.getValue(), LOOSE_FINE_TOL,
             "Permanent of identity matrix should be 1");
 
         NaivePermanent naive = new NaivePermanent(identity, true);
-        assertEquals(expected, naive.getValue(), TOLERANCE,
+        assertEquals(expected, naive.getValue(), LOOSE_FINE_TOL,
             "NaivePermanent of identity matrix should be 1");
 
         RyzerPermanent ryzer = new RyzerPermanent(identity, "graycode", true);
-        assertEquals(expected, ryzer.getValue(), TOLERANCE,
+        assertEquals(expected, ryzer.getValue(), LOOSE_FINE_TOL,
             "RyzerPermanent of identity matrix should be 1");
     }
 

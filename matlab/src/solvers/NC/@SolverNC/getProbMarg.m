@@ -48,6 +48,56 @@ end
 R = sn.nclasses;  % Number of classes
 Ntotal = sum(N);  % Total population
 
+% Fast path: comom method uses pfqn_procomom directly
+if strcmpi(self.options.method, 'comom')
+    M = sn.nstations;
+    C = sn.nchains;
+    nservers = sn.nservers;
+    [Lchain, ~, ~, ~, Nchain] = sn_get_demands_chain(sn);
+    Lchain(~isfinite(Lchain)) = 0;
+
+    % Separate queue vs delay stations (matching solver_nc.m lines 97-119)
+    Lms = zeros(M, C);
+    Ztotal = zeros(1, C);
+    Zms = zeros(1, C);
+    queueStations = [];
+    for i = 1:M
+        if isinf(nservers(i))
+            Ztotal = Ztotal + Lchain(i, :);
+        else
+            queueStations(end+1) = i; %#ok<AGROW>
+            Lms(i, :) = Lchain(i, :) / nservers(i);
+            Zms = Zms + Lchain(i, :) * (nservers(i)-1) / nservers(i);
+        end
+    end
+
+    L_queues = Lms(queueStations, :);
+    Z_total = Ztotal + Zms;
+
+    [Pr, ~] = pfqn_procomom(L_queues, Nchain, Z_total);
+
+    % Find which queue index corresponds to the requested station
+    queue_idx = find(queueStations == ist, 1);
+    if ~isempty(queue_idx)
+        sumNchain = sum(Nchain);
+        Pmarg = zeros(1, Ntotal + 1);
+        logPmarg = -Inf * ones(1, Ntotal + 1);
+        % Pr is (M_queues x sumNchain+1), map to output size
+        len = min(sumNchain + 1, Ntotal + 1);
+        Pmarg(1:len) = Pr(queue_idx, 1:len);
+        logPmarg(Pmarg > 0) = log(Pmarg(Pmarg > 0));
+    else
+        % Delay station: fall through to enumeration
+        line_warning(mfilename, 'comom method does not directly support delay stations, using enumeration.');
+        savedMethod = self.options.method;
+        self.options.method = 'default';
+        [Pmarg, logPmarg] = self.getProbMarg(node_obj);
+        self.options.method = savedMethod;
+        return
+    end
+    return
+end
+
 % Initialize output vectors
 Pmarg = zeros(1, Ntotal + 1);
 logPmarg = -Inf * ones(1, Ntotal + 1);

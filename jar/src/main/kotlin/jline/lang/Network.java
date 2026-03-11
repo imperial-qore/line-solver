@@ -10,7 +10,8 @@ import static jline.GlobalConstants.Inf;
 import jline.GlobalConstants;
 import jline.VerboseLevel;
 import jline.io.Ret;
-import jline.io.ModelVisualizer;
+// import static jline.io.SysUtilsKt.lineViewerGetPath;
+import static jline.io.SysUtilsKt.jmtGetPath;
 import jline.lang.constant.*;
 import jline.lang.nodeparam.*;
 import jline.lang.nodes.*;
@@ -1219,7 +1220,7 @@ public class Network extends Model implements Copyable {
                     linkedJoinCount++;
                 } else {
                     line_warning(mfilename(new Object() {
-                    }), String.format("Join node '%s' at index %d has null joinOf reference", 
+                    }), String.format("Join node '%s' at index %d has null joinOf reference",
                         joinNode.getName(), i));
                 }
             }
@@ -1682,6 +1683,8 @@ public class Network extends Model implements Copyable {
             return ProcessType.BMAP;
         } else if (distr instanceof MarkedMAP) {
             return ProcessType.MMAP;
+        } else if (distr instanceof DMAP) {
+            return ProcessType.DMAP;
         } else if (distr instanceof MAP) {
             return ProcessType.MAP;
         } else if (distr instanceof ME) {
@@ -3228,7 +3231,7 @@ public class Network extends Model implements Copyable {
                             state_i = new Matrix(1, this.getNumberOfClasses());
                             for (int r = 0; r < sn.nclasses; r++) {
                                 if (sn.refstat.get(r, 0) == sn.nodeToStation.get(ind)) {
-                                    state_i.set(0, r, sn.njobs.get(r, 0));
+                                    state_i.set(0, r, sn.njobs.get(0, r));
                                 } else {
                                     state_i.set(0, r, 0);
                                 }
@@ -3716,6 +3719,19 @@ public class Network extends Model implements Copyable {
         }
         
         sanitize();
+
+        // Clear non-station nodes' outputStrategy before setting new routing.
+        // This prevents accumulation from previous link() calls and ensures
+        // non-routed classes get DISABLED (not RAND) routing at Router nodes.
+        // Matches MATLAB's link.m lines 267-283.
+        // Only applies to nodes with public initDispatcherJobClasses (Dispatcher).
+        // Fork nodes use Forker which has private initDispatcherJobClasses (skipped).
+        for (Node node : this.nodes) {
+            if (!(node instanceof Station) && node.getOutput() instanceof Dispatcher) {
+                ((Dispatcher) node.getOutput()).initDispatcherJobClasses(this.getClasses());
+            }
+        }
+
         P.setRouting(this);
 
         for (Node node : this.nodes) {
@@ -4095,6 +4111,8 @@ public class Network extends Model implements Copyable {
         // regionsz(f, r) = class size/memory for class r in region f
         this.sn.regionsz = new Matrix(F, K);
         this.sn.regionsz.fill(1.0);  // Default size = 1
+        this.sn.regionLinConA = new MatrixCell(F);
+        this.sn.regionLinConb = new MatrixCell(F);
 
         for (int f = 0; f < F; f++) {
             Region fcr = this.regions.get(f);
@@ -4129,6 +4147,12 @@ public class Network extends Model implements Copyable {
             }
 
             this.sn.region.set(f, regionMatrix);
+
+            // Serialize linear constraints if set
+            if (fcr.hasLinearConstraints()) {
+                this.sn.regionLinConA.set(f, fcr.getConstraintA());
+                this.sn.regionLinConb.set(f, fcr.getConstraintB());
+            }
         }
         return this.sn;
     }
@@ -4365,7 +4389,7 @@ public class Network extends Model implements Copyable {
                         Distribution arrivalDistrib = ((Source) node).getArrivalProcess(this.getClassByIndex(r));
 
                         if (arrivalDistrib != null) {
-                            if (arrivalDistrib instanceof MAP) {
+                            if (arrivalDistrib instanceof MAP || arrivalDistrib instanceof DMAP) {
                                 if (sourceParam.fileName == null)
                                     sourceParam.fileName = new ArrayList<>(Collections.nCopies(R, null));
                                 nvars.set(ind, r, nvars.get(ind, r) + 1);
@@ -4407,7 +4431,7 @@ public class Network extends Model implements Copyable {
                         if (serviceProcess != null) {
                             Distribution serviceDistrib = serviceProcess.getDistribution();
 
-                            if (serviceDistrib instanceof MAP) {
+                            if (serviceDistrib instanceof MAP || serviceDistrib instanceof DMAP) {
                                 if (queueParam.fileName == null)
                                     queueParam.fileName = new ArrayList<>(Collections.nCopies(R, null));
                                 nvars.set(ind, r, nvars.get(ind, r) + 1);
@@ -4431,7 +4455,7 @@ public class Network extends Model implements Copyable {
                         if (serviceProcess != null) {
                             Distribution serviceDistrib = serviceProcess.getDistribution();
 
-                            if (serviceDistrib instanceof MAP) {
+                            if (serviceDistrib instanceof MAP || serviceDistrib instanceof DMAP) {
                                 if (delayParam.fileName == null)
                                     delayParam.fileName = new ArrayList<>(Collections.nCopies(R, null));
                                 nvars.set(ind, r, nvars.get(ind, r) + 1);
@@ -4453,7 +4477,7 @@ public class Network extends Model implements Copyable {
                     for (int r = 0; r < R; r++) {
                         Distribution firingDistrib = node.getServer().getServiceDistribution(this.jobClasses.get(r));
 
-                        if (firingDistrib instanceof MAP) {
+                        if (firingDistrib instanceof MAP || firingDistrib instanceof DMAP) {
                             if (transitionParam.fileName == null)
                                 transitionParam.fileName = new ArrayList<>(Collections.nCopies(R, null));
                             nvars.set(ind, r, nvars.get(ind, r) + 1);
@@ -4557,8 +4581,8 @@ public class Network extends Model implements Copyable {
                 transitionParam.firingprio = transition.firingPriorities;
                 transitionParam.fireweight = transition.firingWeights;
 
-                transitionParam.firingproc = new HashMap<>();
-                transitionParam.firingpie = new HashMap<>();
+                transitionParam.firingproc = new LinkedHashMap<>();
+                transitionParam.firingpie = new LinkedHashMap<>();
                 transitionParam.firingphases = new Matrix(1, transition.getNumberOfModes());
 
                 for (Mode m : transition.getModes()) {
@@ -4585,7 +4609,7 @@ public class Network extends Model implements Copyable {
                         transitionParam.firingphases.set(m.getIndex() - 1, NaN);
                     }
                     if (transitionParam.firingprocid == null) {
-                        transitionParam.firingprocid = new HashMap<>();
+                        transitionParam.firingprocid = new LinkedHashMap<>();
                     }
                     transitionParam.firingprocid.put(m, ProcessType.fromDistribution(transition.getFiringDistribution(m)));
                 }
@@ -4790,11 +4814,9 @@ public class Network extends Model implements Copyable {
                 for (int r = 0; r < K; r++) {
                     JobClass jobclass = this.jobClasses.get(r);
                     MatrixCell map_ir = ph.get(station).get(jobclass);
-                    if (map_ir != null && map_ir.get(0) != null && map_ir.get(1) != null) {
+                    if (map_ir != null && map_ir.get(0) != null && map_ir.get(1) != null
+                            && !map_ir.get(0).hasNaN() && !map_ir.get(1).hasNaN()) {
                         // PH/MAP representation has both D0 and D1
-                        if (Double.isNaN(map_pie(map_ir.get(0), map_ir.get(1)).value())) {
-                            map_pie(map_ir.get(0), map_ir.get(1));
-                        }
                         pie_i.put(jobclass, map_pie(map_ir.get(0), map_ir.get(1)));
                     } else {
                         // Non-Markovian distributions or disabled - use NaN pie
@@ -5552,7 +5574,6 @@ public class Network extends Model implements Copyable {
     }
 
     public void refreshStruct(boolean hardRefresh) {
-
         sanitize();
         resolveSignals();  // Resolve Signal placeholders to OpenSignal or ClosedSignal
 
@@ -6971,9 +6992,28 @@ public class Network extends Model implements Copyable {
      * @param height the window height
      */
     public void plot(String title, int width, int height) {
-        ModelVisualizer visualizer = new ModelVisualizer(this);
-        visualizer.buildGraph();
-        visualizer.show(title, width, height);
+        try {
+            SolverJMT jmt = new SolverJMT(this);
+            NetworkStruct sn = this.getStruct();
+            jmt.writeJSIM(sn);
+            String jsimFile = jmt.getFilePath() + java.io.File.separator + jmt.getFileName() + ".jsim";
+
+            String jmtPath = jmtGetPath();
+            String jmtJar = jmtPath + java.io.File.separator + "JMT.jar";
+            if (!new java.io.File(jmtJar).exists()) {
+                System.err.println("JMT.jar not found at: " + jmtJar);
+                return;
+            }
+            ProcessBuilder pb = new ProcessBuilder("java", "-cp", jmtJar, "jmt.commandline.Jmt", "jsimg", jsimFile);
+            pb.inheritIO();
+            pb.start();
+            // String viewerPath = lineViewerGetPath();
+            // ProcessBuilder pb = new ProcessBuilder("java", "-jar", viewerPath, jsimFile);
+            // pb.inheritIO();
+            // pb.start();
+        } catch (Exception e) {
+            System.err.println("Failed to launch JSIMgraph viewer: " + e.getMessage());
+        }
     }
 
 }

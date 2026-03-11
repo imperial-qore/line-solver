@@ -70,7 +70,12 @@ if nargin<2 %~exist('R','var')
     R = self.getAvgRespTHandles;
     % to do: check if some R are disabled
 end
-self.getAvg; % get steady-state solution
+% Force MATLAB path for passage time computation (needs odeStateVec)
+origLang = self.options.lang;
+self.options.lang = 'matlab';
+self.result = []; % Clear cached results to force MATLAB re-computation
+self.getAvg; % get steady-state solution with odeStateVec populated
+self.options.lang = origLang;
 options = self.getOptions;
 options.init_sol = self.result.solverSpecific.odeStateVec;
 % we need to pass the modified sn as the number of phases may have changed

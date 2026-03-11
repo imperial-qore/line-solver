@@ -22,6 +22,7 @@ public enum ProcessType implements Serializable {
     COXIAN,
     PH,
     MAP,
+    DMAP,
     UNIFORM,
     DET,
     GAMMA,
@@ -63,6 +64,8 @@ public enum ProcessType implements Serializable {
                 return ProcessType.APH;
             case "MAP":
                 return ProcessType.MAP;
+            case "DMAP":
+                return ProcessType.DMAP;
             case "Uniform":
                 return ProcessType.UNIFORM;
             case "Det":
@@ -132,6 +135,8 @@ public enum ProcessType implements Serializable {
                 return "APH";
             case MAP:
                 return "MAP";
+            case DMAP:
+                return "DMAP";
             case UNIFORM:
                 return "Uniform";
             case DET:

@@ -27,7 +27,7 @@ import static jline.io.InputOutputKt.mfilename;
  *
  * <p><b>Solver compatibility for tasksPerLink &gt; 1:</b></p>
  * <ul>
- *   <li><b>SolverDES</b>: Fully supported - correctly simulates multiple tasks per link</li>
+ *   <li><b>SolverLDES</b>: Fully supported - correctly simulates multiple tasks per link</li>
  *   <li><b>SolverJMT</b>: Fully supported - simulation handles multiple tasks correctly</li>
  *   <li><b>SolverMVA (H-T method)</b>: Not supported - throws error when tasksPerLink &gt; 1</li>
  *   <li><b>SolverMVA (MMT method)</b>: Supported - analytical approximation</li>
@@ -81,7 +81,7 @@ public class Fork extends Node implements Serializable {
      * tasks created will be: (number of outgoing links) × tasksPerLink.</p>
      *
      * <p><b>Important:</b> Values greater than 1 are only fully supported by simulation-based
-     * solvers (SolverDES, SolverJMT). Analytical solvers may produce errors or inaccurate results.</p>
+     * solvers (SolverLDES, SolverJMT). Analytical solvers may produce errors or inaccurate results.</p>
      *
      * @param nTasks the number of tasks to send on each outgoing link (default: 1)
      * @see Fork class documentation for solver compatibility details

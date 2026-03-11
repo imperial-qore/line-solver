@@ -149,7 +149,7 @@ def sn_get_product_form_params(sn: NetworkStruct) -> ProductFormParams:
                             ref_visit_ratio = 1.0
                             if sn.refclass is not None and sn.refstat is not None and sn.stationToStateful is not None:
                                 refclass_c = int(sn.refclass.flatten()[chain_id]) if chain_id < len(sn.refclass.flatten()) else -1
-                                if refclass_c > 0:
+                                if refclass_c >= 0:
                                     refstat_r = int(sn.refstat.flatten()[r]) if r < len(sn.refstat.flatten()) else -1
                                     if refstat_r >= 0 and refstat_r < len(sn.stationToStateful):
                                         refstat_stateful = int(sn.stationToStateful[refstat_r])
@@ -185,7 +185,7 @@ def sn_get_product_form_params(sn: NetworkStruct) -> ProductFormParams:
                             ref_visit_ratio = 1.0
                             if sn.refclass is not None and sn.refstat is not None and sn.stationToStateful is not None:
                                 refclass_c = int(sn.refclass.flatten()[chain_id]) if chain_id < len(sn.refclass.flatten()) else -1
-                                if refclass_c > 0:
+                                if refclass_c >= 0:
                                     refstat_r = int(sn.refstat.flatten()[r]) if r < len(sn.refstat.flatten()) else -1
                                     if refstat_r >= 0 and refstat_r < len(sn.stationToStateful):
                                         refstat_stateful = int(sn.stationToStateful[refstat_r])
@@ -241,18 +241,43 @@ def sn_get_residt_from_respt(
     # sn.visits[chain_id] is indexed by stateful nodes (nstateful x nclasses)
     # We need to convert to station indices using statefulToStation
     V = np.zeros((M, K))
-    if sn.visits:
-        for chain_id, visits in sn.visits.items():
-            if isinstance(visits, np.ndarray):
-                nstateful = visits.shape[0]
-                for sf in range(nstateful):
-                    # Get station index for this stateful node
-                    station_idx = -1
-                    if sn.statefulToStation is not None and sf < len(sn.statefulToStation):
-                        station_idx = int(sn.statefulToStation[sf])
-                    if station_idx >= 0 and station_idx < M:
-                        for r in range(min(visits.shape[1], K)):
-                            V[station_idx, r] += visits[sf, r]
+    visits_obj = getattr(sn, 'visits', None)
+    if visits_obj is not None and len(visits_obj) > 0:
+        if isinstance(visits_obj, dict):
+            visit_matrices = list(visits_obj.values())
+        elif isinstance(visits_obj, np.ndarray):
+            if visits_obj.dtype == object:
+                visit_matrices = [entry for entry in visits_obj.flat if entry is not None]
+            else:
+                visit_matrices = [visits_obj]
+        elif isinstance(visits_obj, (list, tuple)):
+            visit_matrices = list(visits_obj)
+        else:
+            visit_matrices = [visits_obj]
+
+        stateful_to_station = getattr(sn, 'statefulToStation', None)
+        if stateful_to_station is None or len(stateful_to_station) == 0:
+            stateful_to_station = np.arange(M)
+        else:
+            stateful_to_station = np.asarray(stateful_to_station).flatten()
+
+        for visits in visit_matrices:
+            if visits is None:
+                continue
+
+            visits = np.asarray(visits)
+            if visits.ndim == 1:
+                visits = visits.reshape((-1, 1))
+
+            for sf in range(visits.shape[0]):
+                station_idx = sf
+                if sf < len(stateful_to_station):
+                    mapped_idx = int(stateful_to_station[sf])
+                    if 0 <= mapped_idx < M:
+                        station_idx = mapped_idx
+                if 0 <= station_idx < M:
+                    cols = min(visits.shape[1], K)
+                    V[station_idx, :cols] += visits[sf, :cols]
 
     for ist in range(M):
         for k in range(K):
@@ -620,6 +645,19 @@ def sn_refresh_visits(sn: NetworkStruct) -> None:
             cols = cols[cols < rt_for_visits.shape[1]]
 
         Pchain = rt_for_visits[np.ix_(cols, cols)] if len(cols) > 0 else np.eye(len(cols))
+
+        # Match MATLAB sn_refresh_visits: replace NaN routing entries before DTMC solve.
+        for row in range(Pchain.shape[0]):
+            nan_cols = np.isnan(Pchain[row, :])
+            if np.any(nan_cols):
+                non_nan_sum = np.nansum(Pchain[row, ~nan_cols])
+                remaining_prob = max(0.0, 1.0 - non_nan_sum)
+                n_nan = np.sum(nan_cols)
+                if n_nan > 0 and remaining_prob > 0:
+                    Pchain[row, nan_cols] = remaining_prob / n_nan
+                else:
+                    Pchain[row, nan_cols] = 0.0
+
         visited = np.sum(Pchain, axis=1) > FINE_TOL
 
         # Normalize routing matrix for Fork-containing models
@@ -688,11 +726,10 @@ def sn_refresh_visits(sn: NetworkStruct) -> None:
             for ik_idx, ik in enumerate(classes_in_chain):
                 visits[ist, int(ik)] = alpha[ist * nIC + ik_idx]
 
-        # Normalize by reference station visit
-        # refstat is a station index; convert to stateful index via stationToNode (stateful = node in most cases)
+        # Normalize by reference station visit using the stateful mapping, like MATLAB.
         refstat_station = int(sn.refstat.flatten()[classes_in_chain[0]])
-        if refstat_station < len(sn.stationToNode):
-            refstat_idx = int(sn.stationToNode[refstat_station])  # Convert to node/stateful index
+        if hasattr(sn, 'stationToStateful') and sn.stationToStateful is not None and refstat_station < len(sn.stationToStateful):
+            refstat_idx = int(sn.stationToStateful[refstat_station])
         else:
             refstat_idx = refstat_station
         if refstat_idx < M:

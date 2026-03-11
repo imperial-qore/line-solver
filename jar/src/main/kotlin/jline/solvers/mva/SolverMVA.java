@@ -5,6 +5,7 @@
 
 package jline.solvers.mva;
 
+import jline.GlobalConstants;
 import jline.lang.FeatureSet;
 import jline.lang.Network;
 import jline.lang.NetworkStruct;
@@ -25,6 +26,7 @@ import java.util.Map;
 import static jline.util.Maths.logBinomial;
 import static jline.util.Maths.factln;
 import static jline.api.sn.SnIsOpenModelKt.snIsOpenModel;
+import static jline.io.InputOutputKt.line_debug;
 import static jline.io.InputOutputKt.line_error;
 import static jline.io.InputOutputKt.mfilename;
 
@@ -148,10 +150,15 @@ public class SolverMVA extends NetworkSolver {
      */
     @Override
     public void runAnalyzer() throws IllegalAccessException {
-        if (this.sn == null)
-            this.sn = this.model.getStruct(false);
         if (this.options == null)
             this.options = new SolverOptions(SolverType.MVA);
+        // Propagate solver verbose level to global
+        GlobalConstants.Verbose = options.verbose;
+        if (this.sn == null)
+            this.sn = this.model.getStruct(false);
+
+        line_debug(options.verbose, String.format("MVA solver starting: method=%s, nstations=%d, nclasses=%d",
+            options.method, sn.nstations, sn.nclasses));
 
         String origMethod = options.method;
         MVARunner runner = new MVARunner(this.model, this.options, this.enableChecks);
@@ -160,6 +167,7 @@ public class SolverMVA extends NetworkSolver {
         if (origMethod.equals("default") && !resultMethod.equals("default") && !resultMethod.startsWith("default/")) {
             resultMethod = "default/" + resultMethod;
         }
+        line_debug(options.verbose, String.format("MVA solver completed: method=%s, iter=%d", resultMethod, ret.iter));
         this.setAvgResults(ret.QN, ret.UN, ret.RN, ret.TN, ret.AN, ret.WN, ret.CN, ret.XN, ret.runtime, resultMethod, ret.iter);
     }
 
@@ -293,6 +301,7 @@ public class SolverMVA extends NetworkSolver {
      * @return ProbabilityResult with probability and log probability
      */
     public ProbabilityResult getProbSysAggr() {
+        line_debug(options.verbose, "MVA: computing system aggregate probabilities");
         if (this.result == null) {
             try {
                 this.runAnalyzer();

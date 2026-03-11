@@ -29,7 +29,7 @@ import jline.solvers.NetworkSolver;
 import jline.solvers.Solver;
 import jline.solvers.SolverOptions;
 import jline.solvers.ctmc.SolverCTMC;
-import jline.solvers.des.SolverDES;
+import jline.solvers.ldes.SolverLDES;
 import jline.solvers.fluid.SolverFluid;
 import jline.solvers.jmt.SolverJMT;
 import jline.solvers.nc.SolverNC;
@@ -298,11 +298,11 @@ public class SolverMVATest {
     assertNotNull(avgTable, "avgTable should not be null");
 
     double tput = avgTable.getTput().get(1);
-    assertEquals(lambda, tput, 0.01, "Throughput should equal arrival rate");
+    assertEquals(lambda, tput, COARSE_TOL, "Throughput should equal arrival rate");
 
     double expectedUtil = lambda / (c * mu);
     double actualUtil = avgTable.getUtil().get(1);
-    assertEquals(expectedUtil, actualUtil, 0.01, "Utilization should be lambda/(c*mu)");
+    assertEquals(expectedUtil, actualUtil, COARSE_TOL, "Utilization should be lambda/(c*mu)");
   }
 
   @Test
@@ -333,11 +333,11 @@ public class SolverMVATest {
     assertNotNull(avgTable, "avgTable should not be null");
 
     double tput = avgTable.getTput().get(1);
-    assertEquals(lambda, tput, 0.01, "Throughput should equal arrival rate");
+    assertEquals(lambda, tput, COARSE_TOL, "Throughput should equal arrival rate");
 
     double expectedUtil = lambda / (c * mu);
     double actualUtil = avgTable.getUtil().get(1);
-    assertEquals(expectedUtil, actualUtil, 0.01, "Utilization should be lambda/(c*mu)");
+    assertEquals(expectedUtil, actualUtil, COARSE_TOL, "Utilization should be lambda/(c*mu)");
   }
 
   @Test
@@ -368,11 +368,11 @@ public class SolverMVATest {
     assertNotNull(avgTable, "avgTable should not be null");
 
     double tput = avgTable.getTput().get(1);
-    assertEquals(lambda, tput, 0.01, "Throughput should equal arrival rate");
+    assertEquals(lambda, tput, COARSE_TOL, "Throughput should equal arrival rate");
 
     double expectedUtil = lambda / (c * mu);
     double actualUtil = avgTable.getUtil().get(1);
-    assertEquals(expectedUtil, actualUtil, 0.01, "Utilization should be lambda/(c*mu)");
+    assertEquals(expectedUtil, actualUtil, COARSE_TOL, "Utilization should be lambda/(c*mu)");
   }
 
   @Test
@@ -410,13 +410,13 @@ public class SolverMVATest {
 
     double tput1 = avgTable.getTput().get(1);
     double tput2 = avgTable.getTput().get(2);
-    assertEquals(lambda, tput1, 0.01, "Throughput at Queue1 should equal lambda");
-    assertEquals(lambda, tput2, 0.01, "Throughput at Queue2 should equal lambda");
+    assertEquals(lambda, tput1, COARSE_TOL, "Throughput at Queue1 should equal lambda");
+    assertEquals(lambda, tput2, COARSE_TOL, "Throughput at Queue2 should equal lambda");
 
     double expectedUtil1 = lambda / (c1 * mu1);
     double expectedUtil2 = lambda / (c2 * mu2);
-    assertEquals(expectedUtil1, avgTable.getUtil().get(1), 0.01, "Utilization at Queue1");
-    assertEquals(expectedUtil2, avgTable.getUtil().get(2), 0.01, "Utilization at Queue2");
+    assertEquals(expectedUtil1, avgTable.getUtil().get(1), COARSE_TOL, "Utilization at Queue1");
+    assertEquals(expectedUtil2, avgTable.getUtil().get(2), COARSE_TOL, "Utilization at Queue2");
   }
 
   // ===== QNA (Queueing Network Analyzer) Tests =====
@@ -966,9 +966,7 @@ public class SolverMVATest {
   @Nested
   class SchmidtTests {
 
-    // Relative error tolerance for comparison with JMT
-    // Approximation methods can have larger errors; 30% is reasonable for AMVA variants
-    private static final double RELATIVE_TOL = 0.30;
+    // Approximation methods — use VERY_COARSE_TOL (10%) from TestTools
 
     @BeforeEach
     public void setUpVerbosity() {
@@ -1025,8 +1023,8 @@ public class SolverMVATest {
 
       // Compare results
       double meanError = computeMeanRelativeError(mvaTable, jmtTable);
-      assertTrue(meanError < RELATIVE_TOL,
-          String.format("AB mean relative error %.4f exceeds tolerance %.4f", meanError, RELATIVE_TOL));
+      assertTrue(meanError < VERY_COARSE_TOL,
+          String.format("AB mean relative error %.4f exceeds tolerance %.4f", meanError, VERY_COARSE_TOL));
     }
 
     @Test
@@ -1047,8 +1045,8 @@ public class SolverMVATest {
 
       // Compare results
       double meanError = computeMeanRelativeError(mvaTable, jmtTable);
-      assertTrue(meanError < RELATIVE_TOL,
-          String.format("AB mean relative error %.4f exceeds tolerance %.4f", meanError, RELATIVE_TOL));
+      assertTrue(meanError < VERY_COARSE_TOL,
+          String.format("AB mean relative error %.4f exceeds tolerance %.4f", meanError, VERY_COARSE_TOL));
     }
 
     // ========== Schmidt Method Tests ==========
@@ -1071,8 +1069,8 @@ public class SolverMVATest {
 
       // Compare results
       double meanError = computeMeanRelativeError(mvaTable, jmtTable);
-      assertTrue(meanError < RELATIVE_TOL,
-          String.format("Schmidt mean relative error %.4f exceeds tolerance %.4f", meanError, RELATIVE_TOL));
+      assertTrue(meanError < VERY_COARSE_TOL,
+          String.format("Schmidt mean relative error %.4f exceeds tolerance %.4f", meanError, VERY_COARSE_TOL));
     }
 
     @Test
@@ -1093,8 +1091,8 @@ public class SolverMVATest {
 
       // Compare results
       double meanError = computeMeanRelativeError(mvaTable, jmtTable);
-      assertTrue(meanError < RELATIVE_TOL,
-          String.format("Schmidt mean relative error %.4f exceeds tolerance %.4f", meanError, RELATIVE_TOL));
+      assertTrue(meanError < VERY_COARSE_TOL,
+          String.format("Schmidt mean relative error %.4f exceeds tolerance %.4f", meanError, VERY_COARSE_TOL));
     }
 
     // ========== Schmidt-ext Method Tests ==========
@@ -1117,8 +1115,8 @@ public class SolverMVATest {
 
       // Compare results
       double meanError = computeMeanRelativeError(mvaTable, jmtTable);
-      assertTrue(meanError < RELATIVE_TOL,
-          String.format("Schmidt-ext mean relative error %.4f exceeds tolerance %.4f", meanError, RELATIVE_TOL));
+      assertTrue(meanError < VERY_COARSE_TOL,
+          String.format("Schmidt-ext mean relative error %.4f exceeds tolerance %.4f", meanError, VERY_COARSE_TOL));
     }
 
     @Test
@@ -1139,8 +1137,8 @@ public class SolverMVATest {
 
       // Compare results
       double meanError = computeMeanRelativeError(mvaTable, jmtTable);
-      assertTrue(meanError < RELATIVE_TOL,
-          String.format("Schmidt-ext mean relative error %.4f exceeds tolerance %.4f", meanError, RELATIVE_TOL));
+      assertTrue(meanError < VERY_COARSE_TOL,
+          String.format("Schmidt-ext mean relative error %.4f exceeds tolerance %.4f", meanError, VERY_COARSE_TOL));
     }
 
     // ========== High-Error Case Tests ==========
@@ -1148,19 +1146,19 @@ public class SolverMVATest {
 
     /**
      * Test 4 from MATLAB: Three classes with varied service times (4 jobs each).
-     * MATLAB schmidt shows 712.93% max queue length error vs DES.
+     * MATLAB schmidt shows 712.93% max queue length error vs LDES.
      * This test reports the error levels in Java.
      */
     @Test
     public void testHighError_fcfs_varies_3_classes_Schmidt() {
       Network network = SolverMVATestSchmidtFixtures.fcfs_varies_3_classes();
 
-      // Get DES ground truth (1M samples like MATLAB test)
-      SolverDES desSolver = new SolverDES(network);
-      desSolver.options.verbose = VerboseLevel.SILENT;
-      desSolver.options.samples = 1000000;
-      NetworkAvgTable desTable = desSolver.getAvgTable();
-      assertNotNull(desTable, "DES result should not be null");
+      // Get LDES ground truth (1M samples like MATLAB test)
+      SolverLDES ldesSolver = new SolverLDES(network);
+      ldesSolver.options.verbose = VerboseLevel.SILENT;
+      ldesSolver.options.samples = 1000000;
+      NetworkAvgTable ldesTable = ldesSolver.getAvgTable();
+      assertNotNull(ldesTable, "LDES result should not be null");
 
       // Get Schmidt MVA result
       SolverMVA mvaSolver = new SolverMVA(network, "schmidt");
@@ -1169,7 +1167,7 @@ public class SolverMVATest {
       assertNotNull(mvaTable, "MVA result should not be null");
 
       // Compute max queue length relative error
-      double maxQlenError = computeMaxQlenRelativeError(mvaTable, desTable);
+      double maxQlenError = computeMaxQlenRelativeError(mvaTable, ldesTable);
 
       // This is expected to have high error
       // MATLAB shows ~712% error
@@ -1179,12 +1177,12 @@ public class SolverMVATest {
     public void testHighError_fcfs_varies_3_classes_SchmidtExt() {
       Network network = SolverMVATestSchmidtFixtures.fcfs_varies_3_classes();
 
-      // Get DES ground truth
-      SolverDES desSolver = new SolverDES(network);
-      desSolver.options.verbose = VerboseLevel.SILENT;
-      desSolver.options.samples = 1000000;
-      NetworkAvgTable desTable = desSolver.getAvgTable();
-      assertNotNull(desTable, "DES result should not be null");
+      // Get LDES ground truth
+      SolverLDES ldesSolver = new SolverLDES(network);
+      ldesSolver.options.verbose = VerboseLevel.SILENT;
+      ldesSolver.options.samples = 1000000;
+      NetworkAvgTable ldesTable = ldesSolver.getAvgTable();
+      assertNotNull(ldesTable, "LDES result should not be null");
 
       // Get Schmidt-ext MVA result
       SolverMVA mvaSolver = new SolverMVA(network, "schmidt-ext");
@@ -1193,25 +1191,25 @@ public class SolverMVATest {
       assertNotNull(mvaTable, "MVA result should not be null");
 
       // Compute max queue length relative error
-      double maxQlenError = computeMaxQlenRelativeError(mvaTable, desTable);
+      double maxQlenError = computeMaxQlenRelativeError(mvaTable, ldesTable);
 
       // MATLAB shows ~156% error
     }
 
     /**
      * Test 5 from MATLAB: Three nodes with three classes and varied visit ratios.
-     * MATLAB schmidt shows 294.53% max queue length error vs DES.
+     * MATLAB schmidt shows 294.53% max queue length error vs LDES.
      */
     @Test
     public void testHighError_3nodes_3classes_varied_visit_Schmidt() {
       Network network = SolverMVATestSchmidtFixtures.fcfs_3_nodes_3_classes_varied_visit_ratio();
 
-      // Get DES ground truth
-      SolverDES desSolver = new SolverDES(network);
-      desSolver.options.verbose = VerboseLevel.SILENT;
-      desSolver.options.samples = 1000000;
-      NetworkAvgTable desTable = desSolver.getAvgTable();
-      assertNotNull(desTable, "DES result should not be null");
+      // Get LDES ground truth
+      SolverLDES ldesSolver = new SolverLDES(network);
+      ldesSolver.options.verbose = VerboseLevel.SILENT;
+      ldesSolver.options.samples = 1000000;
+      NetworkAvgTable ldesTable = ldesSolver.getAvgTable();
+      assertNotNull(ldesTable, "LDES result should not be null");
 
       // Get Schmidt MVA result
       SolverMVA mvaSolver = new SolverMVA(network, "schmidt");
@@ -1220,7 +1218,7 @@ public class SolverMVATest {
       assertNotNull(mvaTable, "MVA result should not be null");
 
       // Compute max queue length relative error
-      double maxQlenError = computeMaxQlenRelativeError(mvaTable, desTable);
+      double maxQlenError = computeMaxQlenRelativeError(mvaTable, ldesTable);
 
       // MATLAB shows ~294% error
     }
@@ -1229,12 +1227,12 @@ public class SolverMVATest {
     public void testHighError_3nodes_3classes_varied_visit_SchmidtExt() {
       Network network = SolverMVATestSchmidtFixtures.fcfs_3_nodes_3_classes_varied_visit_ratio();
 
-      // Get DES ground truth
-      SolverDES desSolver = new SolverDES(network);
-      desSolver.options.verbose = VerboseLevel.SILENT;
-      desSolver.options.samples = 1000000;
-      NetworkAvgTable desTable = desSolver.getAvgTable();
-      assertNotNull(desTable, "DES result should not be null");
+      // Get LDES ground truth
+      SolverLDES ldesSolver = new SolverLDES(network);
+      ldesSolver.options.verbose = VerboseLevel.SILENT;
+      ldesSolver.options.samples = 1000000;
+      NetworkAvgTable ldesTable = ldesSolver.getAvgTable();
+      assertNotNull(ldesTable, "LDES result should not be null");
 
       // Get Schmidt-ext MVA result
       SolverMVA mvaSolver = new SolverMVA(network, "schmidt-ext");
@@ -1243,7 +1241,7 @@ public class SolverMVATest {
       assertNotNull(mvaTable, "MVA result should not be null");
 
       // Compute max queue length relative error
-      double maxQlenError = computeMaxQlenRelativeError(mvaTable, desTable);
+      double maxQlenError = computeMaxQlenRelativeError(mvaTable, ldesTable);
 
       // MATLAB shows ~125% error
     }

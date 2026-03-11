@@ -138,6 +138,9 @@ def build_model() -> Network:
     return model
 
 
+spn_open_sevenplaces = build_model
+
+
 if __name__ == "__main__":
     GlobalConstants.set_verbose(VerboseLevel.STD)
 

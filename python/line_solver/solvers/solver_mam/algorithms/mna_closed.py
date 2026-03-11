@@ -22,6 +22,7 @@ from . import MAMAlgorithm, MAMResult
 from ..utils.network_adapter import extract_mam_params, extract_visit_counts, check_closed_network
 
 
+
 class MNAClosedAlgorithm(MAMAlgorithm):
     """Matrix-Normalizing Approximation for closed networks."""
 

@@ -5,7 +5,21 @@
 
 package jline.rest.routes;
 
+import jline.VerboseLevel;
+import jline.lang.Model;
+import jline.lang.Network;
+import jline.rest.model.ErrorResponse;
+import jline.rest.model.ModelInput;
 import jline.rest.util.JsonTransformer;
+import jline.rest.util.ModelParser;
+import jline.rest.util.ModelParser.ModelParseException;
+import jline.solvers.NetworkSolver;
+import jline.solvers.SolverOptions;
+import jline.solvers.ctmc.SolverCTMC;
+import jline.solvers.mam.SolverMAM;
+import jline.solvers.mva.SolverMVA;
+import jline.solvers.nc.SolverNC;
+import jline.solvers.qns.SolverQNS;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -13,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 
 import static spark.Spark.get;
+import static spark.Spark.post;
 
 /**
  * Solver listing endpoint for the REST API.
@@ -99,16 +114,16 @@ public class SolverRoutes {
             ssa.put("async", true);
             solvers.add(ssa);
 
-            // DES - Discrete Event Simulation
-            Map<String, Object> des = new HashMap<String, Object>();
-            des.put("id", "des");
-            des.put("name", "Discrete Event Simulation");
-            des.put("description", "Native discrete event simulation using SSJ library");
-            des.put("type", "simulation");
-            des.put("formats", new String[]{"jsim", "jsimg", "jsimw"});
-            des.put("features", new String[]{"open", "multiclass", "multiserver", "general_distributions"});
-            des.put("async", true);
-            solvers.add(des);
+            // LDES - LINE Discrete Event Simulator
+            Map<String, Object> ldes = new HashMap<String, Object>();
+            ldes.put("id", "ldes");
+            ldes.put("name", "Discrete Event Simulation");
+            ldes.put("description", "Native discrete event simulation using SSJ library");
+            ldes.put("type", "simulation");
+            ldes.put("formats", new String[]{"jsim", "jsimg", "jsimw"});
+            ldes.put("features", new String[]{"open", "multiclass", "multiserver", "general_distributions"});
+            ldes.put("async", true);
+            solvers.add(ldes);
 
             // LN - Layered Network
             Map<String, Object> ln = new HashMap<String, Object>();
@@ -154,6 +169,90 @@ public class SolverRoutes {
             }
 
             return solver;
+        }, json);
+
+        // List valid methods for a specific solver given a model
+        post(basePath + "/solvers/:id/methods", (req, res) -> {
+            String solverId = req.params(":id");
+
+            // Parse model from body
+            ModelInput input = json.fromJson(req.body(), ModelInput.class);
+            if (input == null) {
+                res.status(400);
+                return new ErrorResponse("INVALID_REQUEST", "Request body with model is required");
+            }
+
+            String validationError = input.validate();
+            if (validationError != null) {
+                res.status(400);
+                return new ErrorResponse("INVALID_INPUT", validationError);
+            }
+
+            ModelParser parser = new ModelParser();
+            Model model;
+            try {
+                model = parser.parse(input);
+            } catch (ModelParseException e) {
+                res.status(400);
+                return new ErrorResponse("PARSE_ERROR", e.getMessage());
+            }
+
+            if (!(model instanceof Network)) {
+                res.status(400);
+                return new ErrorResponse("UNSUPPORTED", "Method listing requires a queueing network model");
+            }
+
+            Network network = (Network) model;
+            SolverOptions opts = new SolverOptions();
+            opts.verbose = VerboseLevel.SILENT;
+
+            try {
+                NetworkSolver solver;
+                switch (solverId) {
+                    case "mva":
+                        solver = new SolverMVA(network, opts);
+                        break;
+                    case "nc":
+                        solver = new SolverNC(network, opts);
+                        break;
+                    case "mam":
+                        solver = new SolverMAM(network, opts);
+                        break;
+                    case "ctmc":
+                        solver = new SolverCTMC(network, opts);
+                        break;
+                    case "qns":
+                        solver = new SolverQNS(network, opts);
+                        break;
+                    default:
+                        res.status(404);
+                        Map<String, Object> error = new HashMap<String, Object>();
+                        error.put("error", "Solver not found or does not support method listing");
+                        error.put("solverId", solverId);
+                        return error;
+                }
+
+                Object methodsResult = solver.getClass().getMethod("listValidMethods").invoke(solver);
+                List<String> methods;
+                if (methodsResult instanceof String[]) {
+                    methods = new ArrayList<String>();
+                    for (String m : (String[]) methodsResult) {
+                        methods.add(m);
+                    }
+                } else if (methodsResult instanceof List) {
+                    methods = (List<String>) methodsResult;
+                } else {
+                    methods = new ArrayList<String>();
+                }
+
+                Map<String, Object> response = new HashMap<String, Object>();
+                response.put("solverId", solverId);
+                response.put("methods", methods);
+                return response;
+            } catch (Exception e) {
+                res.status(500);
+                return new ErrorResponse("SOLVER_ERROR", "Error listing methods: " + e.getMessage());
+            }
         }, json);
     }
 
@@ -224,8 +323,8 @@ public class SolverRoutes {
                 solver.put("features", new String[]{"closed", "open", "mixed", "multiclass", "exact_sampling"});
                 solver.put("async", true);
                 break;
-            case "des":
-                solver.put("id", "des");
+            case "ldes":
+                solver.put("id", "ldes");
                 solver.put("name", "Discrete Event Simulation");
                 solver.put("description", "Native discrete event simulation using the SSJ library. " +
                         "Supports general distributions and open networks.");

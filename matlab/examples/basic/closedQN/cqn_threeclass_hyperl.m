@@ -45,7 +45,7 @@ solver{end+1} = MVA(model);
 solver{end+1} = NC(model,'exact');
 solver{end+1} = MAM(model);
 solver{end+1} = LINE(model,'seed',23000);
-solver{end+1} = DES(model,'seed',23000,'samples',5e3,'verbose',true);
+solver{end+1} = LDES(model,'seed',23000,'samples',5e3,'verbose',true);
 
 for s=1:length(solver)
     fprintf(1,'SOLVER: %s\n',strrep(solver{s}.getName(),'Solver',''));

@@ -42,7 +42,9 @@ isNodeLogged = max(isNodeClassLogged,[],2);
 logpath = lineTempDir;
 cdfmodel.linkAndLog(Plinked, isNodeLogged, logpath);
 cdfmodel.initFromMarginal(n);
-SolverJMT(cdfmodel, self.getOptions).getAvg(); % log data
+cdfOptions = self.getOptions;
+cdfOptions.lang = 'matlab'; % CDF computation requires log files from native JMT
+SolverJMT(cdfmodel, cdfOptions).getAvg(); % log data
 logData = SolverJMT.parseLogs(cdfmodel, isNodeLogged, MetricType.toText(MetricType.RespT));
 % from here convert from nodes in logData to stations
 for i= 1:cdfmodel.getNumberOfStations

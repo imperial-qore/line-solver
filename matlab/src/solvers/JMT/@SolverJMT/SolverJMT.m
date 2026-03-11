@@ -120,8 +120,8 @@ classdef SolverJMT < NetworkSolver
         Pr = getProbAggr(self, node, state_a);
         [Pi_t, SSnode_a] = getTranProbAggr(self, node);
         probSysStateAggr = getProbSysAggr(self);
-        tranNodeStateAggr = sampleAggr(self, node, numSamples, markActivePassive);
-        tranSysStateAggr = sampleSysAggr(self, numSamples, markActivePassive);
+        tranNodeStateAggr = sampleAggr(self, node, numEvents, markActivePassive);
+        tranSysStateAggr = sampleSysAggr(self, numEvents, markActivePassive);
         
         %% Cdf methods
         [RD,log] = getCdfRespT(self, R);

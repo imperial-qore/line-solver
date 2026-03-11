@@ -23,6 +23,7 @@ import pandas as pd
 import time
 from typing import Optional, Dict, List, Tuple, Any, Union
 from dataclasses import dataclass
+from scipy import linalg
 
 from .options import SolverFLDOptions, FLDResult
 from .utils import extract_metrics_from_handler_result, compute_response_times, compute_cycle_times, compute_system_throughput
@@ -187,7 +188,10 @@ class SolverFLD(NetworkSolver):
         method_from_kwargs = kwargs.pop('method', None)
 
         if isinstance(method_or_options, str):
-            method = method_or_options
+            if method_or_options == 'default' and method_from_kwargs is not None:
+                method = method_from_kwargs
+            else:
+                method = method_or_options
         elif isinstance(method_or_options, SolverFLDOptions):
             options = method_or_options
             method = options.method
@@ -666,10 +670,11 @@ class SolverFLD(NetworkSolver):
 
         self.runtime = time.time() - start_time
 
-        # Print completion message (matches MATLAB verbose=STD default)
-        import sys as _sys
-        py_version = f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}"
-        print(f"Fluid analysis [method: {method_key}, lang: python, env: {py_version}] completed in {self.runtime:.6f}s.")
+        # Print completion message (matches MATLAB verbose guard)
+        if self.options.verbose:
+            import sys as _sys
+            py_version = f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}"
+            print(f"Fluid analysis [method: {method_key}, lang: python, env: {py_version}] completed in {self.runtime:.6f}s.")
 
         return self
 
@@ -699,7 +704,7 @@ class SolverFLD(NetworkSolver):
         """
         from line_solver.api.sn import SchedStrategy
 
-        sched_dict = self.sn.sched if self.sn.sched else {}
+        sched_dict = getattr(self.sn, 'sched', None) or {}
         for i in range(self.sn.nstations):
             station_sched = sched_dict.get(i)
             if station_sched is None:
@@ -712,6 +717,21 @@ class SolverFLD(NetworkSolver):
             if isinstance(station_sched, int) and station_sched == SchedStrategy.DPS.value:
                 return True
         return False
+
+    def _ensure_result(self):
+        """Return an available result or raise RuntimeError if analysis fails."""
+        if self.result is not None:
+            return self.result
+
+        try:
+            self.runAnalyzer()
+        except Exception as exc:
+            raise RuntimeError("runAnalyzer() must complete before accessing results") from exc
+
+        if self.result is None:
+            raise RuntimeError("runAnalyzer() must complete before accessing results")
+
+        return self.result
 
     def _solve_matrix(self) -> FLDResult:
         """Solve using matrix method (existing handler implementation).
@@ -834,7 +854,14 @@ class SolverFLD(NetworkSolver):
         Restricted to single-queue topologies (exactly one queue station).
         Uses analytical M/M/c solution when BUTools is not available.
         """
+        from line_solver.api.aoi import aoi_is_aoi
         from .methods.mfq import MFQMethod
+
+        is_aoi, _ = aoi_is_aoi(self.sn)
+        if is_aoi:
+            result = self._solve_aoi()
+            result.method = 'mfq'
+            return result
 
         method = MFQMethod(self.sn, self.options)
         return method.solve()
@@ -922,10 +949,6 @@ class SolverFLD(NetworkSolver):
                 tput = TN[i, r] if i < TN.shape[0] and r < TN.shape[1] else 0
                 arvr = AN[i, r] if i < AN.shape[0] and r < AN.shape[1] else tput
 
-                # Skip zero rows
-                if abs(qlen) < 1e-12 and abs(util) < 1e-12 and abs(tput) < 1e-12:
-                    continue
-
                 rows.append({
                     'Station': station_names[i] if i < len(station_names) else f'Station{i}',
                     'JobClass': class_names[r] if r < len(class_names) else f'Class{r}',
@@ -975,9 +998,8 @@ class SolverFLD(NetworkSolver):
         >>> qlen = solver.getAvgQLen()
         >>> print(f"Queue length at station 0: {qlen[0]:.3f}")
         """
-        if self.result is None:
-            self.runAnalyzer()
-        return np.mean(self.result.QN, axis=1)
+        result = self._ensure_result()
+        return np.mean(result.QN, axis=1)
 
     def getAvgUtil(self) -> np.ndarray:
         """Get average server utilizations per station.
@@ -1008,9 +1030,8 @@ class SolverFLD(NetworkSolver):
         >>> bottleneck = np.argmax(util)
         >>> print(f"Bottleneck station: {bottleneck} (util={util[bottleneck]:.1%})")
         """
-        if self.result is None:
-            self.runAnalyzer()
-        return np.mean(self.result.UN, axis=1)
+        result = self._ensure_result()
+        return np.mean(result.UN, axis=1)
 
     def getAvgRespT(self) -> np.ndarray:
         """Get average response times per station and class.
@@ -1040,9 +1061,8 @@ class SolverFLD(NetworkSolver):
         >>> resp_time = solver.getAvgRespT()
         >>> print(f"System response time: {np.sum(resp_time):.3f}")
         """
-        if self.result is None:
-            self.runAnalyzer()
-        return self.result.RN
+        result = self._ensure_result()
+        return np.mean(result.RN, axis=1)
 
     def getTput(self) -> np.ndarray:
         """Get average throughputs per job class.
@@ -1073,9 +1093,8 @@ class SolverFLD(NetworkSolver):
         >>> for k, t in enumerate(tput):
         ...     print(f"Class {k}: {t:.4f} customers/time")
         """
-        if self.result is None:
-            self.runAnalyzer()
-        return np.mean(self.result.TN, axis=0)
+        result = self._ensure_result()
+        return np.mean(result.TN, axis=0)
 
     def getAvgSysRespT(self) -> np.ndarray:
         """Get average system response time per job class.
@@ -1104,12 +1123,11 @@ class SolverFLD(NetworkSolver):
         >>> sys_resp = solver.getAvgSysRespT()
         >>> print(f"Mean system response time: {np.mean(sys_resp):.3f}")
         """
-        if self.result is None:
-            self.runAnalyzer()
+        result = self._ensure_result()
 
-        RN = self.result.RN
-        XN = self.result.XN.flatten() if self.result.XN is not None else np.zeros(RN.shape[1])
-        njobs = self.sn.njobs.flatten() if self.sn is not None and hasattr(self.sn, 'njobs') else None
+        RN = result.RN
+        XN = result.XN.flatten() if result.XN is not None else np.zeros(RN.shape[1])
+        njobs = np.asarray(self.sn.njobs).flatten() if self.sn is not None and hasattr(self.sn, 'njobs') else None
         nclasses = RN.shape[1]
         C = np.zeros(nclasses)
 
@@ -1154,9 +1172,8 @@ class SolverFLD(NetworkSolver):
         >>> sys_tput = solver.getAvgSysTput()
         >>> print(f"System throughput: {sys_tput:.4f} customers/time")
         """
-        if self.result is None:
-            self.runAnalyzer()
-        return np.mean(self.result.XN)
+        result = self._ensure_result()
+        return np.mean(result.XN)
 
     # =====================================================================
     # PASSAGE TIME / RESPONSE TIME METHODS
@@ -1336,6 +1353,7 @@ class SolverFLD(NetworkSolver):
             - 'closing', 'fluid.closing': Closing approximation
             - 'diffusion', 'fluid.diffusion': Diffusion SDE method
             - 'mfq', 'fluid.mfq', 'butools': Markovian fluid queue
+            - 'aoi', 'fluid.aoi': explicit AoI MFQ solver
 
         Examples
         --------
@@ -1351,7 +1369,8 @@ class SolverFLD(NetworkSolver):
             'statedep', 'fluid.statedep',
             'closing', 'fluid.closing',
             'diffusion', 'fluid.diffusion',
-            'mfq', 'fluid.mfq', 'butools'
+            'mfq', 'fluid.mfq', 'butools',
+            'aoi', 'fluid.aoi',
         ]
 
     @staticmethod
@@ -1757,72 +1776,87 @@ class SolverFLD(NetworkSolver):
     # AGE OF INFORMATION METHODS
     # =====================================================================
 
-    def getAvgAoI(self) -> np.ndarray:
-        """Get average Age of Information per station.
+    def _get_aoi_results(self) -> Dict[str, Any]:
+        result = self._ensure_result()
+        aoi_results = getattr(result, 'aoiResults', None)
+        if not aoi_results:
+            raise RuntimeError(
+                "No AoI results available. Ensure the model has a valid AoI topology and use method='mfq'."
+            )
+        return aoi_results
 
-        Age of Information measures the freshness of status updates.
-        For fluid models, approximated using steady-state metrics.
-
-        Returns:
-            (M,) array of average AoI values
-        """
-        if self.result is None:
-            self.runAnalyzer()
-
-        # AoI ≈ 1/λ + E[T] where λ is arrival rate and E[T] is response time
-        # For fluid models, use queue length and throughput
-        Q = self.result.QN
-        T = self.result.TN
-        R = self.result.RN
-
-        nstations = Q.shape[0]
-        aoi = np.zeros(nstations)
-
-        for i in range(nstations):
-            mean_tput = np.mean(T[i, :]) if T.ndim > 1 else np.mean(T)
-            mean_resp = np.mean(R[i, :])
-
-            if mean_tput > 0:
-                inter_arrival = 1.0 / mean_tput
-                aoi[i] = inter_arrival + mean_resp
+    def _evaluate_aoi_cdf(
+        self,
+        g: np.ndarray,
+        a: np.ndarray,
+        h: np.ndarray,
+        t_values: np.ndarray,
+    ) -> np.ndarray:
+        cdf_values = np.zeros_like(t_values, dtype=float)
+        g_row = np.asarray(g, dtype=float).reshape(1, -1)
+        h_col = np.asarray(h, dtype=float).reshape(-1, 1)
+        amat = np.asarray(a, dtype=float)
+        for idx, t in enumerate(t_values):
+            if t <= 0:
+                cdf_values[idx] = 0.0
             else:
-                aoi[i] = np.inf
+                ccdf = g_row @ linalg.expm(amat * float(t)) @ h_col
+                cdf_values[idx] = float(np.clip(1.0 - np.real_if_close(ccdf).item(), 0.0, 1.0))
+        return np.maximum.accumulate(cdf_values)
 
-        return aoi
+    def getAvgAoI(self) -> Tuple[Dict[str, float], Dict[str, float], pd.DataFrame]:
+        """Get average AoI and Peak AoI statistics."""
+        aoi_results = self._get_aoi_results()
 
-    def getCdfAoI(self, t_values: Optional[np.ndarray] = None) -> List[Dict]:
-        """Get Age of Information CDF.
+        aoi = {
+            'mean': float(aoi_results['AoI_mean']),
+            'var': float(aoi_results['AoI_var']),
+        }
+        aoi['std'] = float(np.sqrt(max(0.0, aoi['var'])))
 
-        Args:
-            t_values: Time points for CDF evaluation. If None, auto-generated.
+        paoi = {
+            'mean': float(aoi_results['PAoI_mean']),
+            'var': float(aoi_results['PAoI_var']),
+        }
+        paoi['std'] = float(np.sqrt(max(0.0, paoi['var'])))
 
-        Returns:
-            List of dicts with 'station', 't', 'p' keys
-        """
-        if self.result is None:
-            self.runAnalyzer()
+        table = pd.DataFrame({
+            'Metric': ['AoI', 'Peak AoI'],
+            'Mean': [aoi['mean'], paoi['mean']],
+            'Variance': [aoi['var'], paoi['var']],
+            'StdDev': [aoi['std'], paoi['std']],
+            'SystemType': [aoi_results.get('systemType', ''), aoi_results.get('systemType', '')],
+            'Preemption': [aoi_results.get('preemption', np.nan), aoi_results.get('preemption', np.nan)],
+        })
+        return aoi, paoi, table
 
-        avg_aoi = self.getAvgAoI()
-        nstations = len(avg_aoi)
+    def getCdfAoI(self, t_values: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
+        """Get AoI and Peak AoI CDFs as `[cdf, t]` arrays."""
+        aoi_results = self._get_aoi_results()
 
         if t_values is None:
-            max_aoi = np.max(avg_aoi[np.isfinite(avg_aoi)])
-            t_values = np.linspace(0, max_aoi * 3, 100)
+            mean_aoi = float(aoi_results.get('AoI_mean', np.nan))
+            if not np.isfinite(mean_aoi) or mean_aoi <= 0:
+                mean_aoi = 1.0
+            t_values = np.linspace(0.0, 5.0 * mean_aoi, 200)
+        t_values = np.asarray(t_values, dtype=float).reshape(-1)
 
-        results = []
-        for i in range(nstations):
-            if np.isfinite(avg_aoi[i]) and avg_aoi[i] > 0:
-                # Approximate AoI CDF using exponential distribution
-                lambda_rate = 1.0 / avg_aoi[i]
-                cdf_vals = 1 - np.exp(-lambda_rate * t_values)
+        if any(aoi_results.get(key) is None or np.size(aoi_results.get(key)) == 0 for key in ('AoI_A', 'AoI_g', 'AoI_h')):
+            raise RuntimeError('Matrix exponential parameters not available for AoI CDF computation.')
 
-                results.append({
-                    'station': i + 1,
-                    't': t_values,
-                    'p': cdf_vals,
-                })
-
-        return results
+        aoi_cdf = self._evaluate_aoi_cdf(
+            aoi_results['AoI_g'],
+            aoi_results['AoI_A'],
+            aoi_results['AoI_h'],
+            t_values,
+        )
+        paoi_cdf = self._evaluate_aoi_cdf(
+            aoi_results['PAoI_g'],
+            aoi_results['PAoI_A'],
+            aoi_results['PAoI_h'],
+            t_values,
+        )
+        return np.column_stack((aoi_cdf, t_values)), np.column_stack((paoi_cdf, t_values))
 
     # =====================================================================
     # TRANSIENT METHODS
@@ -2314,11 +2348,11 @@ class SolverFLD(NetworkSolver):
         """Alias for getProb (MATLAB compatibility)."""
         return self.getProb(station)
 
-    def GetAvgAoI(self) -> np.ndarray:
+    def GetAvgAoI(self) -> Tuple[Dict[str, float], Dict[str, float], pd.DataFrame]:
         """Alias for getAvgAoI (MATLAB compatibility)."""
         return self.getAvgAoI()
 
-    def GetCdfAoI(self, t_values: Optional[np.ndarray] = None) -> List[Dict]:
+    def GetCdfAoI(self, t_values: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
         """Alias for getCdfAoI (MATLAB compatibility)."""
         return self.getCdfAoI(t_values)
 

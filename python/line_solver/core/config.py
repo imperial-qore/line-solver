@@ -27,8 +27,6 @@ class Config:
         backend: Computation backend (numpy, pytorch, auto)
         device: Device for PyTorch tensors ('cpu', 'cuda', 'cuda:0', etc.)
         default_dtype: Default floating-point dtype
-        use_jit: Enable Numba JIT compilation
-        jit_cache: Cache JIT-compiled functions
         tol_fine: Fine tolerance for numerical comparisons (1e-12)
         tol_medium: Medium tolerance (1e-8)
         tol_coarse: Coarse tolerance (1e-4)
@@ -37,8 +35,6 @@ class Config:
     backend: Backend = Backend.AUTO
     device: str = "cpu"
     default_dtype: str = "float64"
-    use_jit: bool = True
-    jit_cache: bool = True
     tol_fine: float = 1e-12
     tol_medium: float = 1e-8
     tol_coarse: float = 1e-4
@@ -49,7 +45,6 @@ class Config:
 
     # Runtime state
     _pytorch_available: Optional[bool] = field(default=None, repr=False)
-    _numba_available: Optional[bool] = field(default=None, repr=False)
     _cuda_available: Optional[bool] = field(default=None, repr=False)
 
     def __post_init__(self):
@@ -64,10 +59,6 @@ class Config:
         if env_device:
             self.device = env_device
 
-        env_jit = os.environ.get('LINE_JIT', '').lower()
-        if env_jit == 'false' or env_jit == '0':
-            self.use_jit = False
-
     @property
     def pytorch_available(self) -> bool:
         """Check if PyTorch is available."""
@@ -78,17 +69,6 @@ class Config:
             except ImportError:
                 self._pytorch_available = False
         return self._pytorch_available
-
-    @property
-    def numba_available(self) -> bool:
-        """Check if Numba is available."""
-        if self._numba_available is None:
-            try:
-                import numba
-                self._numba_available = True
-            except ImportError:
-                self._numba_available = False
-        return self._numba_available
 
     @property
     def cuda_available(self) -> bool:
@@ -153,8 +133,3 @@ def set_device(device: str) -> None:
         device: Device string ('cpu', 'cuda', 'cuda:0', etc.)
     """
     _config.device = device
-
-
-def enable_jit(enabled: bool = True) -> None:
-    """Enable or disable Numba JIT compilation."""
-    _config.use_jit = enabled

@@ -82,10 +82,45 @@ private fun solveQueue(
     numSTMoms: Int?
 ): Map<String, MutableMap<Int, Matrix>> {
 
-    // Use RAP/RAP/1 solver if both arrivals and service are RAP
+    // RAP/RAP/1 solver: QBD method for rational arrival and service processes
+    // via Kronecker-sum QBD formulation.
     if (isRAParrivals && isRAPorMEservice) {
-        // TODO: Implement proper RAP/RAP/1 or RAP/ME/1 solver routing
-        // For now, fall through to MMAPPH1FCFS which works for valid PH representations
+        // Build service RAP from the first class with non-NaN D0
+        // RAP/RAP/1 handles single-class; for multi-class, use combined service
+        var serviceRAPD0: Matrix? = null
+        var serviceRAPD1: Matrix? = null
+        for (entry in serviceD0.entries) {
+            val k = entry.key
+            val d0 = entry.value
+            if (d0 != null && !d0.hasNaN()) {
+                serviceRAPD0 = d0
+                // Build D1 = -D0*e*pie, which completes the service process
+                val pieK = servicePie[k]
+                if (pieK != null) {
+                    val e = Matrix.ones(d0.numRows, 1)
+                    val negD0e = d0.scale(-1.0).mult(e)
+                    serviceRAPD1 = negD0e.mult(pieK)
+                }
+                break
+            }
+        }
+        if (serviceRAPD0 != null && serviceRAPD1 != null) {
+            val serviceRAP = MatrixCell(2)
+            serviceRAP.set(0, serviceRAPD0)
+            serviceRAP.set(1, serviceRAPD1)
+            try {
+                val rapResult = qbd_raprap1(arrivalProc, serviceRAP)
+                val result = HashMap<String, MutableMap<Int, Matrix>>()
+                if (numQLMoms != null && numQLMoms > 0) {
+                    val ncMoms = HashMap<Int, Matrix>()
+                    ncMoms[0] = Matrix.singleton(rapResult.QN)
+                    result["ncMoms"] = ncMoms
+                }
+                return result
+            } catch (e: Exception) {
+                // Fall through to MMAPPH1FCFS if RAP/RAP/1 fails
+            }
+        }
     }
 
     // Default: use MMAPPH1FCFS (handles MAP/PH, and ME if it's a valid PH)
@@ -151,6 +186,8 @@ fun solver_mam_basic(sn: NetworkStruct, options: SolverOptions): MAMResult {
         if (sn.sched.get(sn.stations.get(ist)) == SchedStrategy.FCFS || sn.sched.get(
                 sn.stations.get(ist)
             ) == SchedStrategy.HOL || sn.sched.get(
+                sn.stations.get(ist)
+            ) == SchedStrategy.FCFSPRIO || sn.sched.get(
                 sn.stations.get(ist)
             ) == SchedStrategy.FCFSPRPRIO || sn.sched.get(
                 sn.stations.get(ist)
@@ -293,7 +330,6 @@ fun solver_mam_basic(sn: NetworkStruct, options: SolverOptions): MAMResult {
         }
     }
 
-    //TODO: check from here
     var dif_matrix = TN.add(-1.0, TN_1)
     var dif = FastMath.abs(dif_matrix.elementMaxAbs())
     while (dif > tol && it <= options.iter_max) {
@@ -440,6 +476,10 @@ fun solver_mam_basic(sn: NetworkStruct, options: SolverOptions): MAMResult {
                             sn.stations.get(
                                 ist
                             )
+                        ) == SchedStrategy.FCFSPRIO || sn.sched.get(
+                            sn.stations.get(
+                                ist
+                            )
                         ) == SchedStrategy.FCFS || sn.sched.get(
                             sn.stations.get(
                                 ist
@@ -510,7 +550,7 @@ fun solver_mam_basic(sn: NetworkStruct, options: SolverOptions): MAMResult {
                         val priorityAnalysis = analyzePriorities(sn)
 
                         val schedStrat = sn.sched.get(sn.stations.get(ist))
-                        if ((schedStrat == SchedStrategy.HOL || schedStrat == SchedStrategy.FCFSPRPRIO) && !priorityAnalysis.isIdentical
+                        if ((schedStrat == SchedStrategy.HOL || schedStrat == SchedStrategy.FCFSPRIO || schedStrat == SchedStrategy.FCFSPRPRIO) && !priorityAnalysis.isIdentical
                         ) {
                             if (priorityAnalysis.isAllDistinct) {
                                 // Get unique priorities and their indices (equivalent to MATLAB's [uK,iK] = unique(sn.classprio))
@@ -714,11 +754,9 @@ fun solver_mam_basic(sn: NetworkStruct, options: SolverOptions): MAMResult {
                                             Qret.put(k, Matrix.singleton(GlobalConstants.FineTol / sn.rates.get(ist)))
                                         }
                                     } else {
-                                        // Check for FunctionTask (queue with setup/delayoff enabled)
-                                        // Matches MATLAB sn.isfunction(ist) check at solver_mam_basic.m:269
-                                        // NOTE: JAR's qbd_setupdelayoff uses a simplified 2-phase model while MATLAB
-                                        // uses APH-based QBD with variable phases. Results may differ slightly.
-                                        // TODO: Port MATLAB's APH-based qbd_setupdelayoff to JAR for exact parity
+                                        // FunctionTask (queue with setup/delayoff enabled)
+                                        // Uses qbd_setupdelayoff with APH.fitMeanAndSCV, matching
+                                        // MATLAB solver_mam_basic.m:269 APH-based QBD exactly.
                                         val station = sn.stations.get(ist)
                                         if (station is Queue && station.isDelayOffEnabled()) {
                                             // Use qbd_setupdelayoff for FunctionTask layers

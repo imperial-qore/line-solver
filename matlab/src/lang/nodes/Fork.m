@@ -81,7 +81,7 @@ classdef Fork < Node
             %
             % Solver compatibility for tasksPerLink > 1:
             %   - SolverJMT: Fully supported - simulation handles multiple tasks correctly
-            %   - SolverDES: Fully supported - simulation handles multiple tasks correctly
+            %   - SolverLDES: Fully supported - simulation handles multiple tasks correctly
             %   - SolverMVA (H-T method): Not supported - throws error
             %   - SolverMVA (MMT method): Supported - analytical approximation
             %

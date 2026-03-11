@@ -90,7 +90,7 @@ public class ModelInput {
         if (content == null || content.trim().isEmpty()) {
             return "Model content is required";
         }
-        String[] validFormats = {"jsim", "jsimg", "jsimw", "lqnx", "xml"};
+        String[] validFormats = {"jsim", "jsimg", "jsimw", "lqnx", "xml", "json"};
         boolean validFormat = false;
         for (String valid : validFormats) {
             if (valid.equals(format)) {
@@ -99,7 +99,7 @@ public class ModelInput {
             }
         }
         if (!validFormat) {
-            return "Invalid format: " + format + ". Valid formats: jsim, jsimg, jsimw, lqnx, xml";
+            return "Invalid format: " + format + ". Valid formats: jsim, jsimg, jsimw, lqnx, xml, json";
         }
         return null;
     }

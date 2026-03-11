@@ -18,7 +18,7 @@ import jline.rest.util.ModelParser;
 import jline.rest.util.ModelParser.ModelParseException;
 import jline.solvers.*;
 import jline.solvers.ctmc.SolverCTMC;
-import jline.solvers.des.SolverDES;
+import jline.solvers.ldes.SolverLDES;
 import jline.solvers.fluid.SolverFluid;
 import jline.solvers.jmt.SolverJMT;
 import jline.solvers.ln.SolverLN;
@@ -143,8 +143,8 @@ public class SolveHandler {
                     return new SolverNC(network, options);
                 case "ssa":
                     return new SolverSSA(network, options);
-                case "des":
-                    return new SolverDES(network, options);
+                case "ldes":
+                    return new SolverLDES(network, options);
                 default:
                     return null;
             }

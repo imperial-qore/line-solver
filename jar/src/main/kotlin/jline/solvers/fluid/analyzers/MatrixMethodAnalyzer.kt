@@ -17,6 +17,9 @@ import jline.solvers.fluid.handlers.MatrixMethodODE
 import jline.solvers.fluid.handlers.TransientDataHandler
 import jline.util.matrix.Matrix
 import jline.util.matrix.MatrixEquation
+import org.ejml.data.DMatrixRMaj
+import org.ejml.data.DMatrixSparseCSC
+import org.ejml.ops.DConvertMatrixStruct
 import odesolver.LSODA
 import org.apache.commons.math3.ode.FirstOrderDifferentialEquations
 import org.apache.commons.math3.util.FastMath
@@ -114,8 +117,8 @@ class MatrixMethodAnalyzer : FluidAnalyzer {
             result.UN = Matrix(M, K)
             result.RN = Matrix(M, K)
             result.TN = Matrix(M, K)
-            result.WN = Matrix(M, K)
-            result.AN = Matrix(M, K)
+            result.WN = Matrix(0, 0) // WN/AN computed at solver level
+            result.AN = Matrix(0, 0)
             result.t = Matrix(1, 1)
             result.QNt = Array<Array<Matrix?>?>(M) { arrayOfNulls<Matrix>(K) }
             result.UNt = Array<Array<Matrix?>?>(M) { arrayOfNulls<Matrix>(K) }
@@ -299,12 +302,13 @@ class MatrixMethodAnalyzer : FluidAnalyzer {
         val initialState = x0.copyOf()
         val nextState = DoubleArray(nStatesFiltered)
 
-        val ode: FirstOrderDifferentialEquations?
+        val rawOde: FirstOrderDifferentialEquations?
         if (options.config.pstar.size == 0) {
-            ode = MatrixMethodODE(WFiltered, SQ, S, Qa, ALambda, nStatesFiltered, isSourceState)
+            rawOde = MatrixMethodODE(WFiltered, SQ, S, Qa, ALambda, nStatesFiltered, isSourceState)
         } else {
-            ode = MatrixMethodODE(WFiltered, SQ, S, Qa, ALambda, nStatesFiltered, isSourceState, sn, options.config.pstar)
+            rawOde = MatrixMethodODE(WFiltered, SQ, S, Qa, ALambda, nStatesFiltered, isSourceState, sn, options.config.pstar)
         }
+        val ode = rawOde
 
         val Tmax: Int
         if (options.stiff) {
@@ -314,24 +318,32 @@ class MatrixMethodAnalyzer : FluidAnalyzer {
             } else {
                 odeSolver = options.odesolvers.accurateStiffODESolver
             }
-            odeSolver.integrate(ode, tRange[0], initialState, tRange[1], nextState)
+            try {
+                odeSolver.integrate(ode, tRange[0], initialState, tRange[1], nextState)
+            } catch (e: RuntimeException) {
+                if (odeSolver.stepsTaken > 0 && options.verbose != VerboseLevel.SILENT) {
+                    println("WARNING: LSODA step limit reached, using partial results (${odeSolver.stepsTaken} steps)")
+                }
+            }
             Tmax = odeSolver.stepsTaken + 1
-            val tVec = Matrix(Tmax, 1)
-            val xVec = Matrix(Tmax, ode.dimension)
             val tHistory = odeSolver.tvec
             val yHistory = odeSolver.yvec
+            val dim = ode.dimension
+            val denseT = DMatrixRMaj(Tmax, 1)
+            val denseX = DMatrixRMaj(Tmax, dim)
             for (i in 0..<Tmax) {
-                tVec.set(i, 0, tHistory.get(i)!!)
-                for (j in 0..<ode.dimension) xVec.set(i, j, max(0.0, yHistory.get(i)!![j]!!))
+                denseT.set(i, 0, tHistory.get(i)!!)
+                for (j in 0..<dim) denseX.set(i, j, max(0.0, yHistory.get(i)!![j]!!))
             }
-            result.t = tVec
-            this.xvec_t = xVec
+            // Convert dense back to sparse for downstream Matrix method compatibility
+            result.t = Matrix(DConvertMatrixStruct.convert(denseT, null as DMatrixSparseCSC?, 0.0))
+            this.xvec_t = Matrix(DConvertMatrixStruct.convert(denseX, null as DMatrixSparseCSC?, 0.0))
         } else {
-            if (options.tol > GlobalConstants.CoarseTol && (options.verbose == VerboseLevel.DEBUG)) {
-                line_warning(mfilename(object : Any() {}),
-                    "Fast, non-stiff ODE solver is not yet available in JLINE. Using accurate non-stiff ODE solver instead.")
+            val odeSolver = if (options.tol > GlobalConstants.CoarseTol) {
+                options.odesolvers.fastODESolver
+            } else {
+                options.odesolvers.accurateODESolver
             }
-            val odeSolver = options.odesolvers.accurateODESolver
             odeSolver.clearStepHandlers()
             val stepHandler = TransientDataHandler(nStatesFiltered)
             odeSolver.addStepHandler(stepHandler)
@@ -385,8 +397,8 @@ class MatrixMethodAnalyzer : FluidAnalyzer {
         result.UN = Matrix(M, K)
         result.RN = Matrix(M, K)
         result.TN = Matrix(M, K)
-        result.WN = Matrix(M, K)
-        result.AN = Matrix(M, K)
+        result.WN = Matrix(0, 0) // WN/AN computed at solver level
+        result.AN = Matrix(0, 0)
         for (i in 0..<M) {
             for (j in 0..<K) {
                 result.QN.set(i, j, result.QNt[i][j].get(Tmax - 1, 0))

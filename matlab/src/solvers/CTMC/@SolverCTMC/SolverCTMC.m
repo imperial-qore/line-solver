@@ -59,7 +59,7 @@ classdef SolverCTMC < NetworkSolver
         [infGen, eventFilt, synchInfo] = getGenerator(self, options)
         
         tstate = sampleSys(self, numevents)
-        sampleAggr = sampleAggr(self, node, numSamples)
+        sampleAggr = sampleAggr(self, node, numEvents)
         
         function MCTMC = getMarkedCTMC(self, options)        
             % MCTMC = GETMARKEDCTMC(options)
@@ -85,7 +85,9 @@ classdef SolverCTMC < NetworkSolver
             % allMethods = LISTVALIDMETHODS()
             % List valid methods for this solver
             sn = self.model.getStruct();
-            allMethods = {'default','gpu'};
+            allMethods = {'default','gpu',...
+                'qrf.mmi','qrf.mem','qrf.mmi.ld','qrf.mmi.linear',...
+                'qrf.bas.mmi','qrf.bas.mem','qrf.bas','qrf.rsrd'};
         end
     end
            
@@ -93,7 +95,7 @@ classdef SolverCTMC < NetworkSolver
 
         function featSupported = getFeatureSet()
             % FEATSUPPORTED = GETFEATURESET()
-            
+
             featSupported = SolverFeatureSet;
             featSupported.setTrue({'Source','Sink',...
                 'ClassSwitch','Delay','DelayStation','Queue',...
@@ -107,11 +109,12 @@ classdef SolverCTMC < NetworkSolver
                 'SchedStrategy_SIRO','SchedStrategy_SEPT',...
                 'SchedStrategy_LEPT','SchedStrategy_FCFS',...
                 'SchedStrategy_HOL','SchedStrategy_LCFS',...
-                'SchedStrategy_LCFSPR',...
+                'SchedStrategy_LCFSPR','SchedStrategy_LCFSPRPRIO','SchedStrategy_FCFSPRPRIO',...
                 'RoutingStrategy_RROBIN',...
                 'RoutingStrategy_PROB','RoutingStrategy_RAND',...
                 'ReplacementStrategy_RR', 'ReplacementStrategy_FIFO','ReplacementStrategy_SFIFO','ReplacementStrategy_LRU',...
-                'ClosedClass','SelfLoopingClass','OpenClass','Replayer'});
+                'ClosedClass','SelfLoopingClass','OpenClass','Replayer',...
+                'Place','Transition','Linkage','Enabling','Timing','Firing','Storage'});
         end
         
         function [bool, featSupported, featUsed] = supports(model)
@@ -163,8 +166,10 @@ classdef SolverCTMC < NetworkSolver
 
         function libs = getLibrariesUsed(sn, options)
             % GETLIBRARIESUSED Get list of external libraries used by CTMC solver
-            % CTMC uses internal solving functions, no external library attribution needed
             libs = {};
+            if ~isempty(options) && isfield(options,'method') && startsWith(options.method,'qrf')
+                libs{end+1} = 'MATLAB Optimization Toolbox (fmincon)';
+            end
         end
     end
 end

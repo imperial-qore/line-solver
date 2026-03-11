@@ -5,9 +5,11 @@ Integrates aoi-fluid solvers into the FLD solver framework for computing AoI
 and PAoI distributions in single-queue systems.
 """
 
-import numpy as np
 import time
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional
+
+import numpy as np
+
 from ..options import SolverFLDOptions, FLDResult
 from line_solver.api.sn import NetworkStruct
 from line_solver.api.aoi import (
@@ -74,26 +76,40 @@ class AoIMethod:
                 raise RuntimeError(f"AoI solver failed: {aoi_result.get('error_message', 'Unknown')}")
 
             # Step 4: Compute standard FLD metrics
-            queue_idx = aoi_info['queue_idx']
-            lambda_arr = self.sn.lambda_arr[0] if hasattr(self.sn, 'lambda_arr') else 0.5
-            mu = self.sn.rates[queue_idx, 0] if (hasattr(self.sn, 'rates') and self.sn.rates is not None) else 1.0
-            rho = lambda_arr / mu if mu > 0 else 0.0
+            source_station = int(aoi_info['sourceStation'])
+            queue_station = int(aoi_info['queueStation'])
+            class_idx = int(aoi_info['openClass'])
+            m = int(self.sn.nstations)
+            k = int(self.sn.nclasses)
 
-            # M/M/1 approximation for QN, UN, RN, TN
+            lambda_arr = self._get_rate(source_station, class_idx, fallback=0.5)
+            mean_service_time = float(
+                np.real_if_close(
+                    -aoi_params['sigma'] @ np.linalg.inv(aoi_params['S']) @ np.ones((aoi_params['S'].shape[0], 1))
+                ).item()
+            )
+            mu = 1.0 / mean_service_time if mean_service_time > 0 else 0.0
+            rho = lambda_arr / mu if mu > 0 else np.inf
+
+            QN = np.zeros((m, k))
+            UN = np.zeros((m, k))
+            RN = np.zeros((m, k))
+            TN = np.zeros((m, k))
+            CN = np.zeros((1, k))
+            XN = np.zeros((1, k))
+
+            UN[queue_station, class_idx] = min(1.0, rho) if np.isfinite(rho) else 1.0
+            TN[queue_station, class_idx] = lambda_arr if rho < 1.0 else mu
+            if 0 <= source_station < m:
+                TN[source_station, class_idx] = TN[queue_station, class_idx]
             if rho < 1.0:
-                QN = np.array([[rho / (1.0 - rho)]])  # Queue length
-                UN = np.array([[rho]])  # Utilization
-                RN = np.array([[1.0 / (mu - lambda_arr)]])  # Response time
-                TN = np.array([[lambda_arr]])  # Throughput
+                QN[queue_station, class_idx] = rho / (1.0 - rho)
+                RN[queue_station, class_idx] = 1.0 / (mu - lambda_arr)
             else:
-                # Unstable: return inf
-                QN = np.array([[np.inf]])
-                UN = np.array([[np.inf]])
-                RN = np.array([[np.inf]])
-                TN = np.array([[lambda_arr]])
-
-            CN = np.array([[RN[0, 0]]])  # Cycle time (single station)
-            XN = np.array([[lambda_arr]])  # System throughput
+                QN[queue_station, class_idx] = np.inf
+                RN[queue_station, class_idx] = np.inf
+            CN[0, class_idx] = RN[queue_station, class_idx]
+            XN[0, class_idx] = TN[queue_station, class_idx]
 
             # Step 5: Package results
             runtime = time.time() - start_time
@@ -112,17 +128,26 @@ class AoIMethod:
                 iterations=1,
                 runtime=runtime,
                 method='aoi',
+                aoiResults=aoi_result,
+                aoiConfig=solver_config,
             )
-
-            # Attach AoI-specific results
-            result.aoiResults = aoi_result
-            result.aoiConfig = solver_config
 
             return result
 
         except Exception as e:
             runtime = time.time() - start_time
             raise RuntimeError(f"AoI method failed after {runtime:.3f}s: {str(e)}")
+
+    def _get_rate(self, station: int, class_idx: int, fallback: float) -> float:
+        if hasattr(self.sn, 'rates') and self.sn.rates is not None:
+            rates = np.asarray(self.sn.rates, dtype=float)
+            if rates.ndim == 2 and station < rates.shape[0] and class_idx < rates.shape[1]:
+                return float(rates[station, class_idx])
+        if hasattr(self.sn, 'lambda_arr') and self.sn.lambda_arr is not None:
+            lambda_arr = np.asarray(self.sn.lambda_arr, dtype=float).reshape(-1)
+            if class_idx < len(lambda_arr):
+                return float(lambda_arr[class_idx])
+        return float(fallback)
 
 
 def run_aoi_analysis(sn: NetworkStruct, options: Optional[SolverFLDOptions] = None) -> FLDResult:

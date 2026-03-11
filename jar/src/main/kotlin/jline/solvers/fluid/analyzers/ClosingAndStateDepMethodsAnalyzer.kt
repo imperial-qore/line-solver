@@ -17,6 +17,9 @@ import jline.solvers.SolverResult
 import jline.solvers.fluid.handlers.PassageTimeODE
 import jline.solvers.fluid.handlers.TransientDataHandler
 import jline.util.matrix.Matrix
+import org.ejml.data.DMatrixRMaj
+import org.ejml.data.DMatrixSparseCSC
+import org.ejml.ops.DConvertMatrixStruct
 import odesolver.LSODA
 import org.apache.commons.math3.ode.FirstOrderDifferentialEquations
 import org.apache.commons.math3.ode.FirstOrderIntegrator
@@ -71,7 +74,7 @@ class ClosingAndStateDepMethodsAnalyzer : FluidAnalyzer {
         // Initialise ODE
         val ode: FirstOrderDifferentialEquations = PassageTimeODE(sn, mu, phi, sn.proc, sn.rt, S, options)
 
-        //decide whether to use stiff or non-stiff method
+        // Decide whether to use stiff or non-stiff method
         options.stiff = detectStiffnessUsingOstrowski(sn, slowrate)
 
         var T0 = options.timespan[0]
@@ -81,7 +84,6 @@ class ClosingAndStateDepMethodsAnalyzer : FluidAnalyzer {
         val xVecIterations: MutableList<Matrix> = LinkedList<Matrix>()
 
         // Matching MATLAB's iterative approach (solver_fluid_iteration.m lines 34-96)
-        // MATLAB does not break on convergence in this function - it runs until T >= timespan[1] or iter >= iter_max
         var goon = true
 
         while ((Double.isFinite(options.timespan[1]) && T < options.timespan[1]) || (goon && iter < options.iter_max)) {
@@ -104,11 +106,7 @@ class ClosingAndStateDepMethodsAnalyzer : FluidAnalyzer {
             }
             val tRange = doubleArrayOf(T0, T)
 
-            if (options.tol > GlobalConstants.CoarseTol && (options.verbose == VerboseLevel.DEBUG)) {
-                System.err.println("Fast, non-stiff ODE solver is not yet available in JLINE. Using accurate non-stiff ODE solver instead.")
-            }
-
-            var Tmax: Int
+            var Tmax: Int = 0
             if (options.stiff) {
                 val odeSolver: LSODA = if (options.tol > GlobalConstants.CoarseTol) {
                     options.odesolvers.fastStiffODESolver
@@ -124,21 +122,32 @@ class ClosingAndStateDepMethodsAnalyzer : FluidAnalyzer {
                     }
                     odeSolver.integrate(ode, tRange[0], yDefault, tRange[1], nextState)
                 }
-                // transform the output format
-                Tmax = odeSolver.stepsTaken + 1
-                val tVec = Matrix(Tmax, 1)
-                val xVec = Matrix(Tmax, ode.dimension)
-                val tHistory = odeSolver.tvec
-                val yHistory = odeSolver.yvec
-                for (i in 0..<Tmax) {
-                    tVec.set(i, 0, tHistory.get(i)!!)
-                    for (j in 0..<ode.dimension) xVec.set(i, j, max(0.0, yHistory.get(i)!![j]!!))
+                if (odeSolver.stepsTaken > 0) {
+                    val tHistory = odeSolver.tvec
+                    val yHistory = odeSolver.yvec
+                    val dim = ode.dimension
+                    Tmax = odeSolver.stepsTaken + 1
+                    // Extract last row as xvec_it (always needed for convergence check)
+                    val lastIdx = Tmax - 1
+                    // Extract last row as xvec_it (1 x dim sparse matrix)
+                    this.xvec_it = Matrix(1, dim)
+                    for (j in 0..<dim) this.xvec_it!!.set(0, j, max(0.0, yHistory.get(lastIdx)!![j]!!))
+                    // Store trajectory using dense matrices for O(1) element access
+                    val denseT = DMatrixRMaj(Tmax, 1)
+                    val denseX = DMatrixRMaj(Tmax, dim)
+                    for (i in 0..<Tmax) {
+                        denseT.set(i, 0, tHistory.get(i)!!)
+                        for (j in 0..<dim) denseX.set(i, j, max(0.0, yHistory.get(i)!![j]!!))
+                    }
+                    tIterations.add(Matrix(denseT))
+                    xVecIterations.add(Matrix(denseX))
                 }
-                tIterations.add(tVec)
-                xVecIterations.add(xVec)
-                this.xvec_it = Matrix.extractRows(xVec, Tmax - 1, Tmax, null)
             } else {
-                val odeSolver: FirstOrderIntegrator = options.odesolvers.accurateODESolver
+                val odeSolver: FirstOrderIntegrator = if (options.tol > GlobalConstants.CoarseTol) {
+                    options.odesolvers.fastODESolver
+                } else {
+                    options.odesolvers.accurateODESolver
+                }
                 odeSolver.clearStepHandlers()
                 val stepHandler = TransientDataHandler(initialState.size)
                 odeSolver.addStepHandler(stepHandler)
@@ -173,18 +182,24 @@ class ClosingAndStateDepMethodsAnalyzer : FluidAnalyzer {
                         options.odesolvers.accurateStiffODESolver
                     }
                     stiffSolver.integrate(ode, tRange[0], initialState, tRange[1], nextState)
-                    Tmax = stiffSolver.stepsTaken + 1
-                    val tVec = Matrix(Tmax, 1)
-                    val xVec = Matrix(Tmax, ode.dimension)
                     val tHistory = stiffSolver.tvec
                     val yHistory = stiffSolver.yvec
+                    val dim = ode.dimension
+                    Tmax = stiffSolver.stepsTaken + 1
+                    val lastIdx = Tmax - 1
+                    // Extract last row as xvec_it (1 x dim sparse matrix)
+                    this.xvec_it = Matrix(1, dim)
+                    for (j in 0..<dim) this.xvec_it!!.set(0, j, max(0.0, yHistory.get(lastIdx)!![j]!!))
+
+                    // Store trajectory using dense matrices for O(1) element access
+                    val denseT = DMatrixRMaj(Tmax, 1)
+                    val denseX = DMatrixRMaj(Tmax, dim)
                     for (i in 0..<Tmax) {
-                        tVec.set(i, 0, tHistory.get(i)!!)
-                        for (j in 0..<ode.dimension) xVec.set(i, j, max(0.0, yHistory.get(i)!![j]!!))
+                        denseT.set(i, 0, tHistory.get(i)!!)
+                        for (j in 0..<dim) denseX.set(i, j, max(0.0, yHistory.get(i)!![j]!!))
                     }
-                    tIterations.add(tVec)
-                    xVecIterations.add(xVec)
-                    this.xvec_it = Matrix.extractRows(xVec, Tmax - 1, Tmax, null)
+                    tIterations.add(Matrix(denseT))
+                    xVecIterations.add(Matrix(denseX))
                 } else {
                     // Retrieve Transient Data from non-stiff solver
                     tIterations.add(stepHandler.tVec)
@@ -198,29 +213,34 @@ class ClosingAndStateDepMethodsAnalyzer : FluidAnalyzer {
             // Update T0 for next iteration
             T0 = T
 
-            // Check if we've reached the end time (MATLAB line 93-95)
+            // Check if we've reached the end time (MATLAB line 99-101)
             if (T >= options.timespan[1]) {
                 goon = false
             }
         }
 
-        // Migrating tIterations and xVecIterations from Lists to concatenated JLineMatrix objects
-        // Note this is done manually for performance purposes - concatRows is not as efficient
-        var nextRow = 0
-        val cols = xVecIterations[0].numCols
-        this.xvec_t = Matrix(totalSteps, cols)
-        result.t = Matrix(totalSteps, 1)
-        for (i in 0..<iter) {
-            val tIter = tIterations[i]
-            val xVecIter = xVecIterations[i]
-            val stepsPerIter = tIter.numRows
-            for (j in nextRow..<nextRow + stepsPerIter) {
-                result.t.set(j, 0, tIter.get(j - nextRow, 0))
-                for (k in 0..<cols) {
-                    xvec_t!!.set(j, k, xVecIter.get(j - nextRow, k))
+        // Migrating tIterations and xVecIterations from Lists to concatenated dense matrices
+        // Dense DMatrixRMaj is used for O(1) element access (sparse CSC is O(nnz) per set)
+        if (xVecIterations.isNotEmpty() && totalSteps > 0) {
+            var nextRow = 0
+            val cols = xVecIterations[0].numCols
+            val denseXvecT = DMatrixRMaj(totalSteps, cols)
+            val denseTvec = DMatrixRMaj(totalSteps, 1)
+            for (i in 0..<xVecIterations.size) {
+                val tIter = tIterations[i]
+                val xVecIter = xVecIterations[i]
+                val stepsPerIter = tIter.numRows
+                for (j in nextRow..<nextRow + stepsPerIter) {
+                    denseTvec.set(j, 0, tIter.get(j - nextRow, 0))
+                    for (k in 0..<cols) {
+                        denseXvecT.set(j, k, xVecIter.get(j - nextRow, k))
+                    }
                 }
+                nextRow += stepsPerIter
             }
-            nextRow += stepsPerIter
+            // Convert dense back to sparse for downstream Matrix method compatibility
+            this.xvec_t = Matrix(DConvertMatrixStruct.convert(denseXvecT, null as DMatrixSparseCSC?, 0.0))
+            result.t = Matrix(DConvertMatrixStruct.convert(denseTvec, null as DMatrixSparseCSC?, 0.0))
         }
     }
 
@@ -614,7 +634,7 @@ class ClosingAndStateDepMethodsAnalyzer : FluidAnalyzer {
                                     }
                                 }
 
-                                SchedStrategy.HOL, SchedStrategy.SJF, SchedStrategy.LJF, 
+                                SchedStrategy.HOL, SchedStrategy.FCFSPRIO, SchedStrategy.SJF, SchedStrategy.LJF,
                                 SchedStrategy.SEPT, SchedStrategy.LEPT -> {
                                     // Priority-based and job-size-based scheduling strategies
                                     // Use same logic as FCFS but with priority/size ordering (scheduling parameter dependent)
@@ -781,8 +801,10 @@ class ClosingAndStateDepMethodsAnalyzer : FluidAnalyzer {
                 }
             }
         }
-        result.WN = Matrix(M, K) // TODO
-        result.AN = Matrix(M, K) // TODO
+        // WN and AN are computed at the solver level (SolverFluid.runAnalyzer):
+        // AN via snGetArvRFromTput, WN not computed (matching MATLAB [] for WN).
+        result.WN = Matrix(0, 0)
+        result.AN = Matrix(0, 0)
     }
 
     override fun getXVecIt(): Matrix {

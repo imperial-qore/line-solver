@@ -52,6 +52,11 @@ from .bnd_qr_ld import mapqn_bnd_qr_ld
 from .qr_bounds_bas import mapqn_qr_bounds_bas
 from .qr_bounds_rsrd import mapqn_qr_bounds_rsrd
 
+from .qrf_noblo_mmi import qrf_noblo_mmi
+from .qrf_noblo_mem import qrf_noblo_mem
+from .qrf_noblo_mmi_ld import qrf_noblo_mmi_ld
+from .qrf_noblo_mmi_linear import qrf_noblo_mmi_linear
+
 
 __all__ = [
     # Solution container
@@ -80,4 +85,9 @@ __all__ = [
     # Bound algorithms - Blocking
     'mapqn_qr_bounds_bas',
     'mapqn_qr_bounds_rsrd',
+    # QRF NLP approximations
+    'qrf_noblo_mmi',
+    'qrf_noblo_mem',
+    'qrf_noblo_mmi_ld',
+    'qrf_noblo_mmi_linear',
 ]
