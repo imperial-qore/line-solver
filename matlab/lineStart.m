@@ -29,7 +29,7 @@ end
 warning on backtrace
 
 %% --- Default Configuration Values ---
-LINE_VERSION     = '3.0.5';
+LINE_VERSION     = '3.0.4';
 LINE_STDOUT      = 1;        % 1 = console
 LINE_VERBOSE     = VerboseLevel.STD;
 LINE_DO_CHECKS   = true;

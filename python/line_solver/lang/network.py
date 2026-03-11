@@ -5123,9 +5123,9 @@ class Network(NetworkBase, Element):
 
     def modelView(self) -> bool:
         """
-        Open the model in JSIMgraph viewer.
+        Open the model in the LINE Compose Desktop viewer.
 
-        Exports the network to JSIMG format and launches JMT's JSIMgraph
+        Exports the network to JSIMG format and launches line-viewer.jar
         as a subprocess to display an interactive visualization.
 
         Returns:
@@ -5136,8 +5136,7 @@ class Network(NetworkBase, Element):
         """
         import tempfile
         import os
-        from ..api.io import jsimg_view, line_printf
-        # from ..api.io import line_viewer_view
+        from ..api.io import line_viewer_view, line_printf
         from ..api.solvers.jmt.handler import _write_jsim_file, SolverJMTOptions
 
         # Compile model if needed
@@ -5155,11 +5154,10 @@ class Network(NetworkBase, Element):
         options = SolverJMTOptions()
         _write_jsim_file(sn, jsimg_file, options)
 
-        line_printf('JSIMgraph Model: %s\n', jsimg_file)
+        line_printf('LINE Viewer Model: %s\n', jsimg_file)
 
-        # Open in JSIMgraph
-        return jsimg_view(jsimg_file)
-        # return line_viewer_view(jsimg_file)
+        # Open in line-viewer
+        return line_viewer_view(jsimg_file)
 
     # snake_case alias
     model_view = modelView

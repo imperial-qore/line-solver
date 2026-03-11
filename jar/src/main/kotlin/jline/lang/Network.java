@@ -10,8 +10,7 @@ import static jline.GlobalConstants.Inf;
 import jline.GlobalConstants;
 import jline.VerboseLevel;
 import jline.io.Ret;
-// import static jline.io.SysUtilsKt.lineViewerGetPath;
-import static jline.io.SysUtilsKt.jmtGetPath;
+import static jline.io.SysUtilsKt.lineViewerGetPath;
 import jline.lang.constant.*;
 import jline.lang.nodeparam.*;
 import jline.lang.nodes.*;
@@ -6998,21 +6997,16 @@ public class Network extends Model implements Copyable {
             jmt.writeJSIM(sn);
             String jsimFile = jmt.getFilePath() + java.io.File.separator + jmt.getFileName() + ".jsim";
 
-            String jmtPath = jmtGetPath();
-            String jmtJar = jmtPath + java.io.File.separator + "JMT.jar";
-            if (!new java.io.File(jmtJar).exists()) {
-                System.err.println("JMT.jar not found at: " + jmtJar);
+            String viewerPath = lineViewerGetPath();
+            if (!new java.io.File(viewerPath).exists()) {
+                System.err.println("line-viewer.jar not found at: " + viewerPath);
                 return;
             }
-            ProcessBuilder pb = new ProcessBuilder("java", "-cp", jmtJar, "jmt.commandline.Jmt", "jsimg", jsimFile);
+            ProcessBuilder pb = new ProcessBuilder("java", "-jar", viewerPath, jsimFile);
             pb.inheritIO();
             pb.start();
-            // String viewerPath = lineViewerGetPath();
-            // ProcessBuilder pb = new ProcessBuilder("java", "-jar", viewerPath, jsimFile);
-            // pb.inheritIO();
-            // pb.start();
         } catch (Exception e) {
-            System.err.println("Failed to launch JSIMgraph viewer: " + e.getMessage());
+            System.err.println("Failed to launch line-viewer: " + e.getMessage());
         }
     }
 

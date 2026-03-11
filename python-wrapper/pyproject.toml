@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "line-solver-wrapper"
-version = "3.0.5"
+version = "3.0.4"
 description = "Queueing theory algorithms in Python (JAR wrapper, not published to PyPI)"
 authors = [
     "Giuliano Casale <g.casale@imperial.ac.uk>"
