@@ -1,0 +1,5 @@
+jax==0.2.21
+matplotlib==3.4.2
+numpy==1.20.3
+scipy==1.7.0
+sympy==1.8

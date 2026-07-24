@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<lqn-model description="Model2" name="Model2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="lqn.xsd">
+   <processor name="P1" scheduling="ps" multiplicity="5" quantum="0.001">
+      <task name="T1" scheduling="ref"  think-time="10" multiplicity="20">  <!-- reference task T1 -->
+         <entry name="E1" type="Graph" />
+         <task-activities>
+             <activity name="A1" host-demand-mean="0.1"  bound-to-entry="E1"/>
+             <activity name="A2" host-demand-mean="0.2"/>
+             <activity name="A3" host-demand-mean="0.3"/>
+             <activity name="A4" host-demand-mean="0.4"/>
+             <activity name="A5" host-demand-mean="0.5"/>
+             <precedence>
+                 <pre>
+                     <activity name="A1"/>
+                 </pre>
+                 <post-OR>
+                     <activity name="A2" prob="0.3"/>
+                     <activity name="A3" prob="0.3"/>
+                     <activity name="A4" prob="0.4"/>
+                 </post-OR>
+             </precedence>
+             <precedence>
+                 <pre-OR>
+                     <activity name="A2"/>
+                     <activity name="A3"/>
+                     <activity name="A4"/>
+                 </pre-OR>
+                 <post>
+                     <activity name="A5"/>
+                 </post>
+             </precedence>
+         </task-activities>
+      </task>
+   </processor>
+</lqn-model>

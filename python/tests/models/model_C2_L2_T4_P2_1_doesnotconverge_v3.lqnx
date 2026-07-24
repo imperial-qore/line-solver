@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lqn-model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="lnw" xsi:noNamespaceSchemaLocation="lqn.xsd">
+   <processor name="c_processor_1" scheduling="inf" speed-factor="1">
+      <task multiplicity="22" name="c_task_1" scheduling="ref" think-time="1e-08">
+         <entry name="c_entry_1" type="NONE"/>
+         <task-activities>
+            <activity bound-to-entry="c_entry_1" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="67.626" name="c_activity_1">
+               <synch-call calls-mean="4.873" dest="entry_1"/>
+            </activity>
+         </task-activities>
+      </task>
+   </processor>
+   <processor name="c_processor_2" scheduling="inf" speed-factor="1">
+      <task multiplicity="5" name="c_task_2" scheduling="ref" think-time="1e-08">
+         <entry name="c_entry_2" type="NONE"/>
+         <task-activities>
+            <activity bound-to-entry="c_entry_2" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="34.1866" name="c_activity_2">
+               <synch-call calls-mean="3.7693" dest="entry_2"/>
+            </activity>
+         </task-activities>
+      </task>
+   </processor>
+   <processor name="processor_1" scheduling="inf" speed-factor="1">
+      <task name="task_1" scheduling="inf">
+         <entry name="entry_1" type="NONE"/>
+         <task-activities>
+            <activity bound-to-entry="entry_1" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="1.7387" name="activity_1">
+               <synch-call calls-mean="4.5784" dest="entry_3"/>
+               <synch-call calls-mean="1.1562" dest="entry_4"/>
+            </activity>
+            <reply-entry name="entry_1">
+               <reply-activity name="activity_1"/>
+            </reply-entry>
+         </task-activities>
+      </task>
+      <task name="task_2" scheduling="inf">
+         <entry name="entry_2" type="NONE"/>
+         <task-activities>
+            <activity bound-to-entry="entry_2" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="3.7645" name="activity_2"/>
+            <reply-entry name="entry_2">
+               <reply-activity name="activity_2"/>
+            </reply-entry>
+         </task-activities>
+      </task>
+   </processor>
+   <processor multiplicity="4" name="processor_2" quantum="0.001" scheduling="ps" speed-factor="1">
+      <task multiplicity="5" name="task_3" scheduling="fcfs">
+         <entry name="entry_3" type="NONE"/>
+         <task-activities>
+            <activity bound-to-entry="entry_3" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="4.3536" name="activity_3"/>
+            <reply-entry name="entry_3">
+               <reply-activity name="activity_3"/>
+            </reply-entry>
+         </task-activities>
+      </task>
+      <task multiplicity="2" name="task_4" scheduling="fcfs">
+         <entry name="entry_4" type="NONE"/>
+         <task-activities>
+            <activity bound-to-entry="entry_4" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="8.0249" name="activity_4"/>
+            <reply-entry name="entry_4">
+               <reply-activity name="activity_4"/>
+            </reply-entry>
+         </task-activities>
+      </task>
+   </processor>
+</lqn-model>

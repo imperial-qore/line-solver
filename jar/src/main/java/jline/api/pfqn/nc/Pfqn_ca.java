@@ -1,0 +1,159 @@
+/**
+ * Convolution Algorithm for Product-Form Networks
+ *
+ * @since LINE 3.0
+ */
+package jline.api.pfqn.nc;
+
+import org.apache.commons.math3.util.FastMath;
+
+import jline.GlobalConstants;
+import jline.io.Ret;
+import jline.util.Maths;
+import jline.util.PopulationLattice;
+import jline.util.matrix.Matrix;
+
+public final class Pfqn_ca {
+    private Pfqn_ca() {}
+
+    public static Ret.pfqnNc pfqn_ca(Matrix L, Matrix N) {
+        Matrix Z = N.copy();
+        Z.zero();
+        return pfqn_ca(L, N, Z);
+    }
+
+    public static Ret.pfqnNc pfqn_ca(Matrix L, Matrix N, Matrix Z) {
+        Matrix Zlocal = Z;
+        int M = L.getNumRows();
+        int R = L.getNumCols();
+
+        if (M == 0) {
+            Matrix tmp = new Matrix(1, N.length());
+            for (int i = 0; i < N.length(); i++) {
+                tmp.set(0, i, -Maths.factln(N.get(i)));
+            }
+            double lGn = tmp.sumRows().sumCols().value();
+
+            Matrix tmp2 = Zlocal.sumCols();
+            for (int i = 0; i < tmp2.length(); i++) {
+                tmp2.set(i, FastMath.log(tmp2.get(i)));
+            }
+            if (N.length() == 1) {
+                lGn += (N.get(0) * tmp2.sumRows().get(0));
+            } else if (tmp2.length() == 1) {
+                lGn += (tmp2.get(0) * N.sumRows().sumCols().value());
+            } else {
+                Matrix tmp3 = new Matrix(1, N.length());
+                for (int i = 0; i < N.length(); i++) {
+                    tmp3.set(i, N.get(i));
+                }
+                lGn += tmp3.elementMult(tmp2, null).sumRows().get(0);
+            }
+            double Gn = FastMath.exp(lGn);
+            return new Ret.pfqnNc(Gn, lGn);
+        }
+
+        if (N.elementMin() < 0) {
+            return new Ret.pfqnNc(0.0, GlobalConstants.NegInf);
+        }
+
+        if (N.sumRows().sumCols().get(0) == 0.0) {
+            return new Ret.pfqnNc(1.0, 0.0);
+        }
+
+        if (Zlocal.isEmpty()) {
+            Matrix temp = new Matrix(1, R);
+            temp.fill(0.0);
+            Zlocal = temp;
+        }
+
+        // see _kb/03-api-layer.md for rationale
+        double Nt = N.elementSum();
+        double lGest = Double.NEGATIVE_INFINITY;
+        Matrix Zsum = Zlocal.sumCols();
+        for (int i = 0; i < M; i++) {
+            double t = 0.0;
+            boolean ok = true;
+            for (int r = 0; r < R; r++) {
+                if (N.get(r) > 0) {
+                    if (L.get(i, r) > 0) {
+                        t += N.get(r) * FastMath.log(L.get(i, r));
+                    } else {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if (ok) {
+                lGest = Maths.max(lGest, t);
+            }
+        }
+        boolean anyZ = false;
+        for (int r = 0; r < R; r++) {
+            if (Zsum.get(r) > 0) {
+                anyZ = true;
+                break;
+            }
+        }
+        if (anyZ) {                       // all jobs at the delay
+            double t = 0.0;
+            boolean ok = true;
+            for (int r = 0; r < R; r++) {
+                if (N.get(r) > 0) {
+                    if (Zsum.get(r) > 0) {
+                        t += N.get(r) * FastMath.log(Zsum.get(r)) - Maths.factln(N.get(r));
+                    } else {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if (ok) {
+                lGest = Maths.max(lGest, t);
+            }
+        }
+        int kscale;
+        if (Double.isInfinite(lGest) || Double.isNaN(lGest)) {
+            kscale = 0;
+        } else {
+            kscale = (int) Math.round(lGest / (Nt * FastMath.log(2)));
+        }
+        double cscale = Math.scalb(1.0, kscale);
+        Matrix Lscaled = new Matrix(L);
+        Lscaled.scaleEq(1.0 / cscale);
+        Matrix Zscaled = new Matrix(Zlocal);
+        Zscaled.scaleEq(1.0 / cscale);
+
+        int product_N_plus_one = 1;
+        for (int i = 0; i < N.length(); i++) {
+            product_N_plus_one = (int) (product_N_plus_one * (N.get(i) + 1));
+        }
+        Matrix G = new Matrix(M + 1, product_N_plus_one);
+        G.fill(1.0);
+        Matrix n = PopulationLattice.pprod(N);
+
+        while (FastMath.abs(n.sumRows().sumCols().get(0) + 1) > GlobalConstants.FineTol) {
+            int idxn = PopulationLattice.hashpop(n, N);
+            G.set(0, idxn, Pfqn_pff_delay.pfqn_pff_delay(Zscaled, n));
+            for (int m = 1; m < M + 1; m++) {
+                G.set(m, idxn, G.get(m - 1, idxn));
+                for (int r = 0; r < R; r++) {
+                    if (n.get(r) >= 1) {
+                        n.set(r, n.get(r) - 1);
+                        int idxn_1r = PopulationLattice.hashpop(n, N);
+                        n.set(r, n.get(r) + 1);
+                        double tmp_res = G.get(m, idxn) + Lscaled.get(m - 1, r) * G.get(m, idxn_1r);
+                        G.set(m, idxn, tmp_res);
+                    }
+                }
+            }
+            n = PopulationLattice.pprod(n, N);
+        }
+
+        // see _kb/03-api-layer.md for rationale
+        double rawG = G.get(M, G.getNumCols() - 1);
+        double lGn = FastMath.log(rawG) + Nt * kscale * FastMath.log(2);
+        double Gn = Math.scalb(rawG, (int) Math.round(Nt * kscale));
+        return new Ret.pfqnNc(Gn, lGn);
+    }
+}

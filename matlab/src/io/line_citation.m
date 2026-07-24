@@ -1,0 +1,56 @@
+function bib = line_citation(toolName)
+% BIB = LINE_CITATION(TOOLNAME)
+%
+% Return the BibTeX entry for the canonical paper of an external tool that a
+% wrapper solver delegates to, so that the acknowledgement printed by LINE_ACK
+% can be turned into a citation without retyping it. With no output argument
+% the entry is printed instead.
+%
+% TOOLNAME is 'JMT', 'LQNS' or 'QNS' ('QNS' shares the LQNS reference, qnsolver
+% being part of that distribution). An unknown tool returns ''. Wrapper solvers
+% that live outside this tree carry their own reference: their tools must not be
+% named in this codebase.
+%
+% The keys match doc/latex/biblio.bib and BIBLIOGRAPHY.md. Mirror any edit in
+% jline.io.InputOutput.line_citation and
+% line_solver.api.io.logging.line_citation.
+%
+% Example:
+%   line_citation('JMT')
+%
+% See also LINE_ACK.
+
+% Copyright (c) 2012-2026, Imperial College London
+% All rights reserved.
+
+switch upper(toolName)
+    case 'JMT'
+        bib = strjoin({ ...
+            '@INPROCEEDINGS{BerCS07,', ...
+            '  author = {M. Bertoli and G. Casale and G. Serazzi},', ...
+            '  title = {The {JMT} Simulator for Performance Evaluation of Non-Product-Form', ...
+            '	Queueing Networks},', ...
+            '  booktitle = {Proc. of the 40th Annual Simulation Symposium (ANSS)},', ...
+            '  year = {2007},', ...
+            '  pages = {3--10}', ...
+            '}'}, newline);
+    case {'LQNS','QNS'}
+        bib = strjoin({ ...
+            '@ARTICLE{fran.ea09,', ...
+            '  author = {G. Franks and T. Al-Omari and M. Woodside and O. Das and S. Derisavi},', ...
+            '  title = {Enhanced Modeling and Solution of Layered Queueing Networks},', ...
+            '  journal = {IEEE Trans. Software Engineering},', ...
+            '  year = {2009},', ...
+            '  volume = {35},', ...
+            '  pages = {148-161},', ...
+            '  number = {2}', ...
+            '}'}, newline);
+    otherwise
+        bib = '';
+end
+
+if nargout == 0 && ~isempty(bib)
+    line_printf('%s\n', bib);
+    clear bib
+end
+end
