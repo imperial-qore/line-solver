@@ -1,6 +1,6 @@
 # LINE Solver JAR
 
-This folder includes the canonical, 100% Java implementation of the JAR-based API of the LINE solver. The API is used both by the MATLAB and Python codebases and can be also used for stand-alone JVM programs. Kotlin code can call this same JAR directly (Kotlin runs on the same JVM); there is no separate Kotlin manual — the Java manual and Javadoc below cover the API as called from Kotlin too.
+This folder includes the canonical, 100% Java implementation of the JAR-based API of the LINE solver. The API is used both by the MATLAB and Python codebases and can be also used for stand-alone JVM programs. The Java manual and Javadoc below document the API.
 
 ## Quick start
 #### Default JAR
