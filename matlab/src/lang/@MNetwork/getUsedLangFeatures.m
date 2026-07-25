@@ -97,6 +97,11 @@ for i=1:getNumberOfNodes(self)
                     self.setUsedLangFeature('CacheClassSwitcher');
                     self.setUsedLangFeature('Cache');
                     self.setUsedLangFeature(ReplacementStrategy.toFeature(self.nodes{i}.replacestrategy));
+                    if ~isempty(self.nodes{i}.retrievalClassIndices)
+                        % delayed-hit retrieval system (setRetrievalSystem):
+                        % per-item retrieval classes; JMT cannot load these
+                        self.setUsedLangFeature('CacheRetrieval');
+                    end
                 case 'Transition'
                     self.setUsedLangFeature('Transition');
                     self.setUsedLangFeature('Enabling');

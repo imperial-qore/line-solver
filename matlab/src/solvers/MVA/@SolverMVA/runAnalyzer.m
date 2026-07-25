@@ -67,6 +67,9 @@ switch options.lang
                 jnode = jmodel.getNodeByIndex(ind-1);
                 self.model.nodes{ind}.setResultHitProb(JLINE.from_jline_matrix(jnode.getHitRatio()));
                 self.model.nodes{ind}.setResultMissProb(JLINE.from_jline_matrix(jnode.getMissRatio()));
+                % Retrieval-cache extras (delayed-hit ratio, per-list hit ratio
+                % and expected latency) so getAvgCacheTable matches the native path.
+                self.model.nodes{ind}.setResultDelayedHitProb(JLINE.from_jline_matrix(jnode.getDelayedHitRatio()));
                 self.model.nodes{ind}.setResultHitProbList(JLINE.from_jline_matrix(jnode.getHitRatioByList()));
                 self.model.nodes{ind}.setResultItemProb(JLINE.from_jline_matrix(jnode.getItemProb()));
                 self.model.nodes{ind}.setResultResidT(JLINE.from_jline_matrix(jnode.getResidT()));

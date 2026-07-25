@@ -299,9 +299,9 @@ Reward: reward, reward-steady, reward-value (default: all)'''
     # Version
     try:
         import line_solver
-        version = getattr(line_solver, '__version__', '3.0.6')
+        version = getattr(line_solver, '__version__', '3.0.7')
     except:
-        version = '3.0.6'
+        version = '3.0.7'
 
     parser.add_argument(
         '-V', '--version',

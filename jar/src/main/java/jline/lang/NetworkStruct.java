@@ -48,6 +48,12 @@ public class NetworkStruct implements Copyable, Cloneable {
     public Map<Station, Map<JobClass, Matrix>> mu;
     public Map<Station, Map<JobClass, Matrix>> phi;
     public Map<Station, Map<JobClass, MatrixCell>> proc;
+    /**
+     * True where the process representation is Markovian, so that mu, phi and pie carry
+     * their probabilistic reading. False for a matrix-exponential or rational process,
+     * whose per-phase quantities are signed. See jline.api.sn.SnIsPhaseType.
+     */
+    public Map<Station, Map<JobClass, Boolean>> isph;
     public Map<Station, Map<JobClass, Matrix>> pie;
     public Map<Station, SchedStrategy> sched;
     public Map<Integer, Matrix> inchain;
@@ -179,6 +185,12 @@ public class NetworkStruct implements Copyable, Cloneable {
      * fires, and the blocking station degenerates into an isolated M/M/1/K.
      */
     public Matrix isbasdestination;
+    /**
+     * (nnodes,nclasses) 1 iff the node holds a server for class r awaiting a REPLY
+     * signal (synchronous call). The held servers are counted in the trailing
+     * local-variable block described by {@link jline.lang.state.ReplyBlock}.
+     */
+    public Matrix replyblock;
     public Matrix rtnodes;
     public Matrix csmask;
     public Matrix isslc;
@@ -425,6 +437,25 @@ public class NetworkStruct implements Copyable, Cloneable {
     public void print() {
         snPrint(this);
     }
-    
+
+    /**
+     * Field-by-field shallow copy of this struct. Every reference (matrices, maps,
+     * lists) is shared with the original, so callers that mutate a field must
+     * replace it with their own copy first. Used by the synchronous-call
+     * (REPLY) enumeration in {@link jline.lang.state.FromMarginal}, which needs a
+     * struct with a reduced server count and the reply block cleared without
+     * paying for a deep copy per enumerated held-server configuration.
+     *
+     * @return a shallow copy of this struct
+     */
+    public NetworkStruct shallowCopy() {
+        try {
+            return (NetworkStruct) super.clone();
+        } catch (CloneNotSupportedException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+
 
 }

@@ -6,6 +6,18 @@
 package jline.lang.processes;
 
 import jline.api.mam.Map_pdf;
+import jline.lang.Network;
+import jline.lang.NetworkStruct;
+import jline.lang.OpenClass;
+import jline.lang.constant.SchedStrategy;
+import jline.lang.nodes.Queue;
+import jline.lang.nodes.Sink;
+import jline.lang.nodes.Source;
+import jline.lang.processes.Exp;
+import jline.solvers.NetworkAvgTable;
+import jline.solvers.SolverOptions;
+import jline.solvers.ctmc.SolverCTMC;
+import jline.solvers.mam.SolverMAM;
 import jline.util.Maths;
 import jline.util.RandomManager;
 import jline.util.matrix.Matrix;
@@ -155,6 +167,202 @@ public class CMEDistributionTest {
         // 2003 phases is beyond the last tabulated entry (n = 1000).
         assertThrows(IllegalArgumentException.class, () -> new CME(1.0, 2003));
         assertThrows(IllegalArgumentException.class, () -> CME.fitMeanAndSCV(1.0, 1e-12));
+    }
+
+    @Test
+    public void testMG1Queue() {
+        // M/CME/1 at rho = 0.5 with a near-deterministic service: the
+        // Pollaczek-Khinchine mean queue length is rho^2*(1+scv)/(2*(1-rho)) plus rho.
+        // Mirrors the same check in the MATLAB and Python test suites.
+        Network model = new Network("M/CME/1");
+        Source source = new Source(model, "Source");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "Sink");
+        OpenClass oclass = new OpenClass(model, "Class1");
+        CME service = new CME(1.0, 11);
+        source.setArrival(oclass, new Exp(0.5));
+        queue.setService(oclass, service);
+        model.link(model.serialRouting(source, queue, sink));
+
+        // sn.isph marks the CME station as non-Markovian: its (D0,D1) pair has
+        // negative off-diagonal entries, so mu/phi/pie carry no probabilistic
+        // reading there, while the exponential source stays Markovian.
+        NetworkStruct sn = model.getStruct();
+        assertFalse(sn.isph.get(queue).get(oclass));
+        assertTrue(sn.isph.get(source).get(oclass));
+
+        NetworkAvgTable avgTable = new SolverMAM(model).getAvgTable();
+        double qlen = avgTable.getQLen().get(1);
+
+        double rho = 0.5;
+        double pk = rho + rho * rho * (1.0 + service.getSCV()) / (2.0 * (1.0 - rho));
+        assertEquals(pk, qlen, 1e-3 * pk);
+    }
+
+    private static Network mme1(double rho, int order) {
+        Network model = new Network("M/CME/1");
+        Source source = new Source(model, "Source");
+        Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+        Sink sink = new Sink(model, "Sink");
+        OpenClass oclass = new OpenClass(model, "Class1");
+        source.setArrival(oclass, new Exp(rho));
+        queue.setService(oclass, new CME(1.0, order));
+        model.link(model.serialRouting(source, queue, sink));
+        return model;
+    }
+
+    @Test
+    public void testCtmcMG1IsExact() {
+        // The ME embeds in the generator exactly as a phase-type does, keeping the
+        // negative off-diagonal entries of A. The stationary vector is then a signed
+        // measure, but every aggregate over a phase block is exact, so the mean queue
+        // length must reproduce Pollaczek-Khinchine to solver precision.
+        int[] orders = {3, 7, 11};
+        double[] rhos = {0.3, 0.5};
+        for (int order : orders) {
+            for (double rho : rhos) {
+                SolverOptions options = SolverCTMC.defaultOptions();
+                options.cutoff = new Matrix(1, 1, 1);
+                options.cutoff.set(0, 0, 30);
+                options.verbose = jline.VerboseLevel.SILENT;
+                NetworkAvgTable avg = new SolverCTMC(mme1(rho, order), options).getAvgTable();
+                double scv = new CME(1.0, order).getSCV();
+                double pk = rho + rho * rho * (1.0 + scv) / (2.0 * (1.0 - rho));
+                assertEquals(pk, avg.getQLen().get(1), 1e-8 * pk);
+                assertEquals(rho, avg.getUtil().get(1), 1e-8);
+                assertEquals(rho, avg.getTput().get(1), 1e-8);
+            }
+        }
+    }
+
+    @Test
+    public void testCtmcRefusesPerStateProbabilities() {
+        // Per-state probabilities and uniformization-based transients do not exist for a
+        // signed stationary vector, so they are refused rather than returned.
+        SolverOptions options = SolverCTMC.defaultOptions();
+        options.cutoff = new Matrix(1, 1, 1);
+        options.cutoff.set(0, 0, 5);
+        options.verbose = jline.VerboseLevel.SILENT;
+        SolverCTMC solver = new SolverCTMC(mme1(0.5, 3), options);
+        solver.getAvgTable();
+        assertThrows(RuntimeException.class, solver::getProbSysAggr);
+        assertThrows(RuntimeException.class, solver::getTranProbSysAggr);
+    }
+
+    @Test
+    public void testFitMeanAndSCVIsExact() {
+        // The CME-plus-exponential convolution matches both moments exactly over the whole
+        // range (sY/(1+sY), 1), which is where an Erlang needs ceil(1/scv) phases and a
+        // two-phase Coxian cannot go at all.
+        double[] scvs = {0.9, 0.5, 0.2, 0.05, 0.01, 1e-3, 1e-4};
+        for (double scv : scvs) {
+            ME fitted = MEFit.fitMeanAndSCV(2.0, scv);
+            assertEquals(2.0, fitted.getMean(), 1e-9);
+            assertEquals(scv, fitted.getSCV(), 1e-6 * scv);
+            if (scv <= 0.05) {
+                // O(1/n^2) instead of the Erlang O(1/n).
+                assertTrue(fitted.getNumberOfPhases() < Math.ceil(1.0 / scv));
+            }
+        }
+    }
+
+    @Test
+    public void testFitMeanAndSCVRespectsPhaseBudget() {
+        // Under a budget the fit returns the closest achievable SCV from below rather than
+        // silently truncating an Erlang: 20 phases reach 5.7e-3, Erlang-20 stops at 0.05.
+        ME fitted = MEFit.fitMeanAndSCV(1.0, 1e-4, 20);
+        assertTrue(fitted.getNumberOfPhases() <= 20);
+        assertEquals(1.0, fitted.getMean(), 1e-9);
+        assertTrue(fitted.getSCV() < 1.0 / 20);
+    }
+
+    @Test
+    public void testFitMeanAndSCVRejectsOutOfRange() {
+        assertThrows(IllegalArgumentException.class, () -> MEFit.fitMeanAndSCV(1.0, 0.0));
+        assertThrows(IllegalArgumentException.class, () -> MEFit.fitMeanAndSCV(1.0, 1.0));
+        assertThrows(IllegalArgumentException.class, () -> MEFit.fitMeanAndSCV(1.0, 1.5));
+        assertThrows(IllegalArgumentException.class, () -> MEFit.fitMeanAndSCV(0.0, 0.5));
+    }
+
+    /**
+     * An ME with a negative entry in alpha whose density touches zero in the interior
+     * (f(1.2) = 0 against a peak of 2.79), so it admits NO phase-type representation of
+     * any order. Spectrum {-1, -2 +- 2i}, mean 0.5329, SCV 2.6843. Same instance as
+     * line-test.git/test_mam_me_warning.m and the native Python test suite.
+     */
+    private static ME nonPhaseTypeME() {
+        Matrix alpha = new Matrix(1, 3);
+        alpha.set(0, 0, 0.61058991931158258);
+        alpha.set(0, 1, -0.15547146730086722);
+        alpha.set(0, 2, 0.54488154798928464);
+        Matrix A = new Matrix(3, 3);
+        A.set(0, 0, -1.0);
+        A.set(1, 1, -2.0);
+        A.set(1, 2, 2.0);
+        A.set(2, 1, -2.0);
+        A.set(2, 2, -2.0);
+        return new ME(alpha, A);
+    }
+
+    @Test
+    public void testNonPhaseTypeMEHasAnInteriorDensityZero() {
+        // The interior zero is what rules out a phase-type representation of ANY order: a
+        // PH density is strictly positive throughout the interior of its support.
+        // Round-off can make it slightly negative, hence the tolerance. The zero sits at
+        // x = 1.2 exactly, so the grid has to land on it.
+        ME dist = nonPhaseTypeME();
+        double[] fine = new double[2001];
+        for (int i = 0; i < fine.length; i++) {
+            fine[i] = 1.15 + i * (0.10 / (fine.length - 1));
+        }
+        double[] pdf = Map_pdf.map_pdf(dist.getProcess(), fine);
+        double min = Double.POSITIVE_INFINITY;
+        for (double v : pdf) {
+            min = Math.min(min, v);
+        }
+        assertTrue(Math.abs(min) < 1e-10, "the density must reach zero at x = 1.2, got " + min);
+        double[] bulk = Map_pdf.map_pdf(dist.getProcess(), new double[]{0.3, 0.6, 2.0, 3.0});
+        double max = 0.0;
+        for (double v : bulk) {
+            max = Math.max(max, v);
+        }
+        assertTrue(max > 0.1, "the density must be positive away from the zero");
+        assertTrue(dist.getAlpha().get(0, 1) < 0, "alpha must have a negative entry");
+    }
+
+    @Test
+    public void testCtmcSolvesANonPhaseTypeME() {
+        // The CTMC branch must not depend on the ME happening to be a phase-type in
+        // disguise. Pollaczek-Khinchine still applies, since the service law is a genuine
+        // distribution and the arrivals are Poisson.
+        double[] rhos = {0.3, 0.5};
+        int[] cutoffs = {30, 60};
+        for (int i = 0; i < rhos.length; i++) {
+            double rho = rhos[i];
+            ME service = nonPhaseTypeME();
+            double mean = service.getMean();
+            double scv = service.getSCV();
+
+            Network model = new Network("M/ME/1 non-PH");
+            Source source = new Source(model, "Source");
+            Queue queue = new Queue(model, "Queue", SchedStrategy.FCFS);
+            Sink sink = new Sink(model, "Sink");
+            OpenClass oclass = new OpenClass(model, "Class1");
+            source.setArrival(oclass, new Exp(rho / mean));
+            queue.setService(oclass, nonPhaseTypeME());
+            model.link(model.serialRouting(source, queue, sink));
+
+            assertFalse(model.getStruct().isph.get(queue).get(oclass));
+
+            SolverOptions options = SolverCTMC.defaultOptions();
+            options.cutoff = new Matrix(1, 1, 1);
+            options.cutoff.set(0, 0, cutoffs[i]);
+            options.verbose = jline.VerboseLevel.SILENT;
+            NetworkAvgTable avg = new SolverCTMC(model, options).getAvgTable();
+            double pk = rho + rho * rho * (1.0 + scv) / (2.0 * (1.0 - rho));
+            assertEquals(pk, avg.getQLen().get(1), 1e-7 * pk);
+            assertEquals(rho, avg.getUtil().get(1), 1e-6);
+        }
     }
 
     @Test

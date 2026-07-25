@@ -178,19 +178,19 @@ class JobClassType(Enum):
     DISABLED = auto()
 
 
-class JoinStrategy(Enum):
-    """
-    Strategies for join node synchronization in fork-join networks.
+def __getattr__(name):
+    """Forward JoinStrategy to its single definition in lang.base.
 
-    - STD: Standard join (wait for all parallel branches)
-    - PARTIAL: Partial join (proceed when some branches complete)
-    - Quorum: Quorum-based join (wait for minimum number of branches)
-    - Guard: Guard condition join (custom completion criteria)
+    It used to be redefined here as a second, independent enum. Nothing stored
+    it: a Join node holds lang.base.JoinStrategy, so the copy compared equal to
+    no strategy any model carried. The forward is lazy because importing
+    lang.base at module level would close an import cycle back through
+    lang.network.
     """
-    STD = auto()
-    PARTIAL = auto()
-    Quorum = auto()
-    Guard = auto()
+    if name == 'JoinStrategy':
+        from .lang.base import JoinStrategy
+        return JoinStrategy
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))
 
 
 class MetricType(Enum):
@@ -565,7 +565,7 @@ class GlobalConstants:
     FineTol = 1e-8  # Match MATLAB's default
     Immediate = 1e8  # 1/FineTol - large but finite rate for immediate service (matches MATLAB)
     MaxInt = 2**31 - 1
-    Version = "3.0.6"
+    Version = "3.0.7"
     DummyMode = False
     # Latch for the once-per-session library attribution printed by the solvers
     # (mirrors MATLAB GlobalConstants and jline.lang.GlobalConstants).

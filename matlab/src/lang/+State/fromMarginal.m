@@ -34,6 +34,64 @@ space = [];
 ist = sn.nodeToStation(ind);
 %isf = sn.nodeToStateful(ind);
 
+% Synchronous call (REPLY signal): the node holds one server per job that has
+% left for its callee and is waiting for the reply. Those servers are not
+% derivable from the marginal N, so enumerate the held-server counts here and
+% build the rest of the state with the REMAINING servers -- with b servers held,
+% only S-b jobs can be in service, a configuration the plain enumeration never
+% produces. Recurse on a struct with the block cleared, then append its columns,
+% which are the last ones in the local-variable layout (State.replyBlockInfo).
+if isfield(sn,'replyblock') && ~isempty(sn.replyblock) && size(sn.replyblock,1) >= ind ...
+        && any(sn.replyblock(ind,:) > 0)
+    ist_r = sn.nodeToStation(ind);
+    rclasses = find(sn.replyblock(ind,:) > 0);
+    snb = sn;
+    snb.replyblock(ind,:) = 0;
+    snb.nvars(ind, (2*R+2):(3*R+1)) = 0;
+    bspace = zeros(1,0);
+    for r = rclasses
+        bspace = State.cartesian(bspace, (0:S(ist_r))');
+    end
+    subspaces = cell(size(bspace,1),1);
+    bkept = cell(size(bspace,1),1);
+    maxw = 0;
+    for bi = 1:size(bspace,1)
+        b = bspace(bi,:);
+        if sum(b) > S(ist_r)
+            continue
+        end
+        snb.nservers(ist_r) = S(ist_r) - sum(b);
+        if nargin < 4
+            subspace = State.fromMarginal(snb, ind, n);
+        else
+            subspace = State.fromMarginal(snb, ind, n, options);
+        end
+        if isempty(subspace)
+            continue
+        end
+        subspaces{bi} = subspace;
+        bkept{bi} = b;
+        maxw = max(maxw, size(subspace,2));
+    end
+    % Held servers push jobs into the buffer, so the sub-spaces have different
+    % buffer widths. The buffer is RIGHT-aligned (empty slots pad the left), so
+    % widen the narrow rows on the left before stacking them.
+    space = [];
+    for bi = 1:size(bspace,1)
+        if isempty(subspaces{bi})
+            continue
+        end
+        subspace = subspaces{bi};
+        if size(subspace,2) < maxw
+            subspace = [zeros(size(subspace,1), maxw-size(subspace,2)), subspace]; %#ok<AGROW>
+        end
+        space = [space; subspace, repmat(bkept{bi}, size(subspace,1), 1)]; %#ok<AGROW>
+    end
+    space = unique(space,'rows');
+    space = space(end:-1:1,:);
+    return
+end
+
 if isfield(sn,'isfjaugmented') && sn.isfjaugmented && sn.nodetype(ind) == NodeType.Join
     % FJ-augmented struct: the join state is the per-class count vector
     % of buffered jobs/siblings, deterministic given the marginals

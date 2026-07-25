@@ -203,33 +203,6 @@ def line2qn(model: Any) -> Any:
     return model
 
 
-@dataclass
-class LQNTask:
-    """Layered Queueing Network task specification."""
-    name: str
-    entries: List[Dict[str, Any]]
-    host: Optional[str] = None
-    multiplicity: int = 1
-    scheduling: str = 'ref'
-
-
-@dataclass
-class LQNProcessor:
-    """Layered Queueing Network processor specification."""
-    name: str
-    tasks: List[LQNTask]
-    multiplicity: int = 1
-    scheduling: str = 'fcfs'
-
-
-@dataclass
-class LQNModel:
-    """Layered Queueing Network model."""
-    name: str
-    processors: List[LQNProcessor]
-    calls: List[Dict[str, Any]]
-
-
 def qn2lqn(model: Any) -> Any:
     """
     Convert a Queueing Network to Layered Queueing Network representation.
@@ -405,72 +378,26 @@ def _has_incoming_routing(sn, node_i: int, class_r: int) -> bool:
 
 
 
-def lqn2qn(lqn_model: LQNModel) -> Dict[str, Any]:
+def lqn2qn(lqn_model):
     """
-    Convert a Layered Queueing Network to Queueing Network representation.
+    Convert a LayeredNetwork into an equivalent Network by expanding each
+    entry's activity subgraph into a step graph.
 
-    Creates a QN specification from an LQN model.
+    This is the canonical converter, shared with ``line_solver.io.LQN2QN``;
+    it is re-exported here so that the ``api.io`` namespace exposes the same
+    implementation rather than a second, weaker one.
 
     Args:
-        lqn_model: LQNModel object
+        lqn_model: LayeredNetwork object
 
     Returns:
-        Dictionary with QN model specification
+        Network model
 
     References:
         MATLAB: matlab/src/io/LQN2QN.m
     """
-    result = {
-        'name': lqn_model.name,
-        'nodes': [],
-        'classes': [],
-        'processes': [],
-        'routing': {},
-    }
-
-    # Map each processor to a station
-    station_id = 0
-    class_id = 0
-    entry_to_class = {}
-
-    for proc in lqn_model.processors:
-        for task in proc.tasks:
-            node_spec = {
-                'id': station_id,
-                'name': task.name,
-                'type': 'Delay' if task.scheduling == 'ref' else 'Queue',
-                'scheduling': 'INF' if task.scheduling == 'ref' else 'FCFS',
-                'servers': task.multiplicity,
-            }
-            result['nodes'].append(node_spec)
-
-            for entry in task.entries:
-                class_spec = {
-                    'id': class_id,
-                    'name': entry['name'],
-                    'type': 'closed',
-                    'population': 1,
-                    'refstation': station_id if task.scheduling == 'ref' else 0,
-                }
-                result['classes'].append(class_spec)
-
-                process_spec = {
-                    'station': station_id,
-                    'class': class_id,
-                    'mean': entry.get('service_time', 1.0),
-                    'scv': 1.0,
-                    'rate': 1.0 / entry.get('service_time', 1.0),
-                    'process_type': 'service',
-                    'distribution': 'Exp',
-                }
-                result['processes'].append(process_spec)
-
-                entry_to_class[entry['name']] = class_id
-                class_id += 1
-
-            station_id += 1
-
-    return result
+    from ...io import LQN2QN
+    return LQN2QN(lqn_model)
 
 
 @dataclass
@@ -966,9 +893,6 @@ __all__ = [
     'line2qn',
     'qn2lqn',
     'lqn2qn',
-    'LQNTask',
-    'LQNProcessor',
-    'LQNModel',
     'mapqn2renv',
     'RandomEnvironmentModel',
     'MMPP2Params',

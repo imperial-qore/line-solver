@@ -426,7 +426,7 @@ public class SolverLDES extends NetworkSolver {
                 "QueueingPlace",  // Queueing place (QPN embedded queue): FCFS/LCFS/SIRO/INF, renewal service
                 "Linkage", "Enabling", "Inhibiting", "Timing", "Firing", "Storage",  // Petri net section support
                 "Logger", "LogTunnel",  // Logger node support
-                "Cache", "CacheClassSwitcher",  // Cache node support with hit/miss class switching
+                "Cache", "CacheClassSwitcher", "CacheRetrieval",  // Cache node support with hit/miss class switching
                 "ReplacementStrategy_LRU", "ReplacementStrategy_FIFO", "ReplacementStrategy_RR", "ReplacementStrategy_SFIFO",  // Cache replacement strategies
                 "ReplacementStrategy_HLRU", "ReplacementStrategy_CLIMB", "ReplacementStrategy_QLRU",
                 "Buffer",  // Finite buffer capacity support

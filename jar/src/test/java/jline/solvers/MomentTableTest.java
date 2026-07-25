@@ -5,7 +5,9 @@
 
 package jline.solvers;
 
+import jline.api.pfqn.PfqnResptPsResult;
 import jline.api.pfqn.sens.Pfqn_sens_mom;
+import jline.api.qsys.QsysMm1PsResult;
 import jline.api.sn.SnHasProductForm;
 import jline.api.pfqn.sens.Pfqn_sens_mva;
 import jline.io.Ret;
@@ -31,6 +33,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import static jline.api.pfqn.Pfqn_respt_ps_moments.pfqn_respt_ps_moments;
+import static jline.api.qsys.Qsys_mm1_ps.qsys_mm1_ps;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -205,8 +209,9 @@ public class MomentTableTest {
     @DisplayName("RespTVar only at FCFS stations")
     public void testResptVarianceOnlyAtFcfs() {
         // RespTVar must be a number at the FCFS station and NaN at the PS station.
-        // The sojourn-time distribution at a PS center is not known in general, so a
-        // value there would be fabricated.
+        // The PS moments of Mitra and Morrison cover the terminal-driven system, one
+        // PS station and delays; this model has a second queueing station, which is
+        // outside that scope, so a value at Q2 would be fabricated.
         Network m = closedMixedSched();
         NetworkMomentTable T = new SolverMVA(m).getMomentTable();
         String[] classes = new String[]{"C1", "C2"};
@@ -218,6 +223,93 @@ public class MomentTableTest {
             int kp = rowOf(T, "Q2", classes[c]);
             assertTrue(Double.isNaN(T.getRespTVar().get(kp)), "PS station must NOT report RespTVar");
             assertTrue(Double.isNaN(T.getRespTSCV().get(kp)), "PS station must NOT report RespTSCV");
+        }
+    }
+
+    @Test
+    @DisplayName("open PS RespTVar is the Mitra-Morrison moment")
+    public void testOpenPsResptVariance() {
+        // A single PS station fed by Poisson streams is the open system of Mitra and
+        // Morrison, where the sojourn-time moments are exact in closed form.
+        double l1 = 0.3;
+        double l2 = 0.4;
+        double mu1 = 1.0;
+        double mu2 = 3.0;
+        Network m = new Network("mt_open_ps");
+        Source src = new Source(m, "S");
+        Sink snk = new Sink(m, "K");
+        Queue q = new Queue(m, "CPU", SchedStrategy.PS);
+        OpenClass o1 = new OpenClass(m, "C1", 0);
+        OpenClass o2 = new OpenClass(m, "C2", 0);
+        src.setArrival(o1, new Exp(l1));
+        src.setArrival(o2, new Exp(l2));
+        q.setService(o1, new Exp(mu1));
+        q.setService(o2, new Exp(mu2));
+        RoutingMatrix P = m.initRoutingMatrix();
+        P.set(o1, o1, Network.serialRouting(src, q, snk));
+        P.set(o2, o2, Network.serialRouting(src, q, snk));
+        m.link(P);
+        NetworkMomentTable T = new SolverMVA(m).getMomentTable();
+        QsysMm1PsResult ref = qsys_mm1_ps(new double[]{l1, l2}, new double[]{mu1, mu2});
+        String[] classes = new String[]{"C1", "C2"};
+        for (int c = 0; c < classes.length; c++) {
+            int k = rowOf(T, "CPU", classes[c]);
+            assertRelEquals(ref.W[c], T.getRespT().get(k), 1e-9, "open PS mean RespT");
+            assertRelEquals(ref.W2[c] - ref.W[c] * ref.W[c], T.getRespTVar().get(k),
+                    1e-9, "open PS RespTVar");
+        }
+    }
+
+    @Test
+    @DisplayName("a PS station on a routing cycle reports no RespTVar")
+    public void testOpenPsWithFeedbackIsBlank() {
+        // With feedback the arrival stream at the station is no longer Poisson, so
+        // the open formula does not apply and a blank is the honest answer.
+        Network m = new Network("mt_open_ps_fb");
+        Source src = new Source(m, "S");
+        Sink snk = new Sink(m, "K");
+        Queue q = new Queue(m, "CPU", SchedStrategy.PS);
+        OpenClass o1 = new OpenClass(m, "C1", 0);
+        src.setArrival(o1, new Exp(0.3));
+        q.setService(o1, new Exp(1.0));
+        RoutingMatrix P = m.initRoutingMatrix();
+        P.set(o1, o1, src, q, 1.0);
+        P.set(o1, o1, q, q, 0.5);
+        P.set(o1, o1, q, snk, 0.5);
+        m.link(P);
+        NetworkMomentTable T = new SolverMVA(m).getMomentTable();
+        int k = rowOf(T, "CPU", "C1");
+        assertTrue(Double.isNaN(T.getRespTVar().get(k)),
+                "a PS station with feedback must NOT report RespTVar");
+    }
+
+    @Test
+    @DisplayName("closed terminal-driven PS RespTVar is the Mitra-Morrison moment")
+    public void testClosedTerminalDrivenPsResptVariance() {
+        // Terminals in series with one PS CPU: the closed system the paper analyses.
+        Network m = new Network("mt_closed_ps");
+        Delay d = new Delay(m, "Terminals");
+        Queue cpu = new Queue(m, "CPU", SchedStrategy.PS);
+        ClosedClass c1 = new ClosedClass(m, "C1", 4, d, 0);
+        ClosedClass c2 = new ClosedClass(m, "C2", 2, d, 0);
+        d.setService(c1, new Exp(0.02));
+        d.setService(c2, new Exp(0.01));
+        cpu.setService(c1, new Exp(1.0));
+        cpu.setService(c2, new Exp(2.0));
+        RoutingMatrix P = m.initRoutingMatrix();
+        P.set(c1, c1, Network.serialRouting(d, cpu));
+        P.set(c2, c2, Network.serialRouting(d, cpu));
+        m.link(P);
+        NetworkMomentTable T = new SolverMVA(m).getMomentTable();
+        PfqnResptPsResult ref = pfqn_respt_ps_moments(new double[]{1.0, 0.5},
+                new double[]{4, 2}, new double[]{50.0, 100.0});
+        String[] classes = new String[]{"C1", "C2"};
+        for (int c = 0; c < classes.length; c++) {
+            int k = rowOf(T, "CPU", classes[c]);
+            assertRelEquals(ref.W[c], T.getRespT().get(k), 1e-7,
+                    "closed PS mean RespT must agree with Little's law");
+            assertRelEquals(ref.W2[c] - ref.W[c] * ref.W[c], T.getRespTVar().get(k),
+                    1e-9, "closed PS RespTVar");
         }
     }
 

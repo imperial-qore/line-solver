@@ -41,10 +41,12 @@ import static jline.io.InputOutput.*;
 import static jline.solvers.nc.analyzers.Solver_nc_analyzer.solver_nc_analyzer;
 import static jline.solvers.nc.analyzers.Solver_nc_cache_analyzer.solver_nc_cache_analyzer;
 import static jline.solvers.nc.analyzers.Solver_nc_cache_qn_analyzer.solver_nc_cache_qn_analyzer;
+import static jline.solvers.nc.analyzers.Solver_nc_retrieval_analyzer.solver_nc_retrieval_analyzer;
 import static jline.solvers.nc.analyzers.Solver_ncld_analyzer.solver_ncld_analyzer;
 import static jline.solvers.nc.analyzers.Solver_nc_lossn_analyzer.solver_nc_lossn_analyzer;
 import static jline.api.sn.SnHasClosedClasses.snHasClosedClasses;
 import jline.lang.constant.DropStrategy;
+import jline.solvers.nc.handlers.Solver_nc_pas_is;
 import static jline.solvers.nc.handlers.Solver_nc_marg.solver_nc_marg;
 import static jline.solvers.nc.handlers.Solver_nc_joint.solver_nc_joint;
 import static jline.solvers.nc.handlers.Solver_nc_margaggr.solver_nc_margaggr;
@@ -106,6 +108,15 @@ public class SolverNC extends NetworkSolver {
         return true;
     }
 
+    /** True if the model contains a Cache equipped with a delayed-hit retrieval system. */
+    public static boolean hasRetrievalCache(NetworkStruct sn) {
+        if (sn.nodeparam == null) return false;
+        for (NodeParam np : sn.nodeparam.values()) {
+            if (np instanceof CacheNodeParam && ((CacheNodeParam) np).retrievalSystemCapacity > 0) return true;
+        }
+        return false;
+    }
+
     public SolverNC(Network model) {
         super(model, "SolverNC", new NCOptions());
         this.sn = model.getStruct(false);
@@ -150,10 +161,11 @@ public class SolverNC extends NetworkSolver {
                 "Region",
                 "Server", "JobSink", "RandomSource", "ServiceTunnel",
                 "SchedStrategy_INF", "SchedStrategy_PS", "SchedStrategy_SIRO",
-                "SchedStrategy_LCFS", "SchedStrategy_LCFSPR",
+                "SchedStrategy_LCFS", "SchedStrategy_LCFSPR", "SchedStrategy_OI",
+                "SchedStrategy_PAS",
                 "RoutingStrategy_PROB", "RoutingStrategy_RAND",
                 "SchedStrategy_FCFS", "ClosedClass", "SelfLoopingClass",
-                "Cache", "CacheClassSwitcher", "OpenClass",
+                "Cache", "CacheClassSwitcher", "CacheRetrieval", "OpenClass",
                 "ReplacementStrategy_RR", "ReplacementStrategy_FIFO",
                 "ReplacementStrategy_HLRU",
                 "LoadDependence", "ClassDependence", "JointDependence",
@@ -771,7 +783,19 @@ public class SolverNC extends NetworkSolver {
                 // so it routes to solver_ncld_analyzer -> Pfqn_ncld -> Pfqn_ld_is
                 // rather than falling through to Seidmann's approximation, which
                 // would faithfully estimate a DIFFERENT (approximated) model.
+                //
+                // OI / pass-and-swap models are the exception: an OI station is
+                // multiserver but is not a plain min(n,c) load-dependent station,
+                // and a P&S tandem has only per-communicating-class product form
+                // (so hasProductFormSolution() is false). Leave them untouched for
+                // Solver_nc to route to Pfqn_pas_is / Pfqn_oi_is.
+                if (Solver_nc_pas_is.nc_is_pas_model(sn)) {
+                    break;   // handled by Solver_nc (Pfqn_pas_is)
+                }
                 // fall through to the "exact" preprocessing
+            case "panaceald":
+                // 'panaceald' is a load-dependent normalizing-constant expansion
+                // and needs the same multiserver conversion as "exact"
             case "exact":
                 if (!this.model.hasProductFormSolution()) {
                     line_error(mfilename(new Object(){}), "The " + options.method + " method requires the model to have a product-form solution. This model does not have one. You can use Network.hasProductFormSolution() to check before running the solver.");
@@ -801,8 +825,20 @@ public class SolverNC extends NetworkSolver {
                 break;
         }
 
+        // Check for delayed-hit retrieval cache model (Cache with a retrieval system) first
         List<NodeType> nonReentrant = new ArrayList<>(Arrays.asList(NodeType.Source, NodeType.Cache, NodeType.Sink));
-        if (sn.nclosedjobs == 0 && sn.nodetype.size() == 3 && sn.nodetype.containsAll(nonReentrant)) {
+        if (hasRetrievalCache(this.sn)) {
+            boolean hasSource = false;
+            for (int i = 0; i < this.sn.nodetype.size(); i++) if (this.sn.nodetype.get(i) == NodeType.Source) { hasSource = true; break; }
+            if (hasSource) {
+                line_debug(options.verbose, "NC: detected open delayed-hit retrieval cache, calling solver_nc_retrieval_analyzer");
+                ret = solver_nc_retrieval_analyzer(this.sn, this.options.copy());
+            } else {
+                line_debug(options.verbose, "NC: detected closed integrated delayed-hit retrieval cache, calling solver_nc_cacheqn_retrieval_analyzer");
+                ret = jline.solvers.nc.analyzers.Solver_nc_cacheqn_retrieval_analyzer.solver_nc_cacheqn_retrieval_analyzer(this.sn, this.options.copy());
+            }
+            actualMethod = ret.method;
+        } else if (sn.nclosedjobs == 0 && sn.nodetype.size() == 3 && sn.nodetype.containsAll(nonReentrant)) {
             line_debug(options.verbose, "NC: detected non-reentrant cache model (Source-Cache-Sink), calling solver_nc_cache_analyzer");
             // Initialize cache nodes
             for (int ind = 0; ind < sn.nnodes; ind++) {
@@ -973,6 +1009,7 @@ public class SolverNC extends NetworkSolver {
                         case "nrp":
                         case "nrl":
                         case "comomld":
+                        case "panaceald":
                             line_debug(options.verbose, String.format("NC: load-dependent method=%s, calling solver_ncld_analyzer", options.method));
                             ret = solver_ncld_analyzer(this.sn, this.options.copy());
                             actualMethod = ret.method;
@@ -999,12 +1036,16 @@ public class SolverNC extends NetworkSolver {
                 if (cacheParam != null) {
                     Matrix hitProb = cacheNode.getHitRatio();
                     Matrix missProb = cacheNode.getMissRatio();
+                    Matrix delayedProb = cacheNode.getDelayedHitRatio();
                     Matrix hitProbList = cacheNode.getHitRatioByList();
                     if (hitProb != null && !hitProb.isEmpty()) {
                         cacheParam.actualhitprob = hitProb;
                     }
                     if (missProb != null && !missProb.isEmpty()) {
                         cacheParam.actualmissprob = missProb;
+                    }
+                    if (delayedProb != null && !delayedProb.isEmpty()) {
+                        cacheParam.actualdelayedhitprob = delayedProb;
                     }
                     if (hitProbList != null && !hitProbList.isEmpty()) {
                         cacheParam.actualhitproblist = hitProbList;
@@ -1063,7 +1104,7 @@ public class SolverNC extends NetworkSolver {
     public String[] listValidMethods() {
         return new String[]{
             "default", "exact", "erlangfp", "mci", "imci", "ls", "le", "mmint2", "gleint",
-            "panacea", "ca", "clw", "kt", "sampling", "is", "propfair", "comom", "cub",
+            "panacea", "panaceald", "ca", "clw", "kt", "sampling", "is", "propfair", "comom", "cub",
             "rd", "nrp", "nrl", "gm", "mem"
         };
     }

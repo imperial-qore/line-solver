@@ -350,6 +350,7 @@ class NetworkStruct:
     signaltarget: Optional[np.ndarray] = None  # (K,) 0-based target class index a signal removes; -1 if none
     signaltype: Optional[List] = None  # signal types
     syncreply: Optional[np.ndarray] = None  # (K, 1) - sync reply class mapping
+    replyblock: Optional[np.ndarray] = None  # (nnodes, K) 1 iff the node holds a server for class r awaiting a REPLY signal (synchronous call)
     immfeed: Optional[np.ndarray] = None  # (M, K) - immediate feedback enabled per station/class
     signalremdist: Optional[List] = None  # removal distribution per signal class
     signalrempolicy: Optional[List] = None  # removal policy per signal class
@@ -366,6 +367,10 @@ class NetworkStruct:
     mu: Optional[Dict] = None  # station -> class -> service rate matrix
     phi: Optional[Dict] = None  # station -> class -> service phase probs
     proc: Optional[Dict] = None  # station -> class -> process cell
+    # True where the representation is Markovian, so that mu, phi and pie carry
+    # their probabilistic reading; False for a matrix-exponential or rational
+    # process, whose per-phase quantities are signed (see sn_is_phasetype).
+    isph: Optional[np.ndarray] = None
     pie: Optional[Dict] = None  # station -> class -> initial phase probs
     procid: Optional[Dict] = None  # station -> class -> process type
     lst: Optional[Dict] = None  # station -> class -> Laplace-Stieltjes transform

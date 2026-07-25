@@ -507,9 +507,52 @@ if isfield(data, 'nodes')
             if ~isfield(cc, 'admissionProb') && isfield(nd, 'admissionProb')
                 cc.admissionProb = nd.admissionProb;
             end
+            if ~isfield(cc, 'retrievalSystem') && isfield(nd, 'retrievalSystem')
+                cc.retrievalSystem = nd.retrievalSystem;
+            end
             % q-LRU admission probability on a miss
             if isfield(cc, 'admissionProb')
                 node.setAdmissionProb(cc.admissionProb);
+            end
+            % Restores cache-internal bookkeeping only; classes/routing/service are rebuilt elsewhere -- see _kb/09-ldes-and-cache.md
+            if isfield(cc, 'retrievalSystem') && ~isempty(cc.retrievalSystem)
+                rs = cc.retrievalSystem;
+                if isfield(rs, 'capacity')
+                    node.retrievalSystemCapacity = double(rs.capacity);
+                end
+                if isfield(rs, 'byClass')
+                    bcNames = fieldnames(rs.byClass);
+                    for bci = 1:length(bcNames)
+                        inName = bcNames{bci};
+                        if ~class_map.isKey(inName), continue; end
+                        jobin = class_map(inName);
+                        entry = rs.byClass.(inName);
+                        if isfield(entry, 'queues')
+                            qNames = cellify_string_array(entry.queues);
+                            qIdx = [];
+                            for qi = 1:numel(qNames)
+                                if node_map.isKey(qNames{qi})
+                                    qIdx(end+1) = node_map(qNames{qi}).index; %#ok<AGROW>
+                                end
+                            end
+                            node.retrievalSystemQueueIndices(int32(jobin.index - 1)) = qIdx;
+                        end
+                        if isfield(entry, 'items')
+                            % jsondecode prefixes the 0-based item keys with 'x'
+                            itNames = fieldnames(entry.items);
+                            for iti = 1:length(itNames)
+                                rcName = entry.items.(itNames{iti});
+                                if ~class_map.isKey(rcName), continue; end
+                                item0 = str2double(strrep(itNames{iti}, 'x', ''));
+                                rcIdx = class_map(rcName).index;
+                                node.setRetrievalClass(jobin, class_map(rcName), item0 + 1);
+                                if ~any(node.retrievalClassIndices == rcIdx)
+                                    node.retrievalClassIndices(end+1) = rcIdx;
+                                end
+                            end
+                        end
+                    end
+                end
             end
             % Hit class mapping
             if isfield(cc, 'hitClass')

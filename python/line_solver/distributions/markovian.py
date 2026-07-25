@@ -2244,6 +2244,93 @@ class ME(ContinuousDistribution, Markovian):
 
 
 
+def fit_me_mean_scv(mean: float, scv: float, max_phases: int = 0) -> 'ME':
+    """Fit a matrix exponential to a given mean and squared coefficient of variation.
+
+    For ``scv < 1`` the fit is the convolution ``X = c*Y + Z`` of a scaled
+    concentrated matrix exponential ``Y`` (unit mean, minimal SCV ``sY`` for its
+    order) with an independent exponential ``Z``. Writing ``c + d = mean`` and
+    ``c^2*sY + d^2 = scv*mean^2`` gives
+
+        c = mean*(1 - sqrt(1 - (1+sY)*(1-scv)))/(1 + sY),   d = mean - c,
+
+    so every target in ``[sY/(1+sY), 1]`` is matched EXACTLY in ``2n+2`` phases.
+    The exponential tail is what makes the convolution reach up to SCV 1; the
+    concentrated part is what makes it reach far below the Erlang bound
+    ``1/order`` at the same order.
+
+    The order is the smallest tabulated one that reaches the target, capped by
+    ``max_phases`` when given: with a phase budget an Erlang can only reach
+    ``1/max_phases``, while this construction reaches ``O(1/max_phases^2)``, and
+    the residual SCV is then the closest achievable from below.
+
+    ``scv >= 1`` is outside the range of a concentrated ME (its SCV never
+    exceeds 0.34), and the caller keeps its own hyperexponential fit there.
+
+    Args:
+        mean: Target mean, positive.
+        scv: Target squared coefficient of variation, in (0, 1).
+        max_phases: Optional cap on the number of phases, 0 for no cap.
+
+    Returns:
+        An :class:`ME` with the requested mean and, budget permitting, SCV.
+
+    Raises:
+        ValueError: if mean is not positive, or scv is not in (0, 1).
+    """
+    mean = float(mean)
+    scv = float(scv)
+    if not np.isfinite(mean) or mean <= 0:
+        raise ValueError("fit_me_mean_scv mean must be a positive finite number")
+    if not np.isfinite(scv) or scv <= 0 or scv >= 1:
+        raise ValueError("fit_me_mean_scv requires 0 < scv < 1; use a "
+                         "hyperexponential for scv >= 1 and a CME for scv = 0")
+
+    # Smallest tabulated order whose convolution range covers the target, subject
+    # to the phase budget. reach(order) = sY/(1+sY) is the minimum SCV of the
+    # convolution, which sits just below the sY of the CME alone.
+    best_order = None
+    for order in CME.getSupportedOrders():
+        if max_phases and order + 1 > max_phases:
+            continue
+        s_y = CME.getMinSCV(order)
+        if s_y / (1.0 + s_y) <= scv:
+            best_order = order
+            break
+        best_order = order  # budget-limited: keep the most concentrated one that fits
+    if best_order is None:
+        raise ValueError("no CME order fits a budget of %d phases; the smallest "
+                         "is 3 phases plus one exponential" % max_phases)
+
+    alpha_y, A_y, s_y = _cme_representation(best_order)
+    reach = s_y / (1.0 + s_y)
+    if scv < reach:
+        # Budget-limited: the target is below what this order can reach, so the
+        # most concentrated member of the family is returned and the caller gets
+        # the closest achievable SCV rather than a silent Erlang truncation.
+        c = mean / (1.0 + s_y)
+    else:
+        c = mean * (1.0 - math.sqrt(1.0 - (1.0 + s_y) * (1.0 - scv))) / (1.0 + s_y)
+    d = mean - c
+
+    n = len(alpha_y)
+    if d <= mean * 1e-12:
+        return CME(mean, best_order)
+    if c <= mean * 1e-12:
+        return ME(np.array([1.0]), np.array([[-1.0 / mean]]))
+
+    # Convolution of two matrix exponentials: the exit flow of the first block
+    # feeds the entry of the second, exactly as for a phase-type.
+    size = n + 1
+    alpha = np.zeros(size)
+    alpha[:n] = alpha_y
+    A = np.zeros((size, size))
+    A[:n, :n] = A_y / c
+    A[:n, n] = -(A_y / c) @ np.ones(n)
+    A[n, n] = -1.0 / d
+    return ME(alpha, A, checkDensity=False)
+
+
 class CME(ME):
     """
     Concentrated Matrix Exponential distribution.

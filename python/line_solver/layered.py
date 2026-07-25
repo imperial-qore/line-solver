@@ -1054,6 +1054,7 @@ class CacheTask(Task):
         self.total_items = total_items
         self.cache_capacity = cache_capacity
         self.replacement_strategy = replacement_strategy
+        self.retrieval = False
         # Register with model
         if model is not None and hasattr(model, 'tasks'):
             model.tasks.append(self)
@@ -1069,6 +1070,20 @@ class CacheTask(Task):
         self.processor = processor
         processor.tasks.append(self)
         return self
+
+    def set_retrieval(self, retrieval: bool = True) -> 'CacheTask':
+        """Enable/disable a delayed-hit retrieval system on the cache miss path.
+
+        When set, concurrent misses for the same item arriving while a fetch (the
+        miss-branch activity and its backend calls) is in flight are parked and
+        released together as delayed hits when the fetch completes, instead of each
+        triggering an independent fetch. Mirrors MATLAB CacheTask.setRetrieval.
+        """
+        self.retrieval = bool(retrieval)
+        return self
+
+    def has_retrieval(self) -> bool:
+        return bool(getattr(self, 'retrieval', False))
 
 
 class ItemEntry(Entry):
@@ -1152,6 +1167,7 @@ class LayeredNetworkStruct:
     isasynccaller: np.ndarray = None # Async caller matrix
     isref: np.ndarray = None         # Reference task flags
     iscache: np.ndarray = None       # Cache task flags (True if task is a CacheTask)
+    hasretrieval: np.ndarray = None  # 1 on a CacheTask with a delayed-hit retrieval miss path
     nitems: np.ndarray = None        # Number of items for CacheTask/ItemEntry
     itemcap: Dict[int, np.ndarray] = field(default_factory=dict)  # Cache capacity per level
     replacestrat: np.ndarray = None  # Cache replacement strategy
@@ -1727,9 +1743,14 @@ class LayeredNetwork:
 
         # Build cache task flags (matches MATLAB: lsn.iscache = lsn.nitems > 0)
         lqn.iscache = np.zeros((nidx + 1, 1))
+        # Delayed-hit retrieval flag: 1 on a CacheTask whose miss path is a
+        # retrieval system (CacheTask.set_retrieval). Mirrors JAR lsn.hasretrieval.
+        lqn.hasretrieval = np.zeros((nidx + 1, 1))
         for task in self.tasks:
             if isinstance(task, CacheTask):
                 lqn.iscache[self._task_idx[task], 0] = 1
+                if task.has_retrieval():
+                    lqn.hasretrieval[self._task_idx[task], 0] = 1
 
         # Build cache-related arrays (matches MATLAB getStruct.m lines 66-68, 135-137, 183-184)
         lqn.nitems = np.zeros((nidx + 1, 1))
@@ -2035,13 +2056,15 @@ class LayeredNetwork:
         for task in self.tasks:
             lqn.sched[self._task_idx[task]] = task.sched_strategy.value
 
-        # Build activity precedence type arrays
-        # Matches MATLAB: actposttype, actpretype indexed by activity number (1 to nacts)
-        # Values match ActivityPrecedenceType enum IDs:
-        # ID_PRE_SEQ=1, ID_POST_SEQ=2, ID_PRE_AND=11, ID_POST_AND=12, ID_PRE_OR=21, ID_POST_OR=22
-        lqn.actposttype = np.ones(lqn.nacts + 1) * 2  # Default: POST_SEQ (2)
-        lqn.actpretype = np.ones(lqn.nacts + 1) * 1   # Default: PRE_SEQ (1)
-        lqn.actquorum = np.zeros(lqn.nacts + 1)
+        # Build activity precedence type arrays. As in MATLAB getStruct they are
+        # indexed by GLOBAL element index over 1..nidx, not by local activity
+        # number: the graph, replygraph and every consumer are global too, so a
+        # local space here would need an ashift correction at each read.
+        # Values are the ActivityPrecedenceType ids shared with MATLAB and the JAR:
+        # PRE_SEQ=1, PRE_AND=2, PRE_OR=3, POST_SEQ=11, POST_AND=12, POST_OR=13.
+        lqn.actposttype = np.ones(nidx + 1) * 11  # Default: POST_SEQ
+        lqn.actpretype = np.ones(nidx + 1) * 1    # Default: PRE_SEQ
+        lqn.actquorum = np.zeros(nidx + 1)
 
         # Populate actposttype and actpretype from precedence constraints
         for task in self.tasks:
@@ -2054,18 +2077,16 @@ class LayeredNetwork:
                         for post_act in post_activities:
                             if post_act in self._act_idx:
                                 act_idx = self._act_idx[post_act]
-                                act_local = act_idx - ashift  # Convert to local activity index
-                                if 0 < act_local <= lqn.nacts:
-                                    lqn.actposttype[act_local] = 12  # ID_POST_AND
+                                if ashift < act_idx <= ashift + lqn.nacts:
+                                    lqn.actposttype[act_idx] = 12  # ID_POST_AND
                     # AND-join: pre_activities are PRE_AND
                     pre_activities = self._get_prec_pre_activities(prec)
                     if pre_activities and len(pre_activities) > 1:
                         for pre_act in pre_activities:
                             if pre_act in self._act_idx:
                                 act_idx = self._act_idx[pre_act]
-                                act_local = act_idx - ashift
-                                if 0 < act_local <= lqn.nacts:
-                                    lqn.actpretype[act_local] = 2  # ID_PRE_AND
+                                if ashift < act_idx <= ashift + lqn.nacts:
+                                    lqn.actpretype[act_idx] = 2  # ID_PRE_AND
                         # Record the quorum on the join target. A missing or out-of-range
                         # value means the join waits for all its predecessors.
                         nbranches = len(pre_activities)
@@ -2077,9 +2098,9 @@ class LayeredNetwork:
                                 quorum = q
                         for post_act in self._get_prec_post_activities(prec):
                             if post_act in self._act_idx:
-                                act_local = self._act_idx[post_act] - ashift
-                                if 0 < act_local <= lqn.nacts:
-                                    lqn.actquorum[act_local] = quorum
+                                act_idx = self._act_idx[post_act]
+                                if ashift < act_idx <= ashift + lqn.nacts:
+                                    lqn.actquorum[act_idx] = quorum
                 elif prec_type == PrecedenceType.CHOICE:
                     # OR-fork: post_activities are POST_OR (only if multiple targets = fork, not join)
                     post_activities = self._get_prec_post_activities(prec)
@@ -2087,18 +2108,16 @@ class LayeredNetwork:
                         for post_act in post_activities:
                             if post_act in self._act_idx:
                                 act_idx = self._act_idx[post_act]
-                                act_local = act_idx - ashift
-                                if 0 < act_local <= lqn.nacts:
-                                    lqn.actposttype[act_local] = 22  # ID_POST_OR
+                                if ashift < act_idx <= ashift + lqn.nacts:
+                                    lqn.actposttype[act_idx] = 13  # ID_POST_OR
                     # OR-join: pre_activities are PRE_OR
                     pre_activities = self._get_prec_pre_activities(prec)
                     if pre_activities and len(pre_activities) > 1:
                         for pre_act in pre_activities:
                             if pre_act in self._act_idx:
                                 act_idx = self._act_idx[pre_act]
-                                act_local = act_idx - ashift
-                                if 0 < act_local <= lqn.nacts:
-                                    lqn.actpretype[act_local] = 3  # ID_PRE_OR
+                                if ashift < act_idx <= ashift + lqn.nacts:
+                                    lqn.actpretype[act_idx] = 3  # ID_PRE_OR
 
         # Build graph (adjacency matrix)
         # MATLAB convention: graph[child, parent] = 1 (element points to its parent/owner)

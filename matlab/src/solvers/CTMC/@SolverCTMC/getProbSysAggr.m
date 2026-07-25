@@ -1,6 +1,8 @@
 function Pn = getProbSysAggr(self)
 % PN = GETPROBSYSSTATEAGGR()
 
+self.assertPhaseTypeStates('getProbSysAggr');
+
 if ~isfield(self.options,'keep')
     self.options.keep = false;
 end

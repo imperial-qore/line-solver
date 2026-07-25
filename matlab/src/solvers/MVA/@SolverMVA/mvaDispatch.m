@@ -14,7 +14,9 @@ function out = mvaDispatch(self, sn, options)
 % All rights reserved.
 
             line_debug(options, 'Product-form check: hasProductForm=%d (exact method requested)', self.model.hasProductFormSolution);
-            if strcmp(options.method,'exact')  && ~self.model.hasProductFormSolution
+            % OI/PAS are exactly solvable via solver_mva_oi_analyzer; exempt from the product-form guard (see _kb/06-solver-catalog.md, MVA OI dispatch)
+            hasOIorPAS = any(sn.sched == SchedStrategy.OI | sn.sched == SchedStrategy.PAS);
+            if strcmp(options.method,'exact')  && ~self.model.hasProductFormSolution && ~hasOIorPAS
                 line_error(mfilename,'The exact method requires the model to have a product-form solution. This model does not have one.\nYou can use Network.hasProductFormSolution() to check before running the solver.\n Run the ''mva'' method to obtain an approximation based on the exact MVA algorithm.\n');
             end
             if strcmp(options.method,'mva') && ~self.model.hasProductFormSolution
@@ -31,7 +33,68 @@ function out = mvaDispatch(self, sn, options)
                 isSizeBasedPolicy = ismember(schedType, [SchedStrategy.SRPT, SchedStrategy.PSJF, SchedStrategy.FB, SchedStrategy.LRPT, SchedStrategy.SETF]);
             end
 
-            if sn.nclosedjobs == 0 && length(sn.nodetype)==3 && all(sort(sn.nodetype)' == sort([NodeType.Source,NodeType.Queue,NodeType.Sink])) && isSizeBasedPolicy
+            % Check for order-independent (OI) queues. An OI station is a PAS/OI
+            % queue with an all-zero swap graph and a service-rate function;
+            % detect it the same way the NC-oi path does (nc_is_oi_model),
+            % not via a nodeparam flag (which is never populated).
+            noi_idx = [];
+            if ~any(isinf(sn.njobs))
+                for ist = 1:sn.nstations
+                    if sn.sched(ist) ~= SchedStrategy.PAS && sn.sched(ist) ~= SchedStrategy.OI
+                        continue;
+                    end
+                    ind = sn.stationToNode(ist);
+                    if ind < 1 || ind > numel(sn.nodeparam) || ~isstruct(sn.nodeparam{ind}) ...
+                            || ~isfield(sn.nodeparam{ind}, 'swapGraph') ...
+                            || ~isfield(sn.nodeparam{ind}, 'svcRateFun') || isempty(sn.nodeparam{ind}.svcRateFun)
+                        continue;
+                    end
+                    sg = sn.nodeparam{ind}.swapGraph;
+                    if isempty(sg) || any(sg(:) ~= 0)
+                        continue;
+                    end
+                    noi_idx = ist;
+                    break;
+                end
+            end
+
+            ci_cache = find(sn.nodetype == NodeType.Cache, 1);
+            hasRetrieval = ~isempty(ci_cache) && isfield(sn.nodeparam{ci_cache}, 'retrievalSystemCapacity') ...
+                && sn.nodeparam{ci_cache}.retrievalSystemCapacity > 0;
+            hasOIStation = any(sn.sched == SchedStrategy.OI | sn.sched == SchedStrategy.PAS);
+            if ~isempty(noi_idx) && nc_is_oi_model(sn) && any(strcmpi(options.method,{'default','exact'}))
+                % Order-independent queueing network
+                line_debug(options, 'MVA: order-independent closed network, routing to solver_mva_oi_analyzer');
+                [QN,UN,RN,TN,CN,XN,lG,runtime,lastiter,actualmethod] = solver_mva_oi_analyzer(sn, options);
+            elseif hasOIStation
+                % MVA supports OI/PAS stations only via the exact path above;
+                % see _kb/06-solver-catalog.md (MVA section) for why AMVA cannot.
+                line_error(mfilename, sprintf(['SolverMVA supports order-independent (OI) and pass-and-swap (PAS) stations only\n' ...
+                    'through its exact order-independent analyzer, which requires method ''default'' or ''exact''\n' ...
+                    '(got ''%s''), an empty/zero swap graph at every OI/PAS station, a closed model, and every\n' ...
+                    'other station to be product-form (INF, PS, LCFS-PR, SIRO, or class-independent-rate FCFS).\n' ...
+                    'Use SolverCTMC or SolverLDES for this model.'], options.method));
+            elseif hasRetrieval % delayed-hit (retrieval-system) cache
+                if any(sn.nodetype == NodeType.Source)
+                    line_debug(options, 'Open delayed-hit retrieval cache, routing to mva_retrieval_analyzer');
+                    [QN,UN,RN,TN,CN,XN,lG,hitprob,missprob,delayedprob,hitproblist,itemprob,latency,runtime,actualmethod] = solver_mva_retrieval_analyzer(sn, options);
+                else
+                    line_debug(options, 'Closed integrated delayed-hit retrieval cache, routing to mva_cacheqn_retrieval_analyzer');
+                    [QN,UN,RN,TN,CN,XN,lG,hitprob,missprob,delayedprob,hitproblist,itemprob,latency,runtime,actualmethod] = solver_mva_cacheqn_retrieval_analyzer(sn, options);
+                end
+                lastiter = NaN;
+                for ind = 1:sn.nnodes
+                    if sn.nodetype(ind) == NodeType.Cache
+                        self.model.nodes{ind}.setResultHitProb(hitprob);
+                        self.model.nodes{ind}.setResultMissProb(missprob);
+                        self.model.nodes{ind}.setResultDelayedHitProb(delayedprob);
+                        self.model.nodes{ind}.setResultHitProbList(hitproblist);
+                        self.model.nodes{ind}.setResultItemProb(itemprob);
+                        self.model.nodes{ind}.setResultResidT(latency);
+                    end
+                end
+                self.model.refreshStruct(true);
+            elseif sn.nclosedjobs == 0 && length(sn.nodetype)==3 && all(sort(sn.nodetype)' == sort([NodeType.Source,NodeType.Queue,NodeType.Sink])) && isSizeBasedPolicy
                 % Multiclass open system with size-based scheduling (SRPT, PSJF, FB, LRPT, SETF)
                 line_debug(options, 'Size-based scheduling detected (%s), routing to qsys_sizebased_analyzer', char(schedType));
                 [QN,UN,RN,TN,CN,XN,lG,runtime,lastiter,actualmethod] = solver_mva_qsys_sizebased_analyzer(sn, options, schedType);

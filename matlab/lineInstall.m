@@ -34,6 +34,21 @@ if (isunix & result == 127) | (ispc & result > 0) %#ok<AND2> % command not found
     warning('WARNING: LQNS is not installed, this may be required by some LINE methods. Download it at: https://github.com/layeredqueuing/dist')
     hasWarnings = true;
 end
+disp('Checking symbolic backend (line-sage-rest)...')
+[dstatus,~] = system('docker info');
+if dstatus ~= 0
+    warning(['WARNING: Docker is not available, so the SageMath symbolic backend cannot start. ', ...
+        'It is required by SolverCTMC/SolverFluid symbolic methods (config.symbolic=''sage''). ', ...
+        'Install Docker, then run: docker run -d -p 8080:8080 imperialqore/line-sage-rest:latest'])
+    hasWarnings = true;
+else
+    [istatus,iresult] = system('docker images -q imperialqore/line-sage-rest');
+    if istatus ~= 0 || isempty(strtrim(iresult))
+        warning(['WARNING: the line-sage-rest image is not present locally, this may be required by some LINE methods. ', ...
+            'Pull it with: docker run -d -p 8080:8080 imperialqore/line-sage-rest:latest'])
+        hasWarnings = true;
+    end
+end
 disp('Checking JMT...')
 lineStart;
 jmtGetPath;

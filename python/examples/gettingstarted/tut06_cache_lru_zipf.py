@@ -34,5 +34,5 @@ P.set(missClass, clientClass, cacheDelay, clientDelay, 1.0)
 # routing from cacheNode
 model.link(P)
 # %%
-ssaAvgTablePara = SSA(model, samples=20000, seed=1, verbose=True, method='serial').avg_table()
+ssaAvgTablePara = SSA(model, samples=20000, seed=23000, verbose=True, method='serial').avg_table()
 print(ssaAvgTablePara)

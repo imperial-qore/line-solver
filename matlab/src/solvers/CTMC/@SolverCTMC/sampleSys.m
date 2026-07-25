@@ -1,5 +1,7 @@
 function tranSysState = sampleSys(self, numEvents)
 % TRANSYSSTATE = SAMPLESYS(NUMSAMPLES)
+self.assertPhaseTypeStates('sampleSys');
+
 options = self.getOptions;
 options.force = true;
 if isempty(self.result) || ~isfield(self.result,'infGen')

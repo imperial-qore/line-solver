@@ -1064,7 +1064,11 @@ public class SolverFluid extends NetworkSolver {
         String origMethod = options.method;
         
         // see _kb/06-solver-catalog.md (JAR-only implementation notes: non-Markovian to phase-type conversion before initSol)
+        // the fluid ODEs read mu*phi as a flow, so the surrogate must be a genuine phase-type
+        String phfit0 = this.options.config.phfit;
+        this.options.config.phfit = "ph";
         sn = SnNonmarkovToPh.snNonmarkovToPh(this.model.getStruct(), this.options, false);
+        this.options.config.phfit = phfit0;
 
         // Explicit check for Fork/Join nodes - SolverFluid does not support them
         for (int i = 0; i < sn.nnodes; i++) {
@@ -1318,7 +1322,11 @@ public class SolverFluid extends NetworkSolver {
             NetworkStruct sn_cur = this.model.getStruct(true).copy();
 
             // see _kb/06-solver-catalog.md (JAR-only implementation notes: non-Markovian to phase-type conversion before initSol)
+            // the fluid ODEs read mu*phi as a flow, so the surrogate must be a genuine phase-type
+            String phfitIter0 = options.config.phfit;
+            options.config.phfit = "ph";
             sn_cur = SnNonmarkovToPh.snNonmarkovToPh(sn_cur, options, false);
+            options.config.phfit = phfitIter0;
 
             //System.out.println("Prior probability (s0prior_val): " + s0prior_val);
 

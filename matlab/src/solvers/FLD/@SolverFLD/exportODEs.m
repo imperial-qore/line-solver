@@ -39,6 +39,9 @@ end
 
 options = self.getOptions;
 sn = self.getStruct;
+% SSA draws a sample path and the fluid ODEs read mu*phi as a flow, so their
+% surrogate must be a genuine phase-type: a matrix exponential has neither.
+options.config.phfit = 'ph';
 sn = sn_nonmarkov_toph(sn, options);
 sys = solver_fluid_symodes(sn, options);
 sys.x0 = build_x0(sys, sn, options);

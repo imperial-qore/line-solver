@@ -14,10 +14,13 @@ import jline.util.matrix.Matrix;
  * per-class demand L and an aggregated delay of think time Z.
  *
  * <p>This is the load-independent case of {@link Pfqn_ld_is} (capacities
- * mu_i(k) = 1): both are the same sample-an-ordering estimator, differing only
- * in the per-position factor of each station's balance function. For a
- * single-server queue that factor is the demand of the class at that position,
- * L(i,q_p); for the delay it is Z(q_p)/p.
+ * mu_i(k) = 1), and the ordinary-network counterpart of the order-independent
+ * {@link Pfqn_oi_is} and the pass-and-swap {@link Pfqn_pas_is}: all four are the
+ * same sample-an-ordering estimator, differing only in the per-position factor
+ * of each station's balance function. For a single-server queue that factor is
+ * the demand of the class at that position, L(i,q_p); for the delay it is
+ * Z(q_p)/p; for an OI/P&amp;S station it is the reciprocal rank rate
+ * 1/mu_i(supp(q_1..q_p)).
  *
  * <p>Writing ell = sum(N), an ordering c of all ell jobs is drawn by placing a
  * uniformly random present class at each step (probability p(c) = product of the
@@ -29,6 +32,8 @@ import jline.util.matrix.Matrix;
  * <p>Port of matlab/src/api/pfqn/pfqn_is.m.
  *
  * @see Pfqn_ld_is
+ * @see Pfqn_oi_is
+ * @see Pfqn_pas_is
  */
 public final class Pfqn_is {
     private Pfqn_is() {}

@@ -29,13 +29,21 @@ function [MomentTable, mom] = getMomentTable(self, order)
 % L(j,s) dQ(i,r)/dL(j,s), evaluated by the pfqn_sens_* family; see
 % _kb/03-api-layer.md.
 %
-% RESPONSE-TIME MOMENTS ARE FCFS-ONLY. RespTVar and RespTSCV are NaN at any
-% station that is not FCFS, and in open or mixed models. This is a limitation
-% of the theory, not of the implementation: the sojourn-time distribution at a
-% processor-sharing or LCFS center is not known in general (Strelen 1990,
-% Section 4), so there is no correct value to report and a wrong one is worse
-% than a blank. The mean RespT is always reported, since it needs no
-% distributional result.
+% RESPONSE-TIME MOMENTS ARE FCFS OR PROCESSOR-SHARING. RespTVar and RespTSCV
+% are NaN at any station that is neither, and at an LCFS center in particular,
+% because the sojourn-time distribution there is not known in general (Strelen
+% 1990, Section 4) and a wrong value is worse than a blank. The mean RespT is
+% always reported, since it needs no distributional result.
+%
+% The FCFS moments come from pfqn_sens_respt and are closed-model only. The
+% processor-sharing moments come from Mitra and Morrison (1983) and cover two
+% configurations, both requiring exponential single-server service:
+%   purely open   -> qsys_mm1_ps, exact, at any PS station whose arrivals are
+%                    Poisson, that is, that lies on no routing cycle
+%   purely closed -> pfqn_respt_ps_moments, for the terminal-driven system the
+%                    paper analyses: one PS station visited once per think
+%                    cycle, with delay stations holding the think time
+% A PS station outside those configurations keeps RespTVar = NaN.
 %
 % Scope by model type:
 %   closed, single-server            -> pfqn_sens_mva
@@ -47,7 +55,9 @@ function [MomentTable, mom] = getMomentTable(self, order)
 % MOM is a struct carrying the raw results: .qlen is the underlying
 % pfqn_sens_mva / pfqn_sens_mvaldmx struct (with the full covariance matrices,
 % not just the diagonal this table shows), .respt is the pfqn_sens_respt struct
-% or empty. Use it when the per-pair covariances are needed.
+% or empty, and .psrespt is the pfqn_respt_ps_moments struct or empty. Use it
+% when the per-pair covariances, or the route taken at a PS station, are
+% needed.
 %
 % Per-station TOTAL moments, including the third moment and the skewness, are
 % in getMomentStationTable: they are only defined for a station total, because
@@ -72,7 +82,7 @@ isOpen = any(isinf(N));
 isClosed = any(isfinite(N) & N > 0);
 isMixed = isOpen && isClosed;
 
-mom = struct('qlen', [], 'respt', [], 'qlenmom', []);
+mom = struct('qlen', [], 'respt', [], 'qlenmom', [], 'psrespt', []);
 QLen = zeros(Mq, R);
 QLenVar = zeros(Mq, R);
 
@@ -182,6 +192,66 @@ for ist = 1:Mq
                 if max(order) >= 3
                     RespTSkew(ist, r) = mom.respt.WSkew(ist, r);
                 end
+            end
+        end
+    end
+end
+
+% ---- response-time moments at processor-sharing stations ------------------
+% Mitra and Morrison (1983) supply the sojourn-time moments the FCFS block
+% above cannot reach: exactly at an open PS station fed by Poisson streams,
+% and by expansion (or by exact enumeration when small) in the closed
+% terminal-driven system. see _kb/05-solvers-overview.md for the scope
+mom.psrespt = [];
+if any(order == 2) && ~isMixed && Mq > 0
+    psQueues = [];
+    for ist = 1:Mq
+        if sn.sched(sn.nodeToStation(queueIndices(ist))) == SchedStrategy.PS
+            psQueues(end+1) = ist; %#ok<AGROW>
+        end
+    end
+    if isOpen
+        for ist = psQueues
+            sIdx = sn.nodeToStation(queueIndices(ist));
+            visiting = find(D(ist, :) > 0);
+            if Ssrv(ist) ~= 1 || ~ratesAreExponential(sn, sIdx, visiting) ...
+                    || ~stationIsFeedbackFree(sn, sIdx, R)
+                continue
+            end
+            muSt = ones(1, R);
+            lamSt = zeros(1, R);
+            for r = visiting
+                muSt(r) = sn.rates(sIdx, r);
+                lamSt(r) = lambda(r) * D(ist, r) * sn.rates(sIdx, r);
+            end
+            if sum(lamSt ./ muSt) >= 1
+                continue
+            end
+            [Wps, W2ps] = qsys_mm1_ps(lamSt, muSt);
+            for r = visiting
+                RespTVar(ist, r) = W2ps(r) - Wps(r)^2;
+            end
+        end
+    elseif numel(psQueues) == 1 && Mq == 1
+        % the paper's closed system: terminals in series with one PS CPU
+        ist = psQueues(1);
+        sIdx = sn.nodeToStation(queueIndices(ist));
+        visiting = find(D(ist, :) > 0);
+        Vps = D(ist, visiting) .* sn.rates(sIdx, visiting);
+        singleVisit = all(abs(Vps - 1) <= GlobalConstants.CoarseTol);
+        if Ssrv(ist) == 1 && ratesAreExponential(sn, sIdx, visiting) && singleVisit ...
+                && all(Ztot(visiting) > 0)
+            Sps = ones(1, R);
+            Zps = ones(1, R);
+            Nps = zeros(1, R);
+            for r = visiting
+                Sps(r) = 1 / sn.rates(sIdx, r);
+                Zps(r) = Ztot(r);
+                Nps(r) = N(r);
+            end
+            [Wps, W2ps, mom.psrespt] = pfqn_respt_ps_moments(Sps, Nps, Zps);
+            for r = visiting
+                RespTVar(ist, r) = W2ps(r) - Wps(r)^2;
             end
         end
     end
@@ -312,6 +382,47 @@ for r = 1:R
         return;
     end
 end
+end
+
+% =========================================================================
+function ok = ratesAreExponential(sn, sIdx, classes)
+% The PS sojourn-time moments of Mitra and Morrison assume exponential
+% service; a phase-type service leaves the mean intact but not the moments.
+ok = true;
+for r = classes
+    if sn.procid(sIdx, r) ~= ProcessType.EXP
+        ok = false;
+        return;
+    end
+end
+end
+
+% =========================================================================
+function ok = stationIsFeedbackFree(sn, sIdx, R)
+% An open PS station sees Poisson arrivals only when no job can return to it,
+% which is Melamed's condition: the station must lie on no routing cycle. The
+% test aggregates the classes, so a cycle closed through a class switch also
+% disqualifies the station.
+M = sn.nstations;
+adj = false(M, M);
+for i = 1:M
+    nt = sn.nodetype(sn.stationToNode(i));
+    if nt == NodeType.Source || nt == NodeType.Sink
+        continue   % jobs never leave a sink, and the rt arc back to the source is bookkeeping
+    end
+    for j = 1:M
+        blk = sn.rt((i-1)*R + (1:R), (j-1)*R + (1:R));
+        adj(i, j) = any(blk(:) > 0);
+    end
+end
+reach = adj(sIdx, :);
+frontier = find(reach);
+while ~isempty(frontier)
+    nxt = any(adj(frontier, :), 1) & ~reach;
+    reach = reach | nxt;
+    frontier = find(nxt);
+end
+ok = ~reach(sIdx);
 end
 
 % =========================================================================

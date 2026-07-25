@@ -32,8 +32,40 @@ public final class Solver_nc {
         int K = sn.nclasses;
         long startTime = System.nanoTime();
 
-        // 'is' is the sample-an-ordering importance-sampling family. Every
-        // CLOSED product-form network falls through to the standard
+        // Order-independent (OI) closed network: auto-detected when the closed
+        // model consists solely of OI and delay stations. Solved exactly by the
+        // balanced-fairness normalizing constant (pfqn_ncoi) with the OI
+        // functional-server (pfqn_oi_fnc) identity for the mean queue lengths.
+        // Intercept BEFORE the generic normalizing-constant path (e.g. the
+        // comomld 2-station branch). There is no explicit 'oi' selector: the
+        // OI path is reached only from 'default'/'exact', matching SolverMVA.
+        boolean oiAuto = Solver_nc_oi.nc_is_oi_model(sn)
+                && options.method != null
+                && (options.method.equalsIgnoreCase("default") || options.method.equalsIgnoreCase("exact"));
+        if (oiAuto) {
+            return Solver_nc_oi.solver_nc_oi(sn, options);
+        }
+
+        // Importance sampling ('is') specialized to OI / pass-and-swap (P&S)
+        // stations: the auto-normalized IS normalizing constant Pfqn_pas_is
+        // (which reduces to the OI case when the swap graph is empty). Triggers
+        // on the explicit IS selector 'is'; on 'sampling', which maps to 'is' in
+        // the presence of OI/PAS stations rather than the generic Pfqn_mci /
+        // Pfqn_ls estimators; and on 'default' for a P&S tandem with a non-empty
+        // swap graph, which is reducible and has no exact path (a pure-OI tandem
+        // on 'default'/'exact' is caught by the exact OI analyzer above).
+        boolean pasAuto = Solver_nc_pas_is.nc_is_pas_model(sn)
+                && options.method != null
+                && (options.method.equalsIgnoreCase("default")
+                    || options.method.equalsIgnoreCase("is")
+                    || options.method.equalsIgnoreCase("sampling"));
+        if (pasAuto) {
+            return Solver_nc_pas_is.solver_nc_pas_is(sn, options);
+        }
+
+        // 'is' is the sample-an-ordering importance-sampling family. OI /
+        // pass-and-swap stations are handled above (Pfqn_pas_is / Pfqn_oi_is);
+        // every other CLOSED product-form network falls through to the standard
         // normalizing-constant path, where Pfqn_nc routes 'is' to Pfqn_is
         // (load-independent) and Pfqn_ncld routes it to Pfqn_ld_is
         // (load-dependent). The estimator has no open-class form.

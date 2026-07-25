@@ -181,7 +181,7 @@ classdef LINE < SolverAuto
                     if strcmp(options.method,'fluid'), options.method='default'; end
                     options.method = erase(options.method,'fluid.');
                     result = SolverFluid(model, options);
-                case {'nc','nc.exact','nc.imci','nc.ls','comom','comomld','cub','ls','nc.le','le','mmint2','nc.panacea','nc.pana','nc.mmint2','nc.kt','nc.deterministic','nc.sampling','nc.propfair','nc.comom','nc.comomld','nc.mom','nc.cub','nc.brute','nc.rd', 'nc.nr.probit', 'nc.nr.logit','nc.gm'}
+                case {'nc','nc.exact','nc.imci','nc.ls','comom','comomld','cub','ls','nc.le','le','mmint2','nc.panacea','nc.pana','nc.panaceald','panaceald','nc.mmint2','nc.kt','nc.deterministic','nc.sampling','nc.propfair','nc.comom','nc.comomld','nc.mom','nc.cub','nc.brute','nc.rd', 'nc.nr.probit', 'nc.nr.logit','nc.gm'}
                     if strcmp(options.method,'nc'), options.method='default'; end
                     options.method = erase(options.method,'nc.');
                     result = SolverNC(model, options);

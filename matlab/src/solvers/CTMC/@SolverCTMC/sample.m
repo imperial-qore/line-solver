@@ -52,6 +52,8 @@ function S = sample(self, node, numEvents)
 % title('Sample Path at Queue1');
 % @endcode
 
+self.assertPhaseTypeStates('sample');
+
 options = self.getOptions;
 options.force = true;
 if isempty(self.result) || ~isfield(self.result,'infGen')

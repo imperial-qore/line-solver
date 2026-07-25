@@ -43,11 +43,20 @@ if isfield(sn,'retrialProc') && ~isempty(sn.retrialProc)
         end
     end
 end
-% see _kb/06-solver-catalog.md (CTMC section, support gates) for rationale
+% see _kb/06-solver-catalog.md (CTMC section, support gates) for rationale, incl. the REPLY-signal exception
 if isfield(sn,'issignal') && ~isempty(sn.issignal) && any(sn.issignal)
+    annihilated = sn.issignal(:)';
+    if isfield(sn,'signaltype') && ~isempty(sn.signaltype)
+        for rr = 1:sn.nclasses
+            if annihilated(rr) && numel(sn.signaltype) >= rr && ~isempty(sn.signaltype{rr}) ...
+                    && ~any(isnan(sn.signaltype{rr})) && sn.signaltype{rr} == SignalType.REPLY
+                annihilated(rr) = false;
+            end
+        end
+    end
     for ii = 1:sn.nstations
         if sn.sched(ii) ~= SchedStrategy.EXT
-            sn.classcap(ii, sn.issignal(:)') = 0;
+            sn.classcap(ii, annihilated) = 0;
         end
     end
 end
@@ -102,6 +111,9 @@ end
 nstateful = sn.nstateful;
 nclasses = sn.nclasses;
 sync = sn.sync;
+% True when at least one service or arrival process is a matrix exponential, so
+% that the generator legitimately carries negative off-diagonal entries.
+hasMEproc = isfield(sn,'isph') && ~isempty(sn.isph) && ~all(sn.isph(:));
 A = length(sync);
 csmask = sn.csmask;
 
@@ -202,7 +214,16 @@ for a=1:A
             continue
         end
         for ia=1:length(new_state_a)
-            if rate_a(ia)>0
+            % A matrix-exponential process embeds in the generator exactly as a
+            % phase-type does, except that the off-diagonal entries of D0 and the
+            % completion vector -A*e may be negative. Those transitions are part
+            % of the balance equations: dropping them leaves the diagonal to
+            % absorb their mass and silently answers a different model (an
+            % M/CME/1 lost 3% of its mean queue length). The stationary vector is
+            % then a signed measure whose aggregates over each phase block are
+            % still the exact probabilities. See sn.isph and
+            % _kb/04-networkstruct.md.
+            if rate_a(ia)~=0 && (rate_a(ia)>0 || hasMEproc)
                 % SPN code:
                 %if rate_a(ia)>0 || modes_a(ia) > 0
                 node_p = sync{a}.passive{1}.node;
@@ -650,9 +671,27 @@ Q = ctmc_makeinfgen(Q);
 %% drop states unreachable from the initial state
 % see _kb/06-solver-catalog.md (CTMC section, unreachable-state pruning) for rationale
 if ~isempty(sn.state) && all(~cellfun(@isempty, sn.state))
-    initState = matchrow(stateSpace, cell2mat(sn.state'));
+    % The per-station initial rows carry only as many buffer slots as the
+    % initial population needs, while the enumerated local space is sized for
+    % the full capacity. Left-pad each row to its space width (empty buffer
+    % slots pad the left, so the server-phase and local-variable tail stays
+    % aligned) before matching; without this the lookup fails and the pruning
+    % below is silently skipped, leaving any enumerated-but-unreachable
+    % absorbing state to break ctmc_solve.
+    initRow = [];
+    for isf = 1:sn.nstateful
+        row_isf = sn.state{isf};
+        row_isf = row_isf(1,:);
+        w_isf = size(sn.space{isf},2);
+        if numel(row_isf) < w_isf
+            row_isf = [zeros(1, w_isf-numel(row_isf)), row_isf];
+        end
+        initRow = [initRow, row_isf]; %#ok<AGROW>
+    end
+    initState = matchrow(stateSpace, initRow);
     if initState > 0
-        adj = (Q - diag(diag(Q))) > 0;
+        % any nonzero off-diagonal is an arc: an ME embeds with negative ones
+        adj = abs(Q - diag(diag(Q))) > 1e-12;
         reach = false(size(Q,1),1);
         reach(initState) = true;
         frontier = initState;

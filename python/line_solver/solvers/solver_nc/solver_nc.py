@@ -303,6 +303,7 @@ class SolverNC(ForkJoinDriverMixin, NetworkSolver):
             line_debug("NC: fork-join network detected, routing to fork_join_analysis", options=self.options)
             fj_result = self._run_fork_join_analysis()
             if fj_result is not None:
+                self._extract_names()
                 return fj_result
 
         if sn is not None and getattr(sn, 'immfeed', None) is not None and np.any(sn.immfeed):
@@ -320,6 +321,48 @@ class SolverNC(ForkJoinDriverMixin, NetworkSolver):
         if has_cache:
             line_debug("Non-reentrant cache (Source-Cache-Sink), routing to nc_cache_analyzer", options=self.options)
             return self._runCacheAnalyzer()
+
+        # see _kb/06-solver-catalog.md (NC: "Analyzer routing order: OI exact,
+        # PAS/OI importance sampling, MEM")
+        from .solver_nc_oi_analyzer import nc_is_oi_model, solver_nc_oi_analyzer
+        if sn is not None and nc_is_oi_model(sn) and self.options.method in ('default', 'exact'):
+            from ...api.solvers.nc.handler import SolverNCReturn
+            line_debug("NC analyzer routing to solver_nc_oi_analyzer (order-independent)", options=self.options)
+            QN, UN, RN, TN, CN, XN, lG, oi_rt, oi_it, oi_method = solver_nc_oi_analyzer(sn, self.options)
+            self._result = SolverNCReturn(
+                Q=QN, U=UN, R=RN, T=TN,
+                nchains=int(getattr(sn, 'nchains', 1)),
+                X=XN, lG=float(lG),
+                STeff=np.zeros_like(QN), it=int(oi_it),
+                runtime=oi_rt, method=oi_method,
+            )
+            self._extract_names()
+            if self.options.verbose:
+                import sys
+                py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+                print(f"NC analysis [method: {method_label(self.options.method, oi_method)}, lang: python, env: {py_version}] completed in {self._result.runtime:.6f}s.")
+            return self
+
+        # see _kb/06-solver-catalog.md (NC: "Analyzer routing order")
+        from .solver_nc_pas_is_analyzer import nc_is_pas_model, solver_nc_pas_is_analyzer
+        _is_pas = sn is not None and nc_is_pas_model(sn)
+        if _is_pas and self.options.method in ('default', 'is', 'sampling'):
+            from ...api.solvers.nc.handler import SolverNCReturn
+            line_debug("NC analyzer routing to solver_nc_pas_is_analyzer (pass-and-swap IS)", options=self.options)
+            QN, UN, RN, TN, CN, XN, lG, ps_rt, ps_it, ps_method = solver_nc_pas_is_analyzer(sn, self.options)
+            self._result = SolverNCReturn(
+                Q=QN, U=UN, R=RN, T=TN,
+                nchains=int(getattr(sn, 'nchains', 1)),
+                X=XN, lG=float(lG),
+                STeff=np.zeros_like(QN), it=int(ps_it),
+                runtime=ps_rt, method=ps_method,
+            )
+            self._extract_names()
+            if self.options.verbose:
+                import sys
+                py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+                print(f"NC analysis [method: {method_label(self.options.method, ps_method)}, lang: python, env: {py_version}] completed in {self._result.runtime:.6f}s.")
+            return self
 
         # see _kb/06-solver-catalog.md (NC: "Analyzer routing order")
         if self.options.method == 'is' and sn is not None and sn.njobs is not None \
@@ -449,7 +492,7 @@ class SolverNC(ForkJoinDriverMixin, NetworkSolver):
         method = self.options.method
 
         # see _kb/06-solver-catalog.md (NC: "Multiserver -> load-dependent conversion")
-        if method in ('exact', 'is') and not _is_pas and has_multiserver and not has_open:
+        if method in ('exact', 'is', 'panaceald') and not _is_pas and has_multiserver and not has_open:
             line_debug("%s method: converting multiserver stations to load-dependent" % method, options=self.options)
             # Transform multi-server nodes into lldscaling (like MATLAB lines 69-80 in runAnalyzer.m)
             njobs = sn.njobs.flatten() if sn.njobs is not None else np.zeros(sn.nclasses)
@@ -497,6 +540,10 @@ class SolverNC(ForkJoinDriverMixin, NetworkSolver):
 
         # Check if lldscaling is already set
         if hasattr(sn, 'lldscaling') and sn.lldscaling is not None and sn.lldscaling.size > 0:
+            use_ld_solver = True
+
+        # load-dependent normalizing-constant methods always route to ncld
+        if method in ('rd', 'nrp', 'nrl', 'comomld', 'panaceald'):
             use_ld_solver = True
 
         # see _kb/06-solver-catalog.md (NC: "Class-dependent (beta) scaling")
@@ -574,6 +621,10 @@ class SolverNC(ForkJoinDriverMixin, NetworkSolver):
         from ...api.solvers.nc.handler import (
             solver_nc_cache_analyzer, solver_nc_cacheqn_analyzer, SolverOptions as HandlerOptions
         )
+        from ...api.retrieval.analyzers import (
+            solver_nc_retrieval_analyzer, solver_nc_cacheqn_retrieval_analyzer,
+            has_retrieval_cache, _has_source
+        )
         from ...api.sn.network_struct import NodeType
 
         sn = self._sn
@@ -604,7 +655,14 @@ class SolverNC(ForkJoinDriverMixin, NetworkSolver):
             seed=getattr(self.options, 'seed', None),
         )
 
-        if is_standalone_cache:
+        if has_retrieval_cache(sn):
+            # Delayed-hit cache with a retrieval system: open (Source) -> product-form
+            # retrieval analyzer; closed integrated -> da_cacheqn_retrieval driver.
+            if _has_source(sn):
+                cache_result = solver_nc_retrieval_analyzer(sn, handler_options)
+            else:
+                cache_result = solver_nc_cacheqn_retrieval_analyzer(sn, handler_options)
+        elif is_standalone_cache:
             # Standalone cache network: use direct cache analyzer
             cache_result = solver_nc_cache_analyzer(sn, handler_options)
         else:
@@ -707,8 +765,15 @@ class SolverNC(ForkJoinDriverMixin, NetworkSolver):
                         cache_param.actualhitprob = actualhitprob
                         cache_param.actualmissprob = actualmissprob
 
-                        # Per-item occupancy across lists (plain multi-list caches, e.g. HLRU)
+                        # Delayed-hit retrieval: per-class delayed-hit fraction and
+                        # per-list hit fractions (None/absent for plain caches).
+                        dhp = getattr(cache_result, 'delayedprob', None)
+                        hpl = getattr(cache_result, 'hitproblist', None)
                         ipb = getattr(cache_result, 'itemprob', None)
+                        if dhp is not None:
+                            cache_param.actualdelayedhitprob = np.asarray(dhp)[0, :]
+                        if hpl is not None:
+                            cache_param.actualhitproblist = np.asarray(hpl)
                         if ipb is not None:
                             cache_param.actualitemprob = np.asarray(ipb)
 
@@ -719,8 +784,16 @@ class SolverNC(ForkJoinDriverMixin, NetworkSolver):
                                 cache_node.set_result_hit_prob(actualhitprob)
                             if actualmissprob is not None and hasattr(cache_node, 'set_result_miss_prob'):
                                 cache_node.set_result_miss_prob(actualmissprob)
+                            if dhp is not None and hasattr(cache_node, 'set_result_delayed_hit_prob'):
+                                cache_node.set_result_delayed_hit_prob(np.asarray(dhp)[0, :])
+                            if hpl is not None and hasattr(cache_node, 'set_result_hit_prob_list'):
+                                cache_node.set_result_hit_prob_list(np.asarray(hpl))
                             if ipb is not None and hasattr(cache_node, 'set_result_item_prob'):
                                 cache_node.set_result_item_prob(np.asarray(ipb))
+                            # Delayed-hit retrieval: expected latency Z (NaN for non-retrieval)
+                            el = getattr(cache_result, 'expected_latency', None)
+                            if el is not None and hasattr(cache_node, 'set_result_residt'):
+                                cache_node.set_result_residt(np.asarray(el)[0, :])
 
         return self
 
@@ -1131,7 +1204,8 @@ class SolverNC(ForkJoinDriverMixin, NetworkSolver):
             - 'le': Leading eigenvalue asymptotic
             - 'mmint2': Gauss-Legendre quadrature
             - 'gleint': Gauss-Legendre integration
-            - 'panacea': Hybrid convolution/MVA
+            - 'panacea': PANACEA asymptotic expansion (load-independent)
+            - 'panaceald': PANACEA asymptotic expansion (load-dependent)
             - 'kt': Knessl-Tier expansion
             - 'sampling': Monte Carlo sampling
             - 'propfair': Proportionally fair allocation
@@ -1145,7 +1219,7 @@ class SolverNC(ForkJoinDriverMixin, NetworkSolver):
         return [
             'default', 'exact', 'erlangfp', 'mci', 'ca', 'clw',
             'imci', 'ls',
-            'le', 'mmint2', 'gleint', 'panacea',
+            'le', 'mmint2', 'gleint', 'panacea', 'panaceald',
             'kt', 'sampling', 'is',
             'propfair', 'comom', 'cub', 'gm',
             'rd', 'nrl', 'nrp', 'mem',
@@ -1249,9 +1323,9 @@ class SolverNC(ForkJoinDriverMixin, NetworkSolver):
             'SchedStrategy_INF', 'SchedStrategy_PS', 'SchedStrategy_SIRO',
             'SchedStrategy_LCFS', 'SchedStrategy_LCFSPR',
             'RoutingStrategy_PROB', 'RoutingStrategy_RAND',
-            'SchedStrategy_FCFS',
+            'SchedStrategy_FCFS', 'SchedStrategy_OI', 'SchedStrategy_PAS',
             'ClosedClass', 'SelfLoopingClass',
-            'Cache', 'CacheClassSwitcher', 'OpenClass',
+            'Cache', 'CacheClassSwitcher', 'OpenClass', 'CacheRetrieval',
             # NC only supports RR and FIFO replacement, not LRU
             'ReplacementStrategy_RR', 'ReplacementStrategy_FIFO',
             'ReplacementStrategy_HLRU',

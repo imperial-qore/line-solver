@@ -72,6 +72,17 @@ cd ../doc
 
 You can browse the JAR class hierarchy at [this page](https://line-solver.sourceforge.net/javadoc/index.html).
 
+## Symbolic backend (first-time setup)
+The symbolic methods of `SolverCTMC`/`SolverFluid` are the JAR's only route to computer algebra: they delegate to a SageMath service packaged as the Docker image [`imperialqore/line-sage-rest`](https://hub.docker.com/r/imperialqore/line-sage-rest). It is not pulled automatically on first use, so obtain it once with:
+```
+docker pull imperialqore/line-sage-rest:latest
+```
+Thereafter LINE starts and stops a container on its own. Check the environment (Java plus the symbolic backend) with:
+```
+java -cp jline.jar jline.cli.LineInstall
+```
+It warns when a dependency is missing without failing.
+
 ## Documentation
 Download the [manual](https://line-solver.sourceforge.net/doc/LINE-java.pdf) (Java syntax; Kotlin code calls the same API on the same JVM).
 

@@ -3120,6 +3120,10 @@ public class Network extends Model implements Copyable {
                     if (replStrat != null && !replStrat.isEmpty()) {
                         setUsedLangFeature(replStrat);
                     }
+                    // see _kb/04-networkstruct.md (Node/process construction notes: getUsedLangFeatures) for rationale
+                    if (!((Cache) n).getRetrievalClassIndices().isEmpty()) {
+                        setUsedLangFeature("CacheRetrieval");
+                    }
                 } else if (n instanceof Transition) {
                     setUsedLangFeature("Transition");
                     setUsedLangFeature("Enabling");
@@ -5282,7 +5286,12 @@ public class Network extends Model implements Copyable {
     public void refreshLocalVars() {
         int R = this.jobClasses.size();
         int I = this.nodes.size();
-        Matrix nvars = new Matrix(I, 2 * R + 1);
+        // Columns 0..R-1 modulation phases, R..2R-1 routing vars, 2R the shared node
+        // block (cache width / BAS marker / polling controller). Columns 2R+1+r are the
+        // synchronous-call (REPLY) blocked-server counters, appended so that every
+        // existing nvars reader keeps its indices; see ReplyBlock. They stay zero unless
+        // the model declares a REPLY signal, so no other model changes state width.
+        Matrix nvars = new Matrix(I, 3 * R + 1);
         // see _kb/04-networkstruct.md (BAS blocking marker section) for rationale
         Matrix isbasblocking = new Matrix(this.nodes.size(), 1);
         isbasblocking.zero();
@@ -5712,6 +5721,65 @@ public class Network extends Model implements Copyable {
             nodeparam.put(node, param);
         }
 
+        // Synchronous call (REPLY signal): a job of a class that expects a reply leaves
+        // this station for the callee but KEEPS its server, which is released only when
+        // the matching REPLY signal class arrives back here. Reserve one counter column
+        // per (station, calling class) so the state can carry the held servers; the job
+        // itself is at the callee and therefore absent from this station's marginal.
+        //
+        // The holding station is identified structurally, since a CTMC has no job
+        // identity to key on as LDES does: it is a station that the REPLY class is
+        // routed INTO. In the canonical shape Client -> Server -> (switch to Reply) ->
+        // Client, that selects the client and NOT the server -- the server's departure
+        // is the one that CREATES the reply, and LDES likewise does not block it
+        // (Solver_ssj: !classSwitchedToReply). Stations that never receive the reply
+        // class carry no counter and are untouched.
+        Matrix replyblock = new Matrix(I, R);
+        replyblock.zero();
+        if (this.sn != null && this.sn.syncreply != null && !this.sn.syncreply.isEmpty()
+                && this.sn.rtnodes != null && !this.sn.rtnodes.isEmpty()) {
+            Matrix rtnodes = this.sn.rtnodes;
+            for (int r = 0; r < R; r++) {
+                int s = (int) this.sn.syncreply.get(r, 0); // stored 0-based
+                if (s < 0 || s >= R) {
+                    continue;
+                }
+                for (int ind = 0; ind < I; ind++) {
+                    Node node = this.nodes.get(ind);
+                    if (!(node instanceof Station) || node instanceof Source) {
+                        continue;
+                    }
+                    // An INF station has a server for every job, so holding one is
+                    // immaterial and needs no state.
+                    SchedStrategy sched = ((Station) node).getSchedStrategy();
+                    if (sched == SchedStrategy.INF) {
+                        continue;
+                    }
+                    // Does the reply class ever arrive here?
+                    boolean arrivesHere = false;
+                    for (int i = 0; i < I && !arrivesHere; i++) {
+                        for (int q = 0; q < R; q++) {
+                            if (rtnodes.get(i * R + q, ind * R + s) > 0) {
+                                arrivesHere = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!arrivesHere) {
+                        continue;
+                    }
+                    if (sched != SchedStrategy.FCFS) {
+                        throw new RuntimeException("Synchronous calls (REPLY signals) are supported only at FCFS "
+                                + "stations, but " + node.getName() + " uses " + SchedStrategy.toText(sched)
+                                + ". Holding a server across a call has no representation in the state of the "
+                                + "other disciplines.");
+                    }
+                    nvars.set(ind, 2 * R + 1 + r, 1);
+                    replyblock.set(ind, r, 1);
+                }
+            }
+        }
+
         if (this.sn != null) {
             this.sn.nvars = nvars;
             this.sn.nodeparam = nodeparam;
@@ -5728,6 +5796,7 @@ public class Network extends Model implements Copyable {
             this.sn.nvars = nvars;
             this.sn.isbasblocking = isbasblocking;
             this.sn.isbasdestination = isbasdestination;
+            this.sn.replyblock = replyblock;
             // Initialize varsparam for cache state management
             this.sn.varsparam = new Matrix(I, 1);
             this.sn.varsparam.fill(-1); // -1 indicates no specific item selected
@@ -6110,6 +6179,23 @@ public class Network extends Model implements Copyable {
                 }
                 pie.put(station, pie_i);
             }
+
+            // Record, per station-class, whether the representation admits a phase-type
+            // reading. Consumers of mu/phi/pie (CTMC state space, SSA, fluid ODEs) treat
+            // those as rates and probabilities, which only holds when the pair is
+            // Markovian; a matrix-exponential process gives signed per-phase values.
+            Map<Station, Map<JobClass, Boolean>> isph = new HashMap<>();
+            for (int i = 0; i < M; i++) {
+                Station station = this.stations.get(i);
+                Map<JobClass, Boolean> isph_i = new HashMap<>();
+                for (int r = 0; r < K; r++) {
+                    JobClass jobclass = this.jobClasses.get(r);
+                    isph_i.put(jobclass, jline.api.sn.SnIsPhaseType.snIsPhaseType(
+                            ph.get(station).get(jobclass), pie.get(station).get(jobclass)));
+                }
+                isph.put(station, isph_i);
+            }
+            this.sn.isph = isph;
 
             this.sn.proc = ph;
             this.sn.pie = pie;

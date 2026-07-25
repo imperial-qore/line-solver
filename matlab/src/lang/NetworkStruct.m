@@ -52,12 +52,16 @@ function sn=NetworkStruct()
  sn.nstations=[];  % number of stations (int)
  sn.nstateful=[];  % number of stations (int)
  sn.nvars=[]; % number of local variables
+ sn.replyblock=[]; % (nnodes,nclasses) 1 iff the node holds a server for class r awaiting a REPLY signal (synchronous call)
  sn.isbasblocking=[]; % (nnodes,1) 1 iff the node is the upstream/blocking side of a true-BAS relation (BUG-83)
  sn.isbasdestination=[]; % (nstations,nclasses) true iff refusing an arrival here must block an upstream BAS station
  sn.nodenames=string([]);   % name of each node
  sn.nodeparam={};     % parameters for local variables
  sn.nodetype=[]; % server type in each node
  sn.nodevisits={};  % visits placed by classes at the nodes
+ sn.isph=[]; % true where the process representation is Markovian (MxK logical),
+ % so that mu, phi and pie carry their probabilistic reading. False for a
+ % matrix-exponential or rational process, whose per-phase quantities are signed
  sn.phases=[]; % number of phases in each service or arrival process
  sn.phasessz=[]; % number of phases
  sn.phaseshift=[]; % shift for phases

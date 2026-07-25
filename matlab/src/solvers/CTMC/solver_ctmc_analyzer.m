@@ -108,7 +108,14 @@ else
         probSysState = pis(scc(initState),scc == scc(initState));
     end
 end
-probSysState(probSysState<GlobalConstants.Zero)=0;
+% The clamp removes the tiny negative residues a genuine CTMC solve leaves
+% behind. With a matrix-exponential process the stationary vector is a genuinely
+% SIGNED measure -- only its aggregates over each phase block are probabilities
+% -- so clamping there deletes real mass and every mean measure moves. Mean
+% measures are linear in the vector and stay exact without the clamp.
+if ~(isfield(sn,'isph') && ~isempty(sn.isph) && ~all(sn.isph(:)))
+    probSysState(probSysState<GlobalConstants.Zero)=0;
+end
 probSysState = probSysState/sum(probSysState);
 
 XN = NaN*zeros(1,K);
@@ -254,6 +261,28 @@ for ist=1:M
     end
 end
 
+% Synchronous calls (REPLY signals): a blocked caller still HOLDS its server, so add the held servers to QLen/Util; see _kb/06-solver-catalog.md
+QNblocked = zeros(M,K);
+if isfield(sn,'replyblock') && ~isempty(sn.replyblock)
+    for ist=1:M
+        ind = sn.stationToNode(ist);
+        if size(sn.replyblock,1) < ind || ~any(sn.replyblock(ind,:) > 0)
+            continue
+        end
+        rinfoU = State.replyBlockInfo(sn, ind);
+        cols = (istSpaceShift(ist)+1):(istSpaceShift(ist)+size(sn.space{ist},2));
+        bcols = cols(end-rinfoU.width+1:end);
+        bmean = probSysState * StateSpace(wset, bcols); % 1 x width
+        pos = 0;
+        for r = rinfoU.classes
+            pos = pos + 1;
+            QN(ist,r) = QN(ist,r) + bmean(pos);
+            UN(ist,r) = UN(ist,r) + bmean(pos)/S(ist);
+            QNblocked(ist,r) = bmean(pos);
+        end
+    end
+end
+
 % see _kb/06-solver-catalog.md (Utilization conventions) for rationale
 if ~isempty(sn.cdscaling) && ~any(isinf(sn.njobs))
     for ist=1:M
@@ -324,7 +353,10 @@ end
 for k=1:K
     for ist=1:M
         if TN(ist,k)>0
-            RN(ist,k) = QN(ist,k)./TN(ist,k);
+            % Response time is time spent AT the station, so the job blocked
+            % out at the callee is excluded even though QLen/Util count it
+            % (LDES measures the sojourn directly and reports the same).
+            RN(ist,k) = (QN(ist,k)-QNblocked(ist,k))./TN(ist,k);
         else
             RN(ist,k)=0;
         end

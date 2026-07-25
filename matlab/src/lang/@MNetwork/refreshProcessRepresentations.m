@@ -109,6 +109,18 @@ if ~isempty(self.sn) %&& isprop(self.sn,'mu')
             end
         end
     end
+    % Record, per station-class, whether the representation admits a phase-type
+    % reading. Consumers of mu/phi/pie (CTMC state space, SSA, fluid ODEs) treat
+    % those as rates and probabilities, which only holds when the pair is
+    % Markovian; a matrix-exponential process gives signed per-phase values.
+    isph = true(M, K);
+    for ist=1:M
+        for r=1:K
+            isph(ist,r) = sn_is_phasetype(proc{ist}{r}, pie{ist}{r});
+        end
+    end
+    self.sn.isph = isph;
+
     self.sn.proc = proc;
     self.sn.pie = pie;
     self.sn.phases = phases;

@@ -25,7 +25,11 @@ public final class Solver_ssa_analyzer {
 
     public static SSAResult solver_ssa_analyzer(NetworkStruct snInput, SolverOptions options, SolverSSA solverSSA) {
         // see _kb/06-solver-catalog.md for rationale
+        // SSA draws a sample path, so the surrogate must be a genuine phase-type
+        String phfit0 = options.config.phfit;
+        options.config.phfit = "ph";
         NetworkStruct sn = SnNonmarkovToPh.snNonmarkovToPh(snInput, options, false);
+        options.config.phfit = phfit0;
         long Tstart = System.nanoTime();
         Map<StatefulNode, Matrix> init_state = new HashMap<StatefulNode, Matrix>();
         for (StatefulNode statefulNode : sn.state.keySet()) {

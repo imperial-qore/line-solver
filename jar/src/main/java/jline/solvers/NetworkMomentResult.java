@@ -60,6 +60,13 @@ public class NetworkMomentResult {
     public Ret.pfqnSensMom qlenmom;
 
     /**
+     * The processor-sharing sojourn-time moment result of Mitra and Morrison, or
+     * null when no PS station qualified (see {@code NetworkSolver.getMomentTable}
+     * for the two configurations that do).
+     */
+    public jline.api.pfqn.PfqnResptPsResult psrespt;
+
+    /**
      * 1 x R throughput of the queue-length path, or null on the purely open branch.
      */
     public Matrix X;

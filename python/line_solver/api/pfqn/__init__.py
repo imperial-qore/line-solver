@@ -53,6 +53,11 @@ from .sens_respt import (
     PfqnSensRespt,
 )
 
+from .respt_ps import (
+    pfqn_respt_ps_moments,
+    PfqnResptPsMoments,
+)
+
 from .sens_linearizer import (
     pfqn_sens_linearizer,
     PfqnSensLinearizer,
@@ -134,6 +139,7 @@ from .asymptotic import (
 
 from .ncld import (
     pfqn_ncld,
+    pfqn_panaceald,
     pfqn_ld_is,
     pfqn_gld,
     pfqn_gldsingle,
@@ -143,6 +149,21 @@ from .ncld import (
     PfqnNcResult,
     PfqnComomrmLdResult,
     PfqnFncResult,
+)
+
+from .oi import (
+    pfqn_ncoi,
+    pfqn_oi_fnc,
+    pfqn_oi_insvc,
+    pfqn_mvaoi,
+    pfqn_mvaoi_marg,
+)
+
+from .pas import (
+    pfqn_pas_is,
+    pfqn_pas_nc,
+    pas_placement,
+    pas_swap2order,
 )
 
 from .ncldmx import (
@@ -287,6 +308,7 @@ __all__ = [
     'pfqn_qlen_joint_moments',
     'pfqn_nc_resolved_method',
     'pfqn_panacea',
+    'pfqn_panaceald',
     'pfqn_propfair',
     'pfqn_ls',
     'pfqn_clw',
@@ -312,6 +334,9 @@ __all__ = [
     'PfqnSensMom',
     'pfqn_sens_respt',
     'PfqnSensRespt',
+    # Processor-sharing sojourn-time moments (Mitra-Morrison)
+    'pfqn_respt_ps_moments',
+    'PfqnResptPsMoments',
     'pfqn_sens_linearizer',
     'PfqnSensLinearizer',
     # Load-dependent MVA
@@ -356,6 +381,15 @@ __all__ = [
     'pfqn_mushift',
     'pfqn_comomrm_ld',
     'pfqn_fnc',
+    'pfqn_ncoi',
+    'pfqn_oi_fnc',
+    'pfqn_oi_insvc',
+    'pfqn_pas_is',
+    'pfqn_pas_nc',
+    'pas_placement',
+    'pas_swap2order',
+    'pfqn_mvaoi',
+    'pfqn_mvaoi_marg',
     'PfqnNcResult',
     'PfqnComomrmLdResult',
     'PfqnFncResult',

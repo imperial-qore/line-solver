@@ -1,4 +1,22 @@
 function space = fromMarginalAndStarted(sn, ind, n, s, options)
+% Wrapper: the discipline branches below return early from several places, so
+% the synchronous-call (REPLY) counter columns are appended here, once, for
+% every exit path. Without them the initial state is narrower than the
+% enumerated local space, matchrow fails, and solver_ctmc silently skips its
+% unreachable-state pruning -- leaving the enumerated-but-unreachable
+% "counter set while every job is here" states as a second absorbing class.
+if nargin < 5
+    space = sub_fromMarginalAndStarted(sn, ind, n, s);
+else
+    space = sub_fromMarginalAndStarted(sn, ind, n, s, options);
+end
+if isfield(sn,'replyblock') && ~isempty(sn.replyblock) && size(sn.replyblock,1) >= ind ...
+        && any(sn.replyblock(ind,:) > 0) && ~isempty(space)
+    space = [space, zeros(size(space,1), sum(sn.replyblock(ind,:) > 0))];
+end
+end
+
+function space = sub_fromMarginalAndStarted(sn, ind, n, s, options)
 % SPACE = FROMMARGINALANDSTARTED(QN, IND, N, S, OPTIONS)
 
 % Copyright (c) 2012-2026, Imperial College London

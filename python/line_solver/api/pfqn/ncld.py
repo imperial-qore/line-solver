@@ -26,17 +26,6 @@ ZERO = 1e-10
 NEG_INF = float('-inf')
 
 
-def _opt(options, name, default):
-    """Read an option field from a dict or dataclass/object; None -> default."""
-    if options is None:
-        return default
-    if isinstance(options, dict):
-        val = options.get(name, default)
-    else:
-        val = getattr(options, name, default)
-    return default if val is None else val
-
-
 def _logsumexp2(a: float, b: float) -> float:
     """Pairwise log-sum-exp, stable when either argument is -inf."""
     if a > b:
@@ -847,6 +836,21 @@ def _compute_norm_const_ld(L: np.ndarray, N: np.ndarray, Z: np.ndarray,
         _, lG = pfqn_clw_lld(L, N, Z_row, mu)
         method = "clw"
 
+    elif method in ('panacea', 'panaceald'):
+        # Mitra-McKenna load-dependent PANACEA asymptotic expansion. Delay terms
+        # may arrive either in Z or as mu(i,n)=n rows of L, both are recognized
+        # by pfqn_panaceald.
+        Z_row = np.sum(Z, axis=0) if np.ndim(Z) > 1 else Z
+        _, lG = pfqn_panaceald(L, N, Z_row, mu)
+        method = "panaceald"
+        if np.isnan(lG):
+            # normal usage (1 - lambda_i/mu_i(Ntot) > 0 at every queueing
+            # center) is the domain of the expansion, not a numerical failure
+            raise ValueError(
+                "The model is not in normal usage, so the 'panaceald' "
+                "asymptotic expansion does not apply. Use 'exact', 'clw' or an "
+                "approximate load-dependent method instead.")
+
     elif method == 'comomld':
         if M <= 1 or np.sum(Z) <= ZERO:
             result = pfqn_comomrm_ld(L, N, Z, mu, options)
@@ -1035,8 +1039,9 @@ def _pfqn_fnc_with_c(alpha: np.ndarray, c: np.ndarray) -> PfqnFncResult:
 def pfqn_ld_is(L, N, Z=None, mu=None, options=None) -> PfqnNcResult:
     """
     Importance-sampling (IS) estimate of the normalizing constant of a closed
-    LOAD-DEPENDENT product-form queueing network. A sample-an-ordering
-    (importance-sampling) estimator over per-position load-dependent capacities.
+    LOAD-DEPENDENT product-form queueing network. Load-dependent counterpart of
+    pfqn_pas_is / pfqn_oi_is: the same sample-an-ordering estimator, with the
+    order-independent rank rate replaced by the load-dependent capacity.
 
     Identity. Every product-form station's balance function is the sum, over the
     orderings q of a given per-class count vector n, of an ordered product of a
@@ -1096,6 +1101,8 @@ def pfqn_ld_is(L, N, Z=None, mu=None, options=None) -> PfqnNcResult:
     --------
     pfqn_is, pfqn_ncld, pfqn_nc
     """
+    from .pas import _opt
+
     L = np.asarray(L, dtype=float)
     if L.ndim == 1:
         L = L.reshape(1, -1)
@@ -1182,8 +1189,229 @@ def pfqn_ld_is(L, N, Z=None, mu=None, options=None) -> PfqnNcResult:
     return PfqnNcResult(G=G, lG=lG, method='is')
 
 
+def pfqn_panaceald(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
+                   mu: np.ndarray = None, terms: int = 3) -> Tuple[float, float]:
+    """
+    PANACEA asymptotic expansion for load-dependent closed networks.
+
+    Mitra-McKenna (JACM 33(3):568-592, 1986) load-dependent PANACEA: the
+    expansion coefficients A_n are linear combinations of partition functions
+    of a pseudonetwork whose load dependence is the phi(n) transform of the
+    original {f(n)}. See _kb/03-api-layer.md (pfqn/ family, panaceald).
+
+    Args:
+        L: Service demand matrix (M x R)
+        N: Population vector (R,)
+        Z: Think time vector (R,) or matrix (D x R), summed over rows
+        mu: Load-dependent rate matrix (M x sum(N))
+        terms: Number of terms in the normal-usage asymptotic series (1, 2 or 3)
+
+    Returns:
+        Tuple (G, lG) - normalizing constant and its log, both NaN when the
+        model is not in normal usage
+    """
+    if terms not in (1, 2, 3):
+        raise ValueError("The terms parameter must be 1, 2, or 3 "
+                         "(higher-order coefficients are not implemented).")
+    L = np.atleast_2d(np.asarray(L, dtype=float))
+    N = np.asarray(N, dtype=float).flatten()
+    M, R = L.shape
+    if Z is None:
+        Ztot = np.zeros(R)
+    else:
+        Z = np.asarray(Z, dtype=float)
+        Ztot = np.sum(Z, axis=0) if Z.ndim > 1 else Z.copy()
+    Ntot = int(round(float(np.sum(N))))
+    if Ntot == 0:
+        return 1.0, 0.0
+    if mu is None:
+        mu = np.ones((M, Ntot))
+    else:
+        mu = np.atleast_2d(np.asarray(mu, dtype=float))
+    if mu.shape[1] < Ntot:
+        mu = np.hstack([mu, np.tile(mu[:, -1:], (1, Ntot - mu.shape[1]))])
+
+    # Type-3 (infinite-server) rows are absent from the pseudonetwork and enter
+    # only through rho_j0; solver_ncld encodes them as mu(i,n)=n rows of L.
+    lattice = np.arange(1, Ntot + 1, dtype=float)
+    is_is = np.all(np.abs(mu[:, :Ntot] - lattice) < FINE_TOL, axis=1)
+    if np.any(is_is):
+        Ztot = Ztot + np.sum(L[is_is, :], axis=0)
+    Lq = L[~is_is, :]
+    muq = mu[~is_is, :Ntot]
+    Mq = Lq.shape[0]
+
+    if np.any((N > 0) & (Ztot <= 0)):
+        # no IS center on the route of a populated class: the expansion
+        # parameter rho_j0 is undefined and PANACEA does not apply
+        return float('nan'), float('nan')
+
+    lGdelay = -float(np.sum([_factln(n) for n in N]))
+    for j in range(R):
+        if N[j] != 0:
+            lGdelay += N[j] * log(Ztot[j])
+    if Mq == 0:
+        return exp(lGdelay), lGdelay
+    if np.any(muq <= 0) or not np.all(np.isfinite(muq)):
+        return float('nan'), float('nan')
+
+    r = np.zeros((Mq, R))
+    for j in range(R):
+        if Ztot[j] > 0:
+            r[:, j] = Lq[:, j] / Ztot[j]
+    lam = r.dot(N)
+    muK = muq[:, Ntot - 1]
+    alpha = 1.0 - lam / muK
+    if np.min(alpha) <= 0:
+        # model is not in normal usage: the {phi(n)} series diverges
+        return float('nan'), float('nan')
+
+    # log-partial products log prod_{k=1}^{s} mu_i(k), s=0..Ntot
+    lPi = np.hstack([np.zeros((Mq, 1)), np.cumsum(np.log(muq), axis=1)])
+
+    nmax = 2 * (terms - 1)
+    lpsi = np.zeros((Mq, nmax + 1))
+    for i in range(Mq):
+        for n in range(nmax + 1):
+            lpsi[i, n] = _logpsi(n, lam[i], lPi[i, :], muK[i], alpha[i], Ntot)
+
+    # load dependence of the pseudonetwork centers:
+    # psi_i(n) = psi_i(0) n! / prod_{k=1}^{n} mups_i(k)
+    mups = np.ones((Mq, max(1, nmax)))
+    for i in range(Mq):
+        for n in range(1, nmax + 1):
+            mups[i, n - 1] = exp(log(n) + lpsi[i, n - 1] - lpsi[i, n])
+
+    # Expansion coefficients (5.4). The large parameter N cancels identically
+    # between beta_j=K_j/N, Gamma=N*r and the 1/N^n scaling, so the demands are
+    # taken as r and beta as N.
+    A = [1.0, 0.0, 0.0]
+    if terms >= 2:
+        for j in range(R):
+            k = np.zeros(R, dtype=int)
+            k[j] = 2
+            A[1] -= N[j] * _pseudonet(r, k, mups)
+    if terms >= 3:
+        for j in range(R):
+            k = np.zeros(R, dtype=int)
+            k[j] = 3
+            A[2] += 2 * N[j] * _pseudonet(r, k, mups)
+            k[j] = 4
+            A[2] += 3 * N[j] ** 2 * _pseudonet(r, k, mups)
+            for s in range(R):
+                if s == j:
+                    continue
+                k2 = np.zeros(R, dtype=int)
+                k2[j] = 2
+                k2[s] = 2
+                A[2] += 0.5 * N[j] * N[s] * _pseudonet(r, k2, mups)
+    I = sum(A[:terms])
+    if I <= 0:
+        return float('nan'), float('nan')
+
+    lG = lGdelay + float(np.sum(lpsi[:, 0])) + log(I)
+    if not np.isfinite(lG):
+        return float('nan'), float('nan')
+    return exp(lG), lG
+
+
+def _logpsi(n: int, lam: float, lPirow: np.ndarray, muK: float,
+            alpha: float, K: int) -> float:
+    """
+    log of psi(n) = sum_{s>=n} [s!/(s-n)!] lam^(s-n) / prod_k mu(k), the mu-free
+    part of the phi(n) transform in eq. (3.7)-(3.8a). The series is split into
+    the exact head s<=K and a geometric tail summed in closed form via the
+    Vandermonde identity, all terms positive.
+    """
+    t = []
+    for s in range(n, K + 1):
+        t.append(_factln(s) - _factln(s - n) + _xlogy(s - n, lam) - lPirow[s])
+    T = max(n, K + 1)
+    for i in range(n + 1):
+        t.append(_factln(n) + _factln(T) - _factln(n - i) - _factln(T - n + i)
+                 + _xlogy(T + i - n, lam) + (K - T - i) * log(muK)
+                 - (i + 1) * log(alpha) - lPirow[K])
+    tmax = max(t)
+    if tmax == NEG_INF:
+        return NEG_INF
+    return tmax + log(sum(exp(v - tmax) for v in t))
+
+
+def _pseudonet(gam: np.ndarray, k: np.ndarray, mups: np.ndarray) -> float:
+    """
+    Partition function of the pseudonetwork at population k, normalized so that
+    G(0)=1. Populations are at most 2*(terms-1), so a direct load-dependent
+    convolution over the population lattice is used.
+    """
+    nz = [j for j in range(len(k)) if k[j] > 0]
+    Mq = gam.shape[0]
+    sizes = [int(k[j]) + 1 for j in nz]
+    npop = 1
+    for sz in sizes:
+        npop *= sz
+
+    def idx2vec(idx):
+        v = []
+        t = idx
+        for sz in sizes:
+            v.append(t % sz)
+            t //= sz
+        return v
+
+    def vec2idx(v):
+        idx = 0
+        mult = 1
+        for j, sz in enumerate(sizes):
+            idx += mult * v[j]
+            mult *= sz
+        return idx
+
+    sterm = np.zeros((Mq, npop))
+    for i in range(Mq):
+        for jdx in range(npop):
+            m = idx2vec(jdx)
+            sm = int(sum(m))
+            v = _factln(sm)
+            zero = False
+            for jj, cls in enumerate(nz):
+                if m[jj] > 0:
+                    if gam[i, cls] <= 0:
+                        zero = True
+                        break
+                    v += m[jj] * log(gam[i, cls]) - _factln(m[jj])
+            if zero:
+                sterm[i, jdx] = 0.0
+            else:
+                for l in range(sm):
+                    v -= log(mups[i, l])
+                sterm[i, jdx] = exp(v)
+
+    g = np.zeros(npop)
+    g[0] = 1.0
+    for i in range(Mq):
+        gnew = np.zeros(npop)
+        for idx in range(npop):
+            nvec = idx2vec(idx)
+            acc = 0.0
+            for jdx in range(npop):
+                m = idx2vec(jdx)
+                if all(m[j] <= nvec[j] for j in range(len(sizes))):
+                    acc += g[vec2idx([nvec[j] - m[j] for j in range(len(sizes))])] * sterm[i, jdx]
+            gnew[idx] = acc
+        g = gnew
+    return float(g[npop - 1])
+
+
+def _xlogy(e: int, x: float) -> float:
+    """e*log(x) with the convention 0*log(0)=0."""
+    if e == 0:
+        return 0.0
+    return e * log(x) if x > 0 else NEG_INF
+
+
 __all__ = [
     'pfqn_ncld',
+    'pfqn_panaceald',
     'pfqn_gld',
     'pfqn_gldsingle',
     'pfqn_mushift',

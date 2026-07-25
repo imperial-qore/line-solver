@@ -337,6 +337,11 @@ class SolverSSA(NetworkSolver):
                 opts_dict = {k: v for k, v in self.options.__dict__.items() if not k.startswith('_')}
             elif isinstance(self.options, dict):
                 opts_dict = dict(self.options)
+            # SSA draws a sample path, so its surrogate must be a genuine
+            # phase-type: a matrix exponential has no sample path to draw.
+            cfg = dict(opts_dict.get('config') or {})
+            cfg['phfit'] = 'ph'
+            opts_dict['config'] = cfg
             self._sn = sn_nonmarkov_toph(copy.deepcopy(self._sn), opts_dict)
 
         # Create handler options
@@ -1961,7 +1966,7 @@ class SolverSSA(NetworkSolver):
             # see _kb/06-solver-catalog.md (SSA: "the NRM engine now supports
             # finite capacity regions directly")
             'Region',
-            'Cache', 'CacheClassSwitcher',
+            'Cache', 'CacheClassSwitcher', 'CacheRetrieval',
             'Server', 'JobSink', 'RandomSource', 'ServiceTunnel',
             'SchedStrategy_INF', 'SchedStrategy_PS',
             'SchedStrategy_DPS', 'SchedStrategy_GPS',

@@ -15,6 +15,9 @@ Tstart      = tic;
 line_debug('SSA analyzer starting: method=%s, nstations=%d, nclasses=%d', options.method, sn.nstations, sn.nclasses);
 
 % Convert non-Markovian distributions to PH
+% SSA draws a sample path and the fluid ODEs read mu*phi as a flow, so their
+% surrogate must be a genuine phase-type: a matrix exponential has neither.
+options.config.phfit = 'ph';
 sn = sn_nonmarkov_toph(sn, options);
 
 % Capture initial state after conversion (state may have been expanded for MAPs)

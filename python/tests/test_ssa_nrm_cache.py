@@ -120,3 +120,61 @@ def test_multilist_matches_ctmc():
         r_nrm = _nrm_ratio(_build(6, [2, 2], strat, pv))
         r_ctmc = _hit_ratio(SolverCTMC(_build(6, [2, 2], strat, pv), cutoff=20))
         assert r_nrm == pytest.approx(r_ctmc, rel=REL_TOL), f'{name} multilist: {r_nrm} vs {r_ctmc}'
+
+
+# --- retrieval / delayed-hit system -----------------------------------------
+# A retrieval cache sends a miss to a fetch queue and back (delayed hits). The
+# CTMC state space is too large here, so the oracle is the same-codebase serial
+# SSA engine (State.afterEventCache). Note a pre-existing serial-vs-LDES
+# divergence on delayed-hit counting; the NRM targets the serial engine.
+from line_solver import Source, Sink, Queue, OpenClass, SchedStrategy  # noqa: E402
+
+
+def _build_retrieval(strat):
+    accessProb = [0.6, 0.3, 0.1]
+    model = Network('DelayedHits')
+    source = Source(model, 'Source')
+    cache = Cache(model, 'Cache', len(accessProb), 1, strat)
+    queue = Queue(model, 'Queue', SchedStrategy.INF)
+    sink = Sink(model, 'Sink')
+    job = OpenClass(model, 'InitClass', 0)
+    hit = OpenClass(model, 'HitClass', 0)
+    miss = OpenClass(model, 'MissClass', 0)
+    source.setArrival(job, Exp(1))
+    queue.setService(job, Exp(2.0))
+    cache.set_read(job, DiscreteSampler(np.array(accessProb)))
+    cache.set_hit_class(job, hit)
+    cache.set_miss_class(job, miss)
+    cache.setRetrievalSystem(job, miss, queue)
+    P = model.init_routing_matrix()
+    P.set(job, job, source, cache, 1.0)
+    P.set(job, job, cache, queue, 1.0)
+    P.set(job, job, queue, cache, 1.0)
+    P.set(hit, hit, cache, sink, 1.0)
+    P.set(miss, miss, cache, sink, 1.0)
+    model.link(P)
+    return model
+
+
+def _retr_hit_ratio(solver):
+    t = solver.getAvgCacheTable()
+    df = t if isinstance(t, pd.DataFrame) else t.tabulate()
+    hc = [c for c in df.columns if c == 'HitProb'][0]
+    mc = [c for c in df.columns if c == 'MissProb'][0]
+    row = df.iloc[0]
+    h = float(row[hc]); m = float(row[mc])
+    return h / (h + m)
+
+
+@pytest.mark.parametrize('name,strat', [
+    ('FIFO', ReplacementStrategy.FIFO), ('LRU', ReplacementStrategy.LRU),
+])
+def test_retrieval_matches_serial(name, strat):
+    # Oracle is the serial SSA (afterEventCache), not CTMC (state space too big).
+    s = SolverSSA(_build_retrieval(strat), 'nrm', samples=SAMPLES, seed=SEED, verbose=False)
+    r_nrm = _retr_hit_ratio(s)
+    assert 'nrm' in str(getattr(s, 'method', 'nrm')).lower()
+    ss = SolverSSA(_build_retrieval(strat), 'serial', samples=SAMPLES, seed=SEED, verbose=False)
+    r_ser = _retr_hit_ratio(ss)
+    assert r_nrm == pytest.approx(r_ser, rel=0.03), \
+        f'{name} retrieval: NRM {r_nrm:.4f} vs serial {r_ser:.4f}'

@@ -19,10 +19,12 @@ classdef Cache < StatefulNode
         accessProb;
         graph;
         totalCacheCapacity;           % sum(itemLevelCap)
-        retrievalSystemCapacity;      % dormant: always 0 (delayed-hit retrieval API removed); low-level plumbing gated on >0
-        retrievalSystemQueueIndices;  % dormant: always empty map
-        retrievalClassIndices;        % dormant: always empty
-        retrievalRoutingEntries;      % dormant: always empty
+        retrievalSystemCapacity;      % 0 until setRetrievalSystem is called; nitems-totalCacheCapacity otherwise
+        retrievalSystemQueueIndices;  % containers.Map jobinClassIdx -> [queue node indices]
+        retrievalClassIndices;        % set of indices of retrieval classes (used in afterEventCache READ)
+        retrievalRoutingEntries;      % cell array of [fromCls,toCls,srcNode,dstNode,prob] routing tuples;
+                                      % link() injects these into the routing matrix P (the auto-generated
+                                      % retrieval classes are not part of the user-supplied P).
     end
     
     methods
@@ -137,6 +139,35 @@ classdef Cache < StatefulNode
             tc = self.totalCacheCapacity;
         end
 
+        function rc = getRetrievalSystemCapacity(self)
+            rc = self.retrievalSystemCapacity;
+        end
+
+        function m = getRetrievalClasses(self)
+            m = self.server.retrievalClasses;
+        end
+
+        function idx = getRetrievalClassIndices(self)
+            idx = self.retrievalClassIndices;
+        end
+
+        function q = getRetrievalSystemQueueIndicesFor(self, jobinClassIdx)
+            % q = getRetrievalSystemQueueIndicesFor(jobinClassIdx)
+            % Return node indices of the queues comprising the retrieval system for the
+            % given (0-indexed) arrival class, or [] if no retrieval system is set.
+            if isKey(self.retrievalSystemQueueIndices, int32(jobinClassIdx))
+                q = self.retrievalSystemQueueIndices(int32(jobinClassIdx));
+            else
+                q = [];
+            end
+        end
+
+        function setRetrievalClass(self, jobinClass, joboutClass, item)
+            % SETRETRIEVALCLASS(jobinClass, joboutClass, item)
+            % item is 1-based (MATLAB convention).
+            self.server.retrievalClasses(item, jobinClass.index) = joboutClass.index;
+        end
+                
         function self = setResultHitProb(self, actualHitProb)
             self.server.actualHitProb = actualHitProb;
         end
@@ -145,14 +176,33 @@ classdef Cache < StatefulNode
             self.server.actualMissProb = actualMissProb;
         end
 
+        function self = setResultDelayedHitProb(self, actualDelayedHitProb)
+            % SETRESULTDELAYEDHITPROB  Per-class delayed-hit fraction
+            % (requests arriving for an item whose fetch is already in
+            % progress in the retrieval system). Zero for caches without a
+            % retrieval system.
+            self.server.actualDelayedHitProb = actualDelayedHitProb;
+        end
+
         function p = getHitRatio(self)
             % GETHITRATIO  Actual (true) hit fraction per class: the item is
-            % resident in the cache.
+            % resident in the cache. Delayed hits are reported separately by
+            % getDelayedHitRatio.
             p = full(self.server.actualHitProb);
         end
 
         function p = getMissRatio(self)
             p = full(self.server.actualMissProb);
+        end
+
+        function p = getDelayedHitRatio(self)
+            % GETDELAYEDHITRATIO  Actual delayed-hit fraction per class
+            % (empty/zero when the cache has no retrieval system).
+            if isprop(self.server, 'actualDelayedHitProb')
+                p = full(self.server.actualDelayedHitProb);
+            else
+                p = [];
+            end
         end
 
         function self = setResultHitProbList(self, actualHitProbList)
@@ -285,6 +335,147 @@ classdef Cache < StatefulNode
             % of that job after a miss
 
             missClass = self.server.missClass;
+        end
+
+        function addRetrievalRoutingEntry(self, fromCls, toCls, srcNode, dstNode, prob, allowZero)
+            % ADDRETRIEVALROUTINGENTRY(fromCls, toCls, srcNode, dstNode, prob, allowZero)
+            % Register a routing edge for an auto-generated retrieval class. link()
+            % injects all such entries into the routing matrix P. Entries are 1-based
+            % class indices and 1-based node indices; prob is the routing probability.
+            % Later entries override earlier ones for the same (fromCls,toCls,src,dst).
+            % With allowZero=true an explicit prob==0 entry is recorded so it can
+            % override (delete) a default edge inherited from the read class; the
+            % internal broadcast path keeps allowZero=false and drops zero edges.
+            if nargin < 7
+                allowZero = false;
+            end
+            if prob < 0 || (prob == 0 && ~allowZero)
+                return
+            end
+            self.retrievalRoutingEntries{end+1} = [fromCls, toCls, srcNode, dstNode, prob];
+        end
+
+        function setItemRoutingProbability(self, jobinClass, item, source, dest, probability)
+            % SETITEMROUTINGPROBABILITY(jobinClass, item, source, dest, probability)
+            % Probability of routing the retrieval class for `item` between two nodes of
+            % the retrieval system. `source`/`dest` are either a retrieval queue or the
+            % cache itself: pass the cache as `source` for a cache->queue entry, or as
+            % `dest` for a queue->cache exit.
+            rClassIdx = self.server.retrievalClasses(item, jobinClass.index);
+            if rClassIdx <= 0
+                line_error(mfilename,'No retrieval class defined for the given class/item; call setRetrievalSystem first.');
+            end
+            self.addRetrievalRoutingEntry(rClassIdx, rClassIdx, source.index, dest.index, probability, true);
+        end
+
+        function setItemRoutingProb(self, jobinClass, item, source, dest, probability)
+            % Short alias for setItemRoutingProbability.
+            self.setItemRoutingProbability(jobinClass, item, source, dest, probability);
+        end
+
+        function setRetrievalSystem(self, jobinClass, missClass, queues)
+            % SETRETRIEVALSYSTEM(jobinClass, missClass, queues)
+            %
+            % Initialise the retrieval system through which a request that misses the cache
+            % is fetched. The request switches to a per-item retrieval class that circulates
+            % the queues and returns to the cache, where the returning READ logs it as a
+            % miss (switching into `missClass`). getResidT reports the per-class
+            % queueing time in the retrieval sub-network.
+            %
+            % Arguments:
+            %   jobinClass      arrival JobClass that can route through the retrieval system
+            %   missClass       JobClass into which a completed retrieval transitions
+            %   queues          single Queue or array/cell of Queue nodes comprising the system
+            %
+            % Routing and service are NOT passed here; they are taken from the read class:
+            %   - service: the read class's service distribution at each queue. Call
+            %     queue.setService(jobinClass, ...) beforehand; override per item with
+            %     queue.setItemServiceRate(cache, jobinClass, item, rate).
+            %   - routing: the read class's routing among the retrieval queues drawn in the
+            %     top-level routing matrix P; override per item with
+            %     setItemQueueEntryProbability / setItemRoutingProbability / setItemQueueExitProbability.
+
+            % --- normalise inputs ---
+            if isa(queues, 'Queue')
+                queueArr = {queues};
+            elseif iscell(queues)
+                queueArr = queues;
+            elseif isnumeric(queues)
+                line_error(mfilename,'queues must be a Queue or a cell/array of Queues.');
+            else
+                queueArr = num2cell(queues);
+            end
+            nQueues = numel(queueArr);
+            nItems = self.items.nitems;
+            self.retrievalSystemCapacity = nItems - self.totalCacheCapacity;
+
+            if nQueues == 0
+                line_error(mfilename,'Retrieval system cannot be initialised with no stations.');
+            end
+
+            % inherit the read class's service distribution at each queue as the per-item default
+            serviceDistByQueue = cell(1, nQueues);
+            for q = 1:nQueues
+                sp = queueArr{q}.serviceProcess;
+                if numel(sp) >= jobinClass.index && ~isempty(sp{jobinClass.index})
+                    serviceDistByQueue{q} = sp{jobinClass.index};
+                else
+                    line_error(mfilename, sprintf(['No service distribution for the read class at queue "%s"; ' ...
+                        'call queue.setService(readClass, ...) before setRetrievalSystem.'], queueArr{q}.name));
+                end
+            end
+
+            % --- record queue node indices ---
+            queueIdxs = zeros(1, nQueues);
+            for q = 1:nQueues
+                queueIdxs(q) = queueArr{q}.index;
+            end
+            self.retrievalSystemQueueIndices(int32(jobinClass.index-1)) = queueIdxs;
+
+            % --- create one retrieval class per item ---
+            retrievalList = cell(1, nItems);
+            for i = 1:nItems
+                if isa(jobinClass, 'ClosedClass')
+                    refStation = jobinClass.refstat;
+                    retrievalList{i} = ClosedClass(self.model, [jobinClass.name '_retrievalClass_' num2str(i)], 0, refStation, 0);
+                else
+                    retrievalList{i} = OpenClass(self.model, [jobinClass.name '_retrievalClass_' num2str(i)], 0);
+                end
+                self.retrievalClassIndices(end+1) = retrievalList{i}.index;
+            end
+
+            % --- per-item retrieval class setup ---
+            % Each item's retrieval class reads item i (one-hot popularity) and, on the
+            % returning READ, is logged as a miss. Its routing through the queues is NOT set
+            % here: it is inherited at link() from the read class's routing in P, overridable
+            % per item via the setItem* methods.
+            for i = 1:nItems
+                rClass = retrievalList{i};
+
+                % switch arrival jobinClass -> retrieval class for item i
+                self.setRetrievalClass(jobinClass, rClass, i);
+
+                % the retrieval class triggers a read of item i (one-hot popularity)
+                itemPopularity = zeros(1, nItems);
+                itemPopularity(i) = 1.0;
+                self.popularity{self.items.index, rClass.index} = DiscreteSampler(itemPopularity);
+
+                % on the returning READ the retrieval is logged as a miss
+                self.setMissClass(rClass, missClass);
+
+                for sourceQueueIdx = 1:nQueues
+                    sourceQueue = queueArr{sourceQueueIdx};
+
+                    % service for the retrieval class at this queue (inherited read-class service)
+                    sourceQueue.setService(rClass, serviceDistByQueue{sourceQueueIdx}.copy());
+
+                    % at most one retrieval in flight at a time for this class
+                    if length(sourceQueue.classCap) < rClass.index
+                        sourceQueue.classCap((length(sourceQueue.classCap)+1):rClass.index) = Inf;
+                    end
+                    sourceQueue.classCap(rClass.index) = 1;
+                end
+            end
         end
     end
 end

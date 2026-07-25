@@ -145,6 +145,9 @@ from .environment import Environment, SolverENV, SolverEnv, ENV
 from .api.io import qn2jsimg, lqn2qn
 from .io.linemodel_io import save_model, load_model
 
+# Environment check (mirror of MATLAB lineInstall)
+from .install import line_install
+
 # Import gallery after lang and distributions to avoid circular import
 from .gallery import *
 

@@ -136,8 +136,9 @@ def test_station_total_consistent_with_perclass():
 
 def test_respt_variance_only_at_fcfs():
     """RespTVar must be a number at the FCFS station and NaN at the PS station.
-    The sojourn-time distribution at a PS center is not known in general, so a
-    value there would be fabricated."""
+    The PS moments of Mitra and Morrison cover the terminal-driven system, one PS
+    station and delays; this model has a second queueing station, which is
+    outside that scope, so a value at Q2 would be fabricated."""
     m = closed_mixed_sched()
     T, _ = SolverMVA(m).get_moment_table()
     for cl in ['C1', 'C2']:
@@ -213,6 +214,85 @@ def test_open_multiclass_mm1_closed_form():
     assert r['QLen'] == pytest.approx(p1 * En, rel=1e-9)
     assert r['QLenVar'] == pytest.approx(En * (p1 - p1 ** 2) + p1 ** 2 * Vn,
                                          rel=1e-9)
+
+
+def test_open_ps_respt_variance():
+    """A single PS station fed by Poisson streams is the open system of Mitra and
+    Morrison, where the sojourn-time moments are exact in closed form."""
+    from line_solver.api.qsys import qsys_mm1_ps
+    l1, l2, mu1, mu2 = 0.3, 0.4, 1.0, 3.0
+    m = Network('mt_open_ps')
+    src = Source(m, 'S')
+    snk = Sink(m, 'K')
+    q = Queue(m, 'CPU', SchedStrategy.PS)
+    o1 = OpenClass(m, 'C1', 0)
+    o2 = OpenClass(m, 'C2', 0)
+    src.setArrival(o1, Exp(l1))
+    src.setArrival(o2, Exp(l2))
+    q.setService(o1, Exp(mu1))
+    q.setService(o2, Exp(mu2))
+    P = m.initRoutingMatrix()
+    P[o1] = Network.serialRouting(src, q, snk)
+    P[o2] = Network.serialRouting(src, q, snk)
+    m.link(P)
+    T, _ = SolverMVA(m).get_moment_table()
+    W, W2, _ = qsys_mm1_ps([l1, l2], [mu1, mu2])
+    for c, cl in enumerate(['C1', 'C2']):
+        r = row_of(T, 'CPU', cl)
+        assert r['RespT'] == pytest.approx(W[c], rel=1e-9)
+        assert r['RespTVar'] == pytest.approx(W2[c] - W[c] ** 2, rel=1e-9)
+
+
+def test_open_ps_with_feedback_is_blank():
+    """With feedback the arrival stream at the station is no longer Poisson, so
+    the open formula does not apply and a blank is the honest answer."""
+    m = Network('mt_open_ps_fb')
+    src = Source(m, 'S')
+    snk = Sink(m, 'K')
+    q = Queue(m, 'CPU', SchedStrategy.PS)
+    o1 = OpenClass(m, 'C1', 0)
+    src.setArrival(o1, Exp(0.3))
+    q.setService(o1, Exp(1.0))
+    si = m.getNodeIndex('S') - 1
+    qi = m.getNodeIndex('CPU') - 1
+    ki = m.getNodeIndex('K') - 1
+    A = np.zeros((3, 3))
+    A[si, qi] = 1.0
+    A[qi, qi] = 0.5
+    A[qi, ki] = 0.5
+    P = m.initRoutingMatrix()
+    P[o1, o1] = A
+    m.link(P)
+    T, _ = SolverMVA(m).get_moment_table()
+    r = row_of(T, 'CPU', 'C1')
+    assert np.isnan(r['RespTVar']), \
+        "a PS station with feedback must NOT report RespTVar"
+
+
+def test_closed_terminal_driven_ps_respt_variance():
+    """Terminals in series with one PS CPU: the closed system the paper
+    analyses."""
+    from line_solver.api.pfqn import pfqn_respt_ps_moments
+    m = Network('mt_closed_ps')
+    d = Delay(m, 'Terminals')
+    cpu = Queue(m, 'CPU', SchedStrategy.PS)
+    c1 = ClosedClass(m, 'C1', 4, d, 0)
+    c2 = ClosedClass(m, 'C2', 2, d, 0)
+    d.setService(c1, Exp(0.02))
+    d.setService(c2, Exp(0.01))
+    cpu.setService(c1, Exp(1.0))
+    cpu.setService(c2, Exp(2.0))
+    P = m.initRoutingMatrix()
+    P[c1] = Network.serialRouting(d, cpu)
+    P[c2] = Network.serialRouting(d, cpu)
+    m.link(P)
+    T, mom = SolverMVA(m).get_moment_table()
+    W, W2, _ = pfqn_respt_ps_moments([1.0, 0.5], [4, 2], [50.0, 100.0])
+    assert mom['psrespt'].method == ['exact', 'exact']
+    for c, cl in enumerate(['C1', 'C2']):
+        r = row_of(T, 'CPU', cl)
+        assert r['RespT'] == pytest.approx(W[c], rel=1e-7)
+        assert r['RespTVar'] == pytest.approx(W2[c] - W[c] ** 2, rel=1e-9)
 
 
 def test_linearizer_tracks_exact():

@@ -26,6 +26,10 @@ classdef SolverAUTO
 
     properties (Hidden, Access = public)
         enableChecks;
+        % Dispatch mode ('default' heuristic, 'tree' learned selection). Held
+        % apart from options.method because that field is handed to the
+        % delegated solver, which does not know AUTO's selection modes.
+        selectionMode = 'default';
     end
 
     properties (Hidden)
@@ -159,7 +163,9 @@ classdef SolverAUTO
                 case 'lqns'
                     self.options.method = 'default';
                     self.solvers{1,1} = SolverLQNS(model,self.options);
-                case {'default','heur'} % 'ai' method not yet available
+                case {'default','heur','tree'} % 'tree' consults chooseSolverTree first
+                    self.selectionMode = self.options.method;
+                    self.options.method = 'default';
                     %solvers sorted from fastest to slowest
                     self.solvers = {};
                     switch class(model)

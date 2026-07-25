@@ -67,8 +67,10 @@ if strcmp(self.options.lang,'java') && ~strcmp(self.name,'SolverLDES')
             end
             self.model.nodes{ind}.setResultHitProb(hitprob);
             self.model.nodes{ind}.setResultMissProb(missprob);
-            % Per-list hit ratio and expected latency copied raw from the Java
-            % cache so getAvgCacheTable matches the native path.
+            % Retrieval-cache extras (delayed-hit ratio, per-list hit ratio and
+            % expected latency) copied raw from the Java cache so getAvgCacheTable
+            % matches the native path. Empty for plain caches.
+            self.model.nodes{ind}.setResultDelayedHitProb(JLINE.from_jline_matrix(jnode.getDelayedHitRatio()));
             self.model.nodes{ind}.setResultHitProbList(JLINE.from_jline_matrix(jnode.getHitRatioByList()));
             self.model.nodes{ind}.setResultItemProb(JLINE.from_jline_matrix(jnode.getItemProb()));
             self.model.nodes{ind}.setResultResidT(JLINE.from_jline_matrix(jnode.getResidT()));

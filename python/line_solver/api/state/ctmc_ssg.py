@@ -12,6 +12,7 @@ from itertools import product as iproduct, islice
 from .marginal import fromMarginal, toMarginal
 from .polling import polling_space as _polling_space, polling_width as _polling_width
 from .routing_pointer import wrr_weighted_outlinks as _wrr_weighted_outlinks
+from .reply_block import reply_width as _reply_width
 from ...lang.base import NodeType, SchedStrategy, RoutingStrategy
 from ...constants import GlobalConstants, ProcessType
 
@@ -484,6 +485,19 @@ def _space_generator_nodes(sn, cutoff_matrix, options):
                 sn.space[isf] = _from_marginal_bounds(
                     sn, ind, capacityc[ind].astype(int), cap_val, options)
 
+            # Synchronous call (REPLY signal): fromMarginal has already appended
+            # one blocked-server counter per calling class at the tail of the
+            # row. Record the width NOW, before any other local variable is
+            # appended, so that toMarginal below reads the buffer/server split
+            # correctly; the rotation further below then keeps the block at the
+            # tail whatever else gets appended in between.
+            _nvar_acc = 0
+            _reply_w = _reply_width(sn, ind)
+            _reply_at = int(np.atleast_2d(sn.space[isf]).shape[1]) - _reply_w
+            if _reply_w > 0:
+                sn.nvars[ind, 0] = _reply_w
+                _nvar_acc += _reply_w
+
             # Persistent MAP server-phase augmentation. A MAP service process
             # keeps evolving its modulating phase and, on completion, restarts in
             # a phase correlated with the completing one. While a job of class r
@@ -492,7 +506,6 @@ def _space_generator_nodes(sn, cutoff_matrix, options):
             # Add one phase variable per MAP class, pinned to the in-service phase
             # while busy and free (every phase) when idle, so the state count
             # matches the monolithic builder.
-            _nvar_acc = 0
             _map_classes = [(r, _map_phases_at(sn, ind, r)) for r in range(R)]
             _map_classes = [(r, nph) for r, nph in _map_classes if nph > 1]
             if _map_classes:
@@ -577,6 +590,17 @@ def _space_generator_nodes(sn, cutoff_matrix, options):
 
             if _nvar_acc > 0:
                 sn.nvars[ind, 0] = _nvar_acc
+
+            # Keep the blocked-server block at the TAIL of the local-variable
+            # vector (the layout api.state.reply_block assumes, and the one
+            # MATLAB gets from its column-addressed nvars): any local variable
+            # appended above landed behind it, so rotate it back.
+            if _reply_w > 0 and _nvar_acc > _reply_w:
+                cur = np.atleast_2d(sn.space[isf])
+                order = (list(range(_reply_at))
+                         + list(range(_reply_at + _reply_w, cur.shape[1]))
+                         + list(range(_reply_at, _reply_at + _reply_w)))
+                sn.space[isf] = cur[:, order]
 
             if np.isinf(sn.nservers[ist]):
                 sn.nservers[ist] = int(np.sum(capacityc[ind]))

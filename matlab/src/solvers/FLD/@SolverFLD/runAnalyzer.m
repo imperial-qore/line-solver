@@ -19,6 +19,9 @@ end
 sn = getStruct(self); % this gets modified later on so pass by copy
 
 % Convert non-Markovian distributions to PH
+% SSA draws a sample path and the fluid ODEs read mu*phi as a flow, so their
+% surrogate must be a genuine phase-type: a matrix exponential has neither.
+options.config.phfit = 'ph';
 sn = sn_nonmarkov_toph(sn, options);
 
 orig_method = options.method;
@@ -163,6 +166,9 @@ while s0_id>=0 % for all possible initial states
         end
     end
     sn = self.model.getStruct;
+    % SSA draws a sample path and the fluid ODEs read mu*phi as a flow, so their
+    % surrogate must be a genuine phase-type: a matrix exponential has neither.
+    options.config.phfit = 'ph';
     sn = sn_nonmarkov_toph(sn, options);  % Re-apply conversion after fresh struct
     if s0prior_val > 0
         %useJLine = false;

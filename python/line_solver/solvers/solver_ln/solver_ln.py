@@ -1052,9 +1052,8 @@ class SolverLN(EnsembleSolver):
             if not isinstance(actposttype, np.ndarray):
                 return False
             flat_posttype = actposttype.flatten()
-            act_local = act_idx - lqn.ashift if act_idx > lqn.ashift else 0
-            if 0 < act_local < len(flat_posttype):
-                return flat_posttype[act_local] == post_and_value
+            if 0 < act_idx < len(flat_posttype):
+                return flat_posttype[act_idx] == post_and_value
             return False
 
         def is_join_target(act_idx: int) -> bool:
@@ -1070,8 +1069,7 @@ class SolverLN(EnsembleSolver):
             # Check if ANY predecessor of this activity is PRE_AND
             for pred_idx in range(graph.shape[0]):
                 if pred_idx != act_idx and graph[pred_idx, act_idx] > 0:
-                    pred_local = pred_idx - lqn.ashift if pred_idx > lqn.ashift else 0
-                    if 0 < pred_local < len(flat_pretype) and flat_pretype[pred_local] == pre_and_value:
+                    if 0 < pred_idx < len(flat_pretype) and flat_pretype[pred_idx] == pre_and_value:
                         return True
             return False
 
@@ -1324,12 +1322,11 @@ class SolverLN(EnsembleSolver):
             flat_posttype = lqn.actposttype.flatten()
             flat_pretype = lqn.actpretype.flatten() if hasattr(lqn, 'actpretype') and lqn.actpretype is not None else np.array([])
             for aidx in acts_in_caller:
-                act_local = aidx - lqn.ashift
-                if 0 < act_local < len(flat_posttype):
-                    if flat_posttype[act_local] == post_and_value:
+                if 0 < aidx < len(flat_posttype):
+                    if flat_posttype[aidx] == post_and_value:
                         is_post_and_act.add(aidx)
-                if 0 < act_local < len(flat_pretype):
-                    if flat_pretype[act_local] == pre_and_value:
+                if 0 < aidx < len(flat_pretype):
+                    if flat_pretype[aidx] == pre_and_value:
                         is_pre_and_act.add(aidx)
 
         has_fork = any(aidx in is_post_and_act for aidx in acts_in_caller)
@@ -2273,6 +2270,17 @@ class SolverLN(EnsembleSolver):
         # The item_access_prob should be a DiscreteSampler or similar distribution
         if item_access_prob is not None:
             cache_node.set_read(entry_class, item_access_prob)
+
+        # delayed-hit retrieval cache wiring (EXPERIMENTAL); see _kb/06-solver-catalog.md LN Delayed-hit retrieval cache wiring.
+        hasretr = getattr(lqn, 'hasretrieval', None)
+        if (hasretr is not None and cache_task_idx < hasretr.shape[0]
+                and hasretr[cache_task_idx, 0] != 0
+                and entry_class is not None and miss_class is not None and miss_aidx is not None):
+            fetch = Queue(layer_model, str(cache_node.name) + '.Fetch', SchedStrategy.PS)
+            layer_model.attribute['retrieval_wiring'] = {
+                'read_class': entry_class, 'miss_class': miss_class,
+                'miss_aidx': miss_aidx, 'fetch': fetch, 'cache_node': cache_node,
+            }
 
     def _get_activity_bound_entry(self, aidx: int) -> Optional[int]:
         """Get the entry index that an activity is bound to."""
@@ -3692,6 +3700,37 @@ class SolverLN(EnsembleSolver):
                 for cs, cd, ns, nd, prob in new_entries:
                     P.set(cs, cd, ns, nd, prob)
 
+        # deferred delayed-hit retrieval wiring applied here (dict-based RoutingMatrix needs no P growth); see _kb/09-ldes-and-cache.md.
+        rw = layer_model.attribute.get('retrieval_wiring') if isinstance(layer_model.attribute, dict) else None
+        if rw is not None:
+            cache_node = rw['cache_node']
+            fetch = rw['fetch']
+            read_class = rw['read_class']
+            miss_class = rw['miss_class']
+            miss_aidx = rw['miss_aidx']
+            # Fetch service = the miss activity's full service (host demand + backend call).
+            svc = None
+            if self.servtproc is not None and miss_aidx < len(self.servtproc):
+                svc = self.servtproc[miss_aidx]
+            if svc is None:
+                svc = Exp(1.0)
+            fetch.set_service(read_class, svc)
+            P.set(read_class, read_class, cache_node, fetch, 1.0)
+            P.set(read_class, read_class, fetch, cache_node, 1.0)
+            cache_node.set_retrieval_system(read_class, miss_class, fetch)
+            # Tag the auto-generated retrieval classes as non-completing (they map to no
+            # LQN activity and are skipped by the LN class->activity updmaps).
+            for rcls in getattr(cache_node, '_retrieval_classes', {}).values():
+                if rcls is not None and hasattr(rcls, 'completes'):
+                    rcls.completes = False
+            # Pad every service station's service to the full class count with Disabled:
+            # the retrieval classes are served only at the fetch station.
+            for st in layer_model.get_nodes():
+                if isinstance(st, Queue):
+                    for jc in layer_model.classes:
+                        if st.get_service(jc) is None:
+                            st.set_service(jc, Disabled())
+
         layer_model.link(P)
 
     def init(self):
@@ -4831,8 +4870,7 @@ class SolverLN(EnsembleSolver):
         head spawned by the AND-fork. Branches between a fork and its join are disjoint
         paths, so the walk is unambiguous.
 
-        Note that actposttype is indexed by local activity index, while the graph and
-        residt are indexed globally.
+        actposttype, like the graph and residt, is indexed by global element index.
         """
         lqn = self.lqn
         graph = lqn.graph
@@ -4852,8 +4890,7 @@ class SolverLN(EnsembleSolver):
             chain = [tail]
             cur = tail
             for _ in range(nacts):
-                cur_local = cur - ashift
-                if 0 < cur_local < len(flat_posttype) and flat_posttype[cur_local] == post_and_value:
+                if 0 < cur < len(flat_posttype) and flat_posttype[cur] == post_and_value:
                     break  # branch head
                 prevs = [p for p in range(1, graph.shape[0])
                          if p != cur and graph[p, cur] > 0 and ashift < p <= ashift + nacts]
@@ -4895,8 +4932,7 @@ class SolverLN(EnsembleSolver):
             is_join = False
             for pred in range(1, lqn.graph.shape[0]):
                 if pred != aidx and lqn.graph[pred, aidx] > 0:
-                    pred_local = pred - lqn.ashift
-                    if 0 < pred_local < len(flat_pretype) and flat_pretype[pred_local] == pre_and_value:
+                    if 0 < pred < len(flat_pretype) and flat_pretype[pred] == pre_and_value:
                         is_join = True
                         break
             if not is_join:
@@ -4912,9 +4948,8 @@ class SolverLN(EnsembleSolver):
                 continue
 
             quorum = n
-            aidx_local = aidx - lqn.ashift
-            if 0 < aidx_local < len(flat_quorum):
-                q = int(flat_quorum[aidx_local])
+            if 0 < aidx < len(flat_quorum):
+                q = int(flat_quorum[aidx])
                 if 1 <= q <= n:
                     quorum = q
             # Branch times are taken as exponential, so the variance is the square of the mean.

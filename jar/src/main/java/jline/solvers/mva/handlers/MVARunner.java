@@ -46,9 +46,11 @@ import static jline.solvers.mva.analyzers.Solver_mva_analyzer.solver_mva_analyze
 import static jline.solvers.mva.analyzers.Solver_mva_marie_analyzer.solver_mva_marie_analyzer;
 import static jline.solvers.mva.analyzers.Solver_mva_cache_analyzer.solver_mva_cache_analyzer;
 import static jline.solvers.mva.analyzers.Solver_mva_cacheqn_analyzer.solver_mva_cacheqn_analyzer;
+import static jline.solvers.mva.analyzers.Solver_mva_retrieval_analyzer.solver_mva_retrieval_analyzer;
 import static jline.solvers.mva.analyzers.Solver_mva_polling_analyzer.solver_mva_polling_analyzer;
 import static jline.solvers.mva.analyzers.Solver_mva_qsys_analyzer.solver_mva_qsys_analyzer;
 import static jline.solvers.mva.analyzers.Solver_mvald_analyzer.solver_mvald_analyzer;
+import jline.solvers.mva.SolverMVAOIAnalyzer;
 import jline.lang.ModelAdapter;
 import static jline.lang.ModelAdapter.*;
 import jline.solvers.fj.FJFixedPoint;
@@ -167,12 +169,16 @@ public class MVARunner {
                 if (cacheParam != null) {
                     Matrix hitProb = cacheNode.getHitRatio();
                     Matrix missProb = cacheNode.getMissRatio();
+                    Matrix delayedProb = cacheNode.getDelayedHitRatio();
                     Matrix hitProbList = cacheNode.getHitRatioByList();
                     if (hitProb != null && !hitProb.isEmpty()) {
                         cacheParam.actualhitprob = hitProb;
                     }
                     if (missProb != null && !missProb.isEmpty()) {
                         cacheParam.actualmissprob = missProb;
+                    }
+                    if (delayedProb != null && !delayedProb.isEmpty()) {
+                        cacheParam.actualdelayedhitprob = delayedProb;
                     }
                     if (hitProbList != null && !hitProbList.isEmpty()) {
                         cacheParam.actualhitproblist = hitProbList;
@@ -362,6 +368,18 @@ public class MVARunner {
                 // see _kb/06-solver-catalog.md for rationale
                 line_debug(this.options.verbose, "Detected multi-class M/M/1-DPS queue (Source-Queue-Sink), calling solver_mva_qsys_dps_analyzer");
                 ret = jline.solvers.mva.analyzers.Solver_mva_qsys_analyzer.solver_mva_qsys_dps_analyzer(this.sn, this.options.copy());
+            } else if (jline.solvers.nc.SolverNC.hasRetrievalCache(this.sn)) {
+                // Delayed-hit cache with a retrieval system: open (Source) -> FPI
+                // analyzer; closed integrated -> da_cacheqn_retrieval driver.
+                boolean hasSource = false;
+                for (int i = 0; i < this.sn.nodetype.size(); i++) if (this.sn.nodetype.get(i) == NodeType.Source) { hasSource = true; break; }
+                if (hasSource) {
+                    line_debug(this.options.verbose, "Detected open delayed-hit retrieval cache, calling solver_mva_retrieval_analyzer");
+                    ret = solver_mva_retrieval_analyzer(this.sn, this.options.copy());
+                } else {
+                    line_debug(this.options.verbose, "Detected closed integrated delayed-hit retrieval cache, calling solver_mva_cacheqn_retrieval_analyzer");
+                    ret = jline.solvers.mva.analyzers.Solver_mva_cacheqn_retrieval_analyzer.solver_mva_cacheqn_retrieval_analyzer(this.sn, this.options.copy());
+                }
             } else if (this.sn.nclosedjobs == 0 && this.sn.nodetype.size() == 3 && checkNodeTypes(this.sn.nodetype, NodeType.Source, NodeType.Cache, NodeType.Sink)) {
                 // Non-rentrant cache
                 // Random initialisation
@@ -430,6 +448,34 @@ public class MVARunner {
                 this.model.refreshStruct(true);
             } else {
                 // see _kb/06-solver-catalog.md for rationale
+                int noi_idx = -1;
+                boolean closedNet = true;
+                for (int r = 0; r < this.sn.nclasses; r++) {
+                    if (Double.isInfinite(this.sn.njobs.get(0, r))) { closedNet = false; break; }
+                }
+                if (closedNet && this.sn.nodeparam != null) {
+                    for (int i = 0; i < this.sn.nstations; i++) {
+                        jline.lang.nodes.Station st = this.sn.stations.get(i);
+                        jline.lang.constant.SchedStrategy s = this.sn.sched.get(st);
+                        if (s != jline.lang.constant.SchedStrategy.PAS
+                                && s != jline.lang.constant.SchedStrategy.OI) {
+                            continue;
+                        }
+                        Object param = this.sn.nodeparam.get(st);
+                        if (!(param instanceof jline.lang.nodeparam.QueueNodeParam)) {
+                            continue;
+                        }
+                        jline.lang.nodeparam.QueueNodeParam qp = (jline.lang.nodeparam.QueueNodeParam) param;
+                        if (qp.svcRateFun == null || qp.swapGraph == null) {
+                            continue;
+                        }
+                        if (qp.swapGraph.isEmpty() || qp.swapGraph.elementMaxAbs() == 0) {
+                            noi_idx = i;
+                            break;
+                        }
+                    }
+                }
+
                 boolean cachePresent = false;
                 for (NodeType t : this.sn.nodetype) {
                     if (t == NodeType.Cache) {
@@ -438,7 +484,49 @@ public class MVARunner {
                     }
                 }
 
-                if (cachePresent) {
+                // An OI/PAS station is admissible only when every other station is
+                // product-form, which is exactly the NC-oi gate.
+                boolean hasOIStation = false;
+                for (int i = 0; i < this.sn.nstations; i++) {
+                    jline.lang.constant.SchedStrategy s = this.sn.sched.get(this.sn.stations.get(i));
+                    if (s == jline.lang.constant.SchedStrategy.PAS
+                            || s == jline.lang.constant.SchedStrategy.OI) {
+                        hasOIStation = true;
+                        break;
+                    }
+                }
+                boolean oiMethod = "exact".equals(method) || "default".equals(method);
+                boolean oiExact = noi_idx >= 0 && oiMethod
+                        && jline.solvers.nc.handlers.Solver_nc_oi.nc_is_oi_model(this.sn);
+
+                if (oiExact) {
+                    // Order-independent queueing network
+                    line_debug(this.options.verbose, "Detected order-independent network, routing to SolverMVAOIAnalyzer");
+                    SolverMVAOIAnalyzer analyzer = new SolverMVAOIAnalyzer(this.sn, this.options);
+                    SolverMVAOIAnalyzer.AnalysisResults results = analyzer.analyze();
+                    ret = new MVAResult();
+                    ret.QN = new Matrix(results.QN);
+                    ret.UN = new Matrix(results.UN);
+                    ret.RN = new Matrix(results.RN);
+                    ret.TN = new Matrix(results.TN);
+                    ret.CN = new Matrix(results.CN);
+                    ret.XN = new Matrix(results.XN);
+                    ret.runtime = results.runtime;
+                    ret.iter = results.iter;
+                    ret.method = results.method;
+                } else if (hasOIStation) {
+                    // An OI/PAS station carries a rank-rate function mu(n) of the whole
+                    // per-class occupancy. The AMVA iteration only ever sees sn.rates
+                    // (the single-job rates), so it cannot represent such a station and
+                    // would silently return a zero queue-length there. MVA therefore
+                    // supports OI/PAS stations only via the exact path above.
+                    throw new RuntimeException(String.format(
+                            "SolverMVA supports order-independent (OI) and pass-and-swap (PAS) stations only%n"
+                            + "through its exact order-independent analyzer, which requires method 'default'%n"
+                            + "or 'exact' (got '%s'), an empty/zero swap graph at every OI/PAS station, a closed%n"
+                            + "model, and every other station to be product-form (INF, PS, LCFS-PR, SIRO, or%n"
+                            + "class-independent-rate FCFS). Use SolverCTMC or SolverLDES for this model.", method));
+                } else if (cachePresent) {
                     // Integrated Cache Queueing
                     line_debug(this.options.verbose, "Detected cache+queueing network, calling solver_mva_cacheqn_analyzer");
                     ret = solver_mva_cacheqn_analyzer(this.sn, this.options.copy());

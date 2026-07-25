@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "line-solver"
-version = "3.0.6.0"
+version = "3.0.7.0"
 description = "Open source queueing theory solvers"
 authors = [
     "Giuliano Casale <g.casale@imperial.ac.uk>"
@@ -54,6 +54,7 @@ ipykernel = "^6.30.1"
 
 [tool.poetry.scripts]
 line = "line_solver.cli:main"
+line-install = "line_solver.install:main"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

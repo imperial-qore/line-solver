@@ -432,8 +432,46 @@ public class AfterEventStation implements Serializable {
                 // policy are all read from sn; see SignalRemoval, which ports MATLAB
                 // State.afterEventStationSignal.
                 if (sn.issignal != null && sn.issignal.get(jobClass) > 0) {
-                    return SignalRemoval.handleSignalArrival(sn, ind, ist, inspace, jobClass, isSimulation,
-                            phasessz, phaseshift, K, Ks, S, spaceBuf, spaceSrv, spaceVar);
+                    // A REPLY signal is not a negative customer: it completes a
+                    // synchronous call, releasing the server this station holds for the
+                    // caller, and then joins as an ordinary job. Only stations that
+                    // actually hold a block for it take this path; elsewhere a REPLY
+                    // class is a plain job class and falls through to the normal arrival
+                    // handling below.
+                    boolean isReplySignal = sn.signaltype != null && jobClass < sn.signaltype.size()
+                            && sn.signaltype.get(jobClass) == jline.lang.constant.SignalType.REPLY;
+                    if (isReplySignal) {
+                        if (ReplyBlock.info(sn, ind).width > 0) {
+                            Ret.EventResult replyRes = AfterEventStationReply.apply(sn, ind, ist, jobClass,
+                                    K, Ks, S, pie, spaceBuf, spaceSrv, spaceVar);
+                            if (isSimulation && replyRes.outprob.getNumRows() > 1) {
+                                // Which entry phase the reply starts in is a random choice.
+                                // The generator needs every destination; a simulation must
+                                // pick exactly one, so sample it here.
+                                double totProb = replyRes.outprob.elementSum();
+                                double u = Math.random() * totProb;
+                                double cum = 0;
+                                int firing = replyRes.outprob.getNumRows() - 1;
+                                for (int i = 0; i < replyRes.outprob.getNumRows(); i++) {
+                                    cum += replyRes.outprob.get(i, 0);
+                                    if (u <= cum) {
+                                        firing = i;
+                                        break;
+                                    }
+                                }
+                                Matrix oneProb = new Matrix(1, 1);
+                                oneProb.set(0, 0, 1.0);
+                                replyRes = new Ret.EventResult(
+                                        Matrix.extractRows(replyRes.outspace, firing, firing + 1, null),
+                                        Matrix.extractRows(replyRes.outrate, firing, firing + 1, null),
+                                        oneProb);
+                            }
+                            return replyRes;
+                        }
+                    } else {
+                        return SignalRemoval.handleSignalArrival(sn, ind, ist, inspace, jobClass, isSimulation,
+                                phasessz, phaseshift, K, Ks, S, spaceBuf, spaceSrv, spaceVar);
+                    }
                 }
                 // Ordinary SPN Place arrival: see _kb/11-conventions-and-gotchas.md
                 // ("An ordinary Place must be special-cased before the generic
@@ -640,12 +678,17 @@ public class AfterEventStation implements Serializable {
                                     pentry.zero();
                                     pentry.set(kentry, 1);
                                 }
+                                // Servers held by synchronous calls awaiting a REPLY are NOT
+                                // available to an arriving job: subtract them from the server
+                                // count. Zero for every model without reply signals.
+                                Matrix nbA = ReplyBlock.blockedTotal(sn, ind, spaceVarK);
                                 // construct all_busy_srv, a matrix with 0s where sum of that row in space_srv_k is >= S.get(ist) and 1s where its <
                                 Matrix all_busy_srv = new Matrix(spaceSrvK.getNumRows(), 1);
                                 for (int i = 0; i < spaceSrvK.getNumRows(); i++) {
                                     Matrix row = Matrix.extractRows(spaceSrvK, i, i + 1, null);
                                     int rowSum = (int) row.elementSum();
-                                    if (rowSum >= S.get(ist)) {
+                                    double SeffA = S.get(ist) - (i < nbA.getNumRows() ? nbA.get(i, 0) : 0);
+                                    if (rowSum >= SeffA) {
                                         all_busy_srv.set(i, 0, 1);
                                     } else {
                                         all_busy_srv.set(i, 0, 0);
@@ -657,7 +700,8 @@ public class AfterEventStation implements Serializable {
                                 for (int i = 0; i < spaceSrvK.getNumRows(); i++) {
                                     Matrix row = Matrix.extractRows(spaceSrvK, i, i + 1, null);
                                     int rowSum = (int) row.elementSum();
-                                    if (rowSum < S.get(ist)) {
+                                    double SeffA = S.get(ist) - (i < nbA.getNumRows() ? nbA.get(i, 0) : 0);
+                                    if (rowSum < SeffA) {
                                         idle_srv.set(i, 0, 1);
                                     } else {
                                         idle_srv.set(i, 0, 0);
@@ -2196,10 +2240,15 @@ public class AfterEventStation implements Serializable {
                                                 spaceSrv.set(row, (int) (Ks.get(jobClass) + k), spaceSrv.get(row, (int) (Ks.get(jobClass) + k)) - 1);
                                             }
                                         }
-                                        // set en_wbuf to states with jobs in buffer
+                                        // set en_wbuf to states with jobs in buffer.
+                                        // Servers held for a pending REPLY are unavailable, so a
+                                        // job waits in the buffer already when ni exceeds the
+                                        // REMAINING servers. Zero for models without replies.
+                                        Matrix nbD = ReplyBlock.blockedTotal(sn, ind, spaceVar);
                                         Matrix enWbuf = new Matrix(en.getNumRows(), 1);
                                         for (int row = 0; row < en.getNumRows(); row++) {
-                                            if (en.get(row, 0) == 1 && ni.get(row) > S.get(ist)) {
+                                            double SeffD = S.get(ist) - (row < nbD.getNumRows() ? nbD.get(row, 0) : 0);
+                                            if (en.get(row, 0) == 1 && ni.get(row) > SeffD) {
                                                 enWbuf.set(row, 0, 1);
                                             } else {
                                                 enWbuf.set(row, 0, 0);
@@ -2217,6 +2266,23 @@ public class AfterEventStation implements Serializable {
                                         }
                                         if (noPromote || isRetrialStationDep) { // immediate feedback / retrial orbit: hold server, do not promote a waiting job
                                             enWbuf.zero();
+                                        }
+                                        // Synchronous call: this departing job keeps its server
+                                        // until its REPLY signal returns here, so the server is
+                                        // NOT handed to a waiting job; it is recorded as held in
+                                        // the reply block instead. Mirrors LDES, which omits the
+                                        // markServerIdle call and records a pendingReply.
+                                        if (sn.replyblock != null && !sn.replyblock.isEmpty()
+                                                && ind < sn.replyblock.getNumRows()
+                                                && sn.replyblock.get(ind, jobClass) > 0) {
+                                            ReplyBlock.Info rinfoD = ReplyBlock.info(sn, ind);
+                                            enWbuf.zero();
+                                            int slotD = rinfoD.slot[jobClass];
+                                            for (int row = 0; row < en.getNumRows(); row++) {
+                                                if (en.get(row, 0) == 1) {
+                                                    spaceVar.set(row, slotD, spaceVar.get(row, slotD) + 1);
+                                                }
+                                            }
                                         }
 
                                         for (int kdest = 0; kdest < K.get(jobClass); kdest++) {

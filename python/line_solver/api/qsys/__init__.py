@@ -23,6 +23,7 @@ from .phm1 import qsys_phm1
 from .bmapm1 import qsys_bmapm1
 from .phmc import qsys_phmc
 from .discrete import qsys_geogeo1, qsys_geoxgeo1, qsys_geoxgeo1_moments
+from .ps import qsys_mm1_ps
 
 from .basic import (
     qsys_mm1,
@@ -121,6 +122,8 @@ __all__ = [
     'qsys_geogeo1',
     'qsys_geoxgeo1',
     'qsys_geoxgeo1_moments',
+    # Multiclass processor sharing
+    'qsys_mm1_ps',
     # Basic queues
     'qsys_mm1',
     'qsys_mmk',

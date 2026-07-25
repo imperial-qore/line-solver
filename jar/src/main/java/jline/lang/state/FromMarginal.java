@@ -65,6 +65,74 @@ public class FromMarginal implements Serializable {
         int ist = (int) sn.nodeToStation.get(ind);
         int isf = (int) sn.nodeToStateful.get(ind);
 
+        // Synchronous call (REPLY signal): the node holds one server per job that has
+        // left for its callee and is waiting for the reply. Those servers are not
+        // derivable from the marginal n, so enumerate the held-server counts here and
+        // build the rest of the state with the REMAINING servers -- with b servers held,
+        // only S-b jobs can be in service, a configuration the plain enumeration never
+        // produces. Recurse on a struct with the block cleared, then append its columns,
+        // which are the last ones in the local-variable layout (see ReplyBlock).
+        if (ReplyBlock.holds(sn, ind)) {
+            List<Integer> rclasses = new ArrayList<Integer>();
+            for (int r = 0; r < R; r++) {
+                if (sn.replyblock.get(ind, r) > 0) {
+                    rclasses.add(r);
+                }
+            }
+            int Sist = (int) S.get(ist);
+            NetworkStruct snb = sn.shallowCopy();
+            snb.replyblock = sn.replyblock.copy();
+            snb.nvars = sn.nvars.copy();
+            snb.nservers = sn.nservers.copy();
+            for (int r = 0; r < R; r++) {
+                snb.replyblock.set(ind, r, 0);
+                snb.nvars.set(ind, 2 * R + 1 + r, 0);
+            }
+            Matrix bspace = new Matrix(0, 0);
+            for (int i = 0; i < rclasses.size(); i++) {
+                Matrix bcol = new Matrix(Sist + 1, 1);
+                for (int v = 0; v <= Sist; v++) {
+                    bcol.set(v, 0, v);
+                }
+                bspace = Matrix.cartesian(bspace, bcol);
+            }
+            List<Matrix> subspaces = new ArrayList<Matrix>();
+            List<Matrix> bkept = new ArrayList<Matrix>();
+            int maxw = 0;
+            for (int bi = 0; bi < bspace.getNumRows(); bi++) {
+                Matrix b = Matrix.extractRows(bspace, bi, bi + 1, null);
+                if (b.elementSum() > Sist) {
+                    continue;
+                }
+                snb.nservers.set(ist, 0, Sist - b.elementSum());
+                Matrix subspace = fromMarginal(snb, ind, n);
+                if (subspace == null || subspace.getNumRows() == 0) {
+                    continue;
+                }
+                subspaces.add(subspace);
+                bkept.add(b);
+                maxw = Math.max(maxw, subspace.getNumCols());
+            }
+            // Held servers push jobs into the buffer, so the sub-spaces have different
+            // buffer widths. The buffer is RIGHT-aligned (empty slots pad the left), so
+            // widen the narrow rows on the left before stacking them.
+            Matrix stacked = new Matrix(0, 0);
+            for (int bi = 0; bi < subspaces.size(); bi++) {
+                Matrix subspace = subspaces.get(bi);
+                if (subspace.getNumCols() < maxw) {
+                    Matrix pad = new Matrix(subspace.getNumRows(), maxw - subspace.getNumCols());
+                    pad.zero();
+                    subspace = pad.concatCols(subspace);
+                }
+                Matrix rows = subspace.concatCols(bkept.get(bi).repmat(subspace.getNumRows(), 1));
+                stacked = stacked.isEmpty() ? rows : Matrix.concatRows(stacked, rows, null);
+            }
+            if (stacked.getNumRows() == 0) {
+                return new Matrix(0, maxw + rclasses.size());
+            }
+            return reverseRows(Maths.uniqueAndSort(stacked));
+        }
+
         if (sn.isstateful.get(ind, 0) == 1 && sn.isstation.get(ind, 0) == 0) {
             for (int r = 0; r < R; r++) {
                 Matrix init_r = spaceClosedSingle(1, n.get(r));
@@ -1220,7 +1288,39 @@ public class FromMarginal implements Serializable {
         return fromMarginalAndStarted(network.getStruct(true), ind, n, s, true);
     }
 
+    /**
+     * Wrapper: the discipline branches below return early from several places, so the
+     * synchronous-call (REPLY) counter columns are appended here, once, for every exit
+     * path. An initial or user-supplied state has no call outstanding, so the counters
+     * are zero -- but the columns must be present, otherwise the row is narrower than
+     * the enumerated local space, matchrow fails, and Solver_ctmc silently skips its
+     * unreachable-state pruning, leaving the enumerated-but-unreachable "counter set
+     * while every job is here" states as a second absorbing class.
+     *
+     * @param sn           network structure
+     * @param ind          node index
+     * @param n            per-class marginal queue lengths
+     * @param s            per-class jobs in service
+     * @param optionsForce force flag
+     * @return the local state space rows
+     */
     public static Matrix fromMarginalAndStarted(NetworkStruct sn, int ind, Matrix n, Matrix s, Boolean optionsForce) {
+        Matrix space = subFromMarginalAndStarted(sn, ind, n, s, optionsForce);
+        if (ReplyBlock.holds(sn, ind) && space != null && space.getNumRows() > 0) {
+            int width = 0;
+            for (int r = 0; r < sn.nclasses; r++) {
+                if (sn.replyblock.get(ind, r) > 0) {
+                    width++;
+                }
+            }
+            Matrix pad = new Matrix(space.getNumRows(), width);
+            pad.zero();
+            space = space.concatCols(pad);
+        }
+        return space;
+    }
+
+    private static Matrix subFromMarginalAndStarted(NetworkStruct sn, int ind, Matrix n, Matrix s, Boolean optionsForce) {
         // generate one initial state such that the marginal queue-lengths are as in vector n
         // n(r): number of jobs at the station in class r
         // s(r): jobs of class r that are running
@@ -1997,6 +2097,23 @@ public class FromMarginal implements Serializable {
         statusCol.set(0, 0, 0);
         statusCol.set(1, 0, 1);
         return Matrix.cartesian(space, statusCol);
+    }
+
+    /**
+     * Row-reversal, so that states where jobs start in phase 1 come first (the
+     * {@code space(end:-1:1,:)} convention of the MATLAB enumeration).
+     *
+     * @param m matrix to reverse
+     * @return a copy of {@code m} with the row order reversed
+     */
+    private static Matrix reverseRows(Matrix m) {
+        Matrix out = new Matrix(m.getNumRows(), m.getNumCols());
+        for (int i = 0; i < m.getNumRows(); i++) {
+            for (int j = 0; j < m.getNumCols(); j++) {
+                out.set(i, j, m.get(m.getNumRows() - 1 - i, j));
+            }
+        }
+        return out;
     }
 
     private static Matrix appendRouteVars(NetworkStruct sn, int ind, int R, Matrix space) {

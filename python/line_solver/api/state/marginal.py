@@ -9,6 +9,7 @@ import numpy as np
 from typing import Tuple, Optional, Union, List
 from ...lang.base import SchedStrategy, NodeType
 from ...lib.thirdparty.uniqueperms import uniqueperms
+from .reply_block import reply_width as _reply_width
 
 
 def toMarginal(sn, ind: int, state_i: np.ndarray = None, phasesz: np.ndarray = None,
@@ -374,6 +375,17 @@ def fromMarginal(sn, ind: int, n: Union[np.ndarray, list], options: dict = None)
     if getattr(sn, 'isfjaugmented', False) and sn.nodetype[ind] == NodeType.JOIN:
         return np.asarray(n, dtype=float).reshape(1, -1)
 
+    # Synchronous call (REPLY signal): the node holds one server per job that
+    # has left for its callee and is waiting for the reply. Those servers are
+    # not derivable from the marginal n, so enumerate the held-server counts
+    # here and build the rest of the state with the REMAINING servers -- with b
+    # servers held, only S-b jobs can be in service, a configuration the plain
+    # enumeration never produces. Recurse on a struct copy with the block
+    # cleared, then append its columns, which trail the local-variable vector
+    # (see api.state.reply_block).
+    if _reply_width(sn, ind) > 0:
+        return _from_marginal_reply(sn, ind, n, options)
+
     # Get station index
     if hasattr(sn, 'nodeToStation'):
         ist = sn.nodeToStation[ind]
@@ -503,6 +515,55 @@ def fromMarginal(sn, ind: int, n: Union[np.ndarray, list], options: dict = None)
         # Reverse sort to put states with jobs in phase 1 earlier
         space = space[::-1]
 
+    return space
+
+
+def _from_marginal_reply(sn, ind: int, n, options) -> np.ndarray:
+    """fromMarginal at a station holding servers for pending synchronous calls.
+
+    Enumerates the held-server counts b (one counter per calling class) and,
+    for each b, generates the ordinary local space with S-b servers, since the
+    held servers are unavailable. The sub-spaces have different buffer widths
+    (held servers push jobs into the buffer), and the FCFS buffer is
+    RIGHT-aligned, so the narrow rows are widened on the LEFT before stacking.
+
+    Mirrors the reply branch of MATLAB State/fromMarginal.m.
+    """
+    import copy as _copy
+    from itertools import product as _iproduct
+
+    ist = int(sn.nodeToStation[ind])
+    S = int(sn.nservers[ist]) if np.isfinite(sn.nservers[ist]) else 0
+    rclasses = [r for r in range(int(sn.nclasses)) if sn.replyblock[ind, r] > 0]
+
+    snb = _copy.copy(sn)
+    snb.replyblock = np.asarray(sn.replyblock).copy()
+    snb.replyblock[ind, :] = 0
+    snb.nservers = np.asarray(sn.nservers, dtype=float).copy()
+
+    subspaces = []
+    maxw = 0
+    for b in _iproduct(*[range(S + 1) for _ in rclasses]):
+        if sum(b) > S:
+            continue
+        snb.nservers[ist] = S - sum(b)
+        subspace = fromMarginal(snb, ind, n, options)
+        subspace = np.atleast_2d(np.asarray(subspace))
+        if subspace.size == 0:
+            continue
+        subspaces.append((np.asarray(b, dtype=float), subspace))
+        maxw = max(maxw, subspace.shape[1])
+
+    rows = []
+    for b, subspace in subspaces:
+        if subspace.shape[1] < maxw:
+            subspace = np.hstack([
+                np.zeros((subspace.shape[0], maxw - subspace.shape[1])), subspace])
+        rows.append(np.hstack([subspace, np.tile(b, (subspace.shape[0], 1))]))
+    if not rows:
+        return np.array([])
+    space = np.vstack(rows)
+    space = np.unique(space, axis=0)[::-1]
     return space
 
 
@@ -1150,6 +1211,29 @@ def _generate_state_space_with_running(sched: int, S: int, n: np.ndarray, s: np.
 
 def fromMarginalAndStarted(sn, ind: int, n: Union[np.ndarray, list],
                            s: Union[np.ndarray, list], options: dict = None) -> np.ndarray:
+    """Wrapper appending the synchronous-call (REPLY) counter columns.
+
+    The discipline branches below return from several places, so the counter
+    columns are appended here, once, for every exit path. An initial or
+    user-supplied state has no call outstanding, so the counters are zero --
+    but the columns must be present, otherwise the row is narrower than the
+    enumerated local space, matches no state, the unreachable-state pruning is
+    silently skipped, and the enumerated-but-unreachable "counter set while
+    every job is here" states remain as a second absorbing class.
+    """
+    if hasattr(sn, 'get_struct'):
+        sn = sn.get_struct()
+    space = _from_marginal_and_started(sn, ind, n, s, options)
+    w = _reply_width(sn, ind)
+    if w > 0:
+        space = np.atleast_2d(np.asarray(space))
+        if space.size > 0:
+            space = np.hstack([space, np.zeros((space.shape[0], w))])
+    return space
+
+
+def _from_marginal_and_started(sn, ind: int, n: Union[np.ndarray, list],
+                               s: Union[np.ndarray, list], options: dict = None) -> np.ndarray:
     """
     Generate state space with specific marginal and started job counts.
 

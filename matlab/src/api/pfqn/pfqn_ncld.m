@@ -158,7 +158,7 @@ switch options.method
     case {'is'}
         % Importance sampling for a load-dependent closed network: the
         % sample-an-ordering estimator of pfqn_ld_is (the LD counterpart of
-        % pfqn_is).
+        % pfqn_is / pfqn_oi_is / pfqn_pas_is).
         [~,lG] = pfqn_ld_is(L,N,sum(Z,1),mu,options);
         method = 'is';
     case 'clw'
@@ -167,6 +167,17 @@ switch options.method
         % delay term is passed as the aggregate IS demand sum(Z,1).
         [~,lG] = pfqn_clw_lld(L, N, sum(Z,1), mu, options);
         method = 'clw';
+    case {'panacea','panaceald'}
+        % Mitra-McKenna load-dependent PANACEA asymptotic expansion. Delay
+        % terms may arrive either in Z or as mu(i,n)=n rows of L, both are
+        % recognized by pfqn_panaceald.
+        [~,lG] = pfqn_panaceald(L, N, sum(Z,1), mu);
+        method = 'panaceald';
+        if isnan(lG)
+            % normal usage (1 - lambda_i/mu_i(Ntot) > 0 at every queueing
+            % center) is the domain of the expansion, not a numerical failure
+            line_error(mfilename,'The model is not in normal usage, so the ''panaceald'' asymptotic expansion does not apply. Use ''exact'', ''clw'' or an approximate load-dependent method instead.');
+        end
     case 'rd'
         [lG] = pfqn_rd(L, N, Z, mu, options);
     case 'nrp'

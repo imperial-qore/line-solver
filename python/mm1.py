@@ -17,6 +17,7 @@ if __name__ == "__main__":
 
     solver = JMT(model,verbose=True)
     table = solver.avg_table()
+    print(table)
 
 
 

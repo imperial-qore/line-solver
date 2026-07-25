@@ -61,6 +61,9 @@ switch options.lang
                 jnode = jmodel.getNodeByIndex(ind-1);
                 self.model.nodes{ind}.setResultHitProb(JLINE.from_jline_matrix(jnode.getHitRatio()));
                 self.model.nodes{ind}.setResultMissProb(JLINE.from_jline_matrix(jnode.getMissRatio()));
+                % Retrieval-cache extras (delayed-hit ratio, per-list hit ratio
+                % and expected latency) so getAvgCacheTable matches the native path.
+                self.model.nodes{ind}.setResultDelayedHitProb(JLINE.from_jline_matrix(jnode.getDelayedHitRatio()));
                 self.model.nodes{ind}.setResultHitProbList(JLINE.from_jline_matrix(jnode.getHitRatioByList()));
                 self.model.nodes{ind}.setResultItemProb(JLINE.from_jline_matrix(jnode.getItemProb()));
                 self.model.nodes{ind}.setResultResidT(JLINE.from_jline_matrix(jnode.getResidT()));
@@ -98,6 +101,22 @@ switch options.lang
             return
         end
 
+        % OI closed network -> solver_nc_oi_analyzer (exact pfqn_ncoi), intercepted
+        % before the multiserver->lldscaling conversion; see
+        % _kb/06-solver-catalog.md (NC section, analyzer routing)
+        if nc_is_oi_model(sn) && any(strcmpi(options.method,{'default','exact'}))
+            line_debug(options, 'NC: order-independent closed network, routing to solver_nc_oi_analyzer');
+            [QN,UN,RN,TN,CN,XN,lG,runtime,iter,actualmethod] = solver_nc_oi_analyzer(sn, options);
+            AN = sn_get_arvr_from_tput(sn, TN, self.getAvgTputHandles());
+            if strcmp(origmethod,'default') && ~strcmp(actualmethod,'default')
+                self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,runtime,['default/' actualmethod],iter);
+            else
+                self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,runtime,actualmethod,iter);
+            end
+            self.result.Prob.logNormConstAggr = real(lG);
+            return
+        end
+
         switch options.method
             case 'default'
                 if sn.nstations == 2 && ~any(sn.nodetype == NodeType.Cache) && any(sn.nodetype == NodeType.Delay) && any(sn.nservers(isfinite(sn.nservers))>1)
@@ -122,10 +141,14 @@ switch options.lang
                         line_debug(options, 'Default method: 2-station Delay+multiserver non-product-form network, using comom');
                     end
                 end
-            case {'exact','is'}
-                % 'is' needs the same model as 'exact' (same multiserver conversion);
-                % see _kb/06-solver-catalog.md (NC section)
-                if ~self.model.hasProductFormSolution
+            case {'exact','is','panaceald'}
+                % 'is' and 'panaceald' need the same model as 'exact' (same
+                % multiserver conversion),
+                % except OI/P&S which route to solver_nc_analyzer (pfqn_pas_is /
+                % pfqn_oi_is); see _kb/06-solver-catalog.md (NC section)
+                if strcmpi(options.method,'is') && nc_is_pas_model(sn)
+                    % no-op: handled by solver_nc_analyzer (pfqn_pas_is)
+                elseif ~self.model.hasProductFormSolution
                     line_error(mfilename,'The %s method requires the model to have a product-form solution. This model does not have one. You can use Network.hasProductFormSolution() to check before running the solver.', options.method);
                 elseif isempty(sn.lldscaling) && any(sn.nservers(isfinite(sn.nservers)) > 1)
                     % convert multiserver to lld ONLY when a genuine multiserver is
@@ -151,7 +174,30 @@ switch options.lang
 
         Solver.resetRandomGeneratorSeed(options.seed);
 
-        if sn.nclosedjobs == 0 && length(sn.nodetype)==3 && all(sort(sn.nodetype)' == sort([NodeType.Source,NodeType.Cache,NodeType.Sink])) % is a non-rentrant cache
+        ci_cache = find(sn.nodetype == NodeType.Cache, 1);
+        hasRetrieval = ~isempty(ci_cache) && isfield(sn.nodeparam{ci_cache}, 'retrievalSystemCapacity') ...
+            && sn.nodeparam{ci_cache}.retrievalSystemCapacity > 0;
+        if hasRetrieval % delayed-hit (retrieval-system) cache
+            if any(sn.nodetype == NodeType.Source)
+                line_debug(options, 'Open delayed-hit retrieval cache, routing to nc_retrieval_analyzer');
+                [QN,UN,RN,TN,CN,XN,lG,hitprob,missprob,delayedprob,hitproblist,itemprob,latency,runtime,actualmethod] = solver_nc_retrieval_analyzer(sn, options);
+            else
+                line_debug(options, 'Closed integrated delayed-hit retrieval cache, routing to nc_cacheqn_retrieval_analyzer');
+                [QN,UN,RN,TN,CN,XN,lG,hitprob,missprob,delayedprob,hitproblist,itemprob,latency,runtime,actualmethod] = solver_nc_cacheqn_retrieval_analyzer(sn, options);
+            end
+            iter = NaN;
+            for ind = 1:sn.nnodes
+                if sn.nodetype(ind) == NodeType.Cache
+                    self.model.nodes{ind}.setResultHitProb(hitprob);
+                    self.model.nodes{ind}.setResultMissProb(missprob);
+                    self.model.nodes{ind}.setResultDelayedHitProb(delayedprob);
+                    self.model.nodes{ind}.setResultHitProbList(hitproblist);
+                    self.model.nodes{ind}.setResultItemProb(itemprob);
+                    self.model.nodes{ind}.setResultResidT(latency);
+                end
+            end
+            self.model.refreshStruct(true);
+        elseif sn.nclosedjobs == 0 && length(sn.nodetype)==3 && all(sort(sn.nodetype)' == sort([NodeType.Source,NodeType.Cache,NodeType.Sink])) % is a non-rentrant cache
             line_debug(options, 'Non-reentrant cache (Source-Cache-Sink), routing to nc_cache_analyzer');
             % random initialization
             for ind = 1:sn.nnodes
@@ -202,6 +248,41 @@ switch options.lang
                 end
                 self.model.refreshStruct(true);  % Force refresh to get updated actualhitprob/actualmissprob
                 sn = self.model.sn;
+            elseif sn_is_mm1k_loss(sn) % single-station M/M/1/K with tail drop
+                % Exact probability-based loss analysis (M/M/1/K stationary
+                % distribution); see qsys_mm1k_loss.
+                queue_ist = sn.nodeToStation(sn.nodetype == NodeType.Queue);
+                source_ist = sn.nodeToStation(sn.nodetype == NodeType.Source);
+                Kcap = sn.cap(queue_ist);
+                lambda = sn.rates(source_ist)*sn.visits{source_ist}(sn.stationToStateful(queue_ist));
+                mu = sn.rates(queue_ist);
+                rho = lambda/mu;
+                [Ploss, ~] = qsys_mm1k_loss(lambda, mu, Kcap);
+                Tq = lambda*(1-Ploss);          % carried throughput
+                if abs(rho-1) < 1e-10
+                    Lsys = Kcap/2;              % L'Hopital limit at rho=1
+                else
+                    Lsys = rho/(1-rho) - (Kcap+1)*rho^(Kcap+1)/(1-rho^(Kcap+1));
+                end
+                Vq = sn.visits{1}(sn.stationToStateful(queue_ist));
+                M = sn.nstations;
+                QN = zeros(M,1); UN = QN; RN = QN; TN = QN; XN = QN; CN = 0;
+                RN(queue_ist) = Lsys/Tq;        % per-visit response time (Little)
+                QN(queue_ist) = Lsys;
+                UN(queue_ist) = Tq/mu;          % single-server utilization
+                TN(queue_ist) = Tq;             % carried (effective) rate
+                TN(source_ist) = lambda;        % offered arrival rate
+                XN(queue_ist) = Tq;             % system throughput = carried rate
+                CN = RN(queue_ist)*Vq;
+                lG = 0; iter = 1; actualmethod = 'mm1k.loss';
+                AN = sn_get_arvr_from_tput(sn, TN, self.getAvgTputHandles());
+                if strcmp(origmethod,'default')
+                    self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,0,['default/' actualmethod],iter);
+                else
+                    self.setAvgResults(QN,UN,RN,TN,AN,[],CN,XN,0,actualmethod,iter);
+                end
+                self.result.Prob.logNormConstAggr = real(lG);
+                return
             else % ordinary queueing network
                 % Check for open model with single FCR containing single Delay (loss network)
                 if ~sn_has_closed_classes(sn) && sn.nregions == 1
@@ -251,7 +332,7 @@ switch options.lang
                                 line_debug(options, 'NC method=exact, open model, routing to nc_analyzer');
                                 [QN,UN,RN,TN,CN,XN,lG,runtime,iter,actualmethod] = solver_nc_analyzer(sn, options);
                             end
-                        case {'rd','nrp','nrl','comomld'}
+                        case {'rd','nrp','nrl','comomld','panaceald'}
                             line_debug(options, 'NC method=%s, routing to ncld_analyzer', options.method);
                             [QN,UN,RN,TN,CN,XN,lG,runtime,iter,actualmethod] = solver_ncld_analyzer(sn, options);
                         otherwise

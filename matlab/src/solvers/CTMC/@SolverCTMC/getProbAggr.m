@@ -13,6 +13,8 @@ function Pnir = getProbAggr(self, ist)
 % Output:
 %   Pnir - Scalar probability in [0,1]
 
+self.assertPhaseTypeStates('getProbAggr');
+
 if GlobalConstants.DummyMode
     Pnir = NaN;
     return

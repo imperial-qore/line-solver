@@ -136,7 +136,7 @@ public abstract class Solver {
                 "jmt.jsim", "jmt.jmva", "jmt.jmva.mva", "jmt.jmva.amva", "jmt.jmva.recal", "jmt.jmva.comom", "jmt.jmva.chow", "jmt.jmva.bs", "jmt.jmva.aql", "jmt.jmva.lin", "jmt.jmva.dmlin", "jmt.jmva.ls",
                 "brute", "ca", "comomrm", "comomld", "gm", "mom", "propfair", "recal", "kt", "rd", "nr.probit", "nr.logit", "nc.brute", "nc.ca", "nc.comom", "nc.comomld", "nc.gm", "nc.mom", "nc.propfair", "nc.recal", "nc.kt", "nc.rd", "nc.nr.probit", "nc.nr.logit",
                 "fluid", "matrix", "softmin", "statedep", "closing", "fluid.softmin", "fluid.statedep", "fluid.closing", "fluid.matrix",
-                "nc", "nc.exact", "nc.imci", "ls", "nc.ls", "nc.cub", "cub", "le", "nc.le", "nc.panacea", "panacea", "nc.mmint2", "mmint2", "nc.gleint", "gleint", "mam", "dec.source", "dec.mmap",
+                "nc", "nc.exact", "nc.imci", "ls", "nc.ls", "nc.cub", "cub", "le", "nc.le", "nc.panacea", "panacea", "nc.panaceald", "panaceald", "nc.mmint2", "mmint2", "nc.gleint", "gleint", "mam", "dec.source", "dec.mmap",
                 "mmk", "gigk", "gigk.kingman_approx",
                 "mm1", "mg1", "gm1", "gig1", "gim1", "gig1.kingman", "gig1.gelenbe", "gig1.heyman", "gig1.kimura", "gig1.allen", "gig1.kobayashi", "gig1.klb", "gig1.marchal",
                 "aba.upper", "aba.lower", "gb.upper", "gb.lower", "sb.upper", "sb.lower", "bjb.upper", "bjb.lower", "pb.upper", "pb.lower"

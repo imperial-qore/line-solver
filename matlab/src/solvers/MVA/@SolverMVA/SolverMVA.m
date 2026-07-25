@@ -148,27 +148,38 @@ classdef SolverMVA < NetworkSolver
             % with setCapacity / a finite classCap (BUG-39).
             [bool, reason] = supportsModelMethod@NetworkSolver(self, method);
             if bool && isa(self.model, 'Network')
-                [bool, reason] = SolverMVA.supportsFiniteCapacity(self.model);
+                [bool, reason] = SolverMVA.supportsFiniteCapacity(self.model, method);
             end
         end
 
     end
 
     methods(Static)
-        function [bool, reason] = supportsFiniteCapacity(model)
-            % [BOOL, REASON] = SUPPORTSFINITECAPACITY(MODEL)
+        function [bool, reason] = supportsFiniteCapacity(model, method)
+            % [BOOL, REASON] = SUPPORTSFINITECAPACITY(MODEL, METHOD)
             % MVA-specific finite-capacity gate: Blocking-After-Service models
             % are exempt because MVA offers the Smith queue-decomposition
             % method 'sqd', and solver_mva_analyzer routes a BAS model to
             % solver_sqd under the default method too, so the finite buffers
             % ARE honoured on every MVA path. Everything else defers to the
             % shared product-form gate.
+            if nargin < 2
+                method = '';
+            end
             bool = true;
             reason = '';
             if ~isa(model, 'Network')
                 return
             end
             if sn_is_bas_model(model.getStruct())
+                return
+            end
+            % Single-station M/M/1/K with tail drop is handled by the
+            % moment-based (MacGregor Smith) qsys_mg1k_loss_mgs branch in
+            % solver_mva_qsys_analyzer, exact only at scv=1. It is an
+            % approximation in general, so method='exact' is NOT exempted (it
+            % must reject); every other method is.
+            if ~strcmp(method, 'exact') && sn_is_mm1k_loss(model.getStruct())
                 return
             end
             [bool, reason] = NetworkSolver.checkBindingCapacity(model, 'SolverMVA');
@@ -184,10 +195,12 @@ classdef SolverMVA < NetworkSolver
                 'Pareto','Weibull','Lognormal','Uniform','Det', ...
                 'StatelessClassSwitcher','InfiniteServer','SharedServer','Buffer','Dispatcher',...
                 'CacheClassSwitcher','Cache', ...
+                'CacheRetrieval', ...
                 'Server','JobSink','RandomSource','ServiceTunnel',...
                 'SchedStrategy_INF','SchedStrategy_PS',...
                 'SchedStrategy_DPS','SchedStrategy_FCFS','SchedStrategy_SIRO','SchedStrategy_HOL',...
                 'SchedStrategy_LCFS','SchedStrategy_LCFSPR','SchedStrategy_POLLING',...
+                'SchedStrategy_OI','SchedStrategy_PAS',...  % exact order-independent path only (solver_mva_oi_analyzer)
                 'Fork','Forker','Join','Joiner',...
                 'RoutingStrategy_PROB','RoutingStrategy_RAND',...
                 'ReplacementStrategy_RR', 'ReplacementStrategy_FIFO', 'ReplacementStrategy_LRU',...

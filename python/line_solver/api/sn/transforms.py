@@ -961,6 +961,12 @@ def sn_nonmarkov_toph(
 
     # Get number of phases from options (default 20)
     n_phases = config.get('nonmkvorder', 20)
+    # Family used when a concrete distribution has to be replaced by a Markovian
+    # surrogate: 'cme' fits a concentrated matrix exponential plus an exponential
+    # tail, 'ph' keeps the Erlang. At a budget of n_phases the ME reaches an SCV
+    # of O(1/n_phases^2) where the Erlang stops at 1/n_phases, so 'cme' is the
+    # default; SSA, Fluid and JMT pass 'ph' because they cannot consume an ME.
+    phfit = str(config.get('phfit', 'cme')).lower()
 
     # Check if we should preserve deterministic distributions
     preserve_det = config.get('preserveDet', False)
@@ -1068,9 +1074,24 @@ def sn_nonmarkov_toph(
                     pdf_func = lambda x, lo=min_val, hi=max_val: stats.uniform.pdf(x, loc=lo, scale=hi-lo)
 
             elif proc_type == ProcessType.DET:
-                # Deterministic: use Erlang approximation
-                MAP = map_erlang(target_mean, n_phases)
-                sn = _update_sn_for_map(sn, ist, r, MAP, n_phases)
+                # Deterministic: the most concentrated surrogate the phase budget
+                # allows. Erlang-20 only reaches SCV 0.05; the CME plus exponential
+                # reaches 5.7e-3 at the same 20 phases.
+                MAP, actual = _fit_concentrated_surrogate(target_mean, 0.0, n_phases, phfit)
+                sn = _update_sn_for_map(sn, ist, r, MAP, actual)
+                continue
+
+            # A concentrated ME matching the first two moments EXACTLY reproduces
+            # the Pollaczek-Khinchine mean, which the Bernstein fit does not: on
+            # M/Gamma/1 at rho 0.5 the shape fit lands 2.7e-2 away from the exact
+            # mean queue length while the two-moment ME lands on it. The Bernstein
+            # path is kept for phfit='ph', where it carries shape information that
+            # a two-moment fit cannot, and for the solvers that need a phase-type.
+            target_scv = float(sn.scv[ist, r]) if sn.scv is not None else 1.0
+            if phfit == 'cme' and 0.0 <= target_scv < 1.0:
+                MAP, actual_me = _fit_concentrated_surrogate(
+                    target_mean, target_scv, n_phases, phfit)
+                sn = _update_sn_for_map(sn, ist, r, MAP, actual_me)
                 continue
 
             # Apply Bernstein approximation if PDF function is defined
@@ -1081,8 +1102,10 @@ def sn_nonmarkov_toph(
                 cur_mean = map_mean(MAP[0], MAP[1])
                 MAP = map_scale(MAP[0], MAP[1], cur_mean / target_mean)
             else:
-                # Generic fallback: Erlang approximation
-                MAP = map_erlang(target_mean, n_phases)
+                # Generic fallback: same concentrated surrogate as the Det branch,
+                # targeting the SCV recorded in sn.
+                target_scv = float(sn.scv[ist, r]) if sn.scv is not None else 0.0
+                MAP, _ = _fit_concentrated_surrogate(target_mean, target_scv, n_phases, phfit)
 
             # Update the network structure for the converted MAP
             actual_phases = MAP[0].shape[0] if isinstance(MAP, (list, tuple)) else n_phases
@@ -1170,6 +1193,34 @@ def sn_nonmarkov_toph(
     return sn
 
 
+
+def _fit_concentrated_surrogate(target_mean, target_scv, n_phases, phfit):
+    """Build the Markovian surrogate of a concrete distribution.
+
+    With ``phfit='cme'`` the surrogate is a concentrated matrix exponential
+    convolved with an exponential (see fit_me_mean_scv): under a budget of
+    ``n_phases`` it reaches an SCV of O(1/n_phases^2), where an Erlang of the same
+    order stops at 1/n_phases. With ``phfit='ph'`` the Erlang is kept, which is
+    what SSA, Fluid and JMT need since they cannot consume a matrix exponential.
+
+    Returns the (D0, D1) pair and its actual number of phases.
+    """
+    from ..mam import map_erlang
+
+    if phfit == 'cme':
+        from ...distributions.markovian import fit_me_mean_scv
+        # A Det has SCV 0, which no ME attains; the budget-limited branch of the
+        # fitter then returns the most concentrated member that fits.
+        scv = max(float(target_scv), 1e-12)
+        if scv < 1.0:
+            fitted = fit_me_mean_scv(target_mean, min(scv, 1.0 - 1e-12), max_phases=n_phases)
+            proc = fitted.getProcess()
+            return (proc[0], proc[1]), fitted.getNumberOfPhases()
+
+    MAP = map_erlang(target_mean, n_phases)
+    return MAP, n_phases
+
+
 def _update_sn_for_map(
     sn: NetworkStruct,
     ist: int,
@@ -1215,7 +1266,19 @@ def _update_sn_for_map(
     # Update procid
     if sn.procid is None:
         sn.procid = np.zeros((sn.nstations, sn.nclasses), dtype=object)
-    sn.procid[ist, r] = ProcessType.MAP
+    # The conversion methods (map_bernstein, map_erlang, the CME fit) always
+    # produce a RENEWAL process, so it is tagged PH, not MAP, exactly as MATLAB
+    # updateSnForMAP does. Tagging MAP made the MAM handler treat the service as
+    # a correlated arrival process and fall back to the exponential rate: an
+    # M/Gamma/1 at rho 0.5 returned the M/M/1 answer 1.0 instead of 0.8125.
+    # A surrogate that is NOT a phase-type is tagged ME and recorded in sn.isph,
+    # so the CTMC assembles a rational generator and the PH-only consumers refuse.
+    from .utils import sn_is_phasetype
+    is_ph = sn_is_phasetype(MAP)
+    sn.procid[ist, r] = ProcessType.PH if is_ph else ProcessType.ME
+    if sn.isph is None:
+        sn.isph = np.ones((sn.nstations, sn.nclasses), dtype=bool)
+    sn.isph[ist, r] = is_ph
 
     # Update phases
     if sn.phases is None:

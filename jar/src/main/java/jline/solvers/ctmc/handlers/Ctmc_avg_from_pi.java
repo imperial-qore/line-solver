@@ -23,6 +23,7 @@ import jline.lang.NetworkStruct;
 import jline.lang.nodes.Station;
 import jline.lang.constant.NodeType;
 import jline.lang.constant.SchedStrategy;
+import jline.lang.state.ReplyBlock;
 import jline.lang.state.State;
 import jline.lang.state.ToMarginal;
 import jline.api.mam.Map_mean;
@@ -288,6 +289,38 @@ public final class Ctmc_avg_from_pi {
             }
         }
 
+        // Synchronous calls (REPLY signals): a caller that is blocked awaiting a reply
+        // still HOLDS its server and, by the LDES/LQN convention, still owns the job it
+        // sent to the callee -- that simultaneous resource possession is the point of
+        // the feature. The held servers live in the reply block of the local state, so
+        // add their time average to the caller's utilization and queue length; without
+        // it CTMC reports only the carried load.
+        Matrix QNblocked = new Matrix(M, K);
+        QNblocked.zero();
+        if (sn.replyblock != null && !sn.replyblock.isEmpty()) {
+            for (int i = 0; i < M; i++) {
+                int ind = (int) sn.stationToNode.get(i);
+                if (!ReplyBlock.holds(sn, ind)) {
+                    continue;
+                }
+                ReplyBlock.Info rinfoU = ReplyBlock.info(sn, ind);
+                int c0 = (int) istSpaceShift.get(i);
+                int wid = sn.space.get(sn.stateful.get(i)).getNumCols();
+                int bcol0 = c0 + wid - rinfoU.width;
+                for (int pos = 0; pos < rinfoU.classes.size(); pos++) {
+                    int r = rinfoU.classes.get(pos).intValue();
+                    double bmean = 0;
+                    for (int index = 0; index < wset.length(); index++) {
+                        int st = (int) wset.get(index);
+                        bmean += probSysState.get(st) * StateSpaceWork.get(st, bcol0 + pos);
+                    }
+                    QN.set(i, r, QN.get(i, r) + bmean);
+                    UN.set(i, r, UN.get(i, r) + bmean / S.get(i));
+                    QNblocked.set(i, r, bmean);
+                }
+            }
+        }
+
         // see _kb/06-solver-catalog.md for rationale
         if (sn.cdscaling != null && !sn.cdscaling.isEmpty()) {
             boolean allFinite = true;
@@ -342,7 +375,10 @@ public final class Ctmc_avg_from_pi {
         for (int k = 0; k < K; k++) {
             for (int i = 0; i < M; i++) {
                 if (TN.get(i, k) > 0) {
-                    RN.set(i, k, QN.get(i, k) / TN.get(i, k));
+                    // Response time is time spent AT the station, so the job blocked out
+                    // at the callee is excluded even though QLen/Util count it (LDES
+                    // measures the sojourn directly and reports the same).
+                    RN.set(i, k, (QN.get(i, k) - QNblocked.get(i, k)) / TN.get(i, k));
                 } else {
                     RN.set(i, k, 0);
                 }

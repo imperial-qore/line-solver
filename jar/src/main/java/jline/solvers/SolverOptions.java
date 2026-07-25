@@ -250,6 +250,7 @@ public class SolverOptions {
         this.config.variates = "none"; // Variance reduction disabled by default
         this.config.nonmkv = "bernstein"; // Method for non-Markovian distribution conversion
         this.config.nonmkvorder = 20; // Order (number of phases) for non-Markovian approximation
+        this.config.phfit = "cme"; // Surrogate family for concrete distributions
         this.config.da = "courtois"; // CTMC decomposition/aggregation method for Env solver
         this.config.da_iter = 10; // Number of iterations for kms/takahashi
         this.config.relax = "none"; // Default is no relaxation (will be overridden for LN solver)
@@ -440,6 +441,7 @@ public class SolverOptions {
             cloned.config.state_space_gen = this.config.state_space_gen;
             cloned.config.nonmkv = this.config.nonmkv;
             cloned.config.nonmkvorder = this.config.nonmkvorder;
+            cloned.config.phfit = this.config.phfit;
             cloned.config.da = this.config.da;
             cloned.config.da_iter = this.config.da_iter;
             cloned.config.relax = this.config.relax;
@@ -896,6 +898,14 @@ public class SolverOptions {
          * <p>Default: 20</p>
          */
         public int nonmkvorder = 20;
+        /**
+         * Family used when a concrete distribution is replaced by a Markovian surrogate:
+         * "cme" fits a concentrated matrix exponential plus an exponential tail, "ph"
+         * keeps the Erlang/Bernstein phase-type. At a budget of nonmkvorder phases the ME
+         * reaches an SCV of O(1/n^2) where the Erlang stops at 1/n, and it matches the
+         * first two moments exactly. SSA, Fluid and JMT must use "ph".
+         */
+        public String phfit = "cme";
 
         /**
          * Whether to preserve deterministic distributions during non-Markovian

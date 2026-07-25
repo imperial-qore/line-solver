@@ -249,9 +249,12 @@ def pfqn_is(L, N, Z=None, options=None):
     per-class demand L and an aggregated delay of think time Z.
 
     This is the load-independent case of :func:`pfqn_ld_is` (capacities
-    mu_i(k)=1): a sample-an-ordering estimator whose per-position factor is, for a
-    single-server queue, the demand of the class at that position, L(i,q_p), and
-    for the delay Z(q_p)/p.
+    mu_i(k)=1), and the ordinary-network counterpart of the order-independent
+    pfqn_oi_is and the pass-and-swap pfqn_pas_is: all four are the same
+    sample-an-ordering estimator, differing only in the per-position factor of
+    each station's balance function. For a single-server queue that factor is the
+    demand of the class at that position, L(i,q_p); for the delay it is Z(q_p)/p;
+    for an OI/P&S station it is the reciprocal rank rate 1/mu_i(supp(q_1..q_p)).
 
     With ell = sum(N), an ordering c of all ell jobs is drawn by placing a
     uniformly random present class at each step (probability p(c) = product of the
@@ -330,7 +333,7 @@ def pfqn_nc(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
             - 'le': Leading eigenvalue asymptotic
             - 'cub': Controllable upper bound
             - 'imci': Importance sampling Monte Carlo integration
-            - 'panacea': Hybrid convolution/MVA
+            - 'panacea': PANACEA asymptotic expansion (load-independent)
             - 'propfair': Proportionally fair allocation
             - 'mmint2': Gauss-Legendre quadrature
             - 'gleint': Gauss-Legendre integration
@@ -541,22 +544,86 @@ def pfqn_nc(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
     return G, lG
 
 
-def pfqn_panacea(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None
-                 ) -> Tuple[float, float]:
+def pfqn_panacea(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None,
+                 terms: int = 3) -> Tuple[float, float]:
     """
-    PANACEA algorithm (hybrid convolution/MVA).
+    PANACEA asymptotic expansion for load-independent closed networks.
 
-    Currently implemented as wrapper around convolution algorithm.
+    McKenna-Mitra normal-usage expansion whose coefficients are linear
+    combinations of pseudonetwork partition functions evaluated by convolution.
 
     Args:
-        L: Service demand matrix
-        N: Population vector
-        Z: Think time vector
+        L: Service demand matrix (M x R)
+        N: Population vector (R,)
+        Z: Think time vector (R,)
+        terms: Number of terms in the normal-usage asymptotic series
+            (1, 2, or 3; default 3), as selectable in the original PANACEA
+            package (Ramakrishnan-Mitra, BSTJ 61(10):2849-2872, 1982)
 
     Returns:
-        Tuple (G, lG) - normalizing constant and its log
+        Tuple (G, lG) - normalizing constant and its log, both NaN when the
+        model is not in normal usage
     """
-    return pfqn_ca(L, N, Z)
+    if terms not in (1, 2, 3):
+        raise ValueError("The terms parameter must be 1, 2, or 3 "
+                         "(higher-order coefficients are not implemented).")
+    L = np.atleast_2d(np.asarray(L, dtype=float))
+    N = np.asarray(N, dtype=float).flatten()
+    q, p = L.shape
+    if Z is None or np.size(Z) == 0:
+        Z = np.full(p, 1e-8)
+    else:
+        Z = np.asarray(Z, dtype=float)
+        Z = np.sum(Z, axis=0) if Z.ndim > 1 else Z.flatten()
+
+    if L.size == 0 or np.all(np.sum(L, axis=0) == 0):
+        lGn = -float(np.sum([_factln(n) for n in N])) + float(np.sum(N * np.log(Z)))
+        return exp(lGn), lGn
+
+    r = L / np.tile(Z, (q, 1))
+    Nt = np.max(1.0 / r[r > 0])   # ignore structural zeros
+    beta = N / Nt
+    gamma = r * Nt
+    alpha = 1.0 - N.dot(r.T)
+    if np.min(alpha) < 0:
+        return float('nan'), float('nan')
+    gammatilde = gamma / np.tile(alpha.reshape(-1, 1), (1, p))
+
+    A0 = 1.0
+    A1 = 0.0
+    if terms >= 2:
+        for j in range(p):
+            m = np.zeros(p)
+            m[j] = 2
+            A1 -= beta[j] * pfqn_ca(gammatilde, m)[0]
+
+    A2 = 0.0
+    if terms >= 3:
+        for j in range(p):
+            m = np.zeros(p)
+            m[j] = 3
+            A2 += 2 * beta[j] * pfqn_ca(gammatilde, m)[0]
+            m = np.zeros(p)
+            m[j] = 4
+            A2 += 3 * beta[j] ** 2 * pfqn_ca(gammatilde, m)[0]
+            for k in range(p):
+                if k != j:
+                    m = np.zeros(p)
+                    m[j] = 2
+                    m[k] = 2
+                    A2 += 0.5 * beta[j] * beta[k] * pfqn_ca(gammatilde, m)[0]
+
+    I = [A0, A1 / Nt, A2 / Nt ** 2][:terms]
+    sumI = sum(I)
+    if sumI <= 0:
+        return float('nan'), float('nan')
+
+    lGn = (-float(np.sum([_factln(n) for n in N]))
+           + float(np.sum(N * np.log(Z))) + log(sumI)
+           - float(np.sum(np.log(alpha))))
+    if not np.isfinite(lGn):
+        return float('nan'), float('nan')
+    return exp(lGn), lGn
 
 
 def pfqn_propfair(L: np.ndarray, N: np.ndarray, Z: np.ndarray = None

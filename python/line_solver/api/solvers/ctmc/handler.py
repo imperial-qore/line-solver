@@ -853,6 +853,20 @@ def _find_immediate_states_sync(sn, state_space_hashed):
     return nonimm_indices, imm_indices
 
 
+
+def _sn_all_phasetype(sn) -> bool:
+    """True when every station-class process admits a phase-type reading.
+
+    False as soon as one service or arrival process is a matrix exponential or a
+    rational arrival process, in which case the stationary vector of the
+    generator is a signed measure. See sn_is_phasetype and _kb/04-networkstruct.md.
+    """
+    isph = getattr(sn, 'isph', None)
+    if isph is None:
+        return True
+    return bool(np.all(np.asarray(isph, dtype=bool)))
+
+
 def _compute_metrics_sync(sn, pi, arvRates, depRates, state_space_aggr,
                           state_space, state_space_hashed, options=None):
     """
@@ -887,8 +901,16 @@ def _compute_metrics_sync(sn, pi, arvRates, depRates, state_space_aggr,
     if len(pi) != n_states:
         return {'Q': QN, 'U': UN, 'R': RN, 'T': TN}
 
-    # Clean up pi
-    pi[pi < 1e-14] = 0
+    # Clean up pi. The clamp removes the tiny negative residues a genuine CTMC
+    # solve leaves behind, but a station whose service is a matrix exponential
+    # makes the stationary vector a genuinely SIGNED measure: the generator has
+    # negative off-diagonal entries by construction, and only the aggregates
+    # over each phase block are probabilities. Clamping there deletes real mass
+    # (an M/CME/1 came out with utilization 3.19), so the sign is kept and every
+    # metric below, being linear in pi, stays exact.
+    signed = not _sn_all_phasetype(sn)
+    if not signed:
+        pi[pi < 1e-14] = 0
     pi_sum = np.sum(pi)
     if pi_sum > 0:
         pi = pi / pi_sum
@@ -1151,11 +1173,43 @@ def _compute_metrics_sync(sn, pi, arvRates, depRates, state_space_aggr,
                     QN[ist, k] -= shift
                     QN[jst, k] += shift
 
+    # Synchronous calls (REPLY signals): a caller that is blocked awaiting a
+    # reply still HOLDS its server and, by the LDES/LQN convention, still owns
+    # the job it sent to the callee -- that simultaneous resource possession is
+    # the point of the feature. The held servers live in the reply block at the
+    # tail of the caller's local state, so add their time average to the
+    # caller's utilization and queue length; without it CTMC reports only the
+    # carried load (0.32915 against LDES 0.54997 on the closed client/server
+    # model, with QLen 0.46395 against 0.68499).
+    QNblocked = np.zeros((M, K))
+    if getattr(sn, 'replyblock', None) is not None and np.any(np.asarray(sn.replyblock) > 0):
+        from ...state.reply_block import reply_block_info
+        for ist in range(M):
+            ind = int(sn.stationToNode[ist])
+            rinfo = reply_block_info(sn, ind)
+            if rinfo.width == 0:
+                continue
+            isf = int(sn.stationToStateful[ist])
+            space_isf = np.atleast_2d(sn.space[isf])
+            rows = state_space_hashed[:, isf].astype(int)
+            S_ist = float(sn.nservers[ist])
+            pos = 0
+            for r in rinfo.classes:
+                col = space_isf.shape[1] - rinfo.width + pos
+                pos += 1
+                bmean = float(np.dot(pi, space_isf[rows, col]))
+                QN[ist, r] += bmean
+                UN[ist, r] += bmean / S_ist
+                QNblocked[ist, r] = bmean
+
     # Response time via Little's law
     for ist in range(M):
         for k in range(K):
             if TN[ist, k] > 1e-14:
-                RN[ist, k] = QN[ist, k] / TN[ist, k]
+                # Response time is time spent AT the station, so the job blocked
+                # out at the callee is excluded even though QLen/Util count it
+                # (LDES measures the sojourn directly and reports the same).
+                RN[ist, k] = (QN[ist, k] - QNblocked[ist, k]) / TN[ist, k]
 
     return {'Q': QN, 'U': UN, 'R': RN, 'T': TN}
 
@@ -1360,9 +1414,10 @@ def _update_cache_routing_probabilities(sn: NetworkStruct) -> None:
 
 
 def _forward_reachable(Q, start):
-    """State indices forward-reachable from ``start`` over positive off-diagonal
-    entries of the generator ``Q``. For a closed pass-and-swap network whose
-    initial placement lies in a recurrent class, this is that recurrent class."""
+    """State indices forward-reachable from ``start`` over the nonzero off-diagonal
+    entries of the generator ``Q`` (an ME embeds with negative ones, which are arcs
+    all the same). For a closed pass-and-swap network whose initial placement lies in
+    a recurrent class, this is that recurrent class."""
     Qd = np.asarray(Q)
     n = Qd.shape[0]
     visited = np.zeros(n, dtype=bool)
@@ -1379,9 +1434,13 @@ def _forward_reachable(Q, start):
     return np.nonzero(visited)[0]
 
 
-def _pas_initial_state_index(sn, state_space_hashed):
-    """Global index of the initial placement (sn.state) within the hashed state
-    space, by matching each node's initial state into its per-node space."""
+def _initial_state_index(sn, state_space_hashed):
+    """Global index of the initial state (sn.state) within the hashed state
+    space, by matching each node's initial state into its per-node space.
+
+    Used wherever a reducible generator has to be restricted to the recurrent
+    class the model actually starts in (closed pass-and-swap placements,
+    synchronous-call blocked-server counters)."""
     if not hasattr(sn, 'state') or sn.state is None or not hasattr(sn, 'space') or sn.space is None:
         return None
     nstateful = state_space_hashed.shape[1]
@@ -1393,6 +1452,14 @@ def _pas_initial_state_index(sn, state_space_hashed):
             return None
         ns = np.atleast_2d(np.asarray(node_space, dtype=float))
         target = np.atleast_1d(np.asarray(node_state, dtype=float)).ravel()
+        # The per-station initial row carries only as many buffer slots as the
+        # initial population needs, while the enumerated local space is sized
+        # for the full capacity. Left-pad to the space width (empty buffer slots
+        # pad the left, so the server-phase and local-variable tail stays
+        # aligned); without this the lookup fails and any pruning keyed on the
+        # initial state is silently skipped.
+        if ns.shape[1] > target.shape[0]:
+            target = np.concatenate([np.zeros(ns.shape[1] - target.shape[0]), target])
         idx = -1
         for r in range(ns.shape[0]):
             if ns.shape[1] == target.shape[0] and np.allclose(ns[r], target):
@@ -2220,6 +2287,26 @@ def solver_ctmc_basic(
                 print(f"  Stochcomp: {len(imm_indices)} immediate states eliminated, "
                       f"{len(nonimm_indices)} non-immediate states remain.")
 
+        # REPLY blocked-server counters are enumerated independently of the marginals, so unreachable (absorbing) configurations are pruned from the initial state; mirrors MATLAB solver_ctmc.m.
+        if (getattr(sn, 'replyblock', None) is not None
+                and np.any(np.asarray(sn.replyblock) > 0) and Q.shape[0] > 1):
+            _init_idx = _initial_state_index(sn, state_space_hashed)
+            if _init_idx is None or _init_idx < 0:
+                raise RuntimeError(
+                    "Synchronous calls (REPLY signals): the initial state was not found in the "
+                    "enumerated state space, so the unreachable blocked-server configurations "
+                    "cannot be pruned and the generator would be reducible.")
+            _reach = _forward_reachable(Q, _init_idx)
+            if 0 < len(_reach) < Q.shape[0]:
+                _reach = np.asarray(sorted(int(x) for x in _reach), dtype=int)
+                Q = Q[np.ix_(_reach, _reach)]
+                state_space = state_space[_reach]
+                state_space_aggr = state_space_aggr[_reach]
+                state_space_hashed = state_space_hashed[_reach]
+                arvRates = arvRates[_reach]
+                depRates = depRates[_reach]
+                Dfilt = [d[np.ix_(_reach, _reach)] for d in Dfilt]
+
         # closed PAS networks are reducible (placement order is conserved); the generator is restricted to the recurrent class reachable from the initial placement before solving.
         _pas_present = False
         if hasattr(sn, 'sched') and sn.sched is not None:
@@ -2228,7 +2315,7 @@ def solver_ctmc_basic(
                     _pas_present = True
                     break
         if _pas_present:
-            _init_idx = _pas_initial_state_index(sn, state_space_hashed)
+            _init_idx = _initial_state_index(sn, state_space_hashed)
             if _init_idx is not None and _init_idx >= 0:
                 _reach = _forward_reachable(Q, _init_idx)
                 if 0 < len(_reach) < Q.shape[0]:

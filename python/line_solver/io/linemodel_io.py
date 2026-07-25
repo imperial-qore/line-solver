@@ -767,9 +767,9 @@ def _network_to_json(model) -> Dict[str, Any]:
             js_dict = getattr(node, '_join_strategy', {})
             for jc, js in js_dict.items():
                 if js is not None and hasattr(js, 'name') and js.name != 'STD':
-                    # Save as PARTIAL for MATLAB compatibility (QUORUM→PARTIAL)
-                    _js_save_map = {'QUORUM': 'PARTIAL'}
-                    nj["joinStrategy"] = _js_save_map.get(js.name, js.name)
+                    # JoinStrategy.PARTIAL is canonical, so .name is already the
+                    # interchange spelling shared with MATLAB.
+                    nj["joinStrategy"] = js.name
                     break
             req_dict = getattr(node, '_required', {})
             for jc, req in req_dict.items():
@@ -827,10 +827,25 @@ def _network_to_json(model) -> Dict[str, Any]:
                 nj["accessProb"] = [[np.asarray(m, dtype=float).tolist() for m in row]
                                     for row in node._accost]
 
-            # Initial cache state [class counts | contents]
+            # Initial cache state [class counts | contents | retrieval bitmap]
             cache_state = node.get_state()
             if cache_state is not None and np.asarray(cache_state).size > 0:
                 nj["initialState"] = [float(x) for x in np.asarray(cache_state).ravel()]
+
+            # retrieval-system (delayed-hit cache) bookkeeping needed by the simulator to start a fetch on a miss.
+            if getattr(node, '_retrieval_system_capacity', 0) > 0:
+                by_class = {}
+                for jc_idx0, q_indices in node._retrieval_system_queue_indices.items():
+                    jc_name = classes[jc_idx0].name
+                    by_class.setdefault(jc_name, {})["queues"] = \
+                        [nodes[qi].name for qi in q_indices]
+                for (item, in_cls), out_cls in node._retrieval_classes.items():
+                    items_map = by_class.setdefault(in_cls.name, {}).setdefault("items", {})
+                    items_map[str(int(item))] = out_cls.name
+                nj["retrievalSystem"] = {
+                    "capacity": int(node._retrieval_system_capacity),
+                    "byClass": by_class,
+                }
 
         # Setup / delay-off (server vacation). Emitted as a pair keyed by class
         # name, since set_delay_off requires both distributions on reload.
@@ -2072,8 +2087,9 @@ def _json_to_network(data: Dict[str, Any]):
             js_str = nd.get("joinStrategy")
             if js_str is not None:
                 from ..lang.base import JoinStrategy
-                # Map aliases from other codebases
-                _js_map = {'PARTIAL': 'QUORUM', 'Quorum': 'QUORUM', 'Partial': 'QUORUM'}
+                # Map aliases from other codebases; PARTIAL and QUORUM are the
+                # same member here, Quorum is the JAR's spelling.
+                _js_map = {'Quorum': 'QUORUM', 'Partial': 'PARTIAL'}
                 js_key = _js_map.get(js_str, js_str)
                 js = getattr(JoinStrategy, js_key, JoinStrategy.STD)
                 for jc in class_map.values():
@@ -2266,6 +2282,26 @@ def _json_to_network(data: Dict[str, Any]):
                     pop_dist = _json_to_dist(dist_json)
                     if pop_dist is not None and not isinstance(pop_dist, Disabled):
                         node.set_read(jc, pop_dist)
+
+            # retrieval-system bookkeeping restored; retrieval classes/routing/service reconstruct generically.
+            rs = cache_src.get("retrievalSystem")
+            if rs:
+                node._retrieval_system_capacity = int(rs.get("capacity", 0))
+                for jc_name, entry in rs.get("byClass", {}).items():
+                    jobin = class_map.get(jc_name)
+                    if jobin is None:
+                        continue
+                    q_idx = []
+                    for qn in entry.get("queues", []):
+                        qnode = node_map.get(qn)
+                        if qnode is not None:
+                            q_idx.append(qnode.get_index0())
+                    node._retrieval_system_queue_indices[jobin.get_index0()] = q_idx
+                    for it_str, rc_name in entry.get("items", {}).items():
+                        rc = class_map.get(rc_name)
+                        if rc is not None:
+                            node.set_retrieval_class(jobin, rc, int(it_str))
+                            node._retrieval_class_indices.add(rc.get_index0())
 
             # Access-cost (list-move) structure
             ag = cache_src.get("accessGraph")

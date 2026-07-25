@@ -196,10 +196,20 @@ class SchedStrategyType(IntEnum):
 
 
 class JoinStrategy(IntEnum):
-    """Enumeration of join strategies."""
-    STD = 0       # Standard (AND-join)
-    QUORUM = 1    # Quorum
-    CANDJOIN = 2  # Cache AND-join
+    """Enumeration of join strategies.
+
+    PARTIAL is the canonical name of the k-of-n join, as in the MATLAB
+    JoinStrategy class, so that `.name` serializes straight to the interchange
+    spelling; QUORUM is kept as an alias for it because that is how the JAR
+    (jline.lang.constant.JoinStrategy.Quorum) spells the same strategy. Only
+    the names cross codebases, in the JSON `joinStrategy` field and the .lqnx
+    path; the numeric values are compared solely against this enum, so they
+    need not match the MATLAB or JAR ids.
+    """
+    STD = 0        # Standard (AND-join)
+    PARTIAL = 1    # k-of-n join (MATLAB spelling, canonical)
+    QUORUM = 1     # Alias of PARTIAL (JAR spelling)
+    CANDJOIN = 2   # Cache AND-join
 
 
 class DropStrategy(IntEnum):

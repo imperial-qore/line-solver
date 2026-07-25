@@ -80,9 +80,16 @@ function model = LQN2QN(lqn)
 %   read the reply is emitted by an immediate trigger step per hit/miss
 %   outcome, whose completion spawns the matching branch continuation.
 %
-% Not yet represented: delayed-hit retrieval on the cache miss path, and the
-% thread pool of a task with an internal AND-fork. Each is reported through
-% line_warning.
+% - An AND-join quorum k of n is applied to the Join node in the class that
+%   entered the Fork; k equal to the branch count is the default wait-for-all
+%   and is left alone. An activity think time becomes an extra step on a shared
+%   ActivityThink delay, in series with the host demand, so the task keeps its
+%   thread for it while its processor is released.
+%
+% Not yet represented: delayed-hit retrieval on the cache miss path, the thread
+% pool of a task with an internal AND-fork, task and processor replication with
+% its fan-out, and the setup and delay-off times of a function task. Each is
+% reported through line_warning.
 %
 % Example:
 %   lqn = LayeredNetwork('MyLQN');
@@ -249,6 +256,9 @@ cacheNodeOf = containers.Map('KeyType', 'double', 'ValueType', 'any');
 cacheWiring = struct('node', {}, 'readStep', {}, 'hitStep', {}, 'missStep', {}, ...
     'itemproc', {}, 'nitems', {});
 
+joinQuorum = zeros(0, 2);   % [joinStep, joinAidx]; applied once the fork class exists
+actThinkNode = [];          % shared INF station carrying the activity think times
+
 for rt = 1:length(refTaskIndices)
     refTidx = refTaskIndices(rt);
     thinkStep = addStep([], [], [], [lsn.names{refTidx}, '_Think'], false, true, refTidx);
@@ -313,6 +323,11 @@ for i = 1:nsteps
     stepClass{i} = stepClass{stepClassOwner(i)};
 end
 
+% AND-join quorum, in the class the siblings are matched in
+for jq_ = 1:size(joinQuorum, 1)
+    applyJoinQuorum(stepNode{joinQuorum(jq_, 1)}, stepClass{joinQuorum(jq_, 1)}, joinQuorum(jq_, 2));
+end
+
 for i = 1:nsteps
     if stepBlocks(i)
         sig = Signal(model, [stepName{i}, '_Reply'], SignalType.REPLY);
@@ -360,6 +375,10 @@ end
 %% Pass 3: service times
 for i = 1:nsteps
     if ~isempty(stepNode{i})
+        if stepClassOwner(i) == i && ~isempty(actThinkNode) && stepNode{i} == actThinkNode
+            actThinkNode.setService(stepClass{i}, stepSvc{i});
+            continue;
+        end
         % A Router-hosted merge step owns a class, declared Immediate at the reference think delay (as for signals)
         if stepClassOwner(i) == i && isa(stepNode{i}, 'Router')
             if stepRefTask(i) == 0
@@ -865,6 +884,7 @@ end
             [sEntry, ~] = walk(joinAidx);
             addRoute([joinStep, 0], sEntry, 1.0);
             joinOf(joinAidx) = [joinStep, sEntry];
+            joinQuorum(end+1, :) = [joinStep, joinAidx]; %#ok<AGROW>
         end
 
         function tf = branchReplies(a0)
@@ -934,6 +954,15 @@ end
         % cur is the port through which the activity is currently left. A
         % blocking call site is left through its reply signal.
         cur = [entryStep, 0];
+
+        % Activity think time: a delay in series with the host demand, on a shared INF station so the processor is released
+        actThinkDist_ = actThinkOf(aidx);
+        if ~isempty(actThinkDist_)
+            actThinkStep_ = addStep(aidx, hidx, actThinkDist_, [lsn.names{aidx}, '_think'], false, false, refTidx);
+            stepNode{actThinkStep_} = actThinkStation();
+            addRoute(cur, actThinkStep_, 1.0);
+            cur = [actThinkStep_, 0];
+        end
 
         % A call blocks the caller's server only when host servers are finite, the task is not a thread pool,
         % multiplicity is finite, and the chain is not open -- see _kb/04-networkstruct.md
@@ -1031,6 +1060,55 @@ end
             full(lsn.actposttype(s)) == ActivityPrecedenceType.POST_AND, succ));
     end
 
+    function applyJoinQuorum(joinNode, joinClass, joinAidx)
+        % A join whose quorum equals its branch count already waits for all
+        % branches, the default JoinStrategy.STD, so only a genuine quorum
+        % k < n switches the node to JoinStrategy.PARTIAL.
+        if isempty(joinNode) || isempty(joinClass) || ~isfield(lsn, 'actquorum') || ...
+                isempty(lsn.actquorum) || joinAidx > length(lsn.actquorum)
+            return;
+        end
+        quorum = full(lsn.actquorum(joinAidx));
+        nbranches = countAndJoinBranches(joinAidx);
+        if quorum < 1 || nbranches < 1 || quorum >= nbranches
+            return;
+        end
+        joinNode.setStrategy(joinClass, JoinStrategy.PARTIAL);
+        joinNode.setRequired(joinClass, quorum);
+    end
+
+    function nb_ = countAndJoinBranches(joinAidx)
+        % Branch tails feeding an AND-join, i.e. its PRE_AND predecessors.
+        nb_ = 0;
+        for p_ = find(lsn.graph(:, joinAidx) ~= 0)'
+            if p_ ~= joinAidx && isAndJoinPre(p_)
+                nb_ = nb_ + 1;
+            end
+        end
+    end
+
+    function ad_ = actThinkOf(aidx)
+        % Think time of an activity, empty when it has none. It is a delay in
+        % series with the host demand, held at the activity's own task (the
+        % thread is kept) but with the host processor released, as in lqns.
+        ad_ = [];
+        if ~isfield(lsn, 'actthink') || aidx > length(lsn.actthink)
+            return;
+        end
+        at_ = lsn.actthink{aidx};
+        if isa(at_, 'Distribution') && ~isa(at_, 'Immediate') && at_.getMean() > GlobalConstants.FineTol
+            ad_ = at_;
+        end
+    end
+
+    function nd_ = actThinkStation()
+        % Single INF station shared by every activity think time.
+        if isempty(actThinkNode)
+            actThinkNode = Delay(model, 'ActivityThink');
+        end
+        nd_ = actThinkNode;
+    end
+
     function tf = isAndJoinPre(aidx)
         % An activity marked PRE_AND is one branch tail of an AND-join.
         tf = isfield(lsn, 'actpretype') && ~isempty(lsn.actpretype) && ...
@@ -1091,6 +1169,16 @@ end
         end
         if isfield(lsn, 'hasretrieval') && any(lsn.hasretrieval)
             line_warning(mfilename, 'Delayed-hit retrieval on the cache miss path is not represented by LQN2QN.');
+        end
+        if isfield(lsn, 'repl') && any(full(lsn.repl(1:lsn.nhosts+lsn.ntasks)) > 1)
+            idx_ = find(full(lsn.repl(1:lsn.nhosts+lsn.ntasks)) > 1, 1);
+            line_warning(mfilename, sprintf(['Replication of %s is not represented by LQN2QN: ' ...
+                'the replicas are collapsed into a single station and their fan-out is ignored.'], ...
+                lsn.names{idx_}));
+        end
+        if isfield(lsn, 'isfunction') && any(full(lsn.isfunction))
+            line_warning(mfilename, ['Setup and delay-off times of function tasks are not ' ...
+                'represented by LQN2QN: the task is converted as an ordinary always-on station.']);
         end
     end
 

@@ -364,13 +364,14 @@ class SolverCTMC(NetworkSolver):
 
         # retrial models the classical exponential-delay, unlimited-attempt, single-class case; other configurations are rejected rather than silently mis-solved with no retry.
 
-        # signal classes never occupy a station; capped at 0 per-station capacity (except EXT/Source) so the space does not enumerate unreachable signal-holding states.
+        # signal classes never occupy a station; capped at 0 per-station capacity (except EXT/Source) so the space does not enumerate unreachable signal-holding states. A REPLY signal is exempt: it stays as an ordinary job.
         if (sn is not None and getattr(sn, 'issignal', None) is not None
                 and getattr(sn, 'classcap', None) is not None):
+            from ...api.state.reply_block import is_reply_class as _is_reply_class
             for _ist in range(int(sn.nstations)):
                 if sn.sched[_ist] != _SchedStrategy.EXT:
                     for _r in range(int(sn.nclasses)):
-                        if sn.issignal[_r]:
+                        if sn.issignal[_r] and not _is_reply_class(sn, _r):
                             sn.classcap[_ist, _r] = 0
 
         # heterogeneous ORDER-policy servers map to load-dependent mu(n) = sum of the first min(n,c) server rates; multi-class hetero is rejected.
@@ -1495,6 +1496,7 @@ class SolverCTMC(NetworkSolver):
         Returns:
             Probability that station ist is in the specified state (scalar).
         """
+        self._assert_phasetype_states('getProbAggr')
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import prob_via_jar
             return prob_via_jar(self, 'prob-aggr', ist=ist, kind='scalar')
@@ -1592,6 +1594,7 @@ class SolverCTMC(NetworkSolver):
         Returns:
             float: Joint probability of the system state.
         """
+        self._assert_phasetype_states('getProbSysAggr')
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import prob_via_jar
             return prob_via_jar(self, 'prob-sys-aggr', kind='scalar')
@@ -1673,6 +1676,7 @@ class SolverCTMC(NetworkSolver):
         Returns:
             float: Joint probability of the detailed system state.
         """
+        self._assert_phasetype_states('getProbSys')
         if getattr(self.options, 'lang', 'python') == 'java':
             from ..jar_dispatch import prob_via_jar
             return prob_via_jar(self, 'prob-sys', kind='scalar')
@@ -1740,6 +1744,29 @@ class SolverCTMC(NetworkSolver):
 
         return prob
 
+
+    def _assert_phasetype_states(self, what: str) -> None:
+        """Refuse a query whose answer is a per-state probability under an ME.
+
+        A matrix-exponential service embeds in the generator with negative
+        off-diagonal entries, so the stationary vector is a SIGNED measure: only
+        its aggregates over each phase block are probabilities. Mean measures
+        stay exact (they are linear in that vector), but a per-state or
+        transient answer is not a probability at all, and uniformization -- a
+        Poisson mixture of powers of I + Q/lambda -- diverges on a signed
+        generator. Such queries are refused rather than answered with a number
+        that looks like a probability. See sn.isph and _kb/04-networkstruct.md.
+        """
+        sn = self.model.getStruct()
+        isph = getattr(sn, 'isph', None)
+        if isph is not None and not bool(np.all(np.asarray(isph, dtype=bool))):
+            raise ValueError(
+                '%s is unavailable: the model has a matrix-exponential (ME) '
+                'service or arrival process, so the stationary vector of the '
+                'generator is a signed measure and per-state probabilities and '
+                'uniformization-based transients do not exist. Mean measures '
+                '(getAvg, getAvgTable) remain exact.' % what)
+
     def getProb(self, station=None) -> float:
         """Get probability for the detailed state at station.
 
@@ -1754,6 +1781,7 @@ class SolverCTMC(NetworkSolver):
         Returns:
             float: Probability that station is in the specified detailed state.
         """
+        self._assert_phasetype_states('getProb')
         if station is None:
             if self._result is None:
                 self.runAnalyzer()
@@ -2081,6 +2109,7 @@ class SolverCTMC(NetworkSolver):
         Returns:
             Transient probability vector at time t
         """
+        self._assert_phasetype_states('getTranProb')
         if self._result is None:
             self.runAnalyzer()
 
@@ -2125,6 +2154,7 @@ class SolverCTMC(NetworkSolver):
         Returns:
             Transient aggregated probability vector at time t
         """
+        self._assert_phasetype_states('getTranProbAggr')
         return self.getTranProb(node, t)
 
     def getTranProbSys(self, t: float = 1.0) -> np.ndarray:
@@ -2138,6 +2168,7 @@ class SolverCTMC(NetworkSolver):
         Returns:
             Transient system probability vector at time t
         """
+        self._assert_phasetype_states('getTranProbSys')
         if self._result is None:
             self.runAnalyzer()
 
@@ -2167,6 +2198,7 @@ class SolverCTMC(NetworkSolver):
         Returns:
             Transient system probability vector at time t
         """
+        self._assert_phasetype_states('getTranProbSysAggr')
         return self.getTranProbSys(t)
 
     # =========================================================================
@@ -4070,10 +4102,10 @@ class SolverCTMC(NetworkSolver):
         return {
             'Source', 'Sink',
             'ClassSwitch', 'Delay', 'DelayStation', 'Queue', 'Router',
-            'MAP', 'APH', 'MMPP2', 'MMAP', 'PH', 'Coxian', 'Erlang', 'Exp', 'HyperExp',
+            'MAP', 'APH', 'MMPP2', 'MMAP', 'PH', 'Coxian', 'Erlang', 'Exp', 'HyperExp', 'ME',
             'Det', 'Gamma', 'Weibull', 'Lognormal', 'Pareto', 'Uniform',
             'StatelessClassSwitcher', 'InfiniteServer', 'SharedServer', 'Buffer', 'Dispatcher',
-            'Cache', 'CacheClassSwitcher',
+            'Cache', 'CacheClassSwitcher', 'CacheRetrieval',
             'Server', 'JobSink', 'RandomSource', 'ServiceTunnel',
             'SchedStrategy_INF', 'SchedStrategy_PS',
             'SchedStrategy_DPS', 'SchedStrategy_GPS',
@@ -4095,7 +4127,7 @@ class SolverCTMC(NetworkSolver):
             'ReplacementStrategy_HLRU', 'ReplacementStrategy_CLIMB', 'ReplacementStrategy_QLRU',
             'ClosedClass', 'SelfLoopingClass', 'OpenClass', 'Replayer',
             'OpenSignal', 'ClosedSignal',
-            'SignalType_NEGATIVE', 'SignalType_CATASTROPHE',
+            'SignalType_NEGATIVE', 'SignalType_CATASTROPHE', 'SignalType_REPLY',
             'SignalBatchRemoval', 'SignalRemovalPolicy',
             'Place', 'Transition', 'Linkage', 'Enabling', 'Inhibiting', 'Timing', 'Firing', 'Storage',
             'Fork', 'Join', 'Forker', 'Joiner',

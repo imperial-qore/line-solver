@@ -1,6 +1,8 @@
 function [Pi_t, SSnode] = getTranProb(self, node)
 % [PI_T, SSNODE] = GETTRANPROBSTATE(NODE)
 
+self.assertPhaseTypeStates('getTranProb');
+
 options = self.getOptions;
 if isfield(options,'timespan')  && isfinite(options.timespan(2))
     sn = self.getStruct;

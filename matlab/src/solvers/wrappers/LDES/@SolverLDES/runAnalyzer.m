@@ -171,6 +171,7 @@ for ind = 1:sn.nnodes
         mcache = self.model.nodes{ind};
         mcache.setResultHitProb(sparse([]));
         mcache.setResultMissProb(sparse([]));
+        mcache.setResultDelayedHitProb(sparse([]));
         mcache.setResultResidT(sparse([]));
         if haveCacheMetrics
             cname = matlab.lang.makeValidName(char(mcache.getName()));
@@ -178,11 +179,13 @@ for ind = 1:sn.nnodes
                 cm = data.cacheMetrics.(cname);
                 hp  = ldesJson2mat(ldesGetField(cm, 'hit', []), [], []);
                 mp  = ldesJson2mat(ldesGetField(cm, 'miss', []), [], []);
+                dhp = ldesJson2mat(ldesGetField(cm, 'delayed', []), [], []);
                 lp  = ldesJson2mat(ldesGetField(cm, 'latency', []), [], []);
                 hpl = ldesJson2mat(ldesGetField(cm, 'hitList', []), [], []);
                 ip  = ldesJson2mat(ldesGetField(cm, 'itemProb', []), [], []);
                 if ~isempty(hp),  mcache.setResultHitProb(hp);         end
                 if ~isempty(mp),  mcache.setResultMissProb(mp);        end
+                if ~isempty(dhp), mcache.setResultDelayedHitProb(dhp); end
                 if ~isempty(lp),  mcache.setResultResidT(lp);          end
                 if ~isempty(hpl), mcache.setResultHitProbList(hpl);    end
                 if ~isempty(ip),  mcache.setResultItemProb(ip);        end

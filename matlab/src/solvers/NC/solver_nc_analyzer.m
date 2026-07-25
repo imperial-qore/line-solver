@@ -7,6 +7,24 @@ Tstart = tic;
 
 line_debug('NC analyzer starting: method=%s, nstations=%d, nclasses=%d, njobs=%s', options.method, sn.nstations, sn.nclasses, mat2str(sn.njobs));
 
+% Order-independent (OI) closed network: explicit request, or auto-detected
+% when the closed model consists solely of OI and delay stations. Solved
+% exactly by the balanced-fairness normalizing constant (pfqn_ncoi) with the
+% OI functional-server (pfqn_oi_fnc) identity for the mean queue lengths.
+if nc_is_oi_model(sn) && any(strcmpi(options.method, {'default','exact'}))
+    line_debug('NC analyzer routing to solver_nc_oi_analyzer (order-independent)');
+    [Q,U,R,T,C,X,lG,runtime,iter,method] = solver_nc_oi_analyzer(sn, options);
+    return
+end
+
+% IS specialized to OI/P&S stations -> pfqn_pas_is (reduces to pfqn_oi_is for an
+% empty swap graph); see _kb/06-solver-catalog.md (NC section, analyzer routing)
+if nc_is_pas_model(sn) && any(strcmpi(options.method, {'default','is','sampling'}))
+    line_debug('NC analyzer routing to solver_nc_pas_is_analyzer (pass-and-swap IS)');
+    [Q,U,R,T,C,X,lG,runtime,iter,method] = solver_nc_pas_is_analyzer(sn, options);
+    return
+end
+
 % plain 'is' is the sample-an-ordering family for closed product-form networks;
 % no open-class form. see _kb/06-solver-catalog.md (NC section, analyzer routing)
 if strcmpi(options.method, 'is') && any(isinf(sn.njobs))

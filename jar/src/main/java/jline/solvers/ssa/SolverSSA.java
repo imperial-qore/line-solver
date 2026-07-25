@@ -96,7 +96,7 @@ public class SolverSSA extends NetworkSolver {
         featSupported.setTrue(new String[]{
                 "Sink", "Source", "Router",
                 "ClassSwitch", "Delay", "DelayStation", "Queue",
-                "Cache", "CacheClassSwitcher",
+                "Cache", "CacheClassSwitcher", "CacheRetrieval",
                 // see _kb/06-solver-catalog.md for rationale
                 "Place", "Transition", "Linkage", "Enabling", "Inhibiting", "Timing", "Firing", "Storage",
                 "MAP", "MMPP2", "MMAP", "APH", "PH", "Replayer",

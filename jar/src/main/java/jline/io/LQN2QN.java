@@ -15,6 +15,7 @@ import jline.lang.RoutingMatrix;
 import jline.lang.Signal;
 import jline.lang.constant.ActivityPrecedenceType;
 import jline.lang.constant.CallType;
+import jline.lang.constant.JoinStrategy;
 import jline.lang.constant.ReplacementStrategy;
 import jline.lang.constant.RoutingStrategy;
 import jline.lang.constant.SchedStrategy;
@@ -104,11 +105,19 @@ import static jline.io.InputOutput.mfilename;
  *       the Join; at a cache read the reply is emitted by an immediate
  *       trigger step per hit/miss outcome, whose completion spawns the
  *       matching branch continuation.</li>
+ *
+ *   <li>An AND-join quorum k of n is applied to the Join node in the class
+ *       that entered the Fork; k equal to the branch count is the default
+ *       wait-for-all and is left alone. An activity think time becomes an
+ *       extra step on a shared ActivityThink delay, in series with the host
+ *       demand, so the task keeps its thread for it while its processor is
+ *       released.</li>
  * </ul>
  *
- * <p>Not yet represented: delayed-hit retrieval on the cache miss path, and
- * the thread pool of a task with an internal AND-fork. Each is reported
- * through line_warning.</p>
+ * <p>Not yet represented: delayed-hit retrieval on the cache miss path, the
+ * thread pool of a task with an internal AND-fork, task and processor
+ * replication with its fan-out, and the setup and delay-off times of a
+ * function task. Each is reported through line_warning.</p>
  *
  * @see LayeredNetwork
  * @see Network
@@ -256,6 +265,14 @@ public class LQN2QN {
     private final Map<Integer, Cache> cacheNodeOf = new HashMap<Integer, Cache>();
     private final List<CacheWiring> cacheWiring = new ArrayList<CacheWiring>();
 
+    // joinQuorum rows [joinStep, joinAidx]: the quorum is applied once the
+    // class that entered the fork exists.
+    private final List<int[]> joinQuorum = new ArrayList<int[]>();
+
+    // Shared INF station carrying the activity think times: the task keeps its
+    // thread across a think time but its host processor is released.
+    private Delay actThinkNode;
+
     private List<JobClass> stepClass;
     private List<Signal> stepSignal;
 
@@ -381,6 +398,10 @@ public class LQN2QN {
         for (int i = 0; i < nsteps; i++) {
             stepClass.set(i, stepClass.get(stepClassOwner.get(i)));
         }
+        // AND-join quorum, in the class the siblings are matched in.
+        for (int[] jq : joinQuorum) {
+            applyJoinQuorum((Join) stepNode.get(jq[0]), stepClass.get(jq[0]), jq[1]);
+        }
         for (int i = 0; i < nsteps; i++) {
             if (stepBlocks.get(i)) {
                 Signal sig = new Signal(model, stepName.get(i) + "_Reply", SignalType.REPLY);
@@ -437,6 +458,11 @@ public class LQN2QN {
         for (int i = 0; i < nsteps; i++) {
             if (stepNode.get(i) != null) {
                 // Router-hosted merge step service pairing: see _kb/06-solver-catalog.md ("LQN2QN")
+                if (stepClassOwner.get(i) == i && stepNode.get(i) == actThinkNode
+                        && actThinkNode != null) {
+                    actThinkNode.setService(stepClass.get(i), stepSvc.get(i));
+                    continue;
+                }
                 if (stepClassOwner.get(i) == i && stepNode.get(i) instanceof Router) {
                     if (stepRefTask.get(i) == 0) {
                         // Open chain: no think delay exists, declare the pair at
@@ -1016,6 +1042,7 @@ public class LQN2QN {
             int sEntry = walk(joinAidx);
             addRoute(new Port(joinStep, false, 1.0), sEntry, 1.0);
             joinOf.put(joinAidx, joinStep);
+            joinQuorum.add(new int[]{joinStep, joinAidx});
         }
 
         private boolean branchReplies(int a0) {
@@ -1089,6 +1116,16 @@ public class LQN2QN {
             int entryStep = addStep(aidx, hidx, svc, lsn.names.get(aidx), false, false, refTidx);
             // exit port semantics: see _kb/06-solver-catalog.md ("LQN2QN")
             Port cur = new Port(entryStep, false, 1.0);
+
+            // activity think time: see _kb/06-solver-catalog.md ("LQN2QN")
+            Distribution think = actThinkOf(aidx);
+            if (think != null) {
+                int thinkStep = addStep(aidx, hidx, think, lsn.names.get(aidx) + "_think",
+                        false, false, refTidx);
+                stepNode.set(thinkStep, actThinkStation());
+                addRoute(cur, thinkStep, 1.0);
+                cur = new Port(thinkStep, false, 1.0);
+            }
 
             // call-blocking eligibility rules: see _kb/06-solver-catalog.md ("LQN2QN")
             boolean hostBlocks = !Boolean.TRUE.equals(hostIsDelay.get(hidx))
@@ -1172,6 +1209,26 @@ public class LQN2QN {
 
     // ------------------------------------------------------------- utilities
 
+    /**
+     * Think time of an activity, or null when it has none. It is a delay in
+     * series with the activity's host demand, held at the activity's own task
+     * (the thread is kept) but with the host processor released, mirroring lqns.
+     */
+    private Distribution actThinkOf(int aidx) {
+        if (lsn.actthink == null) {
+            return null;
+        }
+        return isNonTrivial(lsn.actthink.get(aidx)) ? lsn.actthink.get(aidx) : null;
+    }
+
+    /** Single INF station shared by every activity think time. */
+    private Delay actThinkStation() {
+        if (actThinkNode == null) {
+            actThinkNode = new Delay(model, "ActivityThink");
+        }
+        return actThinkNode;
+    }
+
     /** One Cache node per CacheTask, named so as not to collide with the processor station. */
     private Cache getCacheNode(int tidx) {
         Cache cnode = cacheNodeOf.get(tidx);
@@ -1217,6 +1274,39 @@ public class LQN2QN {
             }
         }
         return true;
+    }
+
+    /**
+     * Applies the AND-join quorum of a join target to its Join node. A join whose
+     * quorum equals its branch count already waits for all branches, which is the
+     * default JoinStrategy.STD, so only a genuine quorum k &lt; n is set.
+     */
+    private void applyJoinQuorum(Join joinNode, JobClass joinClass, int joinAidx) {
+        if (joinNode == null || joinClass == null || lsn.actquorum == null
+                || joinAidx < 1 || joinAidx >= lsn.actquorum.getNumCols()) {
+            return;
+        }
+        int quorum = (int) lsn.actquorum.get(0, joinAidx);
+        int nbranches = countAndJoinBranches(joinAidx);
+        if (quorum < 1 || nbranches < 1 || quorum >= nbranches) {
+            return;
+        }
+        joinNode.setStrategy(joinClass, JoinStrategy.Quorum);
+        joinNode.setRequired(joinClass, quorum);
+    }
+
+    /** Number of branch tails feeding an AND-join, i.e. its PRE_AND predecessors. */
+    private int countAndJoinBranches(int joinAidx) {
+        if (lsn.graph == null) {
+            return 0;
+        }
+        int count = 0;
+        for (int pred = 1; pred < lsn.graph.getNumRows(); pred++) {
+            if (pred != joinAidx && lsn.graph.get(pred, joinAidx) != 0 && isAndJoinPre(pred)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /** An activity marked PRE_AND is one branch tail of an AND-join. */
@@ -1295,6 +1385,26 @@ public class LQN2QN {
                 if (lsn.hasretrieval.get(i) != 0) {
                     line_warning(mfilename(new Object() {}), "Delayed-hit retrieval on the cache "
                             + "miss path is not represented by LQN2QN.");
+                    break;
+                }
+            }
+        }
+        if (lsn.repl != null && !lsn.repl.isEmpty()) {
+            for (int idx = 1; idx <= lsn.nhosts + lsn.ntasks; idx++) {
+                if (idx < lsn.repl.getNumCols() && lsn.repl.get(0, idx) > 1) {
+                    line_warning(mfilename(new Object() {}), "Replication of " + lsn.names.get(idx)
+                            + " is not represented by LQN2QN: the replicas are collapsed into a "
+                            + "single station and their fan-out is ignored.");
+                    break;
+                }
+            }
+        }
+        if (lsn.isfunction != null && !lsn.isfunction.isEmpty()) {
+            for (int idx = 0; idx < lsn.isfunction.getNumElements(); idx++) {
+                if (lsn.isfunction.get(idx) != 0) {
+                    line_warning(mfilename(new Object() {}), "Setup and delay-off times of function "
+                            + "tasks are not represented by LQN2QN: the task is converted as an "
+                            + "ordinary always-on station.");
                     break;
                 }
             }

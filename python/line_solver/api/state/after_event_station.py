@@ -10,6 +10,8 @@ Port from JAR AfterEventStation.java.
 import numpy as np
 from ...constants import EventType, GlobalConstants, ProcessType
 from ...lang.base import SchedStrategy, NodeType
+from .reply_block import (reply_width as _reply_width, reply_blocked as _reply_blocked,
+                          reply_block_info as _reply_block_info, is_reply_class as _is_reply_class)
 
 
 def after_event_station(sn, ind, inspace, event, job_class,
@@ -217,6 +219,33 @@ def _arrival_is_lost(sn, ist, job_class):
     return bool(np.isinf(arr[job_class]))
 
 
+def _reply_held_rows(sn, ind, space_var):
+    """Servers held at node ind for pending synchronous calls, per state row.
+
+    Returns the scalar 0.0 for every model without REPLY signals at this node,
+    so callers can subtract it from the server count unconditionally and pay
+    nothing when the feature is unused.
+    """
+    if _reply_width(sn, ind) == 0:
+        return 0.0
+    return _reply_blocked(sn, ind, space_var)[1]
+
+
+def _reply_call_slot(sn, ind, job_class):
+    """Local-variable index of the blocked-server counter that a departing
+    job_class job at node ind increments, or -1 when this departure is not a
+    synchronous call from this station."""
+    rb = getattr(sn, 'replyblock', None)
+    if rb is None:
+        return -1
+    rb = np.atleast_2d(np.asarray(rb))
+    if rb.size == 0 or ind >= rb.shape[0] or job_class >= rb.shape[1]:
+        return -1
+    if rb[ind, job_class] <= 0:
+        return -1
+    return int(_reply_block_info(sn, ind).slot[job_class])
+
+
 def _is_bas_station_marker(sn, ist):
     """True when station ist declares a blocked marker as the trailing state column.
 
@@ -256,6 +285,15 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                 np.ones(n_out).reshape(-1, 1))
     # signal/catastrophe arrival removes job(s) already present and is annihilated itself; mirrors MATLAB State.afterEventStationSignal.
     if getattr(sn, 'issignal', None) is not None and bool(sn.issignal[job_class]):
+        # A REPLY signal is not a negative customer: it completes a synchronous
+        # call, releasing the server this station holds for the caller, and then
+        # joins as an ordinary job. Only stations that actually hold a block for
+        # it take this path; elsewhere a REPLY class is a plain job class and
+        # falls through to the normal arrival handling below.
+        if _is_reply_class(sn, job_class) and _reply_block_info(sn, ind).width > 0:
+            return _handle_arv_reply(sn, ind, ist, job_class, K, Ks, S, pie,
+                                     space_buf, space_srv, space_var,
+                                     inspace, is_simulation)
         from .signal_removal import handle_signal_arrival
         return handle_signal_arrival(sn, ind, ist, inspace, job_class, sched,
                                      K, Ks, S, space_buf, space_srv, space_var,
@@ -380,11 +418,17 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                         space_buf_k[job_class] += 1
 
         elif sched in (SchedStrategy.FCFS, SchedStrategy.HOL, SchedStrategy.LCFS):
+            # Servers held by synchronous calls awaiting a REPLY are NOT
+            # available to an arriving job: subtract them from the server count.
+            # Computed once for every row (a zero scalar, hence free, for every
+            # model without reply signals).
+            Seff_rows = S - _reply_held_rows(sn, ind, space_var_k)
             for i in range(n_rows):
                 ni_val = ni[i]
                 # idle-server test on server occupancy, not total count, so an immediate-feedback self-loop (idle server + nonempty buffer) re-enters the vacated server; mirrors MATLAB afterEventStation.m.
                 srv_count = float(np.sum(space_srv_k[i])) if space_srv_k.ndim >= 2 else float(np.sum(space_srv_k))
-                if srv_count < S:
+                Seff = Seff_rows if np.isscalar(Seff_rows) else Seff_rows[min(i, len(Seff_rows) - 1)]
+                if srv_count < Seff:
                     # Idle server available: enter service directly
                     space_srv_k[i, int(Ks[job_class]) + kentry] += 1
                 else:
@@ -577,6 +621,100 @@ def _handle_arv(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
 # ---------------------------------------------------------------------------
 # RETRY handler (retrial orbit)
 # ---------------------------------------------------------------------------
+
+def _handle_arv_reply(sn, ind, ist, job_class, K, Ks, S, pie,
+                      space_buf, space_srv, space_var, inspace,
+                      is_simulation=False):
+    """Arrival of a REPLY signal class at the station holding its server.
+
+    The reply completes the synchronous call:
+
+      1. one held server of the calling class is released (the reply block
+         counter is decremented);
+      2. the released server is taken by the REPLY ITSELF, never by a waiting
+         job.
+
+    Unlike a NEGATIVE or CATASTROPHE signal the reply is NOT annihilated: it is
+    a job that carries the call result onward, so it is served here (typically
+    Immediate) and routed on by the ordinary routing matrix. This mirrors LDES,
+    where a REPLY arrival frees the blocked server and then continues routing.
+
+    The pass-through in step 2 is deliberate: the reply is the released work of
+    a call this station already paid for, so it does not queue behind the
+    residents (queueing it gave QLen 0.125 and residence 0.0996 against 0 in
+    LDES, and stole capacity, costing 5% of throughput). Its service is
+    typically Immediate, so the server is handed back at once and the ordinary
+    FCFS departure path then promotes the head of line -- which also keeps
+    sum(srv) <= S, unlike admitting the reply on top of a promoted job.
+
+    The event is passive: the rate is set by the active departure at the callee.
+    Port of MATLAB State/afterEventStationReply.m.
+    """
+    rinfo = _reply_block_info(sn, ind)
+
+    # The calling class this reply releases: the class whose expected reply is
+    # job_class and which holds a block here. sn.syncreply is 0-based.
+    callclass = -1
+    syncreply = np.asarray(sn.syncreply).ravel()
+    for r in rinfo.classes:
+        if r < syncreply.size and int(syncreply[r]) == job_class:
+            callclass = r
+            break
+
+    srv_rows = np.atleast_2d(space_srv)
+    buf_rows = np.atleast_2d(space_buf) if np.asarray(space_buf).size > 0 else None
+    var_rows = np.atleast_2d(space_var)
+
+    out_states, out_rates, out_probs = [], [], []
+    pentry = _get_pie(pie, ist, job_class, K)
+    for i in range(srv_rows.shape[0]):
+        buf = (buf_rows[i].copy() if buf_rows is not None and buf_rows.shape[0] > i
+               else (buf_rows[0].copy() if buf_rows is not None else np.array([])))
+        srv = srv_rows[i].copy()
+        var = var_rows[i].copy() if var_rows.shape[0] > i else var_rows[0].copy()
+
+        if callclass >= 0:
+            col = int(rinfo.slot[callclass])
+            if 0 <= col < var.size and var[col] > 0:
+                var[col] -= 1
+
+        # Join: into a free server (enumerating its entry phase) or, if all
+        # remaining servers are busy, at the tail of the right-aligned buffer.
+        nb = float(_reply_blocked(sn, ind, var.reshape(1, -1))[1][0])
+        Seff = S - nb
+        if float(np.sum(srv)) < Seff:
+            for kentry in range(int(K[job_class])):
+                if pentry[kentry] <= 0:
+                    continue
+                srv_k = srv.copy()
+                srv_k[int(Ks[job_class]) + kentry] += 1
+                out_states.append(_compose_state(buf, srv_k, var))
+                out_rates.append(-1.0)
+                out_probs.append(pentry[kentry])
+            continue
+
+        buf_new = buf.copy()
+        empty = np.where(buf_new == 0)[0]
+        if empty.size == 0:
+            buf_new = np.concatenate([[0.0], buf_new])
+            emptypos = 0
+        else:
+            emptypos = int(empty[-1])
+        buf_new[emptypos] = job_class + 1
+        out_states.append(_compose_state(buf_new, srv, var))
+        out_rates.append(-1.0)
+        out_probs.append(1.0)
+
+    outspace, outrate, outprob = _finalize(out_states, out_rates, out_probs, inspace)
+    if is_simulation and outprob.shape[0] > 1:
+        cum = np.cumsum(outprob.ravel()) / float(np.sum(outprob))
+        idx = int(np.searchsorted(cum, np.random.rand()))
+        idx = min(idx, outspace.shape[0] - 1)
+        outspace = outspace[idx:idx + 1]
+        outrate = outrate[idx:idx + 1]
+        outprob = np.ones((1, 1))
+    return outspace, outrate, outprob
+
 
 def _handle_renege(sn, ind, inspace, job_class, ist, R, K, Ks,
                    space_buf, space_srv, space_var):
@@ -772,6 +910,10 @@ def _handle_dep(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
     space_var = space_var.copy()
     _maybe_update_rrobin(sn, ind, job_class, R, space_var)
 
+    # Synchronous call: a departing job of this class keeps its server here
+    # until its REPLY signal returns. -1 when this is an ordinary departure.
+    _reply_slot = _reply_call_slot(sn, ind, job_class)
+
     out_states = []
     out_rates = []
     out_probs = []
@@ -792,6 +934,18 @@ def _handle_dep(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
 
             # Record departure
             space_srv_k[col] -= 1
+
+            # Synchronous call: this departing job keeps its server until its
+            # REPLY signal returns here, so the server is NOT handed to a
+            # waiting job; it is recorded as held in the reply block instead.
+            # Mirrors LDES, which omits the markServerIdle call and records a
+            # pendingReply.
+            no_promote_k = no_promote
+            if _reply_slot >= 0:
+                space_var_k = np.atleast_1d(space_var_k).astype(float).copy()
+                if _reply_slot < space_var_k.size:
+                    space_var_k[_reply_slot] += 1
+                no_promote_k = True
 
             # Get kir for this row (marked: the token lives in the carrier block)
             if kir.ndim == 3:
@@ -816,7 +970,7 @@ def _handle_dep(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                                           mu, phi, proc, kir_val, ni_val, nir_row, sir[row_idx],
                                           lldscaling, lldlimit, cdscaling, R, sn)
 
-            if rate <= 0:
+            if rate == 0 or (rate < 0 and not _allows_signed_rates(sn, ist, job_class)):
                 continue
 
             if sched == SchedStrategy.EXT:
@@ -859,13 +1013,13 @@ def _handle_dep(sn, ind, inspace, job_class, M, R, ist, S, K, Ks,
                                   ismkvmodclass, space_buf_k, space_srv_k, space_var_k,
                                   kir_val, ni_val, nir_row, lldscaling, lldlimit,
                                   cdscaling, pie, out_states, out_rates, out_probs,
-                                  no_promote=no_promote)
+                                  no_promote=no_promote_k)
                 else:
                     # Buffer promotion: move head-of-line job to service
                     _dep_with_buffer_promotion(sched, sn, space_buf_k, space_srv_k, space_var_k,
                                                 K, Ks, pie, ist, S, ni_val, sir[row_idx],
                                                 out_states, out_rates, out_probs, rate, R,
-                                                ismkvmodclass=ismkvmodclass, no_promote=no_promote)
+                                                ismkvmodclass=ismkvmodclass, no_promote=no_promote_k)
             elif sched in (SchedStrategy.LCFSPR, SchedStrategy.LCFSPRPRIO,
                             SchedStrategy.FCFSPRPRIO, SchedStrategy.FCFSPR):
                 # Preemptive resume: promote buffered job back to service with saved phase
@@ -1159,7 +1313,7 @@ def _dep_map_fcfs(sn, ind, ist, job_class, k_phase, K, Ks, S, proc, ismkvmodclas
 
     for kdest in range(n_phases):
         rate_kd = float(D1[k_phase, kdest]) * kir_val * lld * cd
-        if rate_kd <= 0:
+        if rate_kd == 0 or (rate_kd < 0 and not _allows_signed_rates(sn, ist, job_class)):
             continue
         var_kd = space_var_k.copy() if space_var_k.size > 0 else space_var_k
         if var_kd.size > mvcol:
@@ -1627,6 +1781,27 @@ def _compute_phase_rate(sched, d0_rate, kir_val, ni_val, nir_row, S,
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _allows_signed_rates(sn, ist, job_class) -> bool:
+    """True when the (station, class) process is a matrix exponential.
+
+    An ME embeds in the generator exactly as a phase-type does, except that the
+    off-diagonal entries of D0 and the completion vector -A*e may be negative:
+    the stationary vector is then a signed measure whose aggregates over each
+    phase block are still the exact probabilities. Dropping those negative
+    entries breaks the balance equations, so the usual "rate <= 0 is not a
+    transition" filter must be relaxed to "rate == 0" for such a station-class.
+    See sn.isph, sn_is_phasetype and _kb/04-networkstruct.md.
+    """
+    isph = getattr(sn, 'isph', None)
+    if isph is None:
+        return False
+    try:
+        return not bool(np.asarray(isph)[int(ist), int(job_class)])
+    except (IndexError, TypeError, ValueError):
+        return False
+
 
 def _compose_state(buf, srv, var):
     """Compose full state row from buf, srv, var parts."""

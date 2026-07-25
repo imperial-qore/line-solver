@@ -247,6 +247,8 @@ public class LINE extends SolverAUTO {
             case "mmint2":
             case "nc.panacea":
             case "nc.pana":
+            case "nc.panaceald":
+            case "panaceald":
             case "nc.mmint2":
             case "nc.kt":
             case "nc.deterministic":

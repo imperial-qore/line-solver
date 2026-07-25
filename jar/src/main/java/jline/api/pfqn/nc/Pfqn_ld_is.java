@@ -13,8 +13,9 @@ import java.util.Random;
 /**
  * Importance-sampling (IS) estimate of the normalizing constant of a closed
  * LOAD-DEPENDENT product-form queueing network. Load-dependent counterpart of
- * {@link Pfqn_is}: the same sample-an-ordering estimator, with the
- * single-server unit capacity replaced by the load-dependent capacity.
+ * {@link Pfqn_pas_is} / {@link Pfqn_oi_is}: the same sample-an-ordering
+ * estimator, with the order-independent rank rate replaced by the
+ * load-dependent capacity.
  *
  * <p>Identity. Every product-form station's balance function is the sum, over
  * the orderings q of a given per-class count vector n, of an ordered product of
@@ -50,6 +51,8 @@ import java.util.Random;
  * <p>Port of matlab/src/api/pfqn/pfqn_ld_is.m.
  *
  * @see Pfqn_is
+ * @see Pfqn_oi_is
+ * @see Pfqn_pas_is
  */
 public final class Pfqn_ld_is {
     private Pfqn_ld_is() {}

@@ -1239,6 +1239,9 @@ public class LayeredNetwork extends Ensemble implements Copyable {
                 lsn.nitems.set(0, idx, ((CacheTask) this.tasks.get(i)).items);
                 lsn.itemcap.put(idx, ((CacheTask) this.tasks.get(i)).getItemLevelCap());  // Now stores int[] for multi-level support
                 lsn.replacestrat.set(0, idx, ((CacheTask) this.tasks.get(i)).replacestrategy.ordinal());
+                if (((CacheTask) this.tasks.get(i)).hasRetrieval()) {
+                    lsn.hasretrieval.set(0, idx, 1);
+                }
                 lsn.hashnames.put(idx, "C:" + lsn.names.get(idx));
             } else if (this.tasks.get(i).hasSetupDelayoff()) {
                 // Task has setup/delayoff configured (not just FunctionTask)

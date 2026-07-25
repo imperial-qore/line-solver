@@ -37,6 +37,8 @@ function Pnir = getProb(self, node, state)
 % prob_specific = solver.getProb(queue1);
 % @endcode
 
+self.assertPhaseTypeStates('getProb');
+
 if GlobalConstants.DummyMode
     Pnir = NaN;
     return

@@ -105,6 +105,28 @@ switch event
         % signal source); when there is no target job the signal simply vanishes
         % (destination state unchanged).
         if isfield(sn,'issignal') && ~isempty(sn.issignal) && sn.issignal(class)
+            % A REPLY signal is not a negative customer: it completes a
+            % synchronous call, releasing the server this station holds for the
+            % caller, and then joins as an ordinary job. Only stations that
+            % actually hold a block for it take this path; elsewhere a REPLY
+            % class is a plain job class and falls through to the normal
+            % arrival handling below.
+            if isfield(sn,'signaltype') && ~isempty(sn.signaltype) && numel(sn.signaltype) >= class ...
+                    && ~isempty(sn.signaltype{class}) && ~any(isnan(sn.signaltype{class})) ...
+                    && sn.signaltype{class} == SignalType.REPLY
+                rinfoR = State.replyBlockInfo(sn, ind);
+                if rinfoR.width > 0
+                    [outspace, outrate, outprob] = State.afterEventStationReply(sn, ind, ist, class, K, Ks, S, pie, space_buf, space_srv, space_var);
+                    if isSimulation && size(outprob,1) > 1
+                        cum_prob = cumsum(outprob) / sum(outprob);
+                        firing_ctr = 1 + max([0,find( rand > cum_prob' )]);
+                        outspace = outspace(firing_ctr,:);
+                        outrate = outrate(firing_ctr,:);
+                        outprob = 1;
+                    end
+                    return
+                end
+            else
             [outspace, outrate, outprob] = State.afterEventStationSignal(sn, ind, ist, inspace, class, K, Ks, S, pie, space_buf, space_srv, space_var);
             % Which job a signal removes is in general a random choice, so the
             % generator needs every destination and its probability. A simulation
@@ -118,6 +140,7 @@ switch event
                 outprob = 1;
             end
             return;
+            end
         end
         % Ordinary SPN Place arrival: see _kb/11-conventions-and-gotchas.md
         % ("An ordinary Place must be special-cased before the generic
@@ -228,10 +251,15 @@ switch event
                             pentry = zeros(size(pentry));
                             pentry(kentry) = 1.0;
                         end
-                        all_busy_srv = sum(space_srv_k,2) >= S(ist);
+                        % Servers held by synchronous calls awaiting a REPLY are
+                        % NOT available to an arriving job: subtract them from the
+                        % server count. Zero for every model without reply signals.
+                        [~, nbA] = State.replyBlocked(sn, ind, space_var_k);
+                        SeffA = S(ist) - nbA;
+                        all_busy_srv = sum(space_srv_k,2) >= SeffA;
 
                         % find and modify states with an idle server
-                        idle_srv = sum(space_srv_k,2) < S(ist);
+                        idle_srv = sum(space_srv_k,2) < SeffA;
                         space_srv_k(idle_srv, end-sum(K)+Ks(class)+kentry) = space_srv_k(idle_srv,end-sum(K)+Ks(class)+kentry) + 1; % job enters service
 
                         % this section dynamically grows the number of
@@ -789,9 +817,24 @@ switch event
                                 end
                             case SchedStrategy.FCFS % move first job in service
                                 space_srv(en,Ks(class)+k) = space_srv(en,Ks(class)+k) - 1; % record departure
-                                en_wbuf = en & ni>S(ist); %states with jobs in buffer
+                                % Servers held for a pending REPLY are unavailable, so a
+                                % job waits in the buffer already when ni exceeds the
+                                % REMAINING servers. Zero for models without replies.
+                                [~, nbD] = State.replyBlocked(sn, ind, space_var);
+                                en_wbuf = en & ni>(S(ist)-nbD); %states with jobs in buffer
                                 if noPromote || isRetrialStation % immediate feedback / retrial orbit: hold server, do not promote a waiting job
                                     en_wbuf(:) = false;
+                                end
+                                % Synchronous call: this departing job keeps its server
+                                % until its REPLY signal returns here, so the server is
+                                % NOT handed to a waiting job; it is recorded as held in
+                                % the reply block instead. Mirrors LDES, which omits the
+                                % markServerIdle call and records a pendingReply.
+                                if isfield(sn,'replyblock') && ~isempty(sn.replyblock) ...
+                                        && size(sn.replyblock,1) >= ind && sn.replyblock(ind,class) > 0
+                                    rinfoD = State.replyBlockInfo(sn, ind);
+                                    en_wbuf(:) = false;
+                                    space_var(en, rinfoD.slot(class)) = space_var(en, rinfoD.slot(class)) + 1;
                                 end
                                 for kdest=1:K(class) % new phase
                                     space_buf_kd = space_buf;

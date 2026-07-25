@@ -94,6 +94,7 @@ public class FeatureSet implements Serializable {
         set.put("Zipf", false);
         set.put("StatelessClassSwitcher", false);
         set.put("CacheClassSwitcher", false);
+        set.put("CacheRetrieval", false);
         set.put("InfiniteServer", false);
         set.put("Forker", false);
         set.put("Joiner", false);

@@ -256,10 +256,27 @@ public class Solver_ctmc_analyzer {
                     "This may indicate numerical instability or an invalid model configuration.");
         }
 
-        for (int row = 0; row < probSysState.getNumRows(); row++) {
-            for (int col = 0; col < probSysState.getNumCols(); col++) {
-                if (probSysState.get(row, col) < 0) {
-                    probSysState.set(row, col, 0);
+        // The clamp removes the tiny negative residues a genuine CTMC solve leaves
+        // behind. With a matrix-exponential process the stationary vector is a genuinely
+        // SIGNED measure -- only its aggregates over each phase block are probabilities --
+        // so clamping there deletes real mass and every mean measure moves. Mean measures
+        // are linear in the vector and stay exact without the clamp.
+        boolean allPhaseType = true;
+        if (sn.isph != null) {
+            for (java.util.Map<jline.lang.JobClass, Boolean> isphRow : sn.isph.values()) {
+                for (Boolean v : isphRow.values()) {
+                    if (v != null && !v) {
+                        allPhaseType = false;
+                    }
+                }
+            }
+        }
+        if (allPhaseType) {
+            for (int row = 0; row < probSysState.getNumRows(); row++) {
+                for (int col = 0; col < probSysState.getNumCols(); col++) {
+                    if (probSysState.get(row, col) < 0) {
+                        probSysState.set(row, col, 0);
+                    }
                 }
             }
         }
@@ -581,6 +598,38 @@ public class Solver_ctmc_analyzer {
             }
         }
 
+        // Synchronous calls (REPLY signals): a caller that is blocked awaiting a reply
+        // still HOLDS its server and, by the LDES/LQN convention, still owns the job it
+        // sent to the callee -- that simultaneous resource possession is the point of
+        // the feature. The held servers live in the reply block of the local state, so
+        // add their time average to the caller's utilization and queue length; without
+        // it CTMC reports only the carried load (0.32915 against LDES 0.54997 on the
+        // closed client/server model, with QLen 0.46395 against 0.68499).
+        Matrix QNblocked = new Matrix(M, K);
+        QNblocked.zero();
+        if (sn.replyblock != null && !sn.replyblock.isEmpty()) {
+            for (int i = 0; i < M; i++) {
+                int indR = (int) sn.stationToNode.get(i);
+                if (!jline.lang.state.ReplyBlock.holds(sn, indR)) {
+                    continue;
+                }
+                jline.lang.state.ReplyBlock.Info rinfoU = jline.lang.state.ReplyBlock.info(sn, indR);
+                int bcol0 = (int) istSpaceShift.get(0, i)
+                        + sn.space.get(sn.stateful.get(i)).getNumCols() - rinfoU.width;
+                for (int pos = 0; pos < rinfoU.classes.size(); pos++) {
+                    int r = rinfoU.classes.get(pos).intValue();
+                    double bmean = 0;
+                    for (int index = 0; index < wset.getNumCols(); index++) {
+                        int wstIdx = (int) wset.get(index);
+                        bmean += probSysState.get(wstIdx) * StateSpaceWork.get(wstIdx, bcol0 + pos);
+                    }
+                    QN.set(i, r, QN.get(i, r) + bmean);
+                    UN.set(i, r, UN.get(i, r) + bmean / S.get(i));
+                    QNblocked.set(i, r, bmean);
+                }
+            }
+        }
+
         // see _kb/06-solver-catalog.md for rationale
         if (sn.cdscaling != null && !sn.cdscaling.isEmpty()) {
             boolean allFinite = true;
@@ -685,7 +734,10 @@ public class Solver_ctmc_analyzer {
         for (int k = 0; k < K; k++) {
             for (int i = 0; i < M; i++) {
                 if (TN.get(i, k) > 0) {
-                    RN.set(i, k, QN.get(i, k) / TN.get(i, k));
+                    // Response time is time spent AT the station, so the job blocked
+                    // out at the callee is excluded even though QLen/Util count it
+                    // (LDES measures the sojourn directly and reports the same).
+                    RN.set(i, k, (QN.get(i, k) - QNblocked.get(i, k)) / TN.get(i, k));
                 } else {
                     RN.set(i, k, 0);
                 }

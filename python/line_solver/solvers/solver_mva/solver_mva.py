@@ -1404,6 +1404,55 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 cache_node.set_result_item_prob(item_prob)
             ch.actualitemprob = item_prob
 
+    def _run_retrieval_analysis(self):
+        """Run FPI analysis for a delayed-hit cache with a retrieval system."""
+        from ...api.sn.network_struct import NodeType
+        from ...api.retrieval.analyzers import (
+            solver_mva_retrieval_analyzer, solver_mva_cacheqn_retrieval_analyzer, _has_source
+        )
+        sn = self._sn
+        # open (Source) cache uses the product-form FPI retrieval analyzer; closed integrated uses da_cacheqn_retrieval (relabels Cache to ClassSwitch, index in res.cache_idx).
+        if _has_source(sn):
+            res = solver_mva_retrieval_analyzer(sn, self.options)
+            cache_indices = [ind for ind in range(sn.nnodes)
+                             if ind < len(sn.nodetype) and sn.nodetype[ind] == NodeType.CACHE
+                             and ind in sn.nodeparam]
+        else:
+            res = solver_mva_cacheqn_retrieval_analyzer(sn, self.options)
+            cache_indices = [res.cache_idx]
+        # set cache node results (hit/miss/latency)
+        for ind in cache_indices:
+            if ind in sn.nodeparam:
+                cp = sn.nodeparam[ind]
+                cp.actualhitprob = res.hitprob[0, :]
+                cp.actualmissprob = res.missprob[0, :]
+                cp.actualdelayedhitprob = res.delayedprob[0, :]
+                cp.actualhitproblist = res.hitproblist
+                cp.actualitemprob = res.itemprob
+                if hasattr(self, 'model') and hasattr(self.model, '_nodes'):
+                    node = self.model._nodes[ind]
+                    if hasattr(node, 'set_result_hit_prob'):
+                        node.set_result_hit_prob(res.hitprob[0, :])
+                    if hasattr(node, 'set_result_miss_prob'):
+                        node.set_result_miss_prob(res.missprob[0, :])
+                    if hasattr(node, 'set_result_delayed_hit_prob'):
+                        node.set_result_delayed_hit_prob(res.delayedprob[0, :])
+                    if hasattr(node, 'set_result_hit_prob_list'):
+                        node.set_result_hit_prob_list(res.hitproblist)
+                    if res.itemprob is not None and hasattr(node, 'set_result_item_prob'):
+                        node.set_result_item_prob(res.itemprob)
+                    if hasattr(node, 'set_result_residt'):
+                        node.set_result_residt(res.expected_latency[0, :])
+                break
+        M = self.nstations
+        self._result = {
+            'QN': res.QN, 'UN': res.UN, 'RN': res.RN, 'TN': res.TN,
+            'CN': res.RN.copy(), 'XN': np.asarray(res.XN).ravel(),
+            'AN': np.zeros((M, self.nclasses)), 'WN': res.RN.copy(),
+            'lG': res.lG, 'runtime': res.runtime, 'iter': 1, 'method': 'fpi'
+        }
+        return self._result
+
     def _run_cache_analysis(self):
         """Run specialized cache analysis for Source-Cache-Sink models."""
         from ...api.sn.network_struct import NodeType
@@ -1649,6 +1698,54 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
 
         return self._result
 
+    def _resolve_oi_path(self, method):
+        """
+        Classify the model's order-independent (OI/PAS) content for method.
+
+        Returns (noi_idx, oi_exact), where noi_idx is the index of the OI station
+        (-1 if none) and oi_exact says whether the exact order-independent
+        analyzer applies. Raises ValueError when an OI/PAS station is present but
+        falls outside that analyzer's scope, since AMVA cannot represent it.
+        """
+        # OI detection mirrors the NC-oi path (empty/zero swap graph + a service-rate function), not a nodeparam flag.
+        noi_idx = -1
+        if self._sn is not None and getattr(self._sn, 'njobs', None) is not None \
+                and not np.any(np.isinf(np.asarray(self._sn.njobs, dtype=float))):
+            from .solver_mva_oi_analyzer import find_oi_station
+            noi_idx = find_oi_station(self._sn)
+
+        # OI/PAS admissible only when every other station is product-form (the NC-oi gate); sn.sched carries lang.base.SchedStrategy members, matched by name.
+        has_oi_station = False
+        if self._sn is not None and getattr(self._sn, 'sched', None) is not None:
+            from ...lang.base import SchedStrategy as _SSg
+            _sched = self._sn.sched
+            for _i in range(int(self._sn.nstations)):
+                _si = _sched[_i]
+                _nm = getattr(_si, 'name', None)
+                if _nm is None:
+                    try:
+                        _nm = _SSg(int(_si)).name
+                    except (ValueError, TypeError):
+                        _nm = None
+                if _nm in ('OI', 'PAS'):
+                    has_oi_station = True
+                    break
+        oi_exact = False
+        if noi_idx >= 0 and method in ['exact', 'default']:
+            from ..solver_nc.solver_nc_oi_analyzer import nc_is_oi_model as _nc_is_oi_model
+            oi_exact = _nc_is_oi_model(self._sn)
+
+        if has_oi_station and not oi_exact:
+            # OI/PAS stations need the exact path; see _kb/06-solver-catalog.md MVA Exact-only dispatch for OI/PAS and fork-join.
+            raise ValueError(
+                "SolverMVA supports order-independent (OI) and pass-and-swap (PAS) stations only\n"
+                "through its exact order-independent analyzer, which requires method 'default' or\n"
+                "'exact' (got '%s'), an empty/zero swap graph at every OI/PAS station, a closed\n"
+                "model, and every other station to be product-form (INF, PS, LCFS-PR, SIRO,\n"
+                "or class-independent-rate FCFS). Use SolverCTMC or SolverLDES for this model."
+                % method)
+        return noi_idx, oi_exact
+
     def _marie_inf_mask(self):
         from ...lang.base import SchedStrategy
         m = np.zeros(self.nstations, dtype=bool)
@@ -1789,6 +1886,8 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 "SolverMVA." % (_m0, _m0))
         # lang='java' delegates to the canonical JAR, populating the native result container; imported lazily so a JVM-free install never touches this path.
         if getattr(self.options, 'lang', 'python') == 'java':
+            # native OI/PAS gate applied before lang='java' delegation so both langs raise the same exception rather than an opaque JAR RuntimeError.
+            self._resolve_oi_path(str(getattr(self.options, 'method', 'default')).lower())
             from ..jar_dispatch import populate_java_result
             populate_java_result(self)
             return self
@@ -1870,6 +1969,37 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
                 'method': 'rqna', 'iter': 1,
             }
             return self._result
+
+        noi_idx, oi_exact = self._resolve_oi_path(_method)
+
+        if oi_exact:
+            line_debug("Order-independent closed network, routing to solver_mva_oi_analyzer", options=self.options)
+            from .solver_mva_oi_analyzer import SolverMVAOIAnalyzer
+            analyzer = SolverMVAOIAnalyzer(self._sn, self.options)
+            result = analyzer.analyze()
+            QN = result['QN']
+            UN = result['UN']
+            RN = result['RN']
+            TN = result['TN']
+            XN = result['XN']
+            M_, K_ = QN.shape
+            AN = TN.copy()
+            WN = RN.copy()
+            self._result = {
+                'QN': QN, 'UN': UN, 'RN': RN, 'TN': TN, 'AN': AN,
+                'XN': XN, 'WN': WN, 'CN': np.sum(RN, axis=0),
+                'runtime': result.get('runtime', 0.0),
+                'method': result.get('method', 'oi'), 'iter': result.get('iter', 1),
+            }
+            return self._result
+
+        # Check for delayed-hit cache with a retrieval system (FPI algorithms + latency)
+        from ...api.retrieval.analyzers import has_retrieval_cache
+        if self._sn is not None and has_retrieval_cache(self._sn):
+            line_debug("Delayed-hit retrieval cache, routing to retrieval_analyzer", options=self.options)
+            result = self._run_retrieval_analysis()
+            if result is not None:
+                return result
 
         # Check for cache-only networks and handle specially
         if self._is_cache_only_network():
@@ -5252,11 +5382,13 @@ class SolverMVA(ForkJoinDriverMixin, NetworkSolver):
             'APH', 'Coxian', 'Erlang', 'Exp', 'HyperExp', 'BMAP',
             'Pareto', 'Weibull', 'Lognormal', 'Uniform', 'Det',
             'StatelessClassSwitcher', 'InfiniteServer', 'SharedServer', 'Buffer', 'Dispatcher',
-            'CacheClassSwitcher', 'Cache',
+            'CacheClassSwitcher', 'Cache', 'CacheRetrieval',
             'Server', 'JobSink', 'RandomSource', 'ServiceTunnel',
             'SchedStrategy_INF', 'SchedStrategy_PS',
             'SchedStrategy_DPS', 'SchedStrategy_FCFS', 'SchedStrategy_SIRO', 'SchedStrategy_HOL',
             'SchedStrategy_LCFS', 'SchedStrategy_LCFSPR', 'SchedStrategy_POLLING',
+            # exact order-independent path only (solver_mva_oi_analyzer)
+            'SchedStrategy_OI', 'SchedStrategy_PAS',
             'Fork', 'Forker', 'Join', 'Joiner',
             'RoutingStrategy_PROB', 'RoutingStrategy_RAND',
             'ReplacementStrategy_RR', 'ReplacementStrategy_FIFO', 'ReplacementStrategy_LRU',

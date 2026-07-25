@@ -337,6 +337,17 @@ public final class Pfqn_ncld {
             // see _kb/03-api-layer.md for rationale
             lG = Pfqn_clw_lld.pfqn_clw_lld(L, N, Z.sumCols(), mu).lG;
             method = "clw";
+        } else if ("panacea".equals(options.method) || "panaceald".equals(options.method)) {
+            // Mitra-McKenna load-dependent PANACEA asymptotic expansion. Delay
+            // terms may arrive either in Z or as mu(i,n)=n rows of L, both are
+            // recognized by Pfqn_panaceald.
+            lG = Pfqn_panaceald.pfqn_panaceald(L, N, Z.sumCols(), mu).lG;
+            method = "panaceald";
+            if (Double.isNaN(lG)) {
+                // normal usage (1 - lambda_i/mu_i(Ntot) > 0 at every queueing
+                // center) is the domain of the expansion, not a numerical failure
+                throw new RuntimeException("The model is not in normal usage, so the \"panaceald\" asymptotic expansion does not apply. Use \"exact\", \"clw\" or an approximate load-dependent method instead.");
+            }
         } else if ("rd".equals(options.method)) {
             lG = Pfqn_rd.pfqn_rd(L, N, Z, mu, options).lG;
         } else if ("nrp".equals(options.method)) {

@@ -92,6 +92,13 @@ classdef SolverFLD < NetworkSolver
             featSupported.setTrue({
                 'ClassSwitch','Delay','DelayStation','Queue',...
                 'Cache','CacheClassSwitcher',...
+                ... % 'CacheRetrieval' is deliberately NOT declared: no fluid
+                ... % code anywhere implements delayed-hit retrieval, and on
+                ... % examples/basic/cacheModel/retrieval_simple the ODE
+                ... % returned zero QLen, Util and Tput on every row while jobs
+                ... % arrived at rate 1, i.e. flow was not conserved. Refusing
+                ... % the model is the honest answer; the JAR SolverFluid does
+                ... % the same.
                 'Cox2','Coxian','Erlang','Exp','HyperExp',...
                 'APH', 'Det','MAP','MMPP2','NHPP',...
                 ... % Non-Markovian renewal distributions: converted to acyclic PH

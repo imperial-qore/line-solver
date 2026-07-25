@@ -111,6 +111,14 @@ add('kraemer', 'KraLB78', 'W. Kraemer, M. Langenbach-Belz, "Approximate Formulae
 add('klb', 'KraLB78', 'W. Kraemer, M. Langenbach-Belz, "Approximate Formulae for General Single Server Systems with Single and Batch Arrivals", Angewandte Informatik 9, 1978', 'G/G/1 waiting time approximation');
 add('nc.ca', 'Cas09', 'G. Casale, "CoMoM: Efficient Class-Oriented Evaluation of Multiclass Performance Models", IEEE TSE 35(2), 2009', 'class-oriented recursion for the normalizing constant');
 add('ca', 'Cas09', 'G. Casale, "CoMoM: Efficient Class-Oriented Evaluation of Multiclass Performance Models", IEEE TSE 35(2), 2009', 'class-oriented recursion for the normalizing constant');
+% Loss networks with finite capacity regions (SolverNC, solver_nc_lossn_analyzer)
+add('lossn.exact', 'ManSik07', 'D. Manjunath, B. Sikdar, "Integral Expressions for the Numerical Evaluation of Product Form Expressions Over Irregular Multidimensional Integer Spaces"', 'exact normalizing constant over a state space cut by linear integer constraints');
+add('lossn.ms', 'ManSik07', 'D. Manjunath, B. Sikdar, "Integral Expressions for the Numerical Evaluation of Product Form Expressions Over Irregular Multidimensional Integer Spaces"', 'exact normalizing constant over a state space cut by linear integer constraints');
+add('lossn.erlangfp', 'Kelly91', 'F. P. Kelly, "Loss Networks", Ann. Appl. Probab. 1(3), 1991', 'reduced-load (Erlang fixed point) approximation of link blocking');
+add('erlangfp', 'Kelly91', 'F. P. Kelly, "Loss Networks", Ann. Appl. Probab. 1(3), 1991', 'reduced-load (Erlang fixed point) approximation of link blocking');
+add('lossn.mci', 'RosWan92', 'K. W. Ross, J. Wang, "Monte Carlo Summation Applied to Product-Form Loss Networks", Prob. Eng. Inf. Sci. 6, 1992', 'Monte Carlo summation of the loss-network normalizing constant');
+add('mci', 'RosWan92', 'K. W. Ross, J. Wang, "Monte Carlo Summation Applied to Product-Form Loss Networks", Prob. Eng. Inf. Sci. 6, 1992', 'Monte Carlo summation of the loss-network normalizing constant');
+
 add('comom', 'Cas09', 'G. Casale, "CoMoM: Efficient Class-Oriented Evaluation of Multiclass Performance Models", IEEE TSE 35(2), 2009', 'class-oriented recursion for the normalizing constant');
 add('nc.comom', 'Cas09', 'G. Casale, "CoMoM: Efficient Class-Oriented Evaluation of Multiclass Performance Models", IEEE TSE 35(2), 2009', 'class-oriented recursion for the normalizing constant');
 add('clw', 'ChoLW95', 'G. L. Choudhury, K. K. Leung, W. Whitt, "Calculating Normalization Constants of Closed Queuing Networks by Numerically Inverting Their Generating Functions", J. ACM 42, 1995', 'numerical inversion of the generating function');
@@ -128,6 +136,9 @@ add('nrl', 'CasHH21', 'G. Casale, P. G. Harrison, O. W. Hong, "Facilitating Load
 add('comomld', 'CasHH21', 'G. Casale, P. G. Harrison, O. W. Hong, "Facilitating Load-Dependent Queueing Analysis Through Factorization", Perform. Eval., 2021', 'factorization of the load-dependent normalizing constant');
 add('kt', 'KneT92', 'C. Knessl, C. Tier, "Asymptotic Expansions for Large Closed Queueing Networks with Multiple Job Classes", IEEE TC 41(4), 1992', 'asymptotic expansion for large populations');
 add('panacea', 'McKM84', 'J. McKenna, D. Mitra, "Asymptotic Expansions and Integral Representations of Moments of Queue Lengths in Closed Markovian Networks", J. ACM 31, 1984', 'integral representation of the queue-length moments');
+add('panaceald', 'MitM86', 'D. Mitra, J. McKenna, "Asymptotic Expansions for Closed Markovian Networks with State-Dependent Service Rates", J. ACM 33(3), 1986', 'load-dependent PANACEA expansion and its pseudonetwork coefficients');
+add('psrespt', 'MitMo83', 'D. Mitra, J. A. Morrison, "Asymptotic Expansions of Moments of the Waiting Time in Closed and Open Processor-Sharing Systems with Multiple Job Classes", Adv. Appl. Prob. 15(4), 1983', 'sojourn-time moments at a multiclass processor-sharing station');
+add('mm1ps', 'MitMo83', 'D. Mitra, J. A. Morrison, "Asymptotic Expansions of Moments of the Waiting Time in Closed and Open Processor-Sharing Systems with Multiple Job Classes", Adv. Appl. Prob. 15(4), 1983', 'sojourn-time moments at a multiclass processor-sharing station');
 add('mem', 'Kou94', 'D. D. Kouvatsos, "Entropy Maximisation and Queueing Network Models", Annals of Operations Research 48, 1994', 'maximum-entropy approximation of the network');
 add('mem.blocking', 'TahMB99', 'H. Tahilramani, D. Manjunath, S. K. Bose, "Approximate Analysis of Open Network of GE/GE/m/N Queues with Transfer Blocking", MASCOTS, 1999', 'holding-node expansion that makes transfer blocking work conserving');
 add('recal', 'ConG86', 'A. E. Conway, N. D. Georganas, "RECAL: A New Efficient Algorithm for the Exact Analysis of Multiple-Chain Closed Queueing Networks", J. ACM 33, 1986', 'recursive exact evaluation by chain');
@@ -214,4 +225,7 @@ add('enhanced', 'fran.ea09', 'G. Franks, T. Al-Omari, M. Woodside, O. Das, S. De
 add('ln.fluid', 'trib13', 'M. Tribastone, "A Fluid Model for Layered Queueing Networks", IEEE TSE 39(6), 2013', 'fluid model of the layered network');
 add('env', 'casa.trib11', 'G. Casale, M. Tribastone, "Fluid Analysis of Queueing in Two-Stage Random Environments", QEST, 2011', 'queueing in a random environment');
 add('env.blend', 'pere.casa13', 'J. F. Perez, G. Casale, "Assessing SLA Compliance from Palladio Component Models", MICAS, 2013', 'environment-stage blending of the metrics');
+add('tree', 'rice76', 'J. R. Rice, "The Algorithm Selection Problem", Advances in Computers 15, 1976', 'per-instance selection of the solver from model features');
+add('auto.tree', 'rice76', 'J. R. Rice, "The Algorithm Selection Problem", Advances in Computers 15, 1976', 'per-instance selection of the solver from model features');
+add('cart', 'brei.ea84', 'L. Breiman, J. Friedman, R. Olshen, C. Stone, "Classification and Regression Trees", Wadsworth, 1984', 'decision tree fitted offline to the selection map');
 end

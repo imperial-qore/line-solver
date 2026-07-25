@@ -154,6 +154,21 @@ class Queue(Station):
         """
         return self._service_process.get(jobclass)
 
+    def set_item_service_rate(self, cache, jobin_class: JobClass, item: int,
+                              service_rate: float) -> None:
+        """Override, at this queue, the retrieval service rate for a single item of
+        the read class ``jobin_class`` in ``cache``'s retrieval system. The default
+        (when not overridden) is the read class's own service distribution at this
+        queue. ``item`` is 0-based."""
+        from ..distributions.continuous import Exp
+        r_class = cache.get_retrieval_class(jobin_class, item)
+        if r_class is None:
+            raise ValueError("No retrieval class defined for the given class/item; "
+                             "call set_retrieval_system first.")
+        self.set_service(r_class, Exp(service_rate))
+
+    setItemServiceRate = set_item_service_rate
+
     def set_strategy_param(self, jobclass: JobClass, param) -> None:
         """
         Set scheduling parameter for a job class.
@@ -2121,14 +2136,125 @@ class Cache(Station):
         self._actual_item_prob = None
         self._actual_residt = None
 
+    def set_retrieval_class(self, input_class: JobClass,
+                            output_class: JobClass, item: int) -> None:
+        """Set the retrieval class for (item, input_class). item is 0-based."""
+        self._retrieval_classes[(item, input_class)] = output_class
+
     def get_retrieval_class(self, input_class: JobClass,
                             item: int) -> Optional[JobClass]:
-        """Get the retrieval class for (item, input_class); dormant (always None)
-        since retrieval-system configuration has been removed from the API."""
+        """Get the retrieval class for (item, input_class)."""
         return self._retrieval_classes.get((item, input_class))
 
+    def _add_retrieval_routing_entry(self, from_cls: int, to_cls: int,
+                                     src_node: int, dst_node: int, prob: float,
+                                     allow_zero: bool = False) -> None:
+        """Register a retrieval-class routing edge (0-based class/node indices).
+        link() injects these into the routing matrix P. With allow_zero=True an
+        explicit prob==0 entry is recorded so it can override (delete) a default
+        edge inherited from the read class; negative probs are always dropped and
+        the internal broadcast path keeps allow_zero=False (zeros = no edge)."""
+        if prob < 0 or (prob == 0 and not allow_zero):
+            return
+        self._retrieval_routing_entries.append(
+            [from_cls, to_cls, src_node, dst_node, prob])
+
+    def set_retrieval_system(self, jobin_class: JobClass, miss_class: JobClass,
+                             queues) -> None:
+        """
+        Initialise the retrieval system through which a request that misses the
+        cache is fetched. While the retrieval is pending, repeat requests for the
+        same item become delayed hits; after retrieval completes the job switches
+        into ``miss_class``.
+
+        Routing and service are NOT passed here; they are taken from the read class:
+          - service: the read class's service distribution at each queue. Call
+            ``queue.set_service(jobin_class, ...)`` beforehand; override per item with
+            ``queue.set_item_service_rate(cache, jobin_class, item, rate)``.
+          - routing: the read class's routing among the retrieval queues drawn in the
+            top-level routing matrix P; override per item with ``set_item_routing_prob``
+            (pass the cache as source for a cache->queue entry, or as dest for a
+            queue->cache exit).
+
+        Args:
+            jobin_class: arrival JobClass routed through the retrieval system
+            miss_class: JobClass a completed retrieval transitions into
+            queues: a Queue or list of Queue nodes comprising the system
+        """
+        import copy as _copy
+        from .classes import OpenClass, ClosedClass
+        from ..distributions.discrete import DiscreteSampler
+
+        if not isinstance(queues, (list, tuple)):
+            queue_arr = [queues]
+        else:
+            queue_arr = list(queues)
+        n_queues = len(queue_arr)
+        n_items = self._num_items
+        if n_queues == 0:
+            raise ValueError("Retrieval system cannot be initialised with no queues")
+        self._retrieval_system_capacity = n_items - self._total_cache_capacity
+
+        # inherit the read class's service distribution at each queue as the per-item default
+        service_dist_by_queue = []
+        for q in queue_arr:
+            d = q.get_service(jobin_class)
+            if d is None:
+                raise ValueError(
+                    f"No service distribution for the read class at queue {q.name}; "
+                    "call queue.set_service(read_class, ...) before set_retrieval_system.")
+            service_dist_by_queue.append(d)
+
+        model = self.get_model()
+        self._retrieval_system_queue_indices[jobin_class.get_index0()] = \
+            [q.get_index0() for q in queue_arr]
+
+        is_closed = isinstance(jobin_class, ClosedClass)
+        ref_station = getattr(jobin_class, '_refstat', None)
+        for i in range(n_items):
+            if is_closed:
+                r_class = ClosedClass(model, f"{jobin_class.name}_retrievalClass_{i + 1}", 0, ref_station, 0)
+            else:
+                r_class = OpenClass(model, f"{jobin_class.name}_retrievalClass_{i + 1}", 0)
+            self.set_retrieval_class(jobin_class, r_class, i)
+            self._retrieval_class_indices.add(r_class.get_index0())
+
+            # the retrieval class always reads item i (one-hot popularity); on the
+            # READ when it returns to the cache it is logged as a miss.
+            item_popularity = np.zeros(n_items)
+            item_popularity[i] = 1.0
+            self._read_process[r_class] = DiscreteSampler(item_popularity)
+            self.set_miss_class(r_class, miss_class)
+
+            # service for the retrieval class at each queue (inherited read-class service);
+            # routing is inherited at link() from P and overridable via the setItem* methods.
+            for sq in range(n_queues):
+                source_queue = queue_arr[sq]
+                source_queue.set_service(r_class, _copy.deepcopy(service_dist_by_queue[sq]))
+                source_queue.set_class_capacity(r_class, 1)
+
+    def set_item_routing_probability(self, jobin_class: JobClass, item: int,
+                                     source, dest, probability: float) -> None:
+        """Probability of routing the retrieval class for ``item`` between two nodes
+        of the retrieval system. ``source``/``dest`` are either a retrieval queue or
+        the cache itself: pass the cache as ``source`` for a cache->queue entry, or as
+        ``dest`` for a queue->cache exit. ``item`` is 0-based. Requires a prior
+        :meth:`set_retrieval_system` call."""
+        r_class = self.get_retrieval_class(jobin_class, item)
+        if r_class is None:
+            raise ValueError("No retrieval class defined for the given class/item; "
+                             "call set_retrieval_system first.")
+        rc_idx = r_class.get_index0()
+        self._add_retrieval_routing_entry(
+            rc_idx, rc_idx, source.get_index0(), dest.get_index0(), probability, allow_zero=True)
+
+    setRetrievalSystem = set_retrieval_system
     getResidT = get_residt
     setResultResidT = set_result_residt
+    setItemRoutingProbability = set_item_routing_probability
+    # short alias (Probability -> Prob)
+    set_item_routing_prob = set_item_routing_probability
+    setItemRoutingProb = set_item_routing_probability
 
     # =========================================================================
     # Aliases (MATLAB compatibility)

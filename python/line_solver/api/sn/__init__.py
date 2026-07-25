@@ -68,6 +68,7 @@ from .utils import (
     sn_print,
     sn_print_routing_matrix,
     sn_refresh_process_fields,
+    sn_is_phasetype,
     sn_rtnodes_to_rtorig,
 )
 
@@ -238,5 +239,6 @@ __all__ = [
     'sn_print',
     'sn_print_routing_matrix',
     'sn_refresh_process_fields',
+    'sn_is_phasetype',
     'sn_rtnodes_to_rtorig',
 ]

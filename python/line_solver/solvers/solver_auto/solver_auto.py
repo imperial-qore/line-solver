@@ -1136,8 +1136,8 @@ class SolverAuto(NetworkSolver):
 
                 elif ext in ('.xml', '.lqn', '.lqnx'):
                     # Load LQN model
-                    from ...api.io import lqn2qn
-                    return lqn2qn(filename)
+                    from ...layered import LayeredNetwork
+                    return LayeredNetwork.parse_xml(filename, verbose)
 
                 elif ext == '.mat':
                     # Load MATLAB saved model

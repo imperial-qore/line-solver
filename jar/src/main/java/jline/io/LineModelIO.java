@@ -1222,6 +1222,38 @@ public class LineModelIO {
                     nodeObj.add("initialState", stArr);
                 }
 
+                // Retrieval system (delayed hits): capacity, per-arrival-class
+                // retrieval queues and per-item retrieval classes.
+                if (cache.getRetrievalSystemCapacity() > 0) {
+                    JsonObject rsObj = new JsonObject();
+                    rsObj.addProperty("capacity", cache.getRetrievalSystemCapacity());
+                    JsonObject byClass = new JsonObject();
+                    Matrix rc = cache.getRetrievalClasses();   // [items x classes]
+                    for (Map.Entry<Integer, List<Integer>> qe : cache.getRetrievalSystemQueueIndices().entrySet()) {
+                        int jobinIdx0 = qe.getKey();
+                        if (jobinIdx0 < 0 || jobinIdx0 >= classes.size()) continue;
+                        JsonObject entry = new JsonObject();
+                        JsonArray qArr = new JsonArray();
+                        for (Integer qi : qe.getValue()) {
+                            if (qi >= 0 && qi < nodes.size()) qArr.add(nodes.get(qi).getName());
+                        }
+                        entry.add("queues", qArr);
+                        JsonObject itemsObj = new JsonObject();
+                        if (rc != null) {
+                            for (int it = 0; it < rc.getNumRows(); it++) {
+                                int rci = (int) rc.get(it, jobinIdx0);
+                                if (rci >= 0 && rci < classes.size()) {
+                                    itemsObj.addProperty(String.valueOf(it), classes.get(rci).getName());
+                                }
+                            }
+                        }
+                        entry.add("items", itemsObj);
+                        byClass.add(classes.get(jobinIdx0).getName(), entry);
+                    }
+                    rsObj.add("byClass", byClass);
+                    nodeObj.add("retrievalSystem", rsObj);
+                }
+
             } else if (node instanceof Place) {
                 nodeObj.addProperty("type", "Place");
                 Place place = (Place) node;
@@ -3831,6 +3863,36 @@ public class LineModelIO {
                                 cache.setRead(jc, popDist);
                             }
                         }
+                    }
+                }
+                // see _kb/09-ldes-and-cache.md (Delayed-hit retrieval, api/retrieval)
+                JsonElement rsEl = cacheField(nodeObj, "retrievalSystem", "retrievalSystem");
+                if (rsEl != null) {
+                    JsonObject rsObj = rsEl.getAsJsonObject();
+                    int nItems = cache.getNumberOfItems();
+                    JsonObject byClass = rsObj.getAsJsonObject("byClass");
+                    for (Map.Entry<String, JsonElement> ce : byClass.entrySet()) {
+                        JobClass jobinClass = classMap.get(ce.getKey());
+                        if (jobinClass == null) continue;
+                        JsonObject entry = ce.getValue().getAsJsonObject();
+                        List<Integer> queueIndices = new ArrayList<Integer>();
+                        if (entry.has("queues")) {
+                            for (JsonElement qe : entry.getAsJsonArray("queues")) {
+                                Node qn = nodeMap.get(qe.getAsString());
+                                if (qn != null) queueIndices.add(qn.getNodeIndex());
+                            }
+                        }
+                        JobClass[] retrievalClassByItem = new JobClass[nItems];
+                        if (entry.has("items")) {
+                            JsonObject itemsObj = entry.getAsJsonObject("items");
+                            for (Map.Entry<String, JsonElement> ie : itemsObj.entrySet()) {
+                                int it = Integer.parseInt(ie.getKey());
+                                if (it >= 0 && it < nItems) {
+                                    retrievalClassByItem[it] = classMap.get(ie.getValue().getAsString());
+                                }
+                            }
+                        }
+                        cache.attachRetrievalSystem(jobinClass, queueIndices, retrievalClassByItem);
                     }
                 }
                 // Access-cost (list-move) structure: per-item graph (shared by all

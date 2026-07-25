@@ -46,6 +46,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
 
+import static jline.api.pfqn.Pfqn_respt_ps_moments.pfqn_respt_ps_moments;
+import static jline.api.qsys.Qsys_mm1_ps.qsys_mm1_ps;
+import jline.api.qsys.QsysMm1PsResult;
 import static jline.api.pfqn.sens.Pfqn_sens.pfqn_sens;
 import static jline.api.pfqn.sens.Pfqn_sens_linearizer.pfqn_sens_linearizer;
 import jline.api.pfqn.sens.Pfqn_sens_mom;
@@ -4867,13 +4870,21 @@ public abstract class NetworkSolver extends Solver {
      * moments come from the product-form identity Cov[n(i,r),n(j,s)] = L(j,s)
      * dQ(i,r)/dL(j,s), evaluated by the {@code Pfqn_sens_*} family.</p>
      *
-     * <p>RESPONSE-TIME MOMENTS ARE FCFS-ONLY. RespTVar, RespTSCV and RespTSkew are
-     * NaN at any station that is not FCFS, and in open or mixed models. This is a
-     * limitation of the theory, not of the implementation: the sojourn-time
-     * distribution at a processor-sharing or LCFS center is not known in general
-     * (Strelen 1990, Section 4), so there is no correct value to report and a wrong
-     * one is worse than a blank. The mean RespT is always reported, since it needs no
-     * distributional result.</p>
+     * <p>RESPONSE-TIME MOMENTS ARE FCFS OR PROCESSOR-SHARING. RespTVar, RespTSCV and
+     * RespTSkew are NaN at any station that is neither, and at an LCFS center in
+     * particular, because the sojourn-time distribution there is not known in general
+     * (Strelen 1990, Section 4) and a wrong value is worse than a blank. The mean
+     * RespT is always reported, since it needs no distributional result.</p>
+     *
+     * <p>The FCFS moments come from {@code Pfqn_sens_respt} and are closed-model
+     * only. The processor-sharing moments come from Mitra and Morrison (1983) and
+     * cover two configurations, both requiring exponential single-server service:
+     * purely open, where {@code Qsys_mm1_ps} is exact at any PS station whose
+     * arrivals are Poisson, that is, that lies on no routing cycle; and purely
+     * closed, where {@code Pfqn_respt_ps_moments} covers the terminal-driven system
+     * the paper analyses, one PS station visited once per think cycle with delay
+     * stations holding the think time. A PS station outside those configurations
+     * keeps RespTVar = NaN.</p>
      *
      * <p>Scope by model type: closed single-server uses {@code pfqn_sens_mva};
      * closed multiserver and mixed open/closed use {@code pfqn_sens_mvaldmx}; purely
@@ -5100,6 +5111,103 @@ public abstract class NetworkSolver extends Solver {
                         if (maxOrder >= 3) {
                             RespTSkew.set(ist, r, mom.respt.WSkew.get(ist, r));
                         }
+                    }
+                }
+            }
+        }
+
+        // ---- response-time moments at processor-sharing stations ------------
+        // Mitra and Morrison (1983) supply the sojourn-time moments the FCFS block
+        // above cannot reach: exactly at an open PS station fed by Poisson streams,
+        // and by expansion (or by exact enumeration when small) in the closed
+        // terminal-driven system. see _kb/05-solvers-overview.md for the scope
+        if (hasOrder(order, 2) && !isMixed && Mq > 0) {
+            List<Integer> psQueues = new ArrayList<Integer>();
+            for (int ist = 0; ist < Mq; ist++) {
+                int sIdx = (int) snl.nodeToStation.get(queueIndices.get(ist).intValue());
+                if (snl.sched.get(snl.stations.get(sIdx)) == SchedStrategy.PS) {
+                    psQueues.add(Integer.valueOf(ist));
+                }
+            }
+            if (isOpen) {
+                for (int qi = 0; qi < psQueues.size(); qi++) {
+                    int ist = psQueues.get(qi).intValue();
+                    int sIdx = (int) snl.nodeToStation.get(queueIndices.get(ist).intValue());
+                    List<Integer> visiting = new ArrayList<Integer>();
+                    for (int r = 0; r < R; r++) {
+                        if (D.get(ist, r) > 0) {
+                            visiting.add(Integer.valueOf(r));
+                        }
+                    }
+                    if (Ssrv.get(ist) != 1 || !ratesAreExponential(snl, sIdx, visiting)
+                            || !stationIsFeedbackFree(snl, sIdx, R)) {
+                        continue;
+                    }
+                    double[] muSt = new double[R];
+                    double[] lamSt = new double[R];
+                    double util = 0.0;
+                    for (int r = 0; r < R; r++) {
+                        muSt[r] = 1.0;
+                        lamSt[r] = 0.0;
+                    }
+                    for (int vi = 0; vi < visiting.size(); vi++) {
+                        int r = visiting.get(vi).intValue();
+                        muSt[r] = snl.rates.get(sIdx, r);
+                        lamSt[r] = lambda.get(r) * D.get(ist, r) * snl.rates.get(sIdx, r);
+                        util += lamSt[r] / muSt[r];
+                    }
+                    if (util >= 1) {
+                        continue;
+                    }
+                    QsysMm1PsResult ps = qsys_mm1_ps(lamSt, muSt);
+                    for (int vi = 0; vi < visiting.size(); vi++) {
+                        int r = visiting.get(vi).intValue();
+                        RespTVar.set(ist, r, ps.W2[r] - ps.W[r] * ps.W[r]);
+                    }
+                }
+            } else if (psQueues.size() == 1 && Mq == 1) {
+                // the paper's closed system: terminals in series with one PS CPU
+                int ist = psQueues.get(0).intValue();
+                int sIdx = (int) snl.nodeToStation.get(queueIndices.get(ist).intValue());
+                List<Integer> visiting = new ArrayList<Integer>();
+                for (int r = 0; r < R; r++) {
+                    if (D.get(ist, r) > 0) {
+                        visiting.add(Integer.valueOf(r));
+                    }
+                }
+                boolean singleVisit = true;
+                boolean hasThink = true;
+                for (int vi = 0; vi < visiting.size(); vi++) {
+                    int r = visiting.get(vi).intValue();
+                    double v = D.get(ist, r) * snl.rates.get(sIdx, r);
+                    if (Math.abs(v - 1) > GlobalConstants.CoarseTol) {
+                        singleVisit = false;
+                    }
+                    if (Ztot.get(r) <= 0) {
+                        hasThink = false;
+                    }
+                }
+                if (Ssrv.get(ist) == 1 && ratesAreExponential(snl, sIdx, visiting)
+                        && singleVisit && hasThink) {
+                    double[] Sps = new double[R];
+                    double[] Zps = new double[R];
+                    double[] Nps = new double[R];
+                    for (int r = 0; r < R; r++) {
+                        Sps[r] = 1.0;
+                        Zps[r] = 1.0;
+                        Nps[r] = 0.0;
+                    }
+                    for (int vi = 0; vi < visiting.size(); vi++) {
+                        int r = visiting.get(vi).intValue();
+                        Sps[r] = 1.0 / snl.rates.get(sIdx, r);
+                        Zps[r] = Ztot.get(r);
+                        Nps[r] = N.get(r);
+                    }
+                    mom.psrespt = pfqn_respt_ps_moments(Sps, Nps, Zps);
+                    for (int vi = 0; vi < visiting.size(); vi++) {
+                        int r = visiting.get(vi).intValue();
+                        RespTVar.set(ist, r, mom.psrespt.W2[r]
+                                - mom.psrespt.W[r] * mom.psrespt.W[r]);
                     }
                 }
             }
@@ -6158,6 +6266,79 @@ public abstract class NetworkSolver extends Solver {
             }
         }
         return true;
+    }
+
+    /**
+     * True when every class in {@code classes} has exponential service at station
+     * {@code sIdx}. The PS sojourn-time moments of Mitra and Morrison assume it; a
+     * phase-type service leaves the mean intact but not the moments.
+     */
+    private static boolean ratesAreExponential(NetworkStruct snl, int sIdx,
+                                               List<Integer> classes) {
+        if (snl.procid == null) {
+            return false;
+        }
+        java.util.Map<JobClass, jline.lang.constant.ProcessType> pmap =
+                snl.procid.get(snl.stations.get(sIdx));
+        if (pmap == null) {
+            return false;
+        }
+        for (int i = 0; i < classes.size(); i++) {
+            JobClass jobClass = snl.jobclasses.get(classes.get(i).intValue());
+            if (pmap.get(jobClass) != jline.lang.constant.ProcessType.EXP) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True when no job can return to station {@code sIdx}. An open PS station sees
+     * Poisson arrivals only under this condition, which is Melamed's: the station
+     * must lie on no routing cycle. The test aggregates the classes, so a cycle
+     * closed through a class switch also disqualifies the station. The source and
+     * the sink emit no edges here: jobs never leave a sink, and the rt arc that
+     * leads back to the source is bookkeeping.
+     */
+    private static boolean stationIsFeedbackFree(NetworkStruct snl, int sIdx, int R) {
+        int M = snl.nstations;
+        boolean[][] adj = new boolean[M][M];
+        for (int i = 0; i < M; i++) {
+            NodeType nt = snl.nodetype.get((int) snl.stationToNode.get(i));
+            if (nt == NodeType.Source || nt == NodeType.Sink) {
+                continue;
+            }
+            for (int j = 0; j < M; j++) {
+                boolean any = false;
+                for (int r = 0; r < R && !any; r++) {
+                    for (int s = 0; s < R; s++) {
+                        if (snl.rt.get(i * R + r, j * R + s) > 0) {
+                            any = true;
+                            break;
+                        }
+                    }
+                }
+                adj[i][j] = any;
+            }
+        }
+        boolean[] reach = new boolean[M];
+        java.util.ArrayDeque<Integer> frontier = new java.util.ArrayDeque<Integer>();
+        for (int j = 0; j < M; j++) {
+            if (adj[sIdx][j]) {
+                reach[j] = true;
+                frontier.add(Integer.valueOf(j));
+            }
+        }
+        while (!frontier.isEmpty()) {
+            int i = frontier.poll().intValue();
+            for (int j = 0; j < M; j++) {
+                if (adj[i][j] && !reach[j]) {
+                    reach[j] = true;
+                    frontier.add(Integer.valueOf(j));
+                }
+            }
+        }
+        return !reach[sIdx];
     }
 
     /**

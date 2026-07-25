@@ -724,7 +724,12 @@ class SolverFLD(NetworkSolver):
         # so the options object is converted the same way SolverCTMC does at
         # solver_ctmc.py:515.
         from ...api.sn.transforms import sn_nonmarkov_toph
-        options_dict = vars(self.options) if hasattr(self.options, '__dict__') else {'config': {}}
+        options_dict = dict(vars(self.options)) if hasattr(self.options, '__dict__') else {'config': {}}
+        # the fluid ODEs read mu*phi as a flow, so the surrogate must be a genuine
+        # phase-type: a matrix exponential has no such reading
+        cfg = dict(options_dict.get('config') or {})
+        cfg['phfit'] = 'ph'
+        options_dict['config'] = cfg
         self.sn = sn_nonmarkov_toph(self.sn, options_dict)
 
         # Finite Capacity Region: the fluid ODEs do not enforce the aggregate

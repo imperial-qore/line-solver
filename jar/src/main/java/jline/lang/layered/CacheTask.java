@@ -17,6 +17,7 @@ public class CacheTask extends Task {
     protected int items;
     protected int[] itemLevelCap;  // Changed to array to support multi-level caches
     protected ReplacementStrategy replacestrategy;
+    protected boolean retrieval = false;  // delayed-hit retrieval on the miss path
 
     public CacheTask(LayeredNetwork model, String name) {
         super(model, name);
@@ -131,5 +132,26 @@ public class CacheTask extends Task {
 
     public void setReplacestrategy(ReplacementStrategy replacestrategy) {
         this.replacestrategy = replacestrategy;
+    }
+
+    /**
+     * Enable a retrieval system with delayed-hit coalescing on the cache miss
+     * path. When set, concurrent misses for the same item that arrive while a
+     * fetch (the miss-branch activity and its backend calls) is already in flight
+     * are parked and released together as delayed hits when the fetch completes,
+     * instead of each triggering an independent fetch. The retrieval subsystem is
+     * the downstream call closure of the miss activity (see the POST_CACHE
+     * precedence); no extra topology is declared here.
+     */
+    public void setRetrieval(boolean retrieval) {
+        this.retrieval = retrieval;
+    }
+
+    public void setRetrieval() {
+        this.retrieval = true;
+    }
+
+    public boolean hasRetrieval() {
+        return retrieval;
     }
 }

@@ -104,6 +104,7 @@ class SolverFeatureSet:
         'Zipf',
         'StatelessClassSwitcher',
         'CacheClassSwitcher',
+        'CacheRetrieval',
         'InfiniteServer',
         'Forker',
         'Joiner',
@@ -671,8 +672,8 @@ def _moment_scv(variance, meanv):
     return float(variance / meanv ** 2)
 
 
-def _sched_is_fcfs(sn, s_idx):
-    """True when station ``s_idx`` is scheduled FCFS.
+def _sched_name_of(sn, s_idx):
+    """Scheduling strategy of station ``s_idx``, as an upper-case name.
 
     ``sn.sched`` may be populated with ``line_solver.lang.base.SchedStrategy``,
     ``line_solver.constants.SchedStrategy`` or a bare int depending on the path
@@ -683,15 +684,80 @@ def _sched_is_fcfs(sn, s_idx):
     """
     sc = sn.sched.get(s_idx) if isinstance(sn.sched, dict) else None
     if sc is None:
-        return False
+        return ''
     name = getattr(sc, 'name', None)
     if name is None:
         from ..constants import SchedStrategy
         try:
             name = SchedStrategy(int(sc)).name
         except (ValueError, TypeError):
+            return ''
+    return str(name).upper()
+
+
+def _sched_is_fcfs(sn, s_idx):
+    """True when station ``s_idx`` is scheduled FCFS."""
+    return _sched_name_of(sn, s_idx) == 'FCFS'
+
+
+def _sched_is_ps(sn, s_idx):
+    """True when station ``s_idx`` is scheduled PS."""
+    return _sched_name_of(sn, s_idx) == 'PS'
+
+
+def _rates_are_exponential(sn, s_idx, classes):
+    """True when every class in ``classes`` has exponential service at station
+    ``s_idx``. The PS sojourn-time moments of Mitra and Morrison assume it; a
+    phase-type service leaves the mean intact but not the moments. ProcessType
+    is compared by NAME because its numeric values differ across codebases.
+    """
+    import numpy as np
+    procid = getattr(sn, 'procid', None)
+    if procid is None:
+        return False
+    for r in classes:
+        pt = np.asarray(procid, dtype=object)[s_idx, r]
+        name = getattr(pt, 'name', None)
+        if name is None:
+            from ..constants import ProcessType
+            try:
+                name = ProcessType(int(pt)).name
+            except (ValueError, TypeError):
+                return False
+        if str(name).upper() != 'EXP':
             return False
-    return str(name).upper() == 'FCFS'
+    return True
+
+
+def _station_is_feedback_free(sn, s_idx, R):
+    """True when no job can return to station ``s_idx``.
+
+    An open PS station sees Poisson arrivals only under this condition, which is
+    Melamed's: the station must lie on no routing cycle. The test aggregates the
+    classes, so a cycle closed through a class switch also disqualifies the
+    station. The source and the sink emit no edges here: jobs never leave a
+    sink, and the rt arc that leads back to the source is bookkeeping.
+    """
+    import numpy as np
+    from ..api.sn.network_struct import NodeType
+    M = int(sn.nstations)
+    rt = np.asarray(sn.rt, dtype=float)
+    station_to_node = np.asarray(sn.stationToNode).flatten()
+    adj = np.zeros((M, M), dtype=bool)
+    for i in range(M):
+        nt = sn.nodetype[int(station_to_node[i])]
+        if nt in (NodeType.SOURCE, NodeType.SINK):
+            continue
+        for j in range(M):
+            blk = rt[i * R:(i + 1) * R, j * R:(j + 1) * R]
+            adj[i, j] = bool(np.any(blk > 0))
+    reach = adj[s_idx, :].copy()
+    frontier = np.flatnonzero(reach)
+    while frontier.size > 0:
+        nxt = np.any(adj[frontier, :], axis=0) & ~reach
+        reach = reach | nxt
+        frontier = np.flatnonzero(nxt)
+    return not bool(reach[s_idx])
 
 
 def _fcfs_rates_are_class_independent(sn, queue_nodes, R, node_to_station,
@@ -1458,13 +1524,22 @@ class NetworkSolver(Solver):
         ``Cov[n(i,r),n(j,s)] = L(j,s) dQ(i,r)/dL(j,s)``, evaluated by the
         pfqn_sens_* family; see ``_kb/03-api-layer.md``.
 
-        RESPONSE-TIME MOMENTS ARE FCFS-ONLY. RespTVar and RespTSCV are NaN at any
-        station that is not FCFS, and in open or mixed models. This is a
-        limitation of the theory, not of the implementation: the sojourn-time
-        distribution at a processor-sharing or LCFS center is not known in
-        general (Strelen 1990, Section 4), so there is no correct value to report
-        and a wrong one is worse than a blank. The mean RespT is always reported,
-        since it needs no distributional result.
+        RESPONSE-TIME MOMENTS ARE FCFS OR PROCESSOR-SHARING. RespTVar and
+        RespTSCV are NaN at any station that is neither, and at an LCFS center in
+        particular, because the sojourn-time distribution there is not known in
+        general (Strelen 1990, Section 4) and a wrong value is worse than a
+        blank. The mean RespT is always reported, since it needs no
+        distributional result.
+
+        The FCFS moments come from pfqn_sens_respt and are closed-model only. The
+        processor-sharing moments come from Mitra and Morrison (1983) and cover
+        two configurations, both requiring exponential single-server service:
+        purely open, where qsys_mm1_ps is exact at any PS station whose arrivals
+        are Poisson, that is, that lies on no routing cycle; and purely closed,
+        where pfqn_respt_ps_moments covers the terminal-driven system the paper
+        analyses, one PS station visited once per think cycle with delay stations
+        holding the think time. A PS station outside those configurations keeps
+        RespTVar = NaN.
 
         Scope by model type::
 
@@ -1476,9 +1551,11 @@ class NetworkSolver(Solver):
 
         ``mom`` is a dict carrying the raw results: ``mom['qlen']`` is the
         underlying pfqn_sens_mva / pfqn_sens_mvaldmx object (with the full
-        covariance matrices, not just the diagonal this table shows), and
-        ``mom['respt']`` is the pfqn_sens_respt object or None. Use it when the
-        per-pair covariances are needed.
+        covariance matrices, not just the diagonal this table shows),
+        ``mom['respt']`` is the pfqn_sens_respt object or None, and
+        ``mom['psrespt']`` is the pfqn_respt_ps_moments object or None. Use it
+        when the per-pair covariances, or the route taken at a PS station, are
+        needed.
 
         Per-station TOTAL moments, including the third moment and the skewness,
         are in getMomentStationTable: they are only defined for a station total,
@@ -1523,7 +1600,7 @@ class NetworkSolver(Solver):
         node_to_station = np.asarray(sn.nodeToStation).flatten()
         rates = np.asarray(sn.rates, dtype=float)
 
-        mom = {'qlen': None, 'respt': None, 'qlenmom': None}
+        mom = {'qlen': None, 'respt': None, 'qlenmom': None, 'psrespt': None}
         QLen = np.zeros((Mq, R))
         QLenVar = np.zeros((Mq, R))
 
@@ -1653,6 +1730,56 @@ class NetworkSolver(Solver):
                             RespTVar[ist, r] = mom['respt'].WVar[ist, r]
                         if maxorder >= 3:
                             RespTSkew[ist, r] = mom['respt'].WSkew[ist, r]
+
+        # ---- response-time moments at processor-sharing stations ------------
+        # Mitra and Morrison (1983) supply the sojourn-time moments the FCFS
+        # block above cannot reach: exactly at an open PS station fed by Poisson
+        # streams, and by expansion (or by exact enumeration when small) in the
+        # closed terminal-driven system. see _kb/05-solvers-overview.md
+        mom['psrespt'] = None
+        if 2 in order and not is_mixed and Mq > 0:
+            from ..api.qsys.ps import qsys_mm1_ps
+            from ..api.pfqn.respt_ps import pfqn_respt_ps_moments
+            ps_queues = [ist for ist, node in enumerate(queue_nodes)
+                         if _sched_is_ps(sn, int(node_to_station[node]))]
+            if is_open:
+                for ist in ps_queues:
+                    s_idx = int(node_to_station[queue_nodes[ist]])
+                    visiting = [r for r in range(R) if D[ist, r] > 0]
+                    if (Ssrv[ist] != 1
+                            or not _rates_are_exponential(sn, s_idx, visiting)
+                            or not _station_is_feedback_free(sn, s_idx, R)):
+                        continue
+                    mu_st = np.ones(R)
+                    lam_st = np.zeros(R)
+                    for r in visiting:
+                        mu_st[r] = rates[s_idx, r]
+                        lam_st[r] = lam[r] * D[ist, r] * rates[s_idx, r]
+                    if float(np.sum(lam_st / mu_st)) >= 1:
+                        continue
+                    Wps, W2ps, _ = qsys_mm1_ps(lam_st, mu_st)
+                    for r in visiting:
+                        RespTVar[ist, r] = W2ps[r] - Wps[r] ** 2
+            elif len(ps_queues) == 1 and Mq == 1:
+                # the paper's closed system: terminals in series with one PS CPU
+                ist = ps_queues[0]
+                s_idx = int(node_to_station[queue_nodes[ist]])
+                visiting = [r for r in range(R) if D[ist, r] > 0]
+                Vps = np.array([D[ist, r] * rates[s_idx, r] for r in visiting])
+                single_visit = bool(np.all(np.abs(Vps - 1) <= 1e-3))
+                if (Ssrv[ist] == 1 and _rates_are_exponential(sn, s_idx, visiting)
+                        and single_visit
+                        and all(Ztot[r] > 0 for r in visiting)):
+                    Sps = np.ones(R)
+                    Zps = np.ones(R)
+                    Nps = np.zeros(R)
+                    for r in visiting:
+                        Sps[r] = 1.0 / rates[s_idx, r]
+                        Zps[r] = Ztot[r]
+                        Nps[r] = N[r]
+                    Wps, W2ps, mom['psrespt'] = pfqn_respt_ps_moments(Sps, Nps, Zps)
+                    for r in visiting:
+                        RespTVar[ist, r] = W2ps[r] - Wps[r] ** 2
 
         # ---- assemble -------------------------------------------------------
         rows = []

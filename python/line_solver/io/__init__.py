@@ -583,8 +583,16 @@ def LQN2QN(lqn):
       hit/miss outcome, whose completion spawns the matching branch
       continuation.
 
-    Not yet represented: delayed-hit retrieval on the cache miss path, and the
-    thread pool of a task with an internal AND-fork.
+    - An AND-join quorum k of n is applied to the Join node in the class that
+      entered the Fork; k equal to the branch count is the default
+      wait-for-all and is left alone. An activity think time becomes an extra
+      step on a shared ActivityThink delay, in series with the host demand, so
+      the task keeps its thread for it while its processor is released.
+
+    Not yet represented: delayed-hit retrieval on the cache miss path, the
+    thread pool of a task with an internal AND-fork, task and processor
+    replication with its fan-out, and the setup and delay-off times of a
+    function task. Each is reported through a warning.
 
     Args:
         lqn: LayeredNetwork model to convert.
@@ -599,13 +607,14 @@ def LQN2QN(lqn):
         >>> SolverLDES(model).getAvgTable()
     """
     import warnings
+    import numpy as np
 
     from ..lang import (Network, Queue, Delay, Cache, Fork, Join, Router,
                         Source, Sink, ClosedClass, OpenClass, Signal, SignalType,
                         ClosedSignal)
-    from ..distributions import Exp, Immediate
+    from ..distributions import Distribution, Exp, Immediate
     from ..constants import SchedStrategy, RoutingStrategy
-    from ..lang.base import ReplacementStrategy
+    from ..lang.base import JoinStrategy, ReplacementStrategy
 
     FINE_TOL = 1e-8
     MAXCALLSTAGES = 20          # guard against unrolling a huge call multiplicity
@@ -658,6 +667,19 @@ def LQN2QN(lqn):
             warnings.warn("LQN2QN: asynchronous calls are represented as non-blocking "
                           "visits: the caller releases its server but remains serialised "
                           "behind the callee.")
+    if lsn.hasretrieval is not None and lsn.hasretrieval.any():
+        warnings.warn("LQN2QN: delayed-hit retrieval on the cache miss path is not "
+                      "represented.")
+    if getattr(lsn, 'repl', None) is not None:
+        repl = np.asarray(lsn.repl).ravel()
+        over = [i for i in range(1, min(len(repl), lsn.nhosts + lsn.ntasks + 1)) if repl[i] > 1]
+        if over:
+            warnings.warn("LQN2QN: replication of %s is not represented: the replicas are "
+                          "collapsed into a single station and their fan-out is ignored."
+                          % lsn.names[over[0]])
+    if getattr(lsn, 'isfunction', None) is not None and np.asarray(lsn.isfunction).any():
+        warnings.warn("LQN2QN: setup and delay-off times of function tasks are not "
+                      "represented: the task is converted as an ordinary always-on station.")
     # ------------------------------- tasks whose multiplicity is a thread pool
     # Such a task holds one thread per request from entry to reply, also across
     # its nested synchronous calls. Its calls do not hold the caller's server,
@@ -671,9 +693,8 @@ def LQN2QN(lqn):
         if lsn.actposttype is None:
             return False
         for a in range(lsn.ashift + 1, lsn.ashift + lsn.nacts + 1):
-            la = a - lsn.ashift
-            if int(lsn.parent[a, 0]) == tidx and 0 <= la < len(lsn.actposttype) and \
-                    int(lsn.actposttype[la]) == ID_POST_AND:
+            if int(lsn.parent[a, 0]) == tidx and a < len(lsn.actposttype) and \
+                    int(lsn.actposttype[a]) == ID_POST_AND:
                 return True
         return False
 
@@ -698,8 +719,7 @@ def LQN2QN(lqn):
     branch_acts = []
     if lsn.actposttype is not None:
         for a in range(lsn.ashift + 1, lsn.ashift + lsn.nacts + 1):
-            la = a - lsn.ashift
-            if not (0 <= la < len(lsn.actposttype)) or int(lsn.actposttype[la]) != ID_POST_AND:
+            if a >= len(lsn.actposttype) or int(lsn.actposttype[a]) != ID_POST_AND:
                 continue
             frontier = [a]
             while frontier:
@@ -707,9 +727,8 @@ def LQN2QN(lqn):
                 if cur in branch_acts:
                     continue
                 branch_acts.append(cur)
-                lc = cur - lsn.ashift
-                if lsn.actpretype is not None and 0 <= lc < len(lsn.actpretype) and \
-                        int(lsn.actpretype[lc]) == ID_PRE_AND:
+                if lsn.actpretype is not None and cur < len(lsn.actpretype) and \
+                        int(lsn.actpretype[cur]) == ID_PRE_AND:
                     continue    # branch tail: do not traverse past the join
                 for s in range(lsn.ashift + 1, lsn.ashift + lsn.nacts + 1):
                     if lsn.graph[cur, s] != 0 and int(lsn.parent[s, 0]) == int(lsn.parent[cur, 0]):
@@ -776,6 +795,11 @@ def LQN2QN(lqn):
     step_tasks = []
     cache_node_of = {}
     cache_wiring = []
+    # [join_step, join_aidx]; the quorum is applied once the fork class exists.
+    join_quorum = []
+    # Shared INF station carrying the activity think times: the task keeps its
+    # thread across a think time but its host processor is released.
+    act_think_node = []
 
     def add_step(aidx, hidx, svc, name, blocks, isthink, ref_tidx):
         step_aidx.append(aidx)
@@ -820,13 +844,48 @@ def LQN2QN(lqn):
     def is_and_fork(succ):
         if len(succ) < 2 or lsn.actposttype is None:
             return False
-        return all(int(lsn.actposttype[s - lsn.ashift]) == ID_POST_AND for s in succ)
+        return all(int(lsn.actposttype[s]) == ID_POST_AND for s in succ)
 
     def is_and_join_pre(aidx):
         if lsn.actpretype is None:
             return False
-        a = aidx - lsn.ashift
-        return 0 < a < len(lsn.actpretype) and int(lsn.actpretype[a]) == ID_PRE_AND
+        return 0 < aidx < len(lsn.actpretype) and int(lsn.actpretype[aidx]) == ID_PRE_AND
+
+    def count_and_join_branches(join_aidx):
+        """Branch tails feeding an AND-join, i.e. its PRE_AND predecessors."""
+        return sum(1 for p in range(lsn.graph.shape[0])
+                   if p != join_aidx and lsn.graph[p, join_aidx] != 0 and is_and_join_pre(p))
+
+    def apply_join_quorum(join_node, join_class, join_aidx):
+        """A join whose quorum equals its branch count already waits for all
+        branches, the default JoinStrategy.STD, so only a genuine quorum k < n
+        switches the node to JoinStrategy.PARTIAL."""
+        if join_node is None or join_class is None or lsn.actquorum is None \
+                or not (0 < join_aidx < len(lsn.actquorum)):
+            return
+        quorum = int(lsn.actquorum[join_aidx])
+        nbranches = count_and_join_branches(join_aidx)
+        if quorum < 1 or nbranches < 1 or quorum >= nbranches:
+            return
+        join_node.set_strategy(join_class, JoinStrategy.PARTIAL)
+        join_node.set_required(join_class, quorum)
+
+    def act_think_of(aidx):
+        """Think time of an activity, or None when it has none. It is a delay in
+        series with the host demand, held at the activity's own task (the thread
+        is kept) but with the host processor released, as in lqns."""
+        t = (getattr(lsn, 'actthink', None) or {}).get(aidx)
+        if t is None:
+            return None
+        if isinstance(t, Distribution):
+            return t if not isinstance(t, Immediate) and t.getMean() > FINE_TOL else None
+        return Exp.fitMean(float(t)) if float(t) > FINE_TOL else None
+
+    def act_think_station():
+        """Single INF station shared by every activity think time."""
+        if not act_think_node:
+            act_think_node.append(Delay(model, "ActivityThink"))
+        return act_think_node[0]
 
     def call_mean(cidx):
         return float(lsn.callpair[cidx, 3]) if lsn.callpair.shape[1] > 3 else 1.0
@@ -959,6 +1018,15 @@ def LQN2QN(lqn):
             # cur is the port through which the activity is currently left. A
             # blocking call site is left through its reply signal.
             cur = (entry_step, False)
+
+            # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
+            think_dist = act_think_of(aidx)
+            if think_dist is not None:
+                think_step = add_step(aidx, hidx, think_dist, "%s_think" % lsn.names[aidx],
+                                      False, False, ref_tidx)
+                step_node[think_step] = act_think_station()
+                add_route(cur, think_step, 1.0)
+                cur = (think_step, False)
 
             # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
             tmult = float(lsn.mult[0, tidx])
@@ -1200,6 +1268,7 @@ def LQN2QN(lqn):
             add_route(from_port, join_step, 1.0)
             add_route((join_step, False), walk(join_aidx), 1.0)
             join_of[join_aidx] = join_step
+            join_quorum.append((join_step, join_aidx))
 
         def branch_replies(a0):
             # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
@@ -1271,6 +1340,10 @@ def LQN2QN(lqn):
     for i in range(nsteps):
         step_class[i] = step_class[step_class_owner[i]]
 
+    # AND-join quorum, in the class the siblings are matched in.
+    for (js, ja) in join_quorum:
+        apply_join_quorum(step_node[js], step_class[js], ja)
+
     for i in range(nsteps):
         if step_blocks[i]:
             sig = Signal(model, "%s_Reply" % step_name[i], SignalType.REPLY)
@@ -1317,6 +1390,9 @@ def LQN2QN(lqn):
 
     for i in range(nsteps):
         if step_node[i] is not None:
+            if step_class_owner[i] == i and act_think_node and step_node[i] is act_think_node[0]:
+                act_think_node[0].setService(step_class[i], step_svc[i])
+                continue
             # see _kb/04-networkstruct.md (lqn2qn activity-walk mechanics) for rationale
             if step_class_owner[i] == i and isinstance(step_node[i], Router):
                 if step_ref_task[i] == 0:

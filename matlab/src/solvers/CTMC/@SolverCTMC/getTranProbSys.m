@@ -1,6 +1,8 @@
 function [Pi_t, SSsys] = getTranProbSys(self)
 % [PI_T, SSSYS] = GETTRANPROBSYSSTATE()
 
+self.assertPhaseTypeStates('getTranProbSys');
+
 options = self.getOptions;
 if isfield(options,'timespan')  && isfinite(options.timespan(2))
     sn = self.getStruct;

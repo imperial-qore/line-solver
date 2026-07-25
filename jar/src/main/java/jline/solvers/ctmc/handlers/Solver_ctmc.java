@@ -48,13 +48,27 @@ public class Solver_ctmc {
         int nclasses = sn.nclasses;
         java.util.Map<Integer, jline.lang.Sync> sync = sn.sync;
         int A = sync.size();
+        // True when at least one service or arrival process is a matrix exponential, so
+        // that the generator legitimately carries negative off-diagonal entries.
+        boolean hasMEproc = false;
+        if (sn.isph != null) {
+            for (java.util.Map<jline.lang.JobClass, Boolean> row : sn.isph.values()) {
+                for (Boolean v : row.values()) {
+                    if (v != null && !v) {
+                        hasMEproc = true;
+                    }
+                }
+            }
+        }
         Matrix csmask = sn.csmask;
-        // see _kb/06-solver-catalog.md for rationale
+        // see _kb/06-solver-catalog.md for rationale (incl. the REPLY-signal exception)
         if (sn.issignal != null && sn.classcap != null) {
             for (int ii = 0; ii < sn.nstations; ii++) {
                 if (sn.sched.get(sn.stations.get(ii)) != jline.lang.constant.SchedStrategy.EXT) {
                     for (int r = 0; r < nclasses; r++) {
-                        if (sn.issignal.get(r) > 0) sn.classcap.set(ii, r, 0);
+                        boolean isReply = sn.signaltype != null && r < sn.signaltype.size()
+                                && sn.signaltype.get(r) == jline.lang.constant.SignalType.REPLY;
+                        if (sn.issignal.get(r) > 0 && !isReply) sn.classcap.set(ii, r, 0);
                     }
                 }
             }
@@ -201,7 +215,15 @@ public class Solver_ctmc {
                 }
 
                 for (int ia = 0; ia < new_state_a.length(); ia++) {
-                    if (rate_a.get(ia) > 0) {
+                    // A matrix-exponential process embeds in the generator exactly as a
+                    // phase-type does, except that the off-diagonal entries of D0 and the
+                    // completion vector -A*e may be negative. Those transitions are part of
+                    // the balance equations: dropping them leaves the diagonal to absorb
+                    // their mass and silently answers a different model (an M/CME/1 lost 3%
+                    // of its mean queue length). The stationary vector is then a signed
+                    // measure whose aggregates over each phase block are still the exact
+                    // probabilities. See sn.isph and _kb/04-networkstruct.md.
+                    if (rate_a.get(ia) != 0 && (rate_a.get(ia) > 0 || hasMEproc)) {
                         int node_p = syncA.passive.get(0).getNode();
                         if (node_p + 1 != local) {
                             int state_p = (int) state.get((int) sn.nodeToStateful.get(node_p));
@@ -737,6 +759,102 @@ public class Solver_ctmc {
 
         Q = Ctmc_makeinfgen.ctmc_makeinfgen(Q);
 
+        // Drop states unreachable from the initial state.
+        // The default state space generator enumerates the whole population lattice, so
+        // for a model whose reachable set is constrained -- a Petri net with P-invariants
+        // and a synchronous call, whose held-server counters are enumerated independently
+        // of the marginals, are the clearest cases -- it also produces states that cannot
+        // be reached. Some of those enable nothing at all, or form a closed class of their
+        // own, which leaves the generator with several recurrent classes and no unique
+        // stationary distribution. Such states carry zero probability by definition, and
+        // no reachable state has an arc into them, so restricting every quantity to the
+        // reachable set is exact rather than an approximation.
+        // This runs before the immediate-state removal below, since the initial state may
+        // itself be vanishing and is then absent from the complemented chain.
+        // Mirrors MATLAB solver_ctmc.m.
+        if (sn.state != null && !sn.state.isEmpty()) {
+            boolean allStatesSet = true;
+            for (int isf = 0; isf < nstateful; isf++) {
+                Matrix row_isf = sn.state.get(sn.stateful.get(isf));
+                if (row_isf == null || row_isf.isEmpty()) {
+                    allStatesSet = false;
+                    break;
+                }
+            }
+            if (allStatesSet) {
+                // The per-station initial rows carry only as many buffer slots as the
+                // initial population needs, while the enumerated local space is sized for
+                // the full capacity. Left-pad each row to its space width (empty buffer
+                // slots pad the left, so the server-phase and local-variable tail stays
+                // aligned) before matching; without this the lookup fails and the pruning
+                // is silently skipped, leaving any enumerated-but-unreachable state to
+                // break the stationary solve.
+                Matrix initRow = new Matrix(0, 0);
+                for (int isf = 0; isf < nstateful; isf++) {
+                    Matrix row_isf = Matrix.extractRows(sn.state.get(sn.stateful.get(isf)), 0, 1, null);
+                    Matrix space_isf = sn.space.get(sn.stateful.get(isf));
+                    int w_isf = space_isf == null ? row_isf.getNumCols() : space_isf.getNumCols();
+                    if (row_isf.getNumCols() < w_isf) {
+                        Matrix pad = new Matrix(1, w_isf - row_isf.getNumCols());
+                        pad.zero();
+                        row_isf = pad.concatCols(row_isf);
+                    }
+                    initRow = initRow.isEmpty() ? row_isf : initRow.concatCols(row_isf);
+                }
+                int initState = -1;
+                if (initRow.getNumCols() == stateSpace.getNumCols()) {
+                    initState = Matrix.matchrow(stateSpace, initRow);
+                }
+                if (initState >= 0) {
+                    int nQ = Q.getNumRows();
+                    boolean[] reach = new boolean[nQ];
+                    reach[initState] = true;
+                    List<Integer> frontier = new ArrayList<Integer>();
+                    frontier.add(initState);
+                    while (!frontier.isEmpty()) {
+                        List<Integer> next = new ArrayList<Integer>();
+                        for (int fi = 0; fi < frontier.size(); fi++) {
+                            int s = frontier.get(fi).intValue();
+                            for (int ns = 0; ns < nQ; ns++) {
+                                if (ns == s || reach[ns]) continue;
+                                // any nonzero off-diagonal is an arc: an ME embeds with negative ones
+                                if (Math.abs(Q.get(s, ns)) > 1e-12) {
+                                    reach[ns] = true;
+                                    next.add(ns);
+                                }
+                            }
+                        }
+                        frontier = next;
+                    }
+                    List<Integer> keep = new ArrayList<Integer>();
+                    for (int s = 0; s < nQ; s++) {
+                        if (reach[s]) keep.add(s);
+                    }
+                    if (keep.size() < nQ) {
+                        Q = Ctmc_makeinfgen.ctmc_makeinfgen(submatrix(Q, keep, keep));
+                        stateSpace = subrows(stateSpace, keep);
+                        stateSpaceAggr = subrows(stateSpaceAggr, keep);
+                        stateSpaceHashed = subrows(stateSpaceHashed, keep);
+                        arvRates = subrates(arvRates, keep, nstateful, nclasses);
+                        depRates = subrates(depRates, keep, nstateful, nclasses);
+                        for (int a = 0; a < A; a++) {
+                            Dfilt.set(a, submatrix(Dfilt.get(a), keep, keep));
+                        }
+                        for (int k = 0; k < FJ; k++) {
+                            if (DfiltFjsync[k] != null) {
+                                DfiltFjsync[k] = submatrix(DfiltFjsync[k], keep, keep);
+                            }
+                        }
+                        for (int g = 0; g < G; g++) {
+                            if (DfiltGsyncComp[g] != null) {
+                                DfiltGsyncComp[g] = submatrix(DfiltGsyncComp[g], keep, keep);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if (options.config.hide_immediate) {
             List<Double> imm_unique = (immPurged != null) ? immPurged
                     : ctmcFindVanishingStates(sn, stateSpaceHashed, nclasses, nstateful, FJ, gsyncEvents, G);
@@ -1201,5 +1319,46 @@ public class Solver_ctmc {
         TreeSet<Double> uniqueSet = new TreeSet<Double>(imm_list);
         List<Double> imm_unique = new ArrayList<Double>(uniqueSet);
         return imm_unique;
+    }
+
+    /** Rows {@code keep} of {@code m}, in the given order. */
+    private static Matrix subrows(Matrix m, List<Integer> keep) {
+        Matrix out = new Matrix(keep.size(), m.getNumCols());
+        for (int i = 0; i < keep.size(); i++) {
+            int r = keep.get(i).intValue();
+            for (int c = 0; c < m.getNumCols(); c++) {
+                out.set(i, c, m.get(r, c));
+            }
+        }
+        return out;
+    }
+
+    /** The {@code rows} x {@code cols} submatrix of {@code m}. */
+    private static Matrix submatrix(Matrix m, List<Integer> rows, List<Integer> cols) {
+        Matrix out = new Matrix(rows.size(), cols.size());
+        for (int i = 0; i < rows.size(); i++) {
+            int r = rows.get(i).intValue();
+            for (int j = 0; j < cols.size(); j++) {
+                double v = m.get(r, cols.get(j).intValue());
+                if (v != 0) {
+                    out.set(i, j, v);
+                }
+            }
+        }
+        return out;
+    }
+
+    /** The state slice {@code keep} of a (states x stateful x classes) rate array. */
+    private static double[][][] subrates(double[][][] rates, List<Integer> keep, int nstateful, int nclasses) {
+        double[][][] out = new double[keep.size()][nstateful][nclasses];
+        for (int i = 0; i < keep.size(); i++) {
+            int r = keep.get(i).intValue();
+            for (int j = 0; j < nstateful; j++) {
+                for (int k = 0; k < nclasses; k++) {
+                    out[i][j][k] = rates[r][j][k];
+                }
+            }
+        }
+        return out;
     }
 }

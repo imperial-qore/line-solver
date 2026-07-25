@@ -4,6 +4,7 @@ import jline.solvers.ba.SolverBA;
 import static jline.solvers.nc.SolverNCTestFixtures.*;
 import static jline.TestTools.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -576,8 +577,20 @@ public class SolverMVATest {
         NetworkAvgTable silentResult = silent.getAvgTable();
         assertNotNull(silentResult, "QNA under SILENT verbosity must return results, not NPE");
 
-        std.runAnalyzer();
-        NetworkAvgTable stdResult = std.getAvgTable();
+        // STD verbosity emits a completion line; capture it so the test stays
+        // non-SILENT (proving non-gating) without polluting the test log.
+        java.io.PrintStream savedOut = System.out;
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(captured));
+        NetworkAvgTable stdResult;
+        try {
+          std.runAnalyzer();
+          stdResult = std.getAvgTable();
+        } finally {
+          System.setOut(savedOut);
+        }
+        assertFalse(captured.toString().isEmpty(),
+            "STD verbosity must emit a completion line (computation not gated on verbosity)");
 
         for (int i = 0; i < stdResult.getQLen().size(); i++) {
           assertEquals(stdResult.getQLen().get(i), silentResult.getQLen().get(i), 1e-12,

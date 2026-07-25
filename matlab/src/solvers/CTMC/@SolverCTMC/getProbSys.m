@@ -1,6 +1,8 @@
 function Pn = getProbSys(self)
 % PN = GETPROBSYSSTATE()
 
+self.assertPhaseTypeStates('getProbSys');
+
 if GlobalConstants.DummyMode
     Pn = NaN;
     return

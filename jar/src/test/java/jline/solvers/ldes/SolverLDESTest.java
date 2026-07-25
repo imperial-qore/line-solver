@@ -9,6 +9,7 @@ import static jline.TestTools.*;
 import jline.GlobalConstants;
 import jline.VerboseLevel;
 import jline.examples.java.basic.CacheModel;
+import jline.examples.java.basic.CacheRetrievalSystemModel;
 import jline.lang.nodes.Cache;
 import jline.lang.constant.ReplacementStrategy;
 import jline.examples.java.basic.ClosedModel;
@@ -4107,6 +4108,48 @@ public class SolverLDESTest extends SolverLDESTestFixtures {
             		double sourceThru = avgTable.getTput().get(0);  // Source, InitClass
             		assertTrue(sourceThru > 1.8 && sourceThru < 2.2,
             				"Source throughput should be approximately 2.0, got: " + sourceThru);
+            	}
+
+            	@Test
+            	public void testCacheRetrievalDelayedHitLDES() {
+            		// Delayed-hit retrieval cache (paper motivating example): n=7, m=[6], a single
+            		// PS retrieval station with mu=1, lambda=(49,49,49,49,7,1,1)/205, RR replacement.
+            		// On a miss the request is fetched through the retrieval queue; concurrent
+            		// requests for an in-flight item become delayed hits. The exact recurrence
+            		// (retrieval_metrics) gives hit ratio 0.982722, miss (pi_0) 0.015118,
+            		// delayed-hit (phi) 0.002160.
+            		double[] accessProb = {49, 49, 49, 49, 7, 1, 1};
+            		double total = 0.0;
+            		for (double p : accessProb) total += p;
+            		for (int i = 0; i < accessProb.length; i++) accessProb[i] /= total;
+            		Network model = CacheRetrievalSystemModel.simple_retrieval_system_model(
+            				accessProb,
+            				new double[] {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+            				"[6]", SchedStrategy.PS, ReplacementStrategy.RR);
+
+            		SolverLDES solver = new SolverLDES(model, "samples", 300000,
+            				"verbose", VerboseLevel.SILENT, "seed", 23000);
+            		solver.getAvgNodeTable();
+
+            		Cache cache = (Cache) model.getNodeByName("Cache");
+            		Matrix hit = cache.getHitRatio();
+            		Matrix miss = cache.getMissRatio();
+            		Matrix lat = cache.getResidT();
+            		assertNotNull(hit, "Cache hit ratio should be populated by LDES");
+
+            		double hitProb = hit.get(0, 0);    // InitClass
+            		double missProb = miss.get(0, 0);
+            		double latency = lat.get(0, 0);
+
+            		// Hit ratio matches the exact recurrence value within simulation noise.
+            		assertTrue(Math.abs(hitProb - 0.982722) < 0.01,
+            				"LDES hit ratio should be ~0.9827, got: " + hitProb);
+            		// Delayed hits are tracked separately, so hit + miss < 1 (the rest is phi > 0).
+            		assertTrue(hitProb + missProb < 1.0,
+            				"hit + miss should leave room for delayed hits, got: " + (hitProb + missProb));
+            		// Retrieval latency is measured directly (CTMC/SSA report NaN); ~1/mu = 1 here.
+            		assertTrue(latency > 0.5 && latency < 2.0,
+            				"Measured retrieval latency should be ~1, got: " + latency);
             	}
 
         }

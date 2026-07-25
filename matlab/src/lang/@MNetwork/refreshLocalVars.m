@@ -2,7 +2,13 @@ function nvars = refreshLocalVars(self)
 % NVARS = REFRESHLOCALVARS()
 
 R = self.getNumberOfClasses;
-nvars = zeros(self.getNumberOfNodes, 2*R+1);
+% Columns 1..R modulation phases, R+1..2R routing vars, 2R+1 the shared node
+% block (cache width / BAS marker / polling controller). Columns 2R+1+r are the
+% synchronous-call (REPLY) blocked-server counters, appended so that every
+% existing nvars reader keeps its indices; see State.replyBlockInfo. They stay
+% zero unless the model declares a REPLY signal, so no other model changes
+% state width.
+nvars = zeros(self.getNumberOfNodes, 3*R+1);
 nodeparam = cell(self.getNumberOfNodes, 1);
 rtnodes = self.sn.rtnodes;
 % Draft SPN code:
@@ -302,6 +308,65 @@ if ~isempty(self.sn) && isfield(self.sn,'hasbreakdown') && ~isempty(self.sn.hasb
     end
 end
 
+% Synchronous call (REPLY signal): a job of a class that expects a reply leaves
+% this station for the callee but KEEPS its server, which is released only when
+% the matching REPLY signal class arrives back here. Reserve one counter column
+% per (station, calling class) so the state can carry the held servers; the job
+% itself is at the callee and therefore absent from this station's marginal.
+%
+% The holding station is identified structurally, since a CTMC has no job
+% identity to key on as LDES does: it is a station that the REPLY class is
+% routed INTO. In the canonical shape Client -> Server -> (switch to Reply) ->
+% Client, that selects the client and NOT the server -- the server's departure
+% is the one that CREATES the reply, and LDES likewise does not block it
+% (Solver_ssj: !classSwitchedToReply). Stations that never receive the reply
+% class carry no counter and are untouched.
+replyblock = zeros(self.getNumberOfNodes, R);
+if isfield(self.sn,'syncreply') && ~isempty(self.sn.syncreply) && any(self.sn.syncreply >= 0)
+    rtnodes = self.sn.rtnodes;
+    nnodes = self.getNumberOfNodes;
+    for r=1:R
+        s = self.sn.syncreply(r) + 1; % stored 0-based (JAR convention)
+        if s < 1 || s > R
+            continue
+        end
+        for ind=1:nnodes
+            if ~self.sn.isstation(ind) || self.sn.nodetype(ind) == NodeType.Source
+                continue
+            end
+            ist = self.sn.nodeToStation(ind);
+            % An INF station has a server for every job, so holding one is
+            % immaterial and needs no state.
+            if self.sn.sched(ist) == SchedStrategy.INF
+                continue
+            end
+            % Does the reply class ever arrive here?
+            arrivesHere = false;
+            for i=1:nnodes
+                for q=1:R
+                    if rtnodes((i-1)*R+q, (ind-1)*R+s) > 0
+                        arrivesHere = true;
+                        break
+                    end
+                end
+                if arrivesHere
+                    break
+                end
+            end
+            if ~arrivesHere
+                continue
+            end
+            if SchedStrategy.toId(self.sn.sched(ist)) ~= SchedStrategy.FCFS
+                line_error(mfilename, sprintf(['Synchronous calls (REPLY signals) are supported only at FCFS ', ...
+                    'stations, but %s uses %s. Holding a server across a call has no representation in the ', ...
+                    'state of the other disciplines.'], self.sn.nodenames{ind}, SchedStrategy.toText(self.sn.sched(ist))));
+            end
+            nvars(ind, 2*R+1+r) = 1;
+            replyblock(ind, r) = 1;
+        end
+    end
+end
+
 % Polling controller width depends on discipline/switchover immediacy; State.pollingInfo is the single definition of the block layout
 if ~isempty(self.sn)
     self.sn.nvars = nvars;
@@ -332,6 +397,7 @@ if ~isempty(self.sn)
         isbasdestination(jst,:) = isbasdestination(jst,:) | isbasdestnode(ind,:);
     end
     self.sn.isbasdestination = isbasdestination;
+    self.sn.replyblock = replyblock;
 end
 end
 

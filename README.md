@@ -44,6 +44,24 @@ pip install line-solver
 ```
 Then configure your MCP client to use `line-solver` as a server, see the [MCP Getting Started Guide](https://line-solver.sourceforge.net/doc/LINE-mcp.pdf) for setup instructions and usage examples.
 
+## Symbolic Backend (first-time setup)
+
+The symbolic methods of `SolverCTMC` and `SolverFluid` (exact stationary
+distributions, parametric sensitivities, fluid Jacobians) delegate to a
+SageMath computer algebra system packaged as the Docker image
+[`imperialqore/line-sage-rest`](https://hub.docker.com/r/imperialqore/line-sage-rest).
+The image is not pulled automatically on first use, so obtain it once with:
+```
+docker pull imperialqore/line-sage-rest:latest
+```
+After that, LINE starts and stops a container on its own when a symbolic method
+is requested. An environment check reports whether the image is present and how
+to obtain it: run `lineInstall` (MATLAB), `line-install` or
+`line_solver.line_install()` (Python), or
+`java -cp jline.jar jline.cli.LineInstall` (JAR). MATLAB and Python fall back on
+the Symbolic Math Toolbox and `sympy` respectively when the backend is absent;
+the JAR has no computer algebra system of its own.
+
 ## License
 
 LINE is released under the [BSD-3 license](LICENSE). LINE also invokes and

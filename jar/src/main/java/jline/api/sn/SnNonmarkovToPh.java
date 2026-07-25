@@ -81,6 +81,8 @@ public final class SnNonmarkovToPh {
         }
 
         int nPhases = (options.config != null) ? options.config.nonmkvorder : 20;
+        String phfit = (options.config != null && options.config.phfit != null)
+                ? options.config.phfit.toLowerCase() : "cme";
         boolean preserveDet = (options.config != null) && options.config.preserveDet;
 
         for (int ist = 0; ist < snInput.nstations; ist++) {
@@ -122,8 +124,8 @@ public final class SnNonmarkovToPh {
                             return new Gamma(shape, scale).evalPDF(x);
                         }
                     };
-                    Pair<Matrix, Matrix> dd = Aph_bernstein.aph_bernstein(pdfFunc, nPhases);
-                    map = Map_scale.map_scale(pairToMatrixCell(dd.getLeft(), dd.getRight()), targetMean);
+                    map = fitShapeOrMoments(pdfFunc, targetMean,
+                            snInput.scv != null ? snInput.scv.get(ist, r) : 1.0, nPhases, phfit);
                 } else if (procType == ProcessType.WEIBULL) {
                     final double shapeParam = origProc.get(0).toDouble();
                     final double scaleParam = origProc.get(1).toDouble();
@@ -134,8 +136,8 @@ public final class SnNonmarkovToPh {
                             return new Weibull(shapeParam, scaleParam).evalPDF(x);
                         }
                     };
-                    Pair<Matrix, Matrix> dd = Aph_bernstein.aph_bernstein(pdfFunc, nPhases);
-                    map = Map_scale.map_scale(pairToMatrixCell(dd.getLeft(), dd.getRight()), targetMean);
+                    map = fitShapeOrMoments(pdfFunc, targetMean,
+                            snInput.scv != null ? snInput.scv.get(ist, r) : 1.0, nPhases, phfit);
                 } else if (procType == ProcessType.LOGNORMAL) {
                     final double mu = origProc.get(0).toDouble();
                     final double sigma = origProc.get(1).toDouble();
@@ -146,8 +148,8 @@ public final class SnNonmarkovToPh {
                             return new Lognormal(mu, sigma).evalPDF(x);
                         }
                     };
-                    Pair<Matrix, Matrix> dd = Aph_bernstein.aph_bernstein(pdfFunc, nPhases);
-                    map = Map_scale.map_scale(pairToMatrixCell(dd.getLeft(), dd.getRight()), targetMean);
+                    map = fitShapeOrMoments(pdfFunc, targetMean,
+                            snInput.scv != null ? snInput.scv.get(ist, r) : 1.0, nPhases, phfit);
                 } else if (procType == ProcessType.PARETO) {
                     final double shapeParam = origProc.get(0).toDouble();
                     final double scaleParam = origProc.get(1).toDouble();
@@ -158,8 +160,8 @@ public final class SnNonmarkovToPh {
                             return shapeParam * Math.pow(scaleParam, shapeParam) / Math.pow(x, shapeParam + 1);
                         }
                     };
-                    Pair<Matrix, Matrix> dd = Aph_bernstein.aph_bernstein(pdfFunc, nPhases);
-                    map = Map_scale.map_scale(pairToMatrixCell(dd.getLeft(), dd.getRight()), targetMean);
+                    map = fitShapeOrMoments(pdfFunc, targetMean,
+                            snInput.scv != null ? snInput.scv.get(ist, r) : 1.0, nPhases, phfit);
                 } else if (procType == ProcessType.UNIFORM) {
                     final double minVal = origProc.get(0).toDouble();
                     final double maxVal = origProc.get(1).toDouble();
@@ -170,12 +172,16 @@ public final class SnNonmarkovToPh {
                             return 0.0;
                         }
                     };
-                    Pair<Matrix, Matrix> dd = Aph_bernstein.aph_bernstein(pdfFunc, nPhases);
-                    map = Map_scale.map_scale(pairToMatrixCell(dd.getLeft(), dd.getRight()), targetMean);
+                    map = fitShapeOrMoments(pdfFunc, targetMean,
+                            snInput.scv != null ? snInput.scv.get(ist, r) : 1.0, nPhases, phfit);
                 } else if (procType == ProcessType.DET) {
-                    map = Map_erlang.map_erlang(targetMean, nPhases);
+                    // Deterministic: the most concentrated surrogate the phase budget
+                    // allows. Erlang-20 only reaches SCV 0.05; the CME plus exponential
+                    // reaches 5.7e-3 at the same 20 phases.
+                    map = fitConcentratedSurrogate(targetMean, 0.0, nPhases, phfit);
                 } else {
-                    map = Map_erlang.map_erlang(targetMean, nPhases);
+                    double targetScv = snInput.scv != null ? snInput.scv.get(ist, r) : 1.0;
+                    map = fitConcentratedSurrogate(targetMean, targetScv, nPhases, phfit);
                 }
 
                 int actualPhases = map.get(0).getNumRows();
@@ -186,6 +192,50 @@ public final class SnNonmarkovToPh {
         convertTransitionFiringDistributions(snInput, nPhases, preserveDet);
 
         return snInput;
+    }
+
+
+    /**
+     * Builds the Markovian surrogate of a concrete distribution.
+     *
+     * With {@code phfit="cme"} the surrogate is a concentrated matrix exponential
+     * convolved with an exponential (see {@link jline.lang.processes.MEFit}): under a
+     * budget of {@code nPhases} it reaches an SCV of O(1/nPhases^2), where an Erlang of
+     * the same order stops at 1/nPhases. With {@code phfit="ph"} the Erlang is kept,
+     * which is what SSA, Fluid and JMT need since they cannot consume a matrix
+     * exponential.
+     */
+    private static MatrixCell fitConcentratedSurrogate(double targetMean, double targetScv,
+                                                       int nPhases, String phfit) {
+        if ("cme".equals(phfit)) {
+            // A Det has SCV 0, which no ME attains; the budget-limited branch of the
+            // fitter then returns the most concentrated member that fits.
+            double scv = Math.max(targetScv, 1e-12);
+            if (scv < 1.0) {
+                jline.lang.processes.ME fitted = jline.lang.processes.MEFit.fitMeanAndSCV(
+                        targetMean, Math.min(scv, 1.0 - 1e-12), nPhases);
+                return fitted.getProcess();
+            }
+        }
+        return Map_erlang.map_erlang(targetMean, nPhases);
+    }
+
+    /**
+     * Chooses between the shape-preserving Bernstein fit and the two-moment ME fit.
+     *
+     * A concentrated ME matching the first two moments EXACTLY reproduces the
+     * Pollaczek-Khinchine mean, which the Bernstein fit does not: on M/Gamma/1 at rho 0.5
+     * the shape fit lands 2.7e-2 away from the exact mean queue length while the
+     * two-moment ME lands on it. The Bernstein path is kept for phfit="ph", where it
+     * carries shape information a two-moment fit cannot.
+     */
+    private static MatrixCell fitShapeOrMoments(DoubleUnaryOperator pdfFunc, double targetMean,
+                                                double targetScv, int nPhases, String phfit) {
+        if ("cme".equals(phfit) && targetScv >= 0.0 && targetScv < 1.0) {
+            return fitConcentratedSurrogate(targetMean, targetScv, nPhases, phfit);
+        }
+        Pair<Matrix, Matrix> dd = Aph_bernstein.aph_bernstein(pdfFunc, nPhases);
+        return Map_scale.map_scale(pairToMatrixCell(dd.getLeft(), dd.getRight()), targetMean);
     }
 
     /**
@@ -351,15 +401,35 @@ public final class SnNonmarkovToPh {
 
         Map<JobClass, MatrixCell> stProc = sn.proc.get(station);
         if (stProc != null) stProc.put(jobClass, map);
+        // A concentrated-ME surrogate is NOT a phase-type: it is tagged ME and sn.isph
+        // records it, so the CTMC assembles a rational generator (keeping the negative
+        // off-diagonal entries and the signed stationary vector) and the PH-only
+        // consumers refuse it. SnIsPhaseType is the single test.
+        boolean isPhaseType = SnIsPhaseType.snIsPhaseType(map);
+        if (sn.isph != null) {
+            Map<JobClass, Boolean> stIsph = sn.isph.get(station);
+            if (stIsph != null) {
+                stIsph.put(jobClass, isPhaseType);
+            }
+        }
+
         Map<JobClass, ProcessType> stProcid = sn.procid.get(station);
         if (stProcid != null) {
-            if (!keepDetTag) {
+            if (keepDetTag && origProcType == ProcessType.DET) {
+                // MAM's DET tag selects the EXACT M/D/c (Crommelin) and D/M/c (Smith)
+                // dispatch: overriding it replaced a closed form with a QBD over the
+                // surrogate and moved the Hillier-Yu reference values by 1.3%.
+            } else if (!isPhaseType) {
+                // Mirrors sn_nonmarkov_toph.m: a non-phase-type surrogate is tagged ME on
+                // EVERY path, so MAM reaches the exact RAP/RAP/1 analysis instead of
+                // feeding a signed representation to MMAPPH1FCFS as if it were a MAP.
+                stProcid.put(jobClass, ProcessType.ME);
+            } else if (keepDetTag) {
+                // MAM path (matrix-analytic, uses the proc D0/D1 directly): tag MAP
+                stProcid.put(jobClass, ProcessType.MAP);
+            } else {
                 // see _kb/03-api-layer.md for rationale
                 stProcid.put(jobClass, ProcessType.APH);
-            } else if (origProcType != ProcessType.DET) {
-                // MAM path (matrix-analytic, uses the proc D0/D1 directly): tag MAP.
-                // DET is left as DET for the exact MAP/D/c Crommelin dispatch.
-                stProcid.put(jobClass, ProcessType.MAP);
             }
         }
 

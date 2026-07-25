@@ -65,9 +65,18 @@ for m=1:nreplicas
 end
 
 iscachelayer = all(lqn.iscache(callers)) && ishostlayer;
+hasRetrievalCache = false;
+retrievalStation = [];
 if iscachelayer
     cacheNode = Cache(model, lqn.hashnames{callers}, lqn.nitems(callers), lqn.itemcap{callers}, lqn.replacestrat(callers));
+    % Delayed-hit retrieval: a dedicated fetch station in the cache sublayer so the
+    % closed AMVA (da_cacheqn_retrieval) captures the finite-population coalescing.
+    hasRetrievalCache = isfield(lqn,'hasretrieval') && any(lqn.hasretrieval(callers));
+    if hasRetrievalCache
+        retrievalStation = Queue(model, [lqn.hashnames{callers},'.Fetch'], SchedStrategy.PS);
+    end
 end
+retrievalWiring = [];
 
 actsInCaller = [lqn.actsof{callers}];
 isPostAndAct = full(lqn.actposttype)==ActivityPrecedenceType.POST_AND;
@@ -480,6 +489,61 @@ if hasSource
     end
 end
 
+% Delayed-hit retrieval cache wiring (EXPERIMENTAL).
+% see _kb/06-solver-catalog.md (LN section) for rationale
+if hasRetrievalCache && ~isempty(retrievalWiring)
+    retrievalStation.setService(retrievalWiring.readClass, self.servtproc{retrievalWiring.missaidx});
+    P{retrievalWiring.readClass, retrievalWiring.readClass}(cacheNode, retrievalStation) = 1.0;
+    P{retrievalWiring.readClass, retrievalWiring.readClass}(retrievalStation, cacheNode) = 1.0;
+    cacheNode.setRetrievalSystem(retrievalWiring.readClass, retrievalWiring.missClass, retrievalStation);
+    % see _kb/06-solver-catalog.md (LN section) for rationale
+    rcvals = unique(cacheNode.server.retrievalClasses(:));
+    rcvals = rcvals(rcvals > 0);
+    for rci = rcvals(:)'
+        model.classes{rci}.attribute = [-1, -1];
+        model.classes{rci}.completes = false;
+    end
+    % see _kb/06-solver-catalog.md (LN section) for rationale
+    hc = cacheNode.server.hitClass; mc = cacheNode.server.missClass;
+    Lhm = max(numel(hc), numel(mc));
+    if numel(hc) < Lhm, hc(numel(hc)+1:Lhm) = 0; cacheNode.server.hitClass = hc; end
+    if numel(mc) < Lhm, mc(numel(mc)+1:Lhm) = 0; cacheNode.server.missClass = mc; end
+    % see _kb/06-solver-catalog.md (LN section) for rationale
+    KfullSvc = model.getNumberOfClasses;
+    for istp = 1:numel(model.stations)
+        stp = model.stations{istp};
+        if isprop(stp,'server') && ~strcmpi(class(stp.server),'ServiceTunnel')
+            for rp = 1:KfullSvc
+                if numel(stp.server.serviceProcess) < rp || isempty(stp.server.serviceProcess{rp})
+                    stp.setService(model.classes{rp}, Disabled.getInstance());
+                end
+            end
+        end
+    end
+    % see _kb/06-solver-catalog.md (LN section) for rationale
+    Kfull = model.getNumberOfClasses;
+    Icur = model.getNumberOfNodes;
+    if isa(P, 'RoutingMatrix')
+        Pc = P.getCell();
+    else
+        Pc = P;
+    end
+    if size(Pc, 1) < Kfull
+        Pnew = cell(Kfull, Kfull);
+        [ro, co] = size(Pc);
+        Pnew(1:ro, 1:co) = Pc;
+        for rr = 1:Kfull
+            for ss = 1:Kfull
+                if isempty(Pnew{rr, ss})
+                    Pnew{rr, ss} = zeros(Icur, Icur);
+                end
+            end
+        end
+        Pc = Pnew;
+    end
+    P = Pc;
+end
+
 model.link(P);
 self.ensemble{idx} = model;
 
@@ -590,6 +654,12 @@ self.ensemble{idx} = model;
 
                                 cacheNode.setHitClass(aidxClass{nextaidx},aidxClass{lqn.hitaidx});
                                 cacheNode.setMissClass(aidxClass{nextaidx},aidxClass{lqn.missaidx});
+
+                                if hasRetrievalCache
+                                    % see _kb/06-solver-catalog.md (LN section) for rationale
+                                    retrievalWiring = struct('readClass', aidxClass{nextaidx}, ...
+                                        'missClass', aidxClass{lqn.missaidx}, 'missaidx', lqn.missaidx);
+                                end
 
                                 jobPos = atCache; % cache
                                 curClass = aidxClass{nextaidx};

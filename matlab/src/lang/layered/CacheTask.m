@@ -12,6 +12,7 @@ classdef CacheTask < Task
         items;
         itemLevelCap;  % Scalar or array for multi-level cache capacities
         replacestrategy;
+        retrieval = false;  % delayed-hit retrieval on the miss path
 
     end
 
@@ -96,6 +97,25 @@ classdef CacheTask < Task
             %   total: Sum of all level capacities
 
             total = sum(self.itemLevelCap);
+        end
+
+        % Enable/disable delayed-hit retrieval on the miss path
+        function self = setRetrieval(self, retrieval)
+            % SETRETRIEVAL(SELF, RETRIEVAL)
+            %
+            % Enable a retrieval system with delayed-hit coalescing on the cache
+            % miss path. When set, concurrent misses for the same item arriving
+            % while a fetch (the miss-branch activity and its backend calls) is in
+            % flight are parked and released together as delayed hits when the
+            % fetch completes, instead of each triggering an independent fetch.
+            if nargin < 2
+                retrieval = true;
+            end
+            self.retrieval = logical(retrieval);
+        end
+
+        function tf = hasRetrieval(self)
+            tf = self.retrieval;
         end
 
         % Set item level capacity

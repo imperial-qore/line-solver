@@ -2382,7 +2382,7 @@ class SolverLDES(NetworkSolver):
             'Place', 'Transition',
             'Linkage', 'Enabling', 'Inhibiting', 'Timing', 'Firing', 'Storage',
             'Logger', 'LogTunnel',
-            'Cache', 'CacheClassSwitcher',
+            'Cache', 'CacheClassSwitcher', 'CacheRetrieval',
             'ReplacementStrategy_LRU', 'ReplacementStrategy_FIFO', 'ReplacementStrategy_RR', 'ReplacementStrategy_SFIFO',
             'ReplacementStrategy_HLRU', 'ReplacementStrategy_CLIMB', 'ReplacementStrategy_QLRU',
             'Buffer', 'Region',

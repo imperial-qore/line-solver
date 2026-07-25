@@ -425,6 +425,46 @@ for i = 1:M
             end
         end
 
+        % Retrieval system flat block (setRetrievalSystem only) -- see _kb/09-ldes-and-cache.md
+        if ~isempty(node.retrievalSystemCapacity) && node.retrievalSystemCapacity > 0
+            byClass = containers.Map();
+            nItemsR = node.items.nitems;
+            rc = node.server.retrievalClasses;
+            qKeys = node.retrievalSystemQueueIndices.keys();
+            for kk = 1:numel(qKeys)
+                key0 = qKeys{kk};                 % jobinClass.index - 1 (0-based)
+                inIdx = double(key0) + 1;
+                if inIdx < 1 || inIdx > K
+                    continue;
+                end
+                entry = containers.Map();
+                qidxs = node.retrievalSystemQueueIndices(key0);
+                qnames = cell(1, numel(qidxs));
+                for qi = 1:numel(qidxs)
+                    qnames{qi} = nodes{qidxs(qi)}.name;
+                end
+                entry('queues') = qnames;
+                itemsMap = containers.Map();
+                for it = 1:nItemsR
+                    if size(rc, 1) >= it && size(rc, 2) >= inIdx
+                        rClassIdx = rc(it, inIdx);
+                        if rClassIdx > 0 && rClassIdx <= K
+                            itemsMap(num2str(it - 1)) = classes{rClassIdx}.name;
+                        end
+                    end
+                end
+                if itemsMap.Count > 0
+                    entry('items') = itemsMap;
+                end
+                byClass(classes{inIdx}.name) = entry;
+            end
+            if byClass.Count > 0
+                rsRoot = containers.Map();
+                rsRoot('capacity') = double(node.retrievalSystemCapacity);
+                rsRoot('byClass') = byClass;
+                nj('retrievalSystem') = rsRoot;
+            end
+        end
     end
 
     % Fork tasksPerLink

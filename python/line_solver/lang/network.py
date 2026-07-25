@@ -2293,6 +2293,88 @@ class Network(NetworkBase, Element):
         # heterogeneous-server fields populated last so _refresh_nodeparam cannot wipe them; mirrors MATLAB/JAR ordering.
         self._refresh_heterogeneous_servers()
 
+        # Synchronous calls (REPLY signals): sn.syncreply and the per-node
+        # blocked-server declaration sn.replyblock. Needs rtnodes and sched, so
+        # it runs after routing and scheduling.
+        self._refresh_syncreply()
+
+    def _refresh_syncreply(self) -> None:
+        """Populate sn.syncreply and sn.replyblock (synchronous calls).
+
+        sn.syncreply[r] is the 0-based index of the REPLY signal class that
+        class r waits for, -1 when class r makes no synchronous call (the
+        bidirectional link is established by Signal.forJobClass, and only for
+        SignalType.REPLY).
+
+        sn.replyblock[ind, r] is 1 when node ind holds a server for a class-r
+        job that has left for its callee and is waiting for the reply. The
+        holding station is identified STRUCTURALLY, since a CTMC has no job
+        identity to key on as LDES does: it is a station that the REPLY class
+        is routed INTO. In the canonical shape Client -> Server -> (switch to
+        Reply) -> Client, that selects the client and NOT the server -- the
+        server's departure is the one that CREATES the reply, and LDES likewise
+        does not block it (Solver_ssj: !classSwitchedToReply). Stations that
+        never receive the reply class carry no counter and are untouched.
+
+        Mirrors MATLAB @MNetwork/refreshStruct.m (syncreply) and
+        @MNetwork/refreshLocalVars.m (replyblock).
+        """
+        sn = self._sn
+        R = int(sn.nclasses)
+        nnodes = int(sn.nnodes)
+
+        syncreply = np.full(R, -1, dtype=int)
+        for r, jobclass in enumerate(self._classes):
+            reply = None
+            if hasattr(jobclass, 'get_reply_signal_class'):
+                reply = jobclass.get_reply_signal_class()
+            elif hasattr(jobclass, '_reply_signal_class'):
+                reply = jobclass._reply_signal_class
+            if reply is None:
+                continue
+            for s, cc in enumerate(self._classes):
+                if cc is reply:
+                    syncreply[r] = s
+                    break
+        sn.syncreply = syncreply
+
+        replyblock = np.zeros((nnodes, R), dtype=int)
+        sn.replyblock = replyblock
+        if not np.any(syncreply >= 0):
+            return
+
+        rtnodes = np.asarray(sn.rtnodes) if sn.rtnodes is not None else None
+        if rtnodes is None or rtnodes.size == 0:
+            return
+
+        def _enum(x):
+            return int(x.value) if hasattr(x, 'value') else int(x)
+
+        for r in range(R):
+            s = int(syncreply[r])
+            if s < 0 or s >= R:
+                continue
+            for ind in range(nnodes):
+                if not bool(sn.isstation[ind]):
+                    continue
+                if _enum(sn.nodetype[ind]) == _enum(NodeType.SOURCE):
+                    continue
+                ist = int(sn.nodeToStation[ind])
+                # An INF station has a server for every job, so holding one is
+                # immaterial and needs no state.
+                if _enum(sn.sched[ist]) == _enum(SchedStrategy.INF):
+                    continue
+                # Does the reply class ever arrive here?
+                if not np.any(rtnodes[:, ind * R + s] > 0):
+                    continue
+                if _enum(sn.sched[ist]) != _enum(SchedStrategy.FCFS):
+                    raise RuntimeError(
+                        "Synchronous calls (REPLY signals) are supported only at FCFS stations, "
+                        "but %s uses %s. Holding a server across a call has no representation in "
+                        "the state of the other disciplines."
+                        % (sn.nodenames[ind], str(sn.sched[ist])))
+                replyblock[ind, r] = 1
+
     def _refresh_statedep_routing_params(self) -> None:
         """Expose per-class SQ/RL routing parameters in sn.nodeparam.
 
@@ -2964,6 +3046,13 @@ class Network(NetworkBase, Element):
         # Process parameters: nested list [station][class] -> [D0, D1] or similar
         self._sn.proc = [[None for _ in range(nclasses)] for _ in range(nstations)]
 
+        # True where the representation is Markovian, so that mu, phi and pie
+        # carry their probabilistic reading. Consumers of those fields (CTMC
+        # state space, SSA, fluid ODEs) treat them as rates and probabilities,
+        # which fails for a matrix-exponential process: its per-phase values are
+        # signed. Filled per station-class by _extract_process_params.
+        self._sn.isph = np.ones((nstations, nclasses), dtype=bool)
+
         # Process type IDs: (M x K) array of ProcessType values
         self._sn.procid = np.empty((nstations, nclasses), dtype=object)
         self._sn.procid.fill(ProcessType.EXP)  # Default to exponential
@@ -3038,6 +3127,11 @@ class Network(NetworkBase, Element):
                     # a class already flagged DISABLED keeps that procid; MATLAB refreshProcessTypes likewise never resolves a type for it.
                     if not (hasattr(dist, 'isDisabled') and dist.isDisabled()):
                         self._extract_process_params(i, j, dist)
+                        # The extractor returns from many branches, so the
+                        # Markovian test is applied here, where every branch has
+                        # already written sn.proc for this station-class.
+                        from ..api.sn.utils import sn_is_phasetype
+                        self._sn.isph[i, j] = sn_is_phasetype(self._sn.proc[i][j])
 
                     # Laplace-Stieltjes transform closure for the G/M/1 sigma-root
                     # (non-PH arrivals). Bind dist by default arg to capture it.

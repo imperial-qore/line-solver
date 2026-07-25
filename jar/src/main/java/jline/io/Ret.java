@@ -1048,10 +1048,24 @@ public class Ret {
     public static class pfqnOiNc {
         public double G;
         public double lG;
+        /**
+         * The WHOLE lattice of normalizing constants, Gtab[dot(n, strides)] =
+         * G(n) for every 0 &lt;= n &lt;= N, column-major with
+         * strides = [1, cumprod(N[0..R-2] + 1)]. The convolution produces this
+         * table anyway, so a caller needing G at more than one population must
+         * index this field, NOT re-call pfqn_ncoi per population -- the latter
+         * costs a needless factor prod_r (N_r + 1).
+         */
+        public double[] Gtab;
 
         public pfqnOiNc(double G, double lG) {
+            this(G, lG, null);
+        }
+
+        public pfqnOiNc(double G, double lG, double[] Gtab) {
             this.G = G;
             this.lG = lG;
+            this.Gtab = Gtab;
         }
     }
 

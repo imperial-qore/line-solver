@@ -37,6 +37,19 @@ else
     nPhases = 20;
 end
 
+% Family used when a concrete distribution has to be replaced by a Markovian
+% surrogate: 'cme' fits a concentrated matrix exponential plus an exponential
+% tail, 'ph' keeps the Erlang/Bernstein phase-type. At a budget of nPhases the ME
+% reaches an SCV of O(1/nPhases^2) where the Erlang stops at 1/nPhases, and it
+% matches the first two moments EXACTLY, which is what makes an M/G/1 mean come
+% out right. 'cme' is the default; SSA, Fluid and JMT pass 'ph' because they
+% cannot consume a matrix exponential.
+if isfield(options, 'config') && isfield(options.config, 'phfit')
+    phfit = lower(options.config.phfit);
+else
+    phfit = 'cme';
+end
+
 % Check if we should preserve deterministic distributions for exact MAP/D/c analysis
 if isfield(options, 'config') && isfield(options.config, 'preserveDet')
     preserveDet = options.config.preserveDet;
@@ -120,16 +133,30 @@ for ist = 1:M
                 pdf_func = @(x) (x >= minVal & x <= maxVal) / (maxVal - minVal);
 
             case ProcessType.DET
-                % Deterministic: use Erlang approximation (preserveDet case already handled above)
-                MAP = map_erlang(targetMean, nPhases);
-                sn = updateSnForMAP(sn, ist, r, MAP, nPhases);
+                % Deterministic: the most concentrated surrogate the phase budget
+                % allows. Erlang-20 only reaches SCV 0.05; the CME plus
+                % exponential reaches 5.7e-3 at the same 20 phases.
+                [MAP, actualPh] = fitConcentratedSurrogate(targetMean, 0, nPhases, phfit);
+                sn = updateSnForMAP(sn, ist, r, MAP, actualPh);
                 continue;
 
             otherwise
-                % Generic fallback: Erlang approximation
-                MAP = map_erlang(targetMean, nPhases);
-                sn = updateSnForMAP(sn, ist, r, MAP, nPhases);
+                % Generic fallback: same concentrated surrogate as the Det branch.
+                [MAP, actualPh] = fitConcentratedSurrogate(targetMean, sn.scv(ist,r), nPhases, phfit);
+                sn = updateSnForMAP(sn, ist, r, MAP, actualPh);
                 continue;
+        end
+
+        % A concentrated ME matching the first two moments EXACTLY reproduces the
+        % Pollaczek-Khinchine mean, which the Bernstein fit does not: on
+        % M/Gamma/1 at rho 0.5 the shape fit lands 2.7e-2 away from the exact mean
+        % queue length while the two-moment ME lands on it. The Bernstein path is
+        % kept for phfit='ph', where it carries shape information a two-moment fit
+        % cannot, and for the solvers that need a genuine phase-type.
+        if strcmp(phfit,'cme') && sn.scv(ist,r) >= 0 && sn.scv(ist,r) < 1
+            [MAP, actualPh] = fitConcentratedSurrogate(targetMean, sn.scv(ist,r), nPhases, phfit);
+            sn = updateSnForMAP(sn, ist, r, MAP, actualPh);
+            continue;
         end
 
         % Apply Bernstein approximation and rescale to target mean
@@ -273,7 +300,17 @@ sn.proc{ist}{r} = MAP;
 % PH (D1 = exit_rates * pie), so tag as PH at every station: renewal processes
 % need no MAP phase-restart local variable, and PH service is supported by all
 % scheduling policies (MAP service is FCFS-only, see State.fromMarginal).
-sn.procid(ist, r) = ProcessType.PH;
+% A concentrated-ME surrogate is NOT a phase-type, so it is tagged ME and
+% sn.isph records it: the CTMC then assembles a rational generator and the
+% PH-only consumers refuse it. sn_is_phasetype is the single test.
+if sn_is_phasetype(MAP)
+    sn.procid(ist, r) = ProcessType.PH;
+else
+    sn.procid(ist, r) = ProcessType.ME;
+end
+if isfield(sn,'isph') && ~isempty(sn.isph)
+    sn.isph(ist, r) = sn_is_phasetype(MAP);
+end
 sn.phases(ist, r) = nPhases;
 
 % Update phasessz and phaseshift (derived from phases)
@@ -457,4 +494,31 @@ if ~phaseSyncExists
     newSync.passive{1} = Event(EventType.LOCAL, local, r, 1.0);
     sn.sync{end+1, 1} = newSync;
 end
+end
+
+
+function [MAP, nPh] = fitConcentratedSurrogate(targetMean, targetSCV, nPhases, phfit)
+% [MAP, NPH] = FITCONCENTRATEDSURROGATE(TARGETMEAN, TARGETSCV, NPHASES, PHFIT)
+% Build the Markovian surrogate of a concrete distribution.
+%
+% With PHFIT='cme' the surrogate is a concentrated matrix exponential convolved
+% with an exponential (see dist_fit_me): under a budget of NPHASES it reaches an
+% SCV of O(1/NPHASES^2), where an Erlang of the same order stops at 1/NPHASES.
+% With PHFIT='ph' the Erlang is kept, which is what SSA, Fluid and JMT need since
+% they cannot consume a matrix exponential.
+
+if strcmp(phfit, 'cme')
+    % A Det has SCV 0, which no ME attains; the budget-limited branch of the
+    % fitter then returns the most concentrated member that fits.
+    scv = max(targetSCV, 1e-12);
+    if scv < 1
+        fitted = dist_fit_me(targetMean, min(scv, 1-1e-12), nPhases);
+        MAP = fitted.getProcess();
+        nPh = fitted.getNumberOfPhases();
+        return;
+    end
+end
+
+MAP = map_erlang(targetMean, nPhases);
+nPh = nPhases;
 end

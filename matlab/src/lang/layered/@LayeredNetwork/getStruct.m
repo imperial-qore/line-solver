@@ -137,6 +137,7 @@ for t=1:lsn.ntasks
             lsn.nitems(idx,1) = self.tasks{t}.items;
             lsn.itemcap{idx,1} = self.tasks{t}.itemLevelCap;
             lsn.replacestrat(idx,1) = self.tasks{t}.replacestrategy;
+            lsn.hasretrieval(idx,1) = self.tasks{t}.retrieval;
             lsn.hashnames{idx,1} = ['C:',lsn.names{idx,1}];
         case 'FunctionTask'
             setupDist = self.tasks{t}.SetupTime;

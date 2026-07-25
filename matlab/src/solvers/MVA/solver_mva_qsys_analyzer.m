@@ -24,6 +24,37 @@ cs = sqrt(sn.scv(queue_ist));
 
 line_debug('MVA qsys analyzer starting: method=%s, lambda=%g, mu=%g, k=%d', method, lambda, mu, k);
 
+% Finite-capacity loss branch (M/M/1/K with tail drop). Uses the moment-based
+% (MacGregor Smith) qsys_mg1k_loss_mgs, exact only at scv=1; queue-length
+% metrics come from the truncated M/M/1/K distribution. Being an approximation
+% in general, it is not offered under method='exact'.
+if sn_is_mm1k_loss(sn)
+    if strcmp(method, 'exact')
+        line_error(mfilename, 'M/M/1/K tail-drop is solved by the approximate ''mg1k.mgs'' method (MacGregor Smith); it is not available under method=''exact''. Use the default method, or SolverCTMC/SolverNC for an exact result.');
+    end
+    Kcap = sn.cap(queue_ist);
+    rho = lambda/mu;
+    Ploss = qsys_mg1k_loss_mgs(lambda, mu, cs^2, Kcap);
+    Tq = lambda*(1-Ploss);              % carried throughput
+    Uq = Tq/mu;                         % single-server utilization
+    if abs(rho-1) < 1e-10
+        Lsys = Kcap/2;                  % L'Hopital limit at rho=1
+    else
+        Lsys = rho/(1-rho) - (Kcap+1)*rho^(Kcap+1)/(1-rho^(Kcap+1));
+    end
+    Vq = sn.visits{1}(sn.stationToStateful(queue_ist));
+    R(queue_ist,1) = Lsys/Tq;           % per-visit response time (Little)
+    Q(queue_ist,1) = Lsys;
+    U(queue_ist,1) = Uq;
+    T(queue_ist,1) = Tq;                % carried (effective) rate
+    T(source_ist,1) = lambda;          % offered arrival rate
+    X(queue_ist,1) = Tq;               % system throughput = carried rate
+    C(1,1) = R(queue_ist,1)*Vq;
+    actualmethod = 'mg1k.mgs';
+    lG = 0; totiter = 1; runtime = toc(T0);
+    return
+end
+
 % Check for BMAP arrivals (batch Markovian)
 if sn.procid(source_ist) == ProcessType.BMAP
     line_debug('BMAP arrival process detected');

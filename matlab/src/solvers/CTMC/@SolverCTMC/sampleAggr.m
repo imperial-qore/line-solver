@@ -52,6 +52,8 @@ function sampleAggr = sampleAggr(self, node, numEvents)
 % plot(times, job_counts(:,2), 'r-');  % Class 1 job count over time
 % @endcode
 
+self.assertPhaseTypeStates('sampleAggr');
+
 options = self.getOptions;
 options.force = true;
 if isempty(self.result) || ~isfield(self.result,'infGen')

@@ -8,6 +8,7 @@ Port from:
     - matlab/src/api/sn/sn_print.m
     - matlab/src/api/sn/sn_print_routing_matrix.m
     - matlab/src/api/sn/sn_refresh_process_fields.m
+    - matlab/src/api/sn/sn_is_phasetype.m
     - matlab/src/api/sn/sn_rtnodes_to_rtorig.m
 """
 
@@ -16,6 +17,69 @@ from typing import Optional, Dict, Any, Tuple, List
 import sys
 
 from .network_struct import NetworkStruct, NodeType, RoutingStrategy
+
+
+
+def sn_is_phasetype(proc, pie=None) -> bool:
+    """Test whether a process representation admits a phase-type reading.
+
+    A representation is Markovian when D0 has nonnegative off-diagonal entries,
+    every D_k with k >= 1 is nonnegative, and the entry vector pie is
+    nonnegative. Exactly under those conditions do ``sn.mu``, ``sn.phi`` and
+    ``sn.pie`` carry their probabilistic reading (``mu_i = -D0(i,i)`` is a rate,
+    ``phi_i`` a completion probability, ``pie`` a distribution over phases),
+    which is what the CTMC state space, SSA and the fluid ODEs consume.
+
+    A matrix-exponential (ME) or rational (RAP) process fails the test: its
+    moments, transforms and aggregated stationary measures remain exact, but the
+    per-phase quantities are signed. See ``_kb/04-networkstruct.md``.
+
+    An entry that is empty, holds scalar distribution parameters, or carries a
+    NaN describes a disabled or not-yet-Markovian process; there is no phase
+    decomposition to invalidate, so it passes.
+
+    Mirrors ``matlab/src/api/sn/sn_is_phasetype.m`` and
+    ``jline.api.sn.SnIsPhaseType``.
+
+    Args:
+        proc: Process representation, a sequence [D0, D1, ...].
+        pie: Optional entry vector to test for nonnegativity.
+
+    Returns:
+        True when the representation is Markovian.
+    """
+    tol = 1e-14
+
+    if proc is None or not isinstance(proc, (list, tuple)) or len(proc) < 2:
+        return True
+
+    D0 = np.asarray(proc[0], dtype=float) if proc[0] is not None else None
+    if D0 is None or D0.size == 0 or np.isnan(D0).any():
+        return True
+    if D0.ndim != 2 or D0.shape[0] != D0.shape[1]:
+        return True
+
+    # Off-diagonal entries of D0 are transition rates between phases.
+    offdiag = D0 - np.diag(np.diag(D0))
+    if (offdiag < -tol).any():
+        return False
+
+    # D1 and any further D_k are jump matrices and must be nonnegative.
+    for Dk in proc[1:]:
+        if Dk is None:
+            continue
+        Dk = np.asarray(Dk, dtype=float)
+        if Dk.size == 0 or np.isnan(Dk).any():
+            continue
+        if (Dk < -tol).any():
+            return False
+
+    if pie is not None:
+        pie = np.asarray(pie, dtype=float)
+        if pie.size > 0 and not np.isnan(pie).any() and (pie < -tol).any():
+            return False
+
+    return True
 
 
 def sn_print(sn: NetworkStruct, file=None) -> None:

@@ -115,13 +115,13 @@ public class SolverCTMC extends NetworkSolver {
         featSupported.setTrue(new String[]{
                 "Source", "Sink",
                 "ClassSwitch", "Delay", "DelayStation", "Queue", "Router",
-                "MAP", "APH", "MMPP2", "MMAP", "PH", "Coxian", "Erlang", "Exp", "HyperExp",
+                "MAP", "APH", "MMPP2", "MMAP", "PH", "Coxian", "Erlang", "Exp", "HyperExp", "ME",
                 "Det", "Gamma", "Weibull", "Lognormal", "Pareto", "Uniform",
                 "StatelessClassSwitcher", "InfiniteServer", "SharedServer", "Buffer", "Dispatcher",
                 // Finite capacity regions: CTMC represents them exactly (the
                 // blocked-job overflow buffer is part of the chain).
                 "Region",
-                "Cache", "CacheClassSwitcher",
+                "Cache", "CacheClassSwitcher", "CacheRetrieval",
                 "Server", "JobSink", "RandomSource", "ServiceTunnel",
                 "SchedStrategy_INF", "SchedStrategy_PS",
                 "SchedStrategy_DPS", "SchedStrategy_GPS",
@@ -141,7 +141,7 @@ public class SolverCTMC extends NetworkSolver {
                 "ReplacementStrategy_HLRU", "ReplacementStrategy_CLIMB", "ReplacementStrategy_QLRU",
                 "ClosedClass", "SelfLoopingClass", "OpenClass", "Replayer",
                 "OpenSignal", "ClosedSignal",
-                "SignalType_NEGATIVE", "SignalType_CATASTROPHE",
+                "SignalType_NEGATIVE", "SignalType_CATASTROPHE", "SignalType_REPLY",
                 "SignalBatchRemoval", "SignalRemovalPolicy",
                 "Place", "Transition", "Linkage", "Enabling", "Inhibiting", "Timing", "Firing", "Storage",
                 "Fork", "Join", "Forker", "Joiner",
@@ -610,6 +610,40 @@ public class SolverCTMC extends NetworkSolver {
     }
 
     /**
+     * Refuses a query whose answer is a per-state probability under an ME.
+     *
+     * A matrix-exponential service embeds in the generator with negative off-diagonal
+     * entries, so the stationary vector is a SIGNED measure: only its aggregates over each
+     * phase block are probabilities. Mean measures stay exact (they are linear in that
+     * vector), but a per-state or transient answer is not a probability at all, and
+     * uniformization -- a Poisson mixture of powers of I + Q/lambda -- diverges on a
+     * signed generator. Such queries are refused rather than answered with a number that
+     * looks like a probability.
+     *
+     * Mirrors MATLAB @SolverCTMC/assertPhaseTypeStates.m and the native Python
+     * SolverCTMC._assert_phasetype_states.
+     *
+     * @param what name of the query, used in the error message
+     */
+    protected void assertPhaseTypeStates(String what) {
+        NetworkStruct sn = this.model.getStruct();
+        if (sn.isph == null) {
+            return;
+        }
+        for (java.util.Map<JobClass, Boolean> row : sn.isph.values()) {
+            for (Boolean v : row.values()) {
+                if (v != null && !v) {
+                    throw new RuntimeException(what + " is unavailable: the model has a "
+                            + "matrix-exponential (ME) service or arrival process, so the "
+                            + "stationary vector of the generator is a signed measure and "
+                            + "per-state probabilities and uniformization-based transients "
+                            + "do not exist. Mean measures (getAvg, getAvgTable) remain exact.");
+                }
+            }
+        }
+    }
+
+    /**
      * Symbolic stationary distribution of the CTMC, as a function of the event
      * rate symbols x1, ..., xE.
      *
@@ -661,6 +695,7 @@ public class SolverCTMC extends NetworkSolver {
 
     @Override
     public ProbabilityResult getProb(int node, Matrix state) {
+        assertPhaseTypeStates("getProb");
         if (GlobalConstants.DummyMode) {
             return new ProbabilityResult(Double.NaN);
         }
@@ -740,6 +775,7 @@ public class SolverCTMC extends NetworkSolver {
 
     @Override
     public ProbabilityResult getProbAggr(int node, Matrix state_a) {
+        assertPhaseTypeStates("getProbAggr");
         if (GlobalConstants.DummyMode) {
             return new ProbabilityResult(Double.NaN);
         }
@@ -819,6 +855,7 @@ public class SolverCTMC extends NetworkSolver {
 
     @Override
     public ProbabilityResult getProbSys() {
+        assertPhaseTypeStates("getProbSys");
         if (GlobalConstants.DummyMode) {
             return new ProbabilityResult();
         }
@@ -840,6 +877,7 @@ public class SolverCTMC extends NetworkSolver {
 
     @Override
     public ProbabilityResult getProbSysAggr() {
+        assertPhaseTypeStates("getProbSysAggr");
         if (GlobalConstants.DummyMode) {
             return new ProbabilityResult();
         }
@@ -927,6 +965,7 @@ public class SolverCTMC extends NetworkSolver {
 
 
     public ProbabilityResult getTranProb(StatefulNode node) {
+        assertPhaseTypeStates("getTranProb");
         if (this.options.timespan == null || !Double.isFinite(this.options.timespan[1])) {
             throw new RuntimeException("getTranProb in SolverCTMC requires to specify a finite timespan T, e.g., SolverCTMC(model, options.timespan([0,T])).");
         }
@@ -965,6 +1004,7 @@ public class SolverCTMC extends NetworkSolver {
     }
 
     public ProbabilityResult getTranProbAggr(StatefulNode node) {
+        assertPhaseTypeStates("getTranProbAggr");
         if (this.options.timespan == null || !Double.isFinite(this.options.timespan[1])) {
             throw new RuntimeException("getTranProbAggr in SolverCTMC requires to specify a finite timespan T, e.g., SolverCTMC(model, options.timespan([0,T])).");
         }
@@ -1020,6 +1060,7 @@ public class SolverCTMC extends NetworkSolver {
     }
 
     public ProbabilityResult getTranProbSys() {
+        assertPhaseTypeStates("getTranProbSys");
         if (this.options.timespan == null || !Double.isFinite(this.options.timespan[1])) {
             throw new RuntimeException("getTranProbSys in SolverCTMC requires to specify a finite timespan T, e.g., SolverCTMC(model, options.timespan([0,T])).");
         }
@@ -1058,6 +1099,7 @@ public class SolverCTMC extends NetworkSolver {
     }
 
     public ProbabilityResult getTranProbSysAggr() {
+        assertPhaseTypeStates("getTranProbSysAggr");
         if (this.options.timespan == null || !Double.isFinite(this.options.timespan[1])) {
             throw new RuntimeException("getTranProbSysAggr in SolverCTMC requires to specify a finite timespan T, e.g., SolverCTMC(model, options.timespan([0,T])).");
         }
@@ -1599,6 +1641,7 @@ public class SolverCTMC extends NetworkSolver {
     }
 
     public SampleResult sample(StatefulNode node, int numEvents) {
+        assertPhaseTypeStates("sample");
         SolverOptions options = this.getOptions();
         options.force = true;
 
@@ -1769,6 +1812,7 @@ public class SolverCTMC extends NetworkSolver {
     }
 
     public jline.io.Ret.SampleResult sampleSys(int numEvents) {
+        assertPhaseTypeStates("sampleSys");
         SolverOptions options = this.getOptions();
         options.force = true;
 
@@ -2946,6 +2990,7 @@ public class SolverCTMC extends NetworkSolver {
     }
 
     public SampleResult sampleAggr(StatefulNode node, int numEvents) {
+        assertPhaseTypeStates("sampleAggr");
         SampleResult result = sample(node, numEvents);
         if (result != null) {
             result.isaggregate = true;
@@ -2954,6 +2999,7 @@ public class SolverCTMC extends NetworkSolver {
     }
 
     public jline.io.Ret.SampleResult sampleSysAggr(int numEvents) {
+        assertPhaseTypeStates("sampleSysAggr");
         // For aggregated system sampling, delegate to regular system sampling
         // In a full implementation, this would use aggregated state space
         return sampleSys(numEvents);

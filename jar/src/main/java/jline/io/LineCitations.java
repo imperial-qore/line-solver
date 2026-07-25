@@ -229,6 +229,9 @@ public final class LineCitations {
         add("panacea", "McKM84",
             "J. McKenna, D. Mitra, \"Asymptotic Expansions and Integral Representations of Moments of Queue Lengths in Closed Markovian Networks\", J. ACM 31, 1984",
             "integral representation of the queue-length moments");
+        add("panaceald", "MitM86",
+            "D. Mitra, J. McKenna, \"Asymptotic Expansions for Closed Markovian Networks with State-Dependent Service Rates\", J. ACM 33(3), 1986",
+            "load-dependent PANACEA expansion and its pseudonetwork coefficients");
         add("mem", "Kou94",
             "D. D. Kouvatsos, \"Entropy Maximisation and Queueing Network Models\", Annals of Operations Research 48, 1994",
             "maximum-entropy approximation of the network");
@@ -373,6 +376,12 @@ public final class LineCitations {
         add("qiu", "QiuPH15",
             "Z. Qiu, J. F. Perez, P. G. Harrison, \"Beyond the Mean in Fork-Join Queues: Efficient Approximation for Response-Time Tails\", IFIP PERFORMANCE, 2015",
             "response time tail of a homogeneous fork-join network");
+        add("psrespt", "MitMo83",
+            "D. Mitra, J. A. Morrison, \"Asymptotic Expansions of Moments of the Waiting Time in Closed and Open Processor-Sharing Systems with Multiple Job Classes\", Adv. Appl. Prob. 15(4), 1983",
+            "sojourn-time moments at a multiclass processor-sharing station");
+        add("mm1ps", "MitMo83",
+            "D. Mitra, J. A. Morrison, \"Asymptotic Expansions of Moments of the Waiting Time in Closed and Open Processor-Sharing Systems with Multiple Job Classes\", Adv. Appl. Prob. 15(4), 1983",
+            "sojourn-time moments at a multiclass processor-sharing station");
         add("ctmc", "BolGMT06",
             "G. Bolch, S. Greiner, H. de Meer, K. S. Trivedi, \"Queueing Networks and Markov Chains\", Wiley, 2006",
             "CTMC formulation, uniformization and its stationary solution");
