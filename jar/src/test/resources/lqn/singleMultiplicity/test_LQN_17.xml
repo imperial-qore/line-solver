@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lqn-model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="test_LQN_10.xml" xsi:noNamespaceSchemaLocation="lqn.xsd">
+    <processor name="P1" scheduling="inf" speed-factor="1">
+        <task multiplicity="1" name="T1" scheduling="ref" think-time="1000">
+            <entry name="E1" type="NONE"/>
+            <task-activities>
+                <activity bound-to-entry="E1" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="0.0000000000001" name="AS1">
+                    <synch-call calls-mean="1" dest="E2"/>
+                    <synch-call calls-mean="1" dest="E3"/>                    
+                </activity>
+            </task-activities>
+        </task>
+        <task name="T2" scheduling="fcfs">
+            <entry name="E2" type="NONE"/>
+            <entry name="E3" type="NONE"/>
+            <task-activities>
+                <activity bound-to-entry="E2" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="3" name="AS3"/>
+                <activity bound-to-entry="E3" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="5" name="AS4"/>
+                <reply-entry name="E2">
+                    <reply-activity name="AS3"/>
+                </reply-entry>
+                <reply-entry name="E3">
+                    <reply-activity name="AS4"/>
+                </reply-entry>
+            </task-activities>
+        </task>
+    </processor>
+</lqn-model>

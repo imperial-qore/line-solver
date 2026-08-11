@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<lqn-model description="test_LQN_7" name="test_LQN_7" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="lqn.xsd">
+    <processor name="P1" scheduling="inf">
+        <task name="T1" scheduling="ref"  think-time="10" multiplicity="30">  <!-- reference task T1 -->
+            <entry name="E1" type="Graph" />
+            <task-activities>
+                <activity name="AS1" host-demand-mean="0.0"  bound-to-entry="E1" >
+                    <synch-call calls-mean="1" dest="E2" />
+                </activity>
+            </task-activities>
+        </task>
+    </processor>
+    <processor name="P2" scheduling="inf">
+        <task name="T2" scheduling="inf">  
+            <entry name="E2" type="Graph" />
+            <task-activities>
+                <activity name="AS2" host-demand-mean="1.0"  bound-to-entry="E2" />
+                <reply-entry name="E2">
+                    <reply-activity name="AS2"/>
+                </reply-entry>            
+            </task-activities>
+        </task>
+    </processor>
+</lqn-model>

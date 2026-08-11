@@ -1,0 +1,22 @@
+# Source files
+# ============
+*.m             text diff=matlab
+*.mat           binary
+*.ipynb         filter=nbstripout diff=ipynb
+*.jar           binary
+*.zip           binary
+*.pdf           binary
+* text=auto
+* text eol=lf
+
+# Binary files (must come after text rules)
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.svg           binary
+
+# Exclude JAR and MATLAB source from GitHub language statistics
+jar/** linguist-vendored
+matlab/** linguist-vendored

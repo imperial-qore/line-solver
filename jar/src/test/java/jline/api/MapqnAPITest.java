@@ -1,0 +1,1010 @@
+package jline.api;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Timeout;
+import static org.junit.jupiter.api.Assertions.*;
+import java.util.concurrent.TimeUnit;
+
+import jline.api.mapqn.*;
+import jline.util.matrix.Matrix;
+
+import java.util.Arrays;
+import static jline.TestTools.*;
+
+/**
+ * Test class for MAPQN API functionality.
+ * Based on examples from 08_mapqn_sigme08 repository.
+ *
+ * Reference values computed using SolverMVA from LINE MATLAB.
+ * The LP bounds should bracket the exact MVA solution.
+ *
+ * Also includes comparison tests validating LINE's MAPQN bound implementations
+ * against reference values from the original MATLAB implementations in:
+ * - qrf-revised/qrf_rsrd.m (QR Bounds with RS-RD blocking)
+ * - qrf-revised/qrf_bas.m (QR Bounds with BAS blocking)
+ * - 08_mapqn_sigme08/bnd_linearreduction_new.mod (LR Bounds)
+ */
+public class MapqnAPITest {
+
+    // VERY_COARSE_TOL and VERY_COARSE_TOL: use VERY_COARSE_TOL (10%) from TestTools
+
+    /**
+     * Test QR Bounds for BAS (Blocking After Service) network.
+     * Configuration validated against MATLAB qrf_bas.m from qrf-revised repository.
+     *
+     * Configuration: M=2, N=2, K=[1,1], MR=1 (no blocking)
+     * Reference from MATLAB: LB = UB = 0.666667 (exact for symmetric tandem)
+     */
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.MINUTES)
+    public void testQR_BAS() {
+        // Reference value from MATLAB qrf_bas.m
+        final double EXPECTED_U = 2.0 / 3.0;  // 0.666667
+
+        int M = 2;
+        int N = 2;
+        int[] K = {1, 1};  // 1 phase per queue
+        int[] F = {2, 2};  // Both queues can hold N jobs
+
+        // Service rates mu{i}(k,h) - exponential rate 1
+        Matrix[] mu = new Matrix[M];
+        mu[0] = new Matrix(new double[][]{{1.0}});
+        mu[1] = new Matrix(new double[][]{{1.0}});
+
+        // Background transition rates (zeros)
+        Matrix[] v = new Matrix[M];
+        v[0] = new Matrix(new double[][]{{0.0}});
+        v[1] = new Matrix(new double[][]{{0.0}});
+
+        // Routing probabilities - tandem
+        Matrix r = new Matrix(new double[][]{
+            {0.0, 1.0},
+            {1.0, 0.0}
+        });
+
+        // Blocking configurations - minimal: just unblocked state
+        int MR = 1;  // Only unblocked configuration
+        int f = 1;   // Finite capacity queue (1-based)
+
+        // BB(m, i) = 1 if queue i is blocked in configuration m
+        Matrix BB = new Matrix(new double[][]{{0, 0}});  // m=0: no blocking
+
+        // MM(m, j) = blocking order matrix (MR x M)
+        Matrix MM = new Matrix(new double[][]{{0, 0}});  // No blocking order
+
+        // MM1(m, j) = extended blocking order info
+        Matrix MM1 = new Matrix(new double[][]{{0, 0}});
+
+        // ZZ(m) = number of blocked queues in configuration m
+        int[] ZZ = {0};
+
+        Mapqn_qr_bounds_bas_parameters params = new Mapqn_qr_bounds_bas_parameters(
+            M, N, MR, f, K, F, MM, MM1, ZZ, BB, mu, v, r);
+
+        // Get lower and upper bounds for queue 1
+        Mapqn_solution solutionMin = Mapqn_qr_bounds_bas.solve(params, 1, "min");
+        Mapqn_solution solutionMax = Mapqn_qr_bounds_bas.solve(params, 1, "max");
+
+        assertNotNull(solutionMin, "Min solution should not be null");
+        assertNotNull(solutionMax, "Max solution should not be null");
+
+        double ULB = solutionMin.getObjectiveValue();
+        double UUB = solutionMax.getObjectiveValue();
+
+        assertFalse(Double.isNaN(ULB), "Lower bound should not be NaN");
+        assertFalse(Double.isNaN(UUB), "Upper bound should not be NaN");
+
+        // Bounds should be in valid range [0, 1]
+        assertTrue(ULB >= 0, String.format("Lower bound (%.4f) should be non-negative", ULB));
+        assertTrue(UUB <= 1, String.format("Upper bound (%.4f) should not exceed 1", UUB));
+
+        // Lower bound <= Upper bound
+        assertTrue(ULB <= UUB + 1e-6,
+                  String.format("Lower bound (%.4f) should not exceed upper bound (%.4f)", ULB, UUB));
+
+        // Validate against MATLAB reference: LB and UB should both be close to 2/3
+        assertEquals(EXPECTED_U, ULB, COARSE_TOL,
+                    String.format("Lower bound (%.6f) should match MATLAB reference (%.6f)", ULB, EXPECTED_U));
+        assertEquals(EXPECTED_U, UUB, COARSE_TOL,
+                    String.format("Upper bound (%.6f) should match MATLAB reference (%.6f)", UUB, EXPECTED_U));
+    }
+
+    /**
+     * Test QR Bounds for RSRD network.
+     * Configuration validated against MATLAB qrf_rsrd.m from qrf-revised repository.
+     *
+     * Configuration: M=2, N=2, K=[1,1], F=[2,2] (symmetric tandem)
+     * Reference from MATLAB: LB = UB = 0.666667 (exact for symmetric tandem)
+     */
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.MINUTES)
+    public void testQR_RSRD() {
+        // Reference value from MATLAB qrf_rsrd.m
+        final double EXPECTED_U = 2.0 / 3.0;  // 0.666667
+
+        int M = 2;
+        int N = 2;
+        int[] F = {2, 2};  // Both can hold all jobs
+        int[] K = {1, 1};  // Single phase per queue
+
+        // Service rates mu{i}(k,h) - exponential rate 1
+        Matrix[] mu = new Matrix[M];
+        mu[0] = new Matrix(new double[][]{{1.0}});
+        mu[1] = new Matrix(new double[][]{{1.0}});
+
+        // Background transition rates (zeros)
+        Matrix[] v = new Matrix[M];
+        v[0] = new Matrix(new double[][]{{0.0}});
+        v[1] = new Matrix(new double[][]{{0.0}});
+
+        // Routing probabilities - tandem network
+        Matrix r = new Matrix(new double[][]{
+            {0.0, 1.0},
+            {1.0, 0.0}
+        });
+
+        // Load-dependent rates (default = 1 for all)
+        double[][] alpha = new double[M][];
+        for (int i = 0; i < M; i++) {
+            alpha[i] = new double[N];
+            Arrays.fill(alpha[i], 1.0);
+        }
+
+        Mapqn_qr_bounds_rsrd_parameters params = new Mapqn_qr_bounds_rsrd_parameters(M, N, F, K, mu, v, alpha, r);
+
+        // Get lower and upper bounds for queue 1
+        Mapqn_solution solutionMin = Mapqn_qr_bounds_rsrd.solve(params, 1, "min");
+        Mapqn_solution solutionMax = Mapqn_qr_bounds_rsrd.solve(params, 1, "max");
+
+        assertNotNull(solutionMin, "Min solution should not be null");
+        assertNotNull(solutionMax, "Max solution should not be null");
+
+        double ULB = solutionMin.getObjectiveValue();
+        double UUB = solutionMax.getObjectiveValue();
+
+        assertFalse(Double.isNaN(ULB), "Lower bound should not be NaN");
+        assertFalse(Double.isNaN(UUB), "Upper bound should not be NaN");
+
+        // Bounds should be in valid range [0, 1]
+        assertTrue(ULB >= 0, String.format("Lower bound (%.4f) should be non-negative", ULB));
+        assertTrue(UUB <= 1, String.format("Upper bound (%.4f) should not exceed 1", UUB));
+
+        // Lower bound <= Upper bound
+        assertTrue(ULB <= UUB + 1e-6,
+                  String.format("Lower bound (%.4f) should not exceed upper bound (%.4f)", ULB, UUB));
+
+        // Validate against MATLAB reference: LB and UB should both be close to 2/3
+        assertEquals(EXPECTED_U, ULB, COARSE_TOL,
+                    String.format("Lower bound (%.6f) should match MATLAB reference (%.6f)", ULB, EXPECTED_U));
+        assertEquals(EXPECTED_U, UUB, COARSE_TOL,
+                    String.format("Upper bound (%.6f) should match MATLAB reference (%.6f)", UUB, EXPECTED_U));
+    }
+
+    /**
+     * Test BndMVAVersion model.
+     */
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.MINUTES)
+    public void testBndMVAVersion() {
+        int M = 3;
+        int K = 2;
+        int N = 10;
+
+        double[] muM = {35.71, 25.0};
+
+        Matrix muMAP = new Matrix(new double[][]{
+            {0.2428699491756, 0.0248957749874},
+            {0.3693899392817, 52.2199871959660}
+        });
+
+        Matrix r = new Matrix(new double[][]{
+            {0.2, 0.7, 0.1},
+            {1.0, 0.0, 0.0},
+            {1.0, 0.0, 0.0}
+        });
+
+        Matrix v = new Matrix(new double[][]{
+            {0.0, 0.0},
+            {0.0, 0.0}
+        });
+
+        MVAVersionParameters params = new MVAVersionParameters(M, N, K, muM, muMAP, r, v);
+
+        Mapqn_solution solution = Mapqn_bnd_lr_mva.solve(params, 1, 1);
+        assertNotNull(solution, "Solution should not be null");
+
+        double util = solution.getObjectiveValue();
+        assertTrue(util >= 0, "Total utilization should be non-negative");
+        assertTrue(util <= 1, "Utilization should not exceed 1");
+
+        // Test individual level utilizations
+        for (int k = 1; k <= K; k++) {
+            Mapqn_solution levelSolution = Mapqn_bnd_lr_mva.solve(params, 1, k);
+            assertNotNull(levelSolution, String.format("Solution for queue 1, level %d should exist", k));
+
+            double levelUtil = levelSolution.getVariable("UN_1_" + k);
+            assertTrue(levelUtil >= 0, String.format("Utilization for level %d should be non-negative", k));
+            assertTrue(levelUtil <= 1.0, String.format("Utilization for level %d should not exceed 1", k));
+        }
+
+        // Verify routing conservation
+        for (int i = 0; i < M; i++) {
+            double rowSum = 0;
+            for (int j = 0; j < M; j++) {
+                rowSum += r.get(i, j);
+            }
+            assertEquals(1.0, rowSum, LOOSE_FINE_TOL,
+                        String.format("Routing probabilities from queue %d should sum to 1", i + 1));
+        }
+    }
+
+    /**
+     * Test Mapqn_bnd_lr with symmetric 2-queue tandem network.
+     *
+     * Reference (MVA exact): U1 = U2 = 0.375 for N=3, mu=[1,1], tandem routing
+     * LR bounds give upper bounds on utilization (when maximizing).
+     */
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.MINUTES)
+    public void testMapqn_bnd_lr_symmetric_tandem() {
+        // Reference values from MVA
+        final double EXACT_U1 = 0.375;
+        final double EXACT_U2 = 0.375;
+
+        int M = 2;
+        int N = 3;
+        int[] K = {1, 1};
+
+        Matrix[] mu = new Matrix[M];
+        mu[0] = new Matrix(new double[][]{{1.0}});
+        mu[1] = new Matrix(new double[][]{{1.0}});
+
+        Matrix[] v = new Matrix[M];
+        v[0] = new Matrix(new double[][]{{0.0}});
+        v[1] = new Matrix(new double[][]{{0.0}});
+
+        Matrix r = new Matrix(new double[][]{
+            {0.0, 1.0},
+            {1.0, 0.0}
+        });
+
+        LinearReductionParameters params = new LinearReductionParameters(M, N, K, mu, r, v);
+
+        // Get upper bounds for queue 1
+        Mapqn_solution solQ1 = Mapqn_bnd_lr.solve(params, 1, 1);
+        assertNotNull(solQ1, "Solution for queue 1 should not be null");
+
+        double U1_UB = solQ1.getUtilization(1, 1);
+        assertTrue(U1_UB >= 0, "Queue 1 utilization should be non-negative");
+        assertTrue(U1_UB <= 1, "Queue 1 utilization should not exceed 1");
+
+        // Get upper bounds for queue 2
+        Mapqn_solution solQ2 = Mapqn_bnd_lr.solve(params, 2, 1);
+        assertNotNull(solQ2, "Solution for queue 2 should not be null");
+
+        double U2_UB = solQ2.getUtilization(2, 1);
+        assertTrue(U2_UB >= 0, "Queue 2 utilization should be non-negative");
+        assertTrue(U2_UB <= 1, "Queue 2 utilization should not exceed 1");
+
+        // Upper bound must be >= exact value
+        assertTrue(U1_UB >= EXACT_U1 - 0.01,
+                  String.format("Upper bound U1=%.4f should be >= exact=%.4f", U1_UB, EXACT_U1));
+        assertTrue(U2_UB >= EXACT_U2 - 0.01,
+                  String.format("Upper bound U2=%.4f should be >= exact=%.4f", U2_UB, EXACT_U2));
+
+        // For symmetric network, bounds should be similar
+        double diff = Math.abs(U1_UB - U2_UB);
+        assertTrue(diff < 0.1,
+                  String.format("Symmetric network should have similar bounds: U1=%.4f, U2=%.4f", U1_UB, U2_UB));
+
+        // LR bounds quality check - bound gap should be reasonable (within 2x of exact for this simple case)
+        assertTrue(U1_UB <= EXACT_U1 * 3,
+                  String.format("Upper bound U1=%.4f should not exceed 3x exact=%.4f", U1_UB, EXACT_U1));
+    }
+
+    /**
+     * Test Mapqn_bnd_lr with asymmetric 3-queue network.
+     *
+     * Reference (MVA exact): U1=0.8620, U2=0.2586, U3=0.5172
+     * for N=3, mu=[1,2,0.5], asymmetric routing
+     * LR bounds give upper bounds on utilization.
+     */
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.MINUTES)
+    public void testMapqn_bnd_lr_asymmetric_3queue() {
+        // Reference values from MVA
+        final double EXACT_U1 = 0.8620102215;
+        final double EXACT_U2 = 0.2586030664;
+        final double EXACT_U3 = 0.5172061329;
+
+        int M = 3;
+        int N = 3;
+        int[] K = {1, 1, 1};
+
+        Matrix[] mu = new Matrix[M];
+        mu[0] = new Matrix(new double[][]{{1.0}});   // rate 1
+        mu[1] = new Matrix(new double[][]{{2.0}});   // rate 2 (faster)
+        mu[2] = new Matrix(new double[][]{{0.5}});   // rate 0.5 (slower)
+
+        Matrix[] v = new Matrix[M];
+        v[0] = new Matrix(new double[][]{{0.0}});
+        v[1] = new Matrix(new double[][]{{0.0}});
+        v[2] = new Matrix(new double[][]{{0.0}});
+
+        // Asymmetric routing from exactvalid.m
+        Matrix r = new Matrix(new double[][]{
+            {0.1, 0.6, 0.3},
+            {1.0, 0.0, 0.0},
+            {1.0, 0.0, 0.0}
+        });
+
+        LinearReductionParameters params = new LinearReductionParameters(M, N, K, mu, r, v);
+
+        // Test all queues - get upper bounds
+        double[] exactU = {EXACT_U1, EXACT_U2, EXACT_U3};
+        double[] upperBounds = new double[M];
+
+        for (int i = 1; i <= M; i++) {
+            Mapqn_solution sol = Mapqn_bnd_lr.solve(params, i, 1);
+            assertNotNull(sol, String.format("Solution for queue %d should not be null", i));
+
+            upperBounds[i-1] = sol.getUtilization(i, 1);
+            assertTrue(upperBounds[i-1] >= 0, String.format("Queue %d utilization should be non-negative", i));
+            assertTrue(upperBounds[i-1] <= 1, String.format("Queue %d utilization should not exceed 1", i));
+
+            // Upper bound must be >= exact value
+            assertTrue(upperBounds[i-1] >= exactU[i-1] - 0.01,
+                      String.format("Upper bound for queue %d (%.4f) should be >= exact (%.4f)",
+                                   i, upperBounds[i-1], exactU[i-1]));
+        }
+
+        // Verify routing conservation
+        for (int i = 0; i < M; i++) {
+            double rowSum = 0;
+            for (int j = 0; j < M; j++) {
+                rowSum += r.get(i, j);
+            }
+            assertEquals(1.0, rowSum, LOOSE_FINE_TOL,
+                        String.format("Routing probabilities from queue %d should sum to 1", i + 1));
+        }
+    }
+
+    /**
+     * Test Mapqn_bnd_lr with different service rates (2-queue).
+     *
+     * Reference (MVA exact): U1=0.4667, U2=0.9333
+     * for N=3, mu=[1,0.5], tandem routing
+     * LR bounds give upper bounds on utilization.
+     */
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.MINUTES)
+    public void testMapqn_bnd_lr_different_rates() {
+        // Reference values from MVA
+        final double EXACT_U1 = 0.4666666667;
+        final double EXACT_U2 = 0.9333333333;
+
+        int M = 2;
+        int N = 3;
+        int[] K = {1, 1};
+
+        Matrix[] mu = new Matrix[M];
+        mu[0] = new Matrix(new double[][]{{1.0}});   // rate 1
+        mu[1] = new Matrix(new double[][]{{0.5}});   // rate 0.5 (slower, bottleneck)
+
+        Matrix[] v = new Matrix[M];
+        v[0] = new Matrix(new double[][]{{0.0}});
+        v[1] = new Matrix(new double[][]{{0.0}});
+
+        Matrix r = new Matrix(new double[][]{
+            {0.0, 1.0},
+            {1.0, 0.0}
+        });
+
+        LinearReductionParameters params = new LinearReductionParameters(M, N, K, mu, r, v);
+
+        // Get upper bounds
+        Mapqn_solution solQ1 = Mapqn_bnd_lr.solve(params, 1, 1);
+        Mapqn_solution solQ2 = Mapqn_bnd_lr.solve(params, 2, 1);
+
+        assertNotNull(solQ1, "Solution for queue 1 should not be null");
+        assertNotNull(solQ2, "Solution for queue 2 should not be null");
+
+        double U1_UB = solQ1.getUtilization(1, 1);
+        double U2_UB = solQ2.getUtilization(2, 1);
+
+        assertTrue(U1_UB >= 0 && U1_UB <= 1, String.format("Queue 1 utilization (%.4f) should be in [0,1]", U1_UB));
+        assertTrue(U2_UB >= 0 && U2_UB <= 1, String.format("Queue 2 utilization (%.4f) should be in [0,1]", U2_UB));
+
+        // Upper bounds must be >= exact values
+        assertTrue(U1_UB >= EXACT_U1 - 0.01,
+                  String.format("Upper bound U1=%.4f should be >= exact=%.4f", U1_UB, EXACT_U1));
+        assertTrue(U2_UB >= EXACT_U2 - 0.01,
+                  String.format("Upper bound U2=%.4f should be >= exact=%.4f", U2_UB, EXACT_U2));
+    }
+
+    /**
+     * Test Mapqn_bnd_lr with 2-phase MAP service at one queue.
+     * Based on testsigme.m from 08_mapqn_sigme08.
+     * LR bounds give upper bounds on utilization.
+     */
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.MINUTES)
+    public void testMapqn_bnd_lr_with_map() {
+        int M = 2;
+        int N = 3;
+        int[] K = {1, 2};  // Queue 1: 1 phase, Queue 2: 2 phases (MAP)
+
+        Matrix[] mu = new Matrix[M];
+        mu[0] = new Matrix(new double[][]{{1.0}});  // Queue 1: exponential rate 1
+
+        // Queue 2: 2-phase MAP (D1 matrix)
+        mu[1] = new Matrix(new double[][]{
+            {0.5, 0.3},
+            {0.2, 0.8}
+        });
+
+        Matrix[] v = new Matrix[M];
+        v[0] = new Matrix(new double[][]{{0.0}});
+
+        // Queue 2: background transitions (D0 off-diagonal)
+        v[1] = new Matrix(new double[][]{
+            {0.0, 0.1},
+            {0.05, 0.0}
+        });
+
+        Matrix r = new Matrix(new double[][]{
+            {0.0, 1.0},
+            {1.0, 0.0}
+        });
+
+        LinearReductionParameters params = new LinearReductionParameters(M, N, K, mu, r, v);
+
+        // Test queue 1 (single phase)
+        Mapqn_solution q1Sol = Mapqn_bnd_lr.solve(params, 1, 1);
+        assertNotNull(q1Sol, "Solution for queue 1 should not be null");
+        double q1Util = q1Sol.getUtilization(1, 1);
+        assertTrue(q1Util >= 0 && q1Util <= 1,
+                  String.format("Queue 1 utilization (%.4f) should be in [0,1]", q1Util));
+
+        // Test queue 2, phase 1
+        Mapqn_solution q2Phase1Sol = Mapqn_bnd_lr.solve(params, 2, 1);
+        assertNotNull(q2Phase1Sol, "Solution for queue 2, phase 1 should not be null");
+        double q2Phase1Util = q2Phase1Sol.getUtilization(2, 1);
+        assertTrue(q2Phase1Util >= 0 && q2Phase1Util <= 1,
+                  String.format("Queue 2 phase 1 utilization (%.4f) should be in [0,1]", q2Phase1Util));
+
+        // Test queue 2, phase 2
+        Mapqn_solution q2Phase2Sol = Mapqn_bnd_lr.solve(params, 2, 2);
+        assertNotNull(q2Phase2Sol, "Solution for queue 2, phase 2 should not be null");
+        double q2Phase2Util = q2Phase2Sol.getUtilization(2, 2);
+        assertTrue(q2Phase2Util >= 0 && q2Phase2Util <= 1,
+                  String.format("Queue 2 phase 2 utilization (%.4f) should be in [0,1]", q2Phase2Util));
+
+        // With N=3 jobs, all queues should have positive utilization (upper bounds)
+        assertTrue(q1Util > 0, String.format("Queue 1 should have positive utilization, got %.4f", q1Util));
+        assertTrue(q2Phase1Util > 0 || q2Phase2Util > 0,
+                  String.format("Queue 2 should have positive utilization, got phase1=%.4f, phase2=%.4f",
+                               q2Phase1Util, q2Phase2Util));
+    }
+
+    // ========== Cross-validation: RSRD vs BAS ==========
+
+    /**
+     * Test that RSRD and BAS give consistent results for networks without blocking.
+     *
+     * When F >= N for all queues (no blocking possible), both methods should
+     * produce the same bounds.
+     */
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.MINUTES)
+    public void testRSRD_vs_BAS_consistency() {
+        final double EXPECTED_U = 2.0 / 3.0;  // N/(N+1) for N=2
+
+        int M = 2;
+        int N = 2;
+        int[] K = {1, 1};
+        int[] F = {2, 2};
+
+        Matrix[] mu = new Matrix[M];
+        mu[0] = new Matrix(new double[][]{{1.0}});
+        mu[1] = new Matrix(new double[][]{{1.0}});
+
+        Matrix[] v = new Matrix[M];
+        v[0] = new Matrix(new double[][]{{0.0}});
+        v[1] = new Matrix(new double[][]{{0.0}});
+
+        Matrix r = new Matrix(new double[][]{
+            {0.0, 1.0},
+            {1.0, 0.0}
+        });
+
+        // RSRD
+        double[][] alpha = new double[M][];
+        for (int i = 0; i < M; i++) {
+            alpha[i] = new double[N];
+            Arrays.fill(alpha[i], 1.0);
+        }
+
+        Mapqn_qr_bounds_rsrd_parameters rsrdParams = new Mapqn_qr_bounds_rsrd_parameters(
+            M, N, F, K, mu, v, alpha, r);
+
+        Mapqn_solution rsrdMin = Mapqn_qr_bounds_rsrd.solve(rsrdParams, 1, "min");
+        Mapqn_solution rsrdMax = Mapqn_qr_bounds_rsrd.solve(rsrdParams, 1, "max");
+
+        // BAS
+        int MR = 1;
+        int f = 1;
+        Matrix BB = new Matrix(new double[][]{{0, 0}});
+        Matrix MM = new Matrix(new double[][]{{0, 0}});
+        Matrix MM1 = new Matrix(new double[][]{{0, 0}});
+        int[] ZZ = {0};
+
+        Mapqn_qr_bounds_bas_parameters basParams = new Mapqn_qr_bounds_bas_parameters(
+            M, N, MR, f, K, F, MM, MM1, ZZ, BB, mu, v, r);
+
+        Mapqn_solution basMin = Mapqn_qr_bounds_bas.solve(basParams, 1, "min");
+        Mapqn_solution basMax = Mapqn_qr_bounds_bas.solve(basParams, 1, "max");
+
+        // Both should converge
+        assertFalse(Double.isNaN(rsrdMin.getObjectiveValue()), "RSRD min should converge");
+        assertFalse(Double.isNaN(basMin.getObjectiveValue()), "BAS min should converge");
+
+        // Both should match expected value
+        assertEquals(EXPECTED_U, rsrdMin.getObjectiveValue(), COARSE_TOL,
+            "RSRD should match expected");
+        assertEquals(EXPECTED_U, basMin.getObjectiveValue(), COARSE_TOL,
+            "BAS should match expected");
+
+        // Both methods should give consistent results
+        assertEquals(rsrdMin.getObjectiveValue(), basMin.getObjectiveValue(), COARSE_TOL,
+            "RSRD and BAS should give consistent lower bounds");
+        assertEquals(rsrdMax.getObjectiveValue(), basMax.getObjectiveValue(), COARSE_TOL,
+            "RSRD and BAS should give consistent upper bounds");
+    }
+
+    // ========== RSRD Edge Cases ==========
+
+    /**
+     * Test RSRD bounds for asymmetric 3-queue network M=3, N=3.
+     *
+     * MATLAB Reference (qrf_rsrd.m):
+     * - LB = 0.8565395986
+     * - UB = 0.8648455262
+     * - U1 = 0.856540, U2 = 0.256962, U3 = 0.513924 (at minimum)
+     *
+     * This tests the non-trivial case with different service rates and asymmetric routing.
+     *
+     * NOTE: Currently disabled - Apache Commons Math SimplexSolver cannot converge
+     * for M>2 networks due to simplex cycling issues. The constraint system is
+     * correct (matches MATLAB's qrf_rsrd.m exactly), but the SimplexSolver's
+     * simplex algorithm cycles indefinitely. MATLAB's linprog with interior-point
+     * algorithm handles this correctly. Use LR bounds (testMapqn_bnd_lr_asymmetric_3queue)
+     * as an alternative for M>2 cases.
+     */
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.MINUTES)
+    public void testRSRD_asymmetric_3queue_M3_N3() {
+        // MATLAB reference values
+        final double MATLAB_LB = 0.8565395986;
+        final double MATLAB_UB = 0.8648455262;
+
+        int M = 3;
+        int N = 3;
+        int[] K = {1, 1, 1};
+        int[] F = {3, 3, 3};
+
+        Matrix[] mu = new Matrix[M];
+        mu[0] = new Matrix(new double[][]{{1.0}});
+        mu[1] = new Matrix(new double[][]{{2.0}});
+        mu[2] = new Matrix(new double[][]{{0.5}});
+
+        Matrix[] v = new Matrix[M];
+        v[0] = new Matrix(new double[][]{{0.0}});
+        v[1] = new Matrix(new double[][]{{0.0}});
+        v[2] = new Matrix(new double[][]{{0.0}});
+
+        // Asymmetric routing
+        Matrix r = new Matrix(new double[][]{
+            {0.1, 0.6, 0.3},
+            {1.0, 0.0, 0.0},
+            {1.0, 0.0, 0.0}
+        });
+
+        double[][] alpha = new double[M][];
+        for (int i = 0; i < M; i++) {
+            alpha[i] = new double[N];
+            Arrays.fill(alpha[i], 1.0);
+        }
+
+        Mapqn_qr_bounds_rsrd_parameters params = new Mapqn_qr_bounds_rsrd_parameters(
+            M, N, F, K, mu, v, alpha, r);
+
+        Mapqn_solution solMin = Mapqn_qr_bounds_rsrd.solve(params, 1, "min");
+        Mapqn_solution solMax = Mapqn_qr_bounds_rsrd.solve(params, 1, "max");
+
+        assertNotNull(solMin, "Min solution should not be null");
+        assertNotNull(solMax, "Max solution should not be null");
+
+        double lineLB = solMin.getObjectiveValue();
+        double lineUB = solMax.getObjectiveValue();
+
+        assertFalse(Double.isNaN(lineLB), "Lower bound should not be NaN");
+        assertFalse(Double.isNaN(lineUB), "Upper bound should not be NaN");
+
+        // Basic consistency checks
+        assertTrue(lineLB >= 0, "Lower bound should be non-negative");
+        assertTrue(lineUB <= 1, "Upper bound should not exceed 1");
+        assertTrue(lineLB <= lineUB + 1e-6, "Lower bound should not exceed upper bound");
+
+        // Validate against MATLAB reference (with tolerance for numerical differences)
+        assertEquals(MATLAB_LB, lineLB, COARSE_TOL,
+            String.format("RSRD LB (%.6f) should match MATLAB reference (%.6f)", lineLB, MATLAB_LB));
+        assertEquals(MATLAB_UB, lineUB, COARSE_TOL,
+            String.format("RSRD UB (%.6f) should match MATLAB reference (%.6f)", lineUB, MATLAB_UB));
+    }
+
+    /**
+     * Test RSRD with MAP (2-phase) service process.
+     *
+     * This validates that the implementations handle non-exponential
+     * (Markovian Arrival Process) service correctly.
+     */
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.MINUTES)
+    public void testRSRD_with_MAP_service() {
+        int M = 2;
+        int N = 3;
+        int[] K = {2, 1};  // Queue 1 has 2 phases (MAP), Queue 2 has 1 phase (Exp)
+        int[] F = {3, 3};
+
+        // Queue 1: 2-phase MAP service
+        Matrix[] mu = new Matrix[M];
+        mu[0] = new Matrix(new double[][]{
+            {0.5, 0.3},
+            {0.2, 0.8}
+        });
+        mu[1] = new Matrix(new double[][]{{1.0}});
+
+        // Background transitions for MAP
+        Matrix[] v = new Matrix[M];
+        v[0] = new Matrix(new double[][]{
+            {0.0, 0.1},
+            {0.05, 0.0}
+        });
+        v[1] = new Matrix(new double[][]{{0.0}});
+
+        Matrix r = new Matrix(new double[][]{
+            {0.0, 1.0},
+            {1.0, 0.0}
+        });
+
+        double[][] alpha = new double[M][];
+        for (int i = 0; i < M; i++) {
+            alpha[i] = new double[N];
+            Arrays.fill(alpha[i], 1.0);
+        }
+
+        Mapqn_qr_bounds_rsrd_parameters params = new Mapqn_qr_bounds_rsrd_parameters(
+            M, N, F, K, mu, v, alpha, r);
+
+        Mapqn_solution solMin = Mapqn_qr_bounds_rsrd.solve(params, 1, "min");
+        Mapqn_solution solMax = Mapqn_qr_bounds_rsrd.solve(params, 1, "max");
+
+        assertNotNull(solMin, "Min solution should not be null");
+        assertNotNull(solMax, "Max solution should not be null");
+
+        double LB = solMin.getObjectiveValue();
+        double UB = solMax.getObjectiveValue();
+
+        assertFalse(Double.isNaN(LB), "Lower bound should not be NaN");
+        assertFalse(Double.isNaN(UB), "Upper bound should not be NaN");
+
+        // Basic validity
+        assertTrue(LB >= 0, "Lower bound should be non-negative");
+        assertTrue(UB <= 1, "Upper bound should not exceed 1");
+        assertTrue(LB <= UB + 1e-6, "Lower bound should not exceed upper bound");
+
+        // With N=3 jobs, utilization should be positive
+        assertTrue(LB > 0, "With 3 jobs, utilization lower bound should be positive");
+    }
+
+    /**
+     * Test BAS with actual blocking configurations (MR=2).
+     * 2-queue tandem with blocking, validates MM indexing fix (1-based to 0-based).
+     *
+     * Configuration: M=2, N=3, f=1, F=[2,3], K=[2,2], MR=2
+     * MATLAB reference (qrf_bas.m):
+     *   Lower bound: 0.718653
+     *   Upper bound: 0.823197
+     */
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.MINUTES)
+    public void testBAS_blocking_M2_MR2() {
+        final double MATLAB_LB = 0.718653;
+        final double MATLAB_UB = 0.823197;
+
+        int M = 2;
+        int N = 3;
+        int f = 1;  // Finite capacity queue (1-based)
+        int[] K = {2, 2};
+        int[] F = {2, 3};
+
+        // Service rates mu{i}(k,h)
+        Matrix[] mu = new Matrix[M];
+        mu[0] = new Matrix(new double[][]{
+            {1.0, 0.1},
+            {0.1, 0.5}
+        });
+        mu[1] = new Matrix(new double[][]{
+            {0.8, 0.2},
+            {0.2, 0.6}
+        });
+
+        // Background transition rates (zeros)
+        Matrix[] v = new Matrix[M];
+        for (int i = 0; i < M; i++) {
+            v[i] = new Matrix(new double[][]{{0.0, 0.0}, {0.0, 0.0}});
+        }
+
+        // Routing probabilities (tandem)
+        Matrix r = new Matrix(new double[][]{
+            {0.0, 1.0},
+            {1.0, 0.0}
+        });
+
+        // Blocking configurations (MR=2)
+        int MR = 2;
+
+        // BB(m, i) = 1 if queue i is blocked in configuration m
+        Matrix BB = new Matrix(new double[][]{
+            {0, 0},   // m=0: no blocking
+            {0, 1}    // m=1: queue 2 blocked
+        });
+
+        // MM(m, order) = queue index (1-based) at position 'order' in blocking list
+        Matrix MM = new Matrix(new double[][]{
+            {0, 0},   // m=0: no blocking
+            {2, 0}    // m=1: queue 2 first (1-based)
+        });
+
+        // ZZ(m) = number of blocked queues in configuration m
+        int[] ZZ = {0, 1};
+
+        // MM1(m, j) = extended blocking order info
+        Matrix MM1 = new Matrix(new double[][]{
+            {0, 0},
+            {0, 0}
+        });
+
+        Mapqn_qr_bounds_bas_parameters params = new Mapqn_qr_bounds_bas_parameters(
+            M, N, MR, f, K, F, MM, MM1, ZZ, BB, mu, v, r);
+
+        Mapqn_solution solMin = Mapqn_qr_bounds_bas.solve(params, 1, "min");
+        Mapqn_solution solMax = Mapqn_qr_bounds_bas.solve(params, 1, "max");
+
+        assertNotNull(solMin, "Min solution should not be null");
+        assertNotNull(solMax, "Max solution should not be null");
+
+        double lineLB = solMin.getObjectiveValue();
+        double lineUB = solMax.getObjectiveValue();
+
+        assertFalse(Double.isNaN(lineLB), "Lower bound should not be NaN");
+        assertFalse(Double.isNaN(lineUB), "Upper bound should not be NaN");
+
+        // Basic consistency
+        assertTrue(lineLB >= 0, "Lower bound should be non-negative");
+        assertTrue(lineUB <= 1, "Upper bound should not exceed 1");
+        assertTrue(lineLB <= lineUB + 1e-6, "Lower bound should not exceed upper bound");
+
+        // Validate against MATLAB reference
+        assertEquals(MATLAB_LB, lineLB, COARSE_TOL,
+            String.format("BAS LB (%.6f) should match MATLAB reference (%.6f)", lineLB, MATLAB_LB));
+        assertEquals(MATLAB_UB, lineUB, COARSE_TOL,
+            String.format("BAS UB (%.6f) should match MATLAB reference (%.6f)", lineUB, MATLAB_UB));
+    }
+
+    // ------------------------------------------------------------------
+    // Quadratic reduction (QR) bound variants
+    // ------------------------------------------------------------------
+
+    /** Symmetric 2-queue exponential tandem, N=2: exact utilization 2/3. */
+    private static LinearReductionParameters symmetricTandemParams() {
+        int M = 2;
+        int N = 2;
+        int[] K = {1, 1};
+        Matrix[] mu = new Matrix[M];
+        mu[0] = new Matrix(new double[][]{{1.0}});
+        mu[1] = new Matrix(new double[][]{{1.0}});
+        Matrix[] v = new Matrix[M];
+        v[0] = new Matrix(new double[][]{{0.0}});
+        v[1] = new Matrix(new double[][]{{0.0}});
+        Matrix r = new Matrix(new double[][]{
+            {0.0, 1.0},
+            {1.0, 0.0}
+        });
+        return new LinearReductionParameters(M, N, K, mu, r, v);
+    }
+
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.MINUTES)
+    public void testQRBoundsTandem() {
+        final double EXACT_U = 2.0 / 3.0;
+        LinearReductionParameters params = symmetricTandemParams();
+
+        Mapqn_solution solQ1 = Mapqn_bnd_qr.solve(params, 1, 1);
+        assertNotNull(solQ1, "QR solution for queue 1 should not be null");
+        double u1 = solQ1.getUtilization(1, 1);
+        assertTrue(u1 >= 0 && u1 <= 1 + 1e-6, "QR bound must be a valid utilization");
+        assertTrue(u1 >= EXACT_U - 0.01,
+            String.format("QR upper bound U1=%.4f must dominate exact %.4f", u1, EXACT_U));
+
+        Mapqn_solution solQ2 = Mapqn_bnd_qr.solve(params, 2, 1);
+        double u2 = solQ2.getUtilization(2, 1);
+        assertTrue(Math.abs(u1 - u2) < 0.05,
+            String.format("Symmetric tandem must give symmetric QR bounds: %.4f vs %.4f", u1, u2));
+    }
+
+    // ------------------------------------------------------------------
+    // Quadratic reduction load-dependent / delay variants (BUG-COV-1)
+    // Targets from the validated MATLAB reference (matlab/lib/qrf).
+    // ------------------------------------------------------------------
+
+    /**
+     * QR load-dependent bound on the trivial symmetric exponential tandem
+     * (M=2, N=2, single phase). MATLAB mapqn_bnd_qr_ld gives the exact
+     * marginal P(queue 1 has 1 job) = 1/3.
+     */
+    @Test
+    @Timeout(value = 3, unit = TimeUnit.MINUTES)
+    public void testQRLoadDependentTrivialTandem() {
+        int M = 2;
+        int N = 2;
+        int[] K = {1, 1};
+        double[][][] mu = {{{1.0}}, {{1.0}}};
+        double[][][] v = {{{0.0}}, {{0.0}}};
+        double[][] alpha = {{1.0, 1.0}, {1.0, 1.0}};
+        double[][] r = {{0.0, 1.0}, {1.0, 0.0}};
+        Mapqn_bnd_qr_ld.QuadraticLDParameters p =
+            new Mapqn_bnd_qr_ld.QuadraticLDParameters(M, N, K, mu, v, alpha, r);
+
+        Mapqn_solution sol = Mapqn_bnd_qr_ld.solve(p, 1, 1, 1);
+        assertEquals(1.0 / 3.0, sol.getObjectiveValue(), 1e-4,
+            "QR-LD trivial tandem must match exact MATLAB objective 1/3");
+    }
+
+    /**
+     * QR load-dependent bound, 2-queue 2-phase MAP (Test 6 of
+     * matlab/lib/qrf/test_mapqn_bnd.m). MATLAB objective 0.1264654219.
+     */
+    @Test
+    @Timeout(value = 3, unit = TimeUnit.MINUTES)
+    public void testQRLoadDependentTwoPhase() {
+        int M = 2;
+        int N = 2;
+        int[] K = {2, 2};
+        double[][][] mu = {
+            {{0.8, 0.2}, {0.1, 0.6}},
+            {{0.5, 0.1}, {0.2, 0.7}}
+        };
+        double[][][] v = {
+            {{0.0, 0.1}, {0.05, 0.0}},
+            {{0.0, 0.05}, {0.1, 0.0}}
+        };
+        double[][] alpha = {{1.0, 1.0}, {1.0, 1.0}};
+        double[][] r = {{0.0, 1.0}, {1.0, 0.0}};
+        Mapqn_bnd_qr_ld.QuadraticLDParameters p =
+            new Mapqn_bnd_qr_ld.QuadraticLDParameters(M, N, K, mu, v, alpha, r);
+
+        Mapqn_solution sol = Mapqn_bnd_qr_ld.solve(p, 1, 1, 1);
+        assertEquals(0.1264654219, sol.getObjectiveValue(), 1e-4,
+            "QR-LD 2-phase must match MATLAB objective 0.1264654219");
+    }
+
+    /**
+     * QR delay bound, 2-queue delay with IS alpha (Test 7 of
+     * matlab/lib/qrf/test_mapqn_bnd.m). MATLAB max objective 0.3157894737
+     * (max == min, exact = 6/19).
+     */
+    @Test
+    @Timeout(value = 3, unit = TimeUnit.MINUTES)
+    public void testQRDelayTwoQueue() {
+        int M = 2;
+        int N = 3;
+        int[] K = {1, 1};
+        double Z = 2.0;
+        double D1 = 1.0;
+        double[][][] mu = {{{1.0}}, {{0.5}}};
+        double[][][] v = {{{0.0}}, {{0.0}}};
+        double[][] alpha = {{1.0, 1.0, 1.0}, {1.0, 2.0, 3.0}};
+        double[][] r = {{0.0, 1.0}, {1.0, 0.0}};
+        Mapqn_bnd_qr_delay.QuadraticDelayParameters p =
+            new Mapqn_bnd_qr_delay.QuadraticDelayParameters(M, N, K, Z, D1, mu, v, alpha, r);
+
+        Mapqn_solution sol = Mapqn_bnd_qr_delay.solve(p, 1, 1, 1);
+        assertEquals(0.3157894737, sol.getObjectiveValue(), 1e-4,
+            "QR-delay two-queue must match MATLAB objective 0.3157894737");
+    }
+
+    /**
+     * RS-RD bounds on the two instances of the TOMACS paper, against the
+     * AMPL/GLPK reference optima.
+     *
+     * <p>These are the instances the josqp backend of Mapqn_qr_bounds_rsrd was
+     * selected on; see the OSQP_EPS Javadoc there for the tolerance study. Both
+     * previously returned NaN: ojalgo reports INFEASIBLE on them (verified on
+     * 53.1.1 and 55.1.0) and commons-math3 SimplexSolver solves only M=2 N=2.
+     *
+     * <p>TOLERANCE IS DELIBERATELY LOOSE at 1e-3. The backend is a sparse ADMM
+     * solver whose polish step does not recover the exact vertex of this
+     * degenerate LP, so it lands ~1e-4 relative from the optimum where MATLAB
+     * qrf_rsrd.m and native Python qr_bounds_rsrd.py agree to ~2e-11. This test
+     * guards convergence and the correct optimum, NOT parity with those two.
+     */
+    @Test
+    @Timeout(value = 5, unit = TimeUnit.MINUTES)
+    public void testQR_RSRD_paperInstances() {
+        // Section 7.1: M=3, N=10, F=[4,10,10]. AMPL/GLPK optimum 0.7332453660.
+        Matrix[] mu71 = new Matrix[3];
+        Matrix[] v71 = new Matrix[3];
+        mu71[0] = new Matrix(new double[][]{
+            {1.016186165025678, 0.000025857082896},
+            {0.001569887597955, 0.014132983910493}});
+        mu71[1] = new Matrix(new double[][]{{1.0, 0.0}, {0.0, 1.0}});
+        mu71[2] = new Matrix(new double[][]{{1.0, 0.0}, {0.0, 1.0}});
+        for (int i = 0; i < 3; i++) v71[i] = new Matrix(new double[][]{{0.0, 0.0}, {0.0, 0.0}});
+        double[][] alpha71 = new double[3][];
+        for (int i = 0; i < 3; i++) {
+            alpha71[i] = new double[10];
+            Arrays.fill(alpha71[i], 1.0);
+        }
+        Mapqn_qr_bounds_rsrd_parameters p71 = new Mapqn_qr_bounds_rsrd_parameters(
+            3, 10, new int[]{4, 10, 10}, new int[]{2, 2, 2}, mu71, v71, alpha71,
+            new Matrix(new double[][]{
+                {0.10, 0.50, 0.40},
+                {0.90, 0.00, 0.10},
+                {0.00, 0.50, 0.50}}));
+
+        double sec71 = Mapqn_qr_bounds_rsrd.solve(p71, 1, "min").getObjectiveValue();
+        assertFalse(Double.isNaN(sec71), "Sec 7.1 min must converge, not return NaN");
+        assertEquals(0.7332453660, sec71, 1e-3,
+            "Sec 7.1 min must match the AMPL/GLPK optimum");
+
+        // example_rsrd.mod: M=5, N=20, F=5 each, K=2, ring routing.
+        // AMPL/GLPK optima 0.8705798470 (min) and 1.0000000000 (max).
+        int M = 5;
+        int N = 20;
+        Matrix[] mu = new Matrix[M];
+        Matrix[] v = new Matrix[M];
+        for (int i = 0; i < M; i++) {
+            mu[i] = new Matrix(new double[][]{
+                {1.016186e+00, 2.585708e-05},
+                {1.569888e-03, 1.413298e-02}});
+            v[i] = new Matrix(new double[][]{{0.0, 0.0}, {0.0, 0.0}});
+        }
+        double[][] rRing = new double[M][M];
+        for (int i = 0; i < M; i++) {
+            rRing[i][(i + 1) % M] = 0.5;
+            rRing[i][(i - 1 + M) % M] = 0.5;
+        }
+        double[][] alpha = new double[M][];
+        for (int i = 0; i < M; i++) {
+            alpha[i] = new double[N];
+            Arrays.fill(alpha[i], 1.0);
+        }
+        int[] F = {5, 5, 5, 5, 5};
+        int[] K = {2, 2, 2, 2, 2};
+        Mapqn_qr_bounds_rsrd_parameters params = new Mapqn_qr_bounds_rsrd_parameters(
+            M, N, F, K, mu, v, alpha, new Matrix(rRing));
+
+        double lb = Mapqn_qr_bounds_rsrd.solve(params, 1, "min").getObjectiveValue();
+        double ub = Mapqn_qr_bounds_rsrd.solve(params, 1, "max").getObjectiveValue();
+
+        assertFalse(Double.isNaN(lb), "M5N20 min must converge, not return NaN");
+        assertFalse(Double.isNaN(ub), "M5N20 max must converge, not return NaN");
+        assertEquals(0.8705798470, lb, 1e-3, "M5N20 min must match the AMPL/GLPK optimum");
+        assertEquals(1.0000000000, ub, 1e-3, "M5N20 max must match the AMPL/GLPK optimum");
+        assertTrue(lb <= ub + 1e-9, "Lower bound must not exceed upper bound");
+    }
+
+}

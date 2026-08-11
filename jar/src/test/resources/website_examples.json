@@ -1,0 +1,209 @@
+{
+  "AUTO": [
+    {
+      "solver": "AUTO",
+      "lang": "matlab",
+      "code": "% Create a simple M/M/1 queue\nmodel = Network('AUTO Example');\n\nsource = Source(model, 'Source');\nqueue = Queue(model, 'Queue', SchedStrategy.FCFS);\nsink = Sink(model, 'Sink');\njobclass = OpenClass(model, 'Class1');\n\nsource.setArrival(jobclass, Exp(0.9));\nqueue.setService(jobclass, Exp(1.0));\n\nP = model.initRoutingMatrix();\nP.set(jobclass, jobclass, source, queue, 1.0);\nP.set(jobclass, jobclass, queue, sink, 1.0);\nmodel.link(P);\n\n% AUTO automatically selects the best solver\nAUTO(model).avgTable()",
+      "output": "AUTO analysis [selected: MVA, method: default/lin, lang: matlab] completed.\n  1×8 table\n\n    Station    JobClass     QLen      Util     RespT     ResidT    ArvR     Tput\n     Queue      Class1        9       0.9        10         1      0.9      0.9",
+      "description": ""
+    },
+    {
+      "solver": "AUTO",
+      "lang": "java",
+      "code": "// Create a simple M/M/1 queue\nNetwork model = new Network(\"AUTO Example\");\n\nSource source = new Source(model, \"Source\");\nQueue queue = new Queue(model, \"Queue\", SchedStrategy.FCFS);\nSink sink = new Sink(model, \"Sink\");\nOpenClass jobclass = new OpenClass(model, \"Class1\");\n\nsource.setArrival(jobclass, new Exp(0.9));\nqueue.setService(jobclass, new Exp(1.0));\n\nRoutingMatrix P = model.initRoutingMatrix();\nP.set(jobclass, jobclass, source, queue, 1.0);\nP.set(jobclass, jobclass, queue, sink, 1.0);\nmodel.link(P);\n\n// AUTO automatically selects the best solver\nnew AUTO(model).avgTable.print();",
+      "output": "AUTO analysis [selected: MVA, method: default/lin, lang: java] completed.\n\n  Station    JobClass     QLen      Util     RespT     ResidT    ArvR     Tput\n    Queue      Class1        9       0.9        10         1      0.9      0.9",
+      "description": ""
+    },
+    {
+      "solver": "AUTO",
+      "lang": "python",
+      "code": "from line_solver import *\n\n# Create a simple M/M/1 queue\nmodel = Network('AUTO Example')\n\nsource = Source(model, 'Source')\nqueue = Queue(model, 'Queue', SchedStrategy.FCFS)\nsink = Sink(model, 'Sink')\njobclass = OpenClass(model, 'Class1')\n\nsource.set_arrival(jobclass, Exp(0.9))\nqueue.set_service(jobclass, Exp(1.0))\n\nP = model.init_routing_matrix()\nP.set(jobclass, jobclass, source, queue, 1.0)\nP.set(jobclass, jobclass, queue, sink, 1.0)\nmodel.link(P)\n\n# AUTO automatically selects the best solver\nAUTO(model).avg_table()",
+      "output": "  Station JobClass  QLen  Util  RespT  ResidT  ArvR  Tput\n0  Source   Class1   0.0   0.0    0.0     0.0   0.0   0.9\n1   Queue   Class1   9.0   0.9   10.0    10.0   0.9   0.9",
+      "description": ""
+    }
+  ],
+  "CTMC": [
+    {
+      "solver": "CTMC",
+      "lang": "matlab",
+      "code": "% Create a closed queueing network (2 queues, 3 jobs)\nmodel = Network('Closed Network');\n\n% Create queues\nqueue1 = Queue(model, 'Queue1', SchedStrategy.PS);\nqueue2 = Queue(model, 'Queue2', SchedStrategy.FCFS);\n\n% Closed class with 3 jobs starting at Queue1\njobclass = ClosedClass(model, 'Class1', 3, queue1);\n\n% Set service times\nqueue1.setService(jobclass, Exp(1.0));\nqueue2.setService(jobclass, Exp(2.0));\n\n% Set routing probabilities\nP = model.initRoutingMatrix();\nP.set(jobclass, jobclass, queue1, queue1, 0.4);\nP.set(jobclass, jobclass, queue1, queue2, 0.6);\nP.set(jobclass, jobclass, queue2, queue1, 1.0);\nmodel.link(P);\n\n% Solve with CTMC\nsolver = CTMC(model);\nCTMC(model).avgTable()",
+      "output": "CTMC analysis [method: default, lang: matlab] completed in 0.234s.\n\nans =\n  2×8 table\n    Station    JobClass     QLen       Util       RespT     ResidT     ArvR       Tput\n    _______    ________    _______    _______    _______    ______    _______    _______\n    Queue1      Class1      2.6041    0.98095     2.6547    2.6547    0.98095    0.98095\n    Queue2      Class1     0.39591    0.29428    0.67266    0.4036    0.58857    0.58857",
+      "description": ""
+    },
+    {
+      "solver": "CTMC",
+      "lang": "java",
+      "code": "import jline.lang.*;\nimport jline.lang.constant.SchedStrategy;\nimport jline.lang.nodes.Queue;\nimport jline.lang.processes.Exp;\nimport jline.solvers.NetworkAvgTable;\nimport jline.solvers.ctmc.CTMC;\nimport java.util.List;\n\npublic class CTMCExample {\n    public static void main(String[] args) {\n        // Create a closed queueing network (2 queues, 3 jobs)\n        Network model = new Network(\"Closed Network\");\n\n        Queue queue1 = new Queue(model, \"Queue1\", SchedStrategy.PS);\n        Queue queue2 = new Queue(model, \"Queue2\", SchedStrategy.FCFS);\n\n        // Closed class with 3 jobs starting at Queue1\n        ClosedClass jobclass = new ClosedClass(model, \"Class1\", 3, queue1);\n\n        queue1.setService(jobclass, Exp.fitRate(1.0));\n        queue2.setService(jobclass, Exp.fitRate(2.0));\n\n        // Set routing probabilities\n        RoutingMatrix P = new RoutingMatrix(model,\n            List.of(jobclass), List.of(queue1, queue2));\n        P.addConnection(jobclass, jobclass, queue1, queue1, 0.4);\n        P.addConnection(jobclass, jobclass, queue1, queue2, 0.6);\n        P.addConnection(jobclass, jobclass, queue2, queue1, 1.0);\n        model.link(P);\n\n        // Solve with CTMC\n        CTMC solver = new CTMC(model);\n        NetworkAvgTable avgTable = solver.avgTable;\n        System.out.println(avgTable);\n    }\n}",
+      "output": "CTMC analysis [method: default, lang: java] completed.\n\nStation    JobClass     QLen       Util       RespT     ResidT     ArvR       Tput\nQueue1     Class1       2.6041     0.98095    2.6547    2.6547     0.98095    0.98095\nQueue2     Class1       0.39591    0.29428    0.67266   0.4036     0.58857    0.58857",
+      "description": ""
+    },
+    {
+      "solver": "CTMC",
+      "lang": "python",
+      "code": "from line_solver import *\n\n# Create a closed queueing network (2 queues, 3 jobs)\nmodel = Network('Closed Network')\n\nqueue1 = Queue(model, 'Queue1', SchedStrategy.PS)\nqueue2 = Queue(model, 'Queue2', SchedStrategy.FCFS)\n\n# Closed class with 3 jobs starting at Queue1\njobclass = ClosedClass(model, 'Class1', 3, queue1)\n\nqueue1.set_service(jobclass, Exp(1.0))\nqueue2.set_service(jobclass, Exp(2.0))\n\n# Set routing probabilities\nP = model.init_routing_matrix()\nP.set(jobclass, jobclass, queue1, queue1, 0.4)\nP.set(jobclass, jobclass, queue1, queue2, 0.6)\nP.set(jobclass, jobclass, queue2, queue1, 1.0)\nmodel.link(P)\n\n# Solve with CTMC\nCTMC(model).avg_table()",
+      "output": "  Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0  Queue1   Class1  2.6041  0.9810  2.6547  2.6547  0.9810  0.9810\n1  Queue2   Class1  0.3959  0.2943  0.6727  0.4036  0.5886  0.5886",
+      "description": ""
+    }
+  ],
+  "LDES": [
+    {
+      "solver": "LDES",
+      "lang": "matlab",
+      "code": "% Create a simple M/M/1 queue\nmodel = Network('M/M/1 Example');\nsource = Source(model, 'Source');\nqueue = Queue(model, 'Queue1', SchedStrategy.FCFS);\nsink = Sink(model, 'Sink');\n\njobclass = OpenClass(model, 'Class1');\nsource.setArrival(jobclass, Exp(0.9));\nqueue.setService(jobclass, Exp(1.0));\n\nmodel.link(Network.serialRouting(source, queue, sink));\n\n% Solve with LDES (via JAR backend)\nsolver = LDES(model, 'samples', 5000, 'seed', 12345);\n\n% Display average performance metrics\nLDES(model).avgTable()",
+      "output": "LDES analysis [method: default, lang: matlab] completed.\n\nans =\n  2×8 table\n    Station    JobClass     QLen      Util      RespT     ResidT     ArvR       Tput\n    _______    ________    ______    _______    ______    ______    _______    _______\n    Source      Class1          0          0         0         0          0    0.89856\n    Queue1      Class1     8.2105    0.88742    9.1954    9.1954    0.89856    0.89315",
+      "description": ""
+    },
+    {
+      "solver": "LDES",
+      "lang": "java",
+      "code": "import jline.lang.*;\nimport jline.lang.constant.SchedStrategy;\nimport jline.lang.nodes.*;\nimport jline.lang.processes.Exp;\nimport jline.solvers.NetworkAvgTable;\nimport jline.solvers.ldes.LDES;\n\npublic class LDESExample {\n    public static void main(String[] args) {\n        // Create a simple M/M/1 queue\n        Network model = new Network(\"M/M/1 Example\");\n\n        Source source = new Source(model, \"Source\");\n        Queue queue = new Queue(model, \"Queue1\", SchedStrategy.FCFS);\n        Sink sink = new Sink(model, \"Sink\");\n\n        OpenClass jobclass = new OpenClass(model, \"Class1\");\n        source.setArrival(jobclass, Exp.fitRate(0.9));\n        queue.setService(jobclass, Exp.fitRate(1.0));\n\n        model.link(Network.serialRouting(source, queue, sink));\n\n        // Solve with LDES (Discrete Event Simulation)\n        LDES solver = new LDES(model);\n        solver.options.samples = 5000;\n        solver.options.seed = 12345;\n\n        // Display average performance metrics\n        NetworkAvgTable avgTable = solver.avgTable;\n        System.out.println(avgTable);\n    }\n}",
+      "output": "LDES analysis [method: default, lang: java] completed.\n\nStation    JobClass     QLen      Util      RespT     ResidT     ArvR       Tput\nSource     Class1       0.0       0.0       0.0       0.0        0.0        0.89856\nQueue1     Class1       8.2105    0.88742   9.1954    9.1954     0.89856    0.89315",
+      "description": ""
+    },
+    {
+      "solver": "LDES",
+      "lang": "python",
+      "code": "from line_solver import *\n\n# Create a simple M/M/1 queue\nmodel = Network('M/M/1 Example')\n\nsource = Source(model, 'Source')\nqueue = Queue(model, 'Queue1', SchedStrategy.FCFS)\nsink = Sink(model, 'Sink')\n\njobclass = OpenClass(model, 'Class1')\nsource.set_arrival(jobclass, Exp(0.9))\nqueue.set_service(jobclass, Exp(1.0))\n\nmodel.link(Network.serial_routing(source, queue, sink))\n\n# Solve with LDES (via JAR backend)\nLDES(model, samples=5000, seed=12345).avg_table()",
+      "output": "  Station JobClass    QLen   Util    RespT   ResidT  ArvR    Tput\n0  Source   Class1  0.0000  0.000   0.0000   0.0000   0.0  0.9000\n1  Queue1   Class1  7.5496  1.071  11.2898  11.2898   0.9  0.9131",
+      "description": ""
+    }
+  ],
+  "FLD": [
+    {
+      "solver": "FLD",
+      "lang": "matlab",
+      "code": "% Create a closed queueing network with 100 jobs\nmodel = Network('FLD Example');\n\ndelay = Delay(model, 'Delay');\nqueue = Queue(model, 'Queue', SchedStrategy.FCFS);\njobclass = ClosedClass(model, 'Class1', 100, delay);\n\ndelay.setService(jobclass, Exp(1.0));\nqueue.setService(jobclass, Exp(2.4));\n\nP = model.initRoutingMatrix();\nP.set(jobclass, jobclass, delay, queue, 1.0);\nP.set(jobclass, jobclass, queue, delay, 1.0);\nmodel.link(P);\n\nsolver = FLD(model);\nFLD(model).avgTable()",
+      "output": "FLD analysis [method: default/matrix, lang: matlab] completed in 0.076s.\n  2×8 table\n\n    Station    JobClass     QLen      Util     RespT     ResidT     ArvR      Tput\n     Delay      Class1      2.4       2.4          1         1      2.4       2.4\n     Queue      Class1     97.6         1     40.667    40.667      2.4       2.4",
+      "description": ""
+    },
+    {
+      "solver": "FLD",
+      "lang": "java",
+      "code": "// Create a closed queueing network with 100 jobs\nNetwork model = new Network(\"FLD Example\");\n\nDelay delay = new Delay(model, \"Delay\");\nQueue queue = new Queue(model, \"Queue\", SchedStrategy.FCFS);\nClosedClass jobclass = new ClosedClass(model, \"Class1\", 100, delay);\n\ndelay.setService(jobclass, new Exp(1.0));\nqueue.setService(jobclass, new Exp(2.4));\n\nRoutingMatrix P = model.initRoutingMatrix();\nP.set(jobclass, jobclass, delay, queue, 1.0);\nP.set(jobclass, jobclass, queue, delay, 1.0);\nmodel.link(P);\n\nFLD solver = new FLD(model);\nsolver.avgTable.print();",
+      "output": "FLD analysis [method: default/matrix, lang: java] completed.\n\n  Station    JobClass     QLen      Util     RespT     ResidT     ArvR      Tput\n    Delay      Class1      2.4       2.4          1         1      2.4       2.4\n    Queue      Class1     97.6         1     40.667    40.667      2.4       2.4",
+      "description": ""
+    },
+    {
+      "solver": "FLD",
+      "lang": "python",
+      "code": "from line_solver import *\n\n# Create a closed queueing network with 100 jobs\nmodel = Network('FLD Example')\n\ndelay = Delay(model, 'Delay')\nqueue = Queue(model, 'Queue', SchedStrategy.FCFS)\njobclass = ClosedClass(model, 'Class1', 100, delay)\n\ndelay.set_service(jobclass, Exp(1.0))\nqueue.set_service(jobclass, Exp(2.4))\n\nP = model.init_routing_matrix()\nP.set(jobclass, jobclass, delay, queue, 1.0)\nP.set(jobclass, jobclass, queue, delay, 1.0)\nmodel.link(P)\n\nFLD(model).avg_table()",
+      "output": "  Station JobClass  QLen  Util    RespT   ResidT  ArvR  Tput\n0   Delay   Class1   2.4   2.4   1.0000   1.0000   2.4   2.4\n1   Queue   Class1  97.6   1.0  40.6667  40.6667   2.4   2.4",
+      "description": ""
+    }
+  ],
+  "JMT": [
+    {
+      "solver": "JMT",
+      "lang": "matlab",
+      "code": "% Create a simple M/M/1 queue\nmodel = Network('M/M/1 Example');\nsource = Source(model, 'Source');\nqueue = Queue(model, 'Queue1', SchedStrategy.FCFS);\nsink = Sink(model, 'Sink');\n\njobclass = OpenClass(model, 'Class1');\nsource.setArrival(jobclass, Exp(0.9));\nqueue.setService(jobclass, Exp(1.0));\n\nmodel.link(Network.serialRouting(source, queue, sink));\n\n% Solve with JMT (simulation with specific seed and samples)\nsolver = JMT(model, 'seed', 23000, 'samples', 10000);\n\n% Display average performance metrics\nJMT(model, 'seed', 23000, 'samples', 10000).avgTable()",
+      "output": "Default method: using JSIM discrete-event simulation\nJMT analysis [method: default, lang: matlab] completed in 1.068s.\n\nans =\n  2×8 table\n    Station    JobClass     QLen      Util      RespT     ResidT     ArvR       Tput\n    _______    ________    ______    _______    ______    ______    _______    _______\n    Source      Class1          0          0         0         0          0    0.89313\n    Queue1      Class1     5.0616    0.87445    8.2595    8.2595    0.89313    0.89063",
+      "description": ""
+    },
+    {
+      "solver": "JMT",
+      "lang": "java",
+      "code": "import jline.lang.*;\nimport jline.lang.constant.SchedStrategy;\nimport jline.lang.nodes.*;\nimport jline.lang.processes.Exp;\nimport jline.solvers.NetworkAvgTable;\nimport jline.solvers.SolverOptions;\nimport jline.solvers.jmt.JMT;\n\npublic class JMTExample {\n    public static void main(String[] args) {\n        // Create a simple M/M/1 queue\n        Network model = new Network(\"M/M/1 Example\");\n\n        Source source = new Source(model, \"Source\");\n        Queue queue = new Queue(model, \"Queue1\", SchedStrategy.FCFS);\n        Sink sink = new Sink(model, \"Sink\");\n\n        OpenClass jobclass = new OpenClass(model, \"Class1\");\n        source.setArrival(jobclass, Exp.fitRate(0.9));\n        queue.setService(jobclass, Exp.fitRate(1.0));\n\n        model.link(Network.serialRouting(source, queue, sink));\n\n        // Solve with JMT (simulation with specific seed and samples)\n        JMT solver = new JMT(model);\n        solver.options.seed = 23000;\n        solver.options.samples = 10000;\n\n        // Display average performance metrics\n        NetworkAvgTable avgTable = solver.avgTable;\n        System.out.println(avgTable);\n    }\n}",
+      "output": "Default method: using JSIM discrete-event simulation\nJMT analysis [method: default, lang: java] completed.\n\nStation    JobClass     QLen      Util      RespT     ResidT     ArvR       Tput\nSource     Class1       0.0       0.0       0.0       0.0        0.0        0.89313\nQueue1     Class1       5.0616    0.87445   8.2595    8.2595     0.89313    0.89063",
+      "description": ""
+    },
+    {
+      "solver": "JMT",
+      "lang": "python",
+      "code": "from line_solver import *\n\n# Create a simple M/M/1 queue\nmodel = Network('M/M/1 Example')\n\nsource = Source(model, 'Source')\nqueue = Queue(model, 'Queue1', SchedStrategy.FCFS)\nsink = Sink(model, 'Sink')\n\njobclass = OpenClass(model, 'Class1')\nsource.set_arrival(jobclass, Exp(0.9))\nqueue.set_service(jobclass, Exp(1.0))\n\nmodel.link(Network.serial_routing(source, queue, sink))\n\n# Solve with JMT (simulation with specific seed and samples)\nJMT(model, seed=23000, samples=10000).avg_table()",
+      "output": "  Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0  Source   Class1  0.0000  0.0000  0.0000  0.0000  0.0000  0.9000\n1  Queue1   Class1  9.0000  0.9000  10.000  10.000  0.9000  0.9000",
+      "description": ""
+    }
+  ],
+  "MAM": [
+    {
+      "solver": "MAM",
+      "lang": "matlab",
+      "code": "% Create a simple M/M/1 queue\nmodel = Network('M/M/1 Example');\nsource = Source(model, 'Source');\nqueue = Queue(model, 'Queue1', SchedStrategy.FCFS);\nsink = Sink(model, 'Sink');\n\njobclass = OpenClass(model, 'Class1');\nsource.setArrival(jobclass, Exp(0.9));\nqueue.setService(jobclass, Exp(1.0));\n\nmodel.link(Network.serialRouting(source, queue, sink));\n\n% Solve with MAM (Matrix Analytic Methods)\nsolver = MAM(model);\n\n% Display average performance metrics\nMAM(model).avgTable()",
+      "output": "Default method: using dec.source\nMAM analysis [method: default/dec.source, lang: matlab] completed in 0.123s. Iterations: 4.\n\nans =\n  2×8 table\n    Station    JobClass    QLen    Util    RespT    ResidT    ArvR    Tput\n    _______    ________    ____    ____    _____    ______    ____    ____\n    Source      Class1      0        0       0         0        0     0.9\n    Queue1      Class1      9      0.9      10        10      0.9     0.9",
+      "description": ""
+    },
+    {
+      "solver": "MAM",
+      "lang": "java",
+      "code": "import jline.lang.*;\nimport jline.lang.constant.SchedStrategy;\nimport jline.lang.nodes.*;\nimport jline.lang.processes.Exp;\nimport jline.solvers.NetworkAvgTable;\nimport jline.solvers.mam.MAM;\n\npublic class MAMExample {\n    public static void main(String[] args) {\n        // Create a simple M/M/1 queue\n        Network model = new Network(\"M/M/1 Example\");\n\n        Source source = new Source(model, \"Source\");\n        Queue queue = new Queue(model, \"Queue1\", SchedStrategy.FCFS);\n        Sink sink = new Sink(model, \"Sink\");\n\n        OpenClass jobclass = new OpenClass(model, \"Class1\");\n        source.setArrival(jobclass, Exp.fitRate(0.9));\n        queue.setService(jobclass, Exp.fitRate(1.0));\n\n        model.link(Network.serialRouting(source, queue, sink));\n\n        // Solve with MAM (Matrix Analytic Methods)\n        MAM solver = new MAM(model);\n\n        // Display average performance metrics\n        NetworkAvgTable avgTable = solver.avgTable;\n        System.out.println(avgTable);\n    }\n}",
+      "output": "Default method: using dec.source\nMAM analysis [method: default/dec.source, lang: java] completed. Iterations: 4.\n\nStation    JobClass    QLen    Util    RespT    ResidT    ArvR    Tput\nSource     Class1      0.0     0.0     0.0      0.0       0.0     0.9\nQueue1     Class1      9.0     0.9     10.0     10.0      0.9     0.9",
+      "description": ""
+    },
+    {
+      "solver": "MAM",
+      "lang": "python",
+      "code": "from line_solver import *\n\n# Create a simple M/M/1 queue\nmodel = Network('M/M/1 Example')\n\nsource = Source(model, 'Source')\nqueue = Queue(model, 'Queue1', SchedStrategy.FCFS)\nsink = Sink(model, 'Sink')\n\njobclass = OpenClass(model, 'Class1')\nsource.set_arrival(jobclass, Exp(0.9))\nqueue.set_service(jobclass, Exp(1.0))\n\nmodel.link(Network.serial_routing(source, queue, sink))\n\n# Solve with MAM (Matrix Analytic Methods)\nMAM(model).avg_table()",
+      "output": "  Station JobClass  QLen  Util  RespT  ResidT  ArvR  Tput\n0  Source   Class1   0.0   0.0    0.0     0.0   0.0   0.9\n1  Queue1   Class1   9.0   0.9   10.0    10.0   0.9   0.9",
+      "description": ""
+    }
+  ],
+  "MVA": [
+    {
+      "solver": "MVA",
+      "lang": "matlab",
+      "code": "% Create a simple M/M/1 queue\nmodel = Network('M/M/1 Example');\nsource = Source(model, 'Source');\nqueue = Queue(model, 'Queue1', SchedStrategy.FCFS);\nsink = Sink(model, 'Sink');\n\njobclass = OpenClass(model, 'Class1');\nsource.setArrival(jobclass, Exp(0.9));\nqueue.setService(jobclass, Exp(1.0));\n\nmodel.link(Network.serialRouting(source, queue, sink));\n\n% Solve with MVA and display average performance metrics\nMVA(model).avgTable()",
+      "output": "MVA analysis [method: default, lang: matlab] completed in 0.004175s.\n\nans =\n  2×8 table\n    Station    JobClass    QLen    Util    RespT    ResidT    ArvR    Tput\n    _______    ________    ____    ____    _____    ______    ____    ____\n    Source      Class1      0        0       0         0        0     0.9\n    Queue1      Class1      9      0.9      10        10      0.9     0.9",
+      "description": ""
+    },
+    {
+      "solver": "MVA",
+      "lang": "java",
+      "code": "import jline.lang.*;\nimport jline.lang.constant.SchedStrategy;\nimport jline.lang.nodes.*;\nimport jline.lang.processes.Exp;\nimport jline.solvers.NetworkAvgTable;\nimport jline.solvers.mva.MVA;\n\npublic class MVAExample {\n    public static void main(String[] args) {\n        // Create a simple M/M/1 queue\n        Network model = new Network(\"M/M/1 Example\");\n\n        Source source = new Source(model, \"Source\");\n        Queue queue = new Queue(model, \"Queue1\", SchedStrategy.FCFS);\n        Sink sink = new Sink(model, \"Sink\");\n\n        OpenClass jobclass = new OpenClass(model, \"Class1\");\n        source.setArrival(jobclass, Exp.fitRate(0.9));\n        queue.setService(jobclass, Exp.fitRate(1.0));\n\n        model.link(Network.serialRouting(source, queue, sink));\n\n        // Solve with MVA and display average performance metrics\n        System.out.println(new MVA(model).avgTable);\n    }\n}",
+      "output": "MVA analysis [method: default, lang: java] completed.\n\nStation    JobClass    QLen    Util    RespT    ResidT    ArvR    Tput\nSource     Class1      0.0     0.0     0.0      0.0       0.0     0.9\nQueue1     Class1      9.0     0.9     10.0     10.0      0.9     0.9",
+      "description": ""
+    },
+    {
+      "solver": "MVA",
+      "lang": "python",
+      "code": "from line_solver import *\n\n# Create a simple M/M/1 queue\nmodel = Network('M/M/1 Example')\n\nsource = Source(model, 'Source')\nqueue = Queue(model, 'Queue1', SchedStrategy.FCFS)\nsink = Sink(model, 'Sink')\n\njobclass = OpenClass(model, 'Class1')\nsource.set_arrival(jobclass, Exp(0.9))\nqueue.set_service(jobclass, Exp(1.0))\n\nmodel.link(Network.serial_routing(source, queue, sink))\n\n# Solve with MVA and display average performance metrics\nMVA(model).avg_table()",
+      "output": "  Station JobClass  QLen  Util  RespT  ResidT  ArvR  Tput\n0  Source   Class1   0.0   0.0    0.0     0.0   0.0   0.9\n1  Queue1   Class1   9.0   0.9   10.0    10.0   0.9   0.9",
+      "description": ""
+    }
+  ],
+  "NC": [
+    {
+      "solver": "NC",
+      "lang": "matlab",
+      "code": "% Create a closed network with delay and queue\nmodel = Network('NC Example');\ndelay = Delay(model, 'Delay');\nqueue = Queue(model, 'Queue', SchedStrategy.FCFS);\n\n% Closed class with 5 jobs\njobclass = ClosedClass(model, 'Class1', 5, delay);\n\ndelay.setService(jobclass, Exp(1.0));\nqueue.setService(jobclass, Exp(2.0));\n\n% Circular routing\nP = model.initRoutingMatrix();\nP.set(jobclass, jobclass, delay, queue, 1.0);\nP.set(jobclass, jobclass, queue, delay, 1.0);\nmodel.link(P);\n\n% Solve with NC\nsolver = NC(model);\nNC(model).avgTable()",
+      "output": "NC analysis [method: default/comom, lang: matlab] completed in 0.041s.\n\nans =\n  2×8 table\n    Station    JobClass     QLen      Util     RespT     ResidT     ArvR      Tput\n    _______    ________    ______    ______    ______    ______    ______    ______\n     Delay      Class1     1.9266    1.9266         1         1    1.9266    1.9266\n     Queue      Class1     3.0734    0.9633    1.5952    1.5952    1.9266    1.9266",
+      "description": ""
+    },
+    {
+      "solver": "NC",
+      "lang": "java",
+      "code": "import jline.lang.*;\nimport jline.lang.constant.SchedStrategy;\nimport jline.lang.nodes.Delay;\nimport jline.lang.nodes.Queue;\nimport jline.lang.processes.Exp;\nimport jline.solvers.NetworkAvgTable;\nimport jline.solvers.nc.NC;\nimport java.util.List;\n\npublic class NCExample {\n    public static void main(String[] args) {\n        // Create a closed network with delay and queue\n        Network model = new Network(\"NC Example\");\n        Delay delay = new Delay(model, \"Delay\");\n        Queue queue = new Queue(model, \"Queue\", SchedStrategy.FCFS);\n\n        // Closed class with 5 jobs\n        ClosedClass jobclass = new ClosedClass(model, \"Class1\", 5, delay);\n\n        delay.setService(jobclass, Exp.fitRate(1.0));\n        queue.setService(jobclass, Exp.fitRate(2.0));\n\n        // Circular routing\n        RoutingMatrix P = new RoutingMatrix(model,\n            List.of(jobclass), List.of(delay, queue));\n        P.addConnection(jobclass, jobclass, delay, queue, 1.0);\n        P.addConnection(jobclass, jobclass, queue, delay, 1.0);\n        model.link(P);\n\n        // Solve with NC\n        NC solver = new NC(model);\n        NetworkAvgTable avgTable = solver.avgTable;\n        System.out.println(avgTable);\n    }\n}",
+      "output": "NC analysis [method: default/comom, lang: java] completed.\n\nStation    JobClass     QLen      Util     RespT     ResidT     ArvR      Tput\nDelay      Class1       1.9266    1.9266   1.0       1.0        1.9266    1.9266\nQueue      Class1       3.0734    0.9633   1.5952    1.5952     1.9266    1.9266",
+      "description": ""
+    },
+    {
+      "solver": "NC",
+      "lang": "python",
+      "code": "from line_solver import *\n\n# Create a closed network with delay and queue\nmodel = Network('NC Example')\ndelay = Delay(model, 'Delay')\nqueue = Queue(model, 'Queue', SchedStrategy.FCFS)\n\n# Closed class with 5 jobs\njobclass = ClosedClass(model, 'Class1', 5, delay)\n\ndelay.set_service(jobclass, Exp(1.0))\nqueue.set_service(jobclass, Exp(2.0))\n\n# Circular routing\nP = model.init_routing_matrix()\nP.set(jobclass, jobclass, delay, queue, 1.0)\nP.set(jobclass, jobclass, queue, delay, 1.0)\nmodel.link(P)\n\n# Solve with NC\nNC(model).avg_table()",
+      "output": "  Station JobClass    QLen    Util   RespT  ResidT    ArvR    Tput\n0   Delay   Class1  1.9266  1.9266  1.0000  1.0000  1.9266  1.9266\n1   Queue   Class1  3.0734  0.9633  1.5952  1.5952  1.9266  1.9266",
+      "description": ""
+    }
+  ],
+  "SSA": [
+    {
+      "solver": "SSA",
+      "lang": "matlab",
+      "code": "% Create a simple M/M/1 queue\nmodel = Network('M/M/1 Example');\nsource = Source(model, 'Source');\nqueue = Queue(model, 'Queue1', SchedStrategy.FCFS);\nsink = Sink(model, 'Sink');\n\njobclass = OpenClass(model, 'Class1');\nsource.setArrival(jobclass, Exp(0.9));\nqueue.setService(jobclass, Exp(1.0));\n\nmodel.link(Network.serialRouting(source, queue, sink));\n\n% Solve with SSA (Stochastic Simulation Algorithm)\nsolver = SSA(model);\n\n% Display average performance metrics\nSSA(model).avgTable()",
+      "output": "Default method: using serial SSA\n\nSSA samples:    100\n   200\n   ...\n  9900\n 10000\nSSA analysis [method: default/serial, lang: matlab] completed in 2.376s.\n\nans =\n  2×8 table\n    Station    JobClass     QLen     Util    RespT     ResidT    ArvR     Tput\n    _______    ________    ______    ____    ______    ______    ____    _______\n    Source      Class1          0      0          0         0      0         0.9\n    Queue1      Class1     7.8089    0.9     8.5969    8.5969    0.9     0.90834",
+      "description": ""
+    },
+    {
+      "solver": "SSA",
+      "lang": "java",
+      "code": "import jline.lang.*;\nimport jline.lang.constant.SchedStrategy;\nimport jline.lang.nodes.*;\nimport jline.lang.processes.Exp;\nimport jline.solvers.NetworkAvgTable;\nimport jline.solvers.ssa.SSA;\n\npublic class SSAExample {\n    public static void main(String[] args) {\n        // Create a simple M/M/1 queue\n        Network model = new Network(\"M/M/1 Example\");\n\n        Source source = new Source(model, \"Source\");\n        Queue queue = new Queue(model, \"Queue1\", SchedStrategy.FCFS);\n        Sink sink = new Sink(model, \"Sink\");\n\n        OpenClass jobclass = new OpenClass(model, \"Class1\");\n        source.setArrival(jobclass, Exp.fitRate(0.9));\n        queue.setService(jobclass, Exp.fitRate(1.0));\n\n        model.link(Network.serialRouting(source, queue, sink));\n\n        // Solve with SSA (Stochastic Simulation Algorithm)\n        SSA solver = new SSA(model);\n\n        // Display average performance metrics\n        NetworkAvgTable avgTable = solver.getAvgTable();\n        System.out.println(avgTable);\n    }\n}",
+      "output": "Default method: using serial SSA\nSSA samples: 10000\nSSA analysis [method: default/serial, lang: java] completed.\n\nStation    JobClass     QLen     Util    RespT     ResidT    ArvR     Tput\nSource     Class1       0.0      0.0     0.0       0.0       0.0      0.9\nQueue1     Class1       7.8089   0.9     8.5969    8.5969    0.9      0.90834",
+      "description": ""
+    },
+    {
+      "solver": "SSA",
+      "lang": "python",
+      "code": "from line_solver import *\n\n# Create a simple M/M/1 queue\nmodel = Network('M/M/1 Example')\n\nsource = Source(model, 'Source')\nqueue = Queue(model, 'Queue1', SchedStrategy.FCFS)\nsink = Sink(model, 'Sink')\n\njobclass = OpenClass(model, 'Class1')\nsource.set_arrival(jobclass, Exp(0.9))\nqueue.set_service(jobclass, Exp(1.0))\n\nmodel.link(Network.serial_routing(source, queue, sink))\n\n# Solve with SSA (Stochastic Simulation Algorithm)\nSSA(model, seed=23000).avg_table()",
+      "output": "  Station JobClass    QLen  Util   RespT  ResidT  ArvR    Tput\n0  Source   Class1  0.0000   0.0  0.0000  0.0000   0.0  0.9000\n1  Queue1   Class1  9.0000   0.9  10.000  10.000   0.9  0.9000",
+      "description": ""
+    }
+  ]
+}

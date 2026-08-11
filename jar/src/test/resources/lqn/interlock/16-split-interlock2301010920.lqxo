@@ -1,0 +1,64 @@
+<?xml version="1.0"?>
+<!-- $Id$ -->
+<!-- lqns -->
+<lqn-model name="16-split-interlock2301010920" description="lqns 6.2.28 solution for model from: 16-split-interlock2301010920.lqnx." xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="/usr/local/share/lqns/lqn.xsd">
+   <solver-params comment=" " conv_val="1e-06" it_limit="50" underrelax_coeff="0.9" print_int="1">
+      <result-general solver-info="lqns 6.2.28" valid="true" conv-val="0" iterations="2" platform-info="emerald01 Linux 6.17.0-14-generic" user-cpu-time=" 0:00:00.000" system-cpu-time=" 0:00:00.000" elapsed-time=" 0:00:00.000" max-rss="6824">
+         <mva-info submodels="2" core="4" step="34" step-squared="330" wait="4279" wait-squared="8.70696e+06" faults="0"/>
+      </result-general>
+   </solver-params>
+   <processor name="server" scheduling="fcfs">
+      <result-processor utilization="1.04552"/>
+      <task name="s0" scheduling="fcfs">
+         <result-task throughput="0.190094" utilization="0.475234" phase1-utilization="0.190094" phase2-utilization="0.285141" proc-utilization="0.475234"/>
+         <entry name="s0" type="PH1PH2">
+            <result-entry utilization="0.475234" throughput="0.190094" proc-utilization="0.475234" squared-coeff-variation="0.52" throughput-bound="0.4"/>
+            <entry-phase-activities>
+               <activity name="s0_ph1" phase="1" host-demand-mean="1" think-time="0">
+                  <result-activity proc-waiting="0" service-time="1" utilization="0.190094" service-time-variance="1"/>
+               </activity>
+               <activity name="s0_ph2" phase="2" host-demand-mean="1.5" think-time="0">
+                  <result-activity proc-waiting="0" service-time="1.5" utilization="0.285141" service-time-variance="2.25"/>
+               </activity>
+            </entry-phase-activities>
+         </entry>
+      </task>
+      <task name="s1" scheduling="fcfs">
+         <result-task throughput="0.190094" utilization="0.570281" phase1-utilization="0.570281" proc-utilization="0.570281"/>
+         <entry name="s1" type="PH1PH2">
+            <result-entry utilization="0.570281" throughput="0.190094" proc-utilization="0.570281" squared-coeff-variation="1" throughput-bound="0.333333"/>
+            <entry-phase-activities>
+               <activity name="s1_ph1" phase="1" host-demand-mean="3" think-time="0">
+                  <result-activity proc-waiting="0" service-time="3" utilization="0.570281" service-time-variance="9"/>
+               </activity>
+            </entry-phase-activities>
+         </entry>
+      </task>
+   </processor>
+   <processor name="client" scheduling="fcfs">
+      <result-processor utilization="0.0950469"/>
+      <task name="c0" scheduling="ref">
+         <result-task throughput="0.0950469" utilization="1" phase1-utilization="0.731593" phase2-utilization="0.268407" proc-utilization="0.0950469"/>
+         <entry name="c0" type="PH1PH2">
+            <result-entry utilization="1" throughput="0.0950469" proc-utilization="0.0950469" squared-coeff-variation="0.833172" throughput-bound="0.111111"/>
+            <entry-phase-activities>
+               <activity name="c0_ph1" phase="1" host-demand-mean="0" think-time="0">
+                  <result-activity proc-waiting="0" service-time="7.69718" utilization="0.731593" service-time-variance="79.2469"/>
+                  <synch-call dest="s0" calls-mean="1">
+                     <result-call waiting="0.697183"/>
+                  </synch-call>
+                  <synch-call dest="s1" calls-mean="2">
+                     <result-call waiting="0"/>
+                  </synch-call>
+               </activity>
+               <activity name="c0_ph2" phase="2" host-demand-mean="1" think-time="0">
+                  <result-activity proc-waiting="0" service-time="2.82394" utilization="0.268407" service-time-variance="12.9803"/>
+                  <synch-call dest="s0" calls-mean="1">
+                     <result-call waiting="0.823944"/>
+                  </synch-call>
+               </activity>
+            </entry-phase-activities>
+         </entry>
+      </task>
+   </processor>
+</lqn-model>

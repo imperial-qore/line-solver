@@ -1,0 +1,264 @@
+/*
+ * Copyright (c) 2012-2026, QORE Lab, Imperial College London
+ * All rights reserved.
+ */
+
+package jline.lang.processes;
+
+import static jline.GlobalConstants.Inf;
+
+import jline.util.Pair;
+import jline.util.RandomManager;
+import jline.util.matrix.Matrix;
+import jline.util.matrix.MatrixCell;
+import org.apache.commons.math3.analysis.UnivariateFunction;
+import org.apache.commons.math3.analysis.integration.IterativeLegendreGaussIntegrator;
+import org.apache.commons.math3.util.FastMath;
+
+import java.io.Serializable;
+import java.util.Random;
+
+import static jline.io.InputOutput.line_error;
+import static jline.io.InputOutput.mfilename;
+
+/**
+ * A Pareto distribution
+ */
+public class Pareto extends ContinuousDistribution implements Serializable {
+
+    public Pareto(double shape, double scale) {
+        super("Pareto", 2, new Pair<Double, Double>(0.0, Inf));
+        if (shape < 2) {
+            line_error(mfilename(new Object() {
+            }), "shape parameter must be >= 2.0");
+        }
+        this.setParam(1, "alpha", shape);
+        this.setParam(2, "k", scale);
+    }
+
+    public static Pareto fitMeanAndSCV(double mean, double scv) {
+        // see _kb/01-model-classes.md (Java process-construction notes) for rationale
+        if (mean <= 0 || scv <= 0) {
+            line_error(mfilename(new Object() {
+            }), "Mean and SCV of the Pareto distribution must be positive.");
+        }
+        double shape = 1 + FastMath.sqrt(1 + 1.0 / scv);
+        double scale = mean * (shape - 1) / shape;
+        return new Pareto(shape, scale);
+    }
+
+    public static double gpcdf(double x, double k, double sigma, double theta) {
+        // Check for invalid sigma
+        if (sigma <= 0) {
+            return Double.NaN;
+        }
+
+        // Calculate the (x - theta) / sigma term
+        double z = (x - theta) / sigma;
+
+        // Return 0 for out-of-range values
+        if (z < 0) {
+            return 0.0;
+        }
+
+        // Handle the k == 0 case
+        if (Math.abs(k) < FastMath.ulp(1.0)) {
+            return -Math.expm1(-z);
+        }
+
+        // Compute the CDF value for k != 0
+        double t = z * k;
+
+        // When k < 0, the support is 0 <= x/sigma <= -1/k.
+        if (t <= -1 && k < -Math.ulp(1.0)) {
+            return 1.0;
+        }
+
+        return -Math.expm1((-1.0 / k) * FastMath.log1p(t));
+    }
+
+    @Override
+    public double evalCDF(double t) {
+        double shape = (double) this.getParam(1).getValue();
+        double scale = (double) this.getParam(2).getValue();
+        double k = 1 / shape;
+        double sigma = scale * k;
+        return gpcdf(t, k, sigma, sigma / k);
+    }
+
+    /**
+     * Evaluates the probability density function (PDF) at the given point.
+     * Pareto PDF: α*k^α / x^(α+1) for x >= k
+     *
+     * @param t the point at which to evaluate the PDF
+     * @return the PDF value at point t
+     */
+    public double evalPDF(double t) {
+        double alpha = (double) this.getParam(1).getValue(); // shape parameter
+        double k = (double) this.getParam(2).getValue(); // scale parameter (minimum value)
+        if (t < k) {
+            return 0.0;
+        }
+        return alpha * FastMath.pow(k, alpha) / FastMath.pow(t, alpha + 1);
+    }
+
+    @Override
+    public double evalLST(double s) {
+        // see _kb/01-model-classes.md (Java process-construction notes) for rationale
+
+        final double alpha = (double) this.getParam(1).getValue(); // shape parameter
+        final double k = (double) this.getParam(2).getValue(); // scale parameter
+
+        if (s == 0.0) {
+            return 1.0; // A*(0) = 1 exactly; skip the quadrature
+        }
+
+        final double sFinal = s;
+        UnivariateFunction integrand = new UnivariateFunction() {
+            @Override
+            public double value(double u) {
+                // u=0 is an essential zero of the integrand (exp(-s*k/u) and all its
+                // derivatives vanish there), so the guard only avoids 0/0.
+                if (u <= 0.0) {
+                    return 0.0;
+                }
+                return FastMath.pow(u, alpha - 1.0) * FastMath.exp(-sFinal * k / u);
+            }
+        };
+        // see _kb/01-model-classes.md (Java process-construction notes) for rationale
+        IterativeLegendreGaussIntegrator integrator =
+                new IterativeLegendreGaussIntegrator(64, 1e-13, 1e-300, 3, 128);
+        return alpha * integrator.integrate(1000000, integrand, 0.0, 1.0);
+    }
+
+    @Override
+    public double getMean() {
+        double shape = (double) this.getParam(1).getValue();
+        double scale = (double) this.getParam(2).getValue();
+
+        if (shape <= 1) {
+            return Inf;
+        } else {
+            return shape * scale / (shape - 1);
+        }
+    }
+
+    @Override
+    public double getRate() {
+        return 1.0 / getMean();
+    }
+
+    @Override
+    public double getSCV() {
+        double shape = (double) this.getParam(1).getValue();
+        if (shape <= 2) {
+            return Inf;
+        } else {
+            double scale = (double) this.getParam(2).getValue();
+            double var = FastMath.pow(scale, 2) * shape / FastMath.pow(shape - 1, 2) / (shape - 2);
+            double ex = shape * scale / (shape - 1);
+            return var / FastMath.pow(ex, 2);
+        }
+    }
+
+    @Override
+    public double getSkewness() {
+        double shape = (double) this.getParam(1).getValue();
+        if (shape <= 3) {
+            return Inf;
+        } else {
+            return 2 * (1 + shape) / (shape - 3) * FastMath.sqrt((shape - 2) / shape);
+        }
+    }
+
+    @Override
+    public double getVar() {
+        double shape = (double) this.getParam(1).getValue();
+        double scale = (double) this.getParam(2).getValue();
+
+        if (shape <= 2) {
+            return Inf;
+        } else {
+            return (scale * scale * shape) / ((shape - 1) * (shape - 1) * (shape - 2));
+        }
+    }
+
+    @Override
+    public double[] sample(int n, Random random) {
+        double[] samples = new double[(int) n];
+        double shape = (double) this.getParam(1).getValue();
+        double scale = (double) this.getParam(2).getValue();
+
+        for (int i = 0; i < n; i++) {
+            double u = random.nextDouble();
+            double sample = scale / FastMath.pow(u, 1.0 / shape);
+            samples[i] = sample;
+        }
+
+        return samples;
+    }
+
+    /**
+     * Gets n samples from the distribution
+     *
+     * @param n - the number of samples
+     * @return - n samples from the distribution
+     */
+    @Override
+    public double[] sample(int n) {
+        return this.sample(n, RandomManager.getThreadRandomAsRandom());
+    }
+
+    public MatrixCell getProcess() {
+        // Returns {shape (alpha), scale (k)} for Pareto distribution
+        MatrixCell representation = new MatrixCell();
+        representation.set(0, Matrix.singleton((Double) this.getParam(1).getValue()));  // shape (alpha)
+        representation.set(1, Matrix.singleton((Double) this.getParam(2).getValue()));  // scale (k)
+        return representation;
+    }
+
+    // =================== KOTLIN-STYLE PROPERTY ALIASES ===================
+    
+    /**
+     * Kotlin-style property alias for getMean()
+     */
+    public double mean() {
+        return getMean();
+    }
+    
+    /**
+     * Kotlin-style property alias for getRate()
+     */
+    public double rate() {
+        return getRate();
+    }
+    
+    /**
+     * Kotlin-style property alias for getSCV()
+     */
+    public double scv() {
+        return getSCV();
+    }
+    
+    /**
+     * Kotlin-style property alias for getSkewness()
+     */
+    public double skewness() {
+        return getSkewness();
+    }
+    
+    /**
+     * Kotlin-style property alias for getVar()
+     */
+    public double var() {
+        return getVar();
+    }
+    
+    /**
+     * Kotlin-style property alias for getProcess()
+     */
+    public MatrixCell process() {
+        return getProcess();
+    }
+}
+

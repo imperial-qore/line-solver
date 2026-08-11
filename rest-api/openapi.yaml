@@ -1,0 +1,1010 @@
+openapi: 3.0.3
+info:
+  title: LINE Solver REST API
+  description: |
+    REST API for LINE - an open source queueing network solver.
+
+    LINE supports Mean Value Analysis (MVA), Java Modelling Tools (JMT),
+    Stochastic State-space Analysis (SSA), and other solver algorithms.
+  version: 1.0.0
+  contact:
+    name: QORE Lab
+    url: https://www.imperial.ac.uk/qore-lab
+  license:
+    name: BSD-3-Clause
+    url: https://opensource.org/licenses/BSD-3-Clause
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+  - url: https://line-solver.example.com/api/v1
+    description: Production server
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: Health
+    description: Health check and server info endpoints
+  - name: Solvers
+    description: Solver listing and capabilities
+  - name: Models
+    description: Model solving, validation, and conversion
+  - name: Jobs
+    description: Asynchronous job management
+  - name: Analysis
+    description: What-if, sensitivity, and bottleneck analysis
+  - name: SRE
+    description: SRE/DevOps integration (metrics, calibration, traces)
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Returns server health status for Kubernetes liveness probes.
+      security: []
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /ready:
+    get:
+      tags:
+        - Health
+      summary: Readiness check
+      description: Returns server readiness status for Kubernetes readiness probes.
+      security: []
+      responses:
+        '200':
+          description: Server is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyResponse'
+
+  /info:
+    get:
+      tags:
+        - Health
+      summary: Server information
+      description: Returns LINE version and server capabilities.
+      responses:
+        '200':
+          description: Server information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InfoResponse'
+
+  /solvers:
+    get:
+      tags:
+        - Solvers
+      summary: List available solvers
+      description: Returns list of available solver algorithms and their capabilities.
+      responses:
+        '200':
+          description: List of solvers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolversResponse'
+
+  /models/solve:
+    post:
+      tags:
+        - Models
+      summary: Solve a model (synchronous)
+      description: |
+        Solves a queueing network model synchronously.
+        For long-running jobs, use the async endpoint instead.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SolveRequest'
+      responses:
+        '200':
+          description: Model solved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolveResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Solver error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /models/solve/async:
+    post:
+      tags:
+        - Models
+      summary: Solve a model (asynchronous)
+      description: |
+        Submits a model for asynchronous solving.
+        Returns a job ID to track progress.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SolveRequest'
+      responses:
+        '202':
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobCreatedResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /models/validate:
+    post:
+      tags:
+        - Models
+      summary: Validate a model
+      description: Validates model syntax and structure without solving.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateRequest'
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidateResponse'
+
+  /models/convert:
+    post:
+      tags:
+        - Models
+      summary: Convert model format
+      description: Converts a model between supported formats (JSIMG, LQNX, JSON).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConvertRequest'
+      responses:
+        '200':
+          description: Converted model
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConvertResponse'
+
+  /models/calibrate:
+    post:
+      tags:
+        - SRE
+      summary: Calibrate model from metrics
+      description: |
+        Calibrates model parameters from observed metrics.
+        Uses optimization to fit service rates and arrival rates.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalibrationRequest'
+      responses:
+        '200':
+          description: Calibration result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalibrationResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /jobs:
+    get:
+      tags:
+        - Jobs
+      summary: List all jobs
+      description: Returns list of all pending and completed jobs.
+      responses:
+        '200':
+          description: List of jobs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListResponse'
+
+  /jobs/{jobId}:
+    get:
+      tags:
+        - Jobs
+      summary: Get job status
+      description: Returns the status and result of a specific job.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Jobs
+      summary: Cancel a job
+      description: Cancels a running job.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Job cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobCancelResponse'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /jobs/{jobId}/stream:
+    get:
+      tags:
+        - Jobs
+      summary: Stream job progress
+      description: |
+        Streams job progress updates using Server-Sent Events (SSE).
+        Events include: progress, completed, failed.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '404':
+          description: Job not found
+
+  /analysis/whatif:
+    post:
+      tags:
+        - Analysis
+      summary: What-if parameter sweep
+      description: |
+        Performs what-if analysis by sweeping parameters and collecting metrics.
+        Supports multiple parameters with values or ranges.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WhatIfRequest'
+      responses:
+        '200':
+          description: What-if results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WhatIfResponse'
+
+  /analysis/sensitivity:
+    post:
+      tags:
+        - Analysis
+      summary: Sensitivity analysis
+      description: |
+        Computes sensitivity of metrics to parameter changes.
+        Uses numerical differentiation to estimate derivatives.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SensitivityRequest'
+      responses:
+        '200':
+          description: Sensitivity results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SensitivityResponse'
+
+  /analysis/bottleneck:
+    post:
+      tags:
+        - Analysis
+      summary: Bottleneck detection
+      description: |
+        Detects bottleneck stations based on utilization thresholds.
+        Returns severity levels: critical (≥95%), high (90-95%), moderate (85-90%).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BottleneckRequest'
+      responses:
+        '200':
+          description: Bottleneck analysis results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BottleneckResponse'
+
+  /metrics:
+    get:
+      tags:
+        - SRE
+      summary: Prometheus metrics
+      description: Returns server metrics in Prometheus text format.
+      security: []
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: |
+                  # HELP line_requests_total Total number of requests
+                  # TYPE line_requests_total counter
+                  line_requests_total 42
+
+  /metrics/json:
+    get:
+      tags:
+        - SRE
+      summary: JSON metrics
+      description: Returns server metrics in JSON format.
+      security: []
+      responses:
+        '200':
+          description: JSON metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsResponse'
+
+  /traces/import:
+    post:
+      tags:
+        - SRE
+      summary: Import traces to model
+      description: |
+        Imports distributed traces and generates a queueing network model.
+        Supports OpenTelemetry, Jaeger, and Zipkin formats.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TraceImportRequest'
+      responses:
+        '200':
+          description: Generated model
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TraceImportResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Optional API key for authentication
+
+  parameters:
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      description: Job identifier
+      schema:
+        type: string
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "ok"
+        timestamp:
+          type: string
+          format: date-time
+
+    ReadyResponse:
+      type: object
+      properties:
+        ready:
+          type: boolean
+          example: true
+        checks:
+          type: object
+          additionalProperties:
+            type: boolean
+
+    InfoResponse:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "LINE Solver"
+        version:
+          type: string
+          example: "2.0.28"
+        javaVersion:
+          type: string
+          example: "1.8.0_392"
+        solvers:
+          type: array
+          items:
+            type: string
+
+    SolversResponse:
+      type: object
+      properties:
+        solvers:
+          type: array
+          items:
+            $ref: '#/components/schemas/SolverInfo'
+
+    SolverInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "mva"
+        description:
+          type: string
+        supports:
+          type: array
+          items:
+            type: string
+
+    ModelInput:
+      type: object
+      required:
+        - format
+        - content
+      properties:
+        format:
+          type: string
+          enum: [jsimg, lqnx, json]
+          description: Model format
+        content:
+          type: string
+          description: Model content (base64 encoded for XML formats)
+
+    SolverOptions:
+      type: object
+      properties:
+        seed:
+          type: integer
+          description: Random seed for simulation
+        verbose:
+          type: boolean
+          default: false
+        maxIterations:
+          type: integer
+          default: 1000
+        tolerance:
+          type: number
+          default: 0.0001
+
+    SolveRequest:
+      type: object
+      required:
+        - model
+        - solver
+      properties:
+        model:
+          $ref: '#/components/schemas/ModelInput'
+        solver:
+          type: string
+          enum: [mva, jmt, ssa, ctmc, fluid, mam, nc, auto]
+        analysis:
+          type: string
+          enum: [avg, sys, all]
+          default: all
+        options:
+          $ref: '#/components/schemas/SolverOptions'
+
+    SolveResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [completed, failed]
+        solver:
+          type: string
+        runtime:
+          type: number
+          description: Solve time in seconds
+        results:
+          $ref: '#/components/schemas/ResultTables'
+        error:
+          type: string
+
+    ResultTables:
+      type: object
+      properties:
+        avgTable:
+          $ref: '#/components/schemas/AvgTable'
+
+    AvgTable:
+      type: object
+      properties:
+        stations:
+          type: array
+          items:
+            type: string
+        classes:
+          type: array
+          items:
+            type: string
+        metrics:
+          type: object
+          properties:
+            QLen:
+              type: array
+              items:
+                type: array
+                items:
+                  type: number
+            Util:
+              type: array
+              items:
+                type: array
+                items:
+                  type: number
+            RespT:
+              type: array
+              items:
+                type: array
+                items:
+                  type: number
+            Tput:
+              type: array
+              items:
+                type: array
+                items:
+                  type: number
+
+    ValidateRequest:
+      type: object
+      required:
+        - model
+      properties:
+        model:
+          $ref: '#/components/schemas/ModelInput'
+
+    ValidateResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+
+    ConvertRequest:
+      type: object
+      required:
+        - model
+        - targetFormat
+      properties:
+        model:
+          $ref: '#/components/schemas/ModelInput'
+        targetFormat:
+          type: string
+          enum: [jsimg, lqnx, json]
+
+    ConvertResponse:
+      type: object
+      properties:
+        format:
+          type: string
+        content:
+          type: string
+
+    JobCreatedResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          example: "pending"
+        streamUrl:
+          type: string
+
+    JobListResponse:
+      type: object
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobSummary'
+
+    JobSummary:
+      type: object
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, completed, failed, cancelled]
+        createdAt:
+          type: string
+          format: date-time
+        progress:
+          type: number
+          minimum: 0
+          maximum: 100
+
+    JobResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+        progress:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        result:
+          $ref: '#/components/schemas/SolveResponse'
+
+    JobCancelResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          example: "cancelled"
+
+    WhatIfRequest:
+      type: object
+      required:
+        - model
+        - solver
+        - parameters
+      properties:
+        model:
+          $ref: '#/components/schemas/ModelInput'
+        solver:
+          type: string
+        parameters:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParameterSweep'
+        metrics:
+          type: array
+          items:
+            type: string
+          default: [QLen, Util, RespT, Tput]
+
+    ParameterSweep:
+      type: object
+      required:
+        - path
+      properties:
+        path:
+          type: string
+          description: Parameter path (e.g., "stations.Queue1.servers")
+        values:
+          type: array
+          items:
+            type: number
+          description: Explicit values to sweep
+        min:
+          type: number
+          description: Minimum value for range
+        max:
+          type: number
+          description: Maximum value for range
+        steps:
+          type: integer
+          description: Number of steps in range
+
+    WhatIfResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        parameters:
+          type: array
+          items:
+            type: string
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/WhatIfResult'
+
+    WhatIfResult:
+      type: object
+      properties:
+        parameterValues:
+          type: object
+          additionalProperties:
+            type: number
+        metrics:
+          type: object
+          additionalProperties:
+            type: object
+
+    SensitivityRequest:
+      type: object
+      required:
+        - model
+        - solver
+        - parameter
+      properties:
+        model:
+          $ref: '#/components/schemas/ModelInput'
+        solver:
+          type: string
+        parameter:
+          type: string
+        delta:
+          type: number
+          default: 0.01
+        metrics:
+          type: array
+          items:
+            type: string
+
+    SensitivityResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        parameter:
+          type: string
+        baseValue:
+          type: number
+        derivatives:
+          type: object
+          additionalProperties:
+            type: object
+
+    BottleneckRequest:
+      type: object
+      required:
+        - model
+        - solver
+      properties:
+        model:
+          $ref: '#/components/schemas/ModelInput'
+        solver:
+          type: string
+        threshold:
+          type: number
+          default: 0.8
+          description: Utilization threshold for bottleneck detection
+
+    BottleneckResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        bottlenecks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Bottleneck'
+        recommendation:
+          type: string
+
+    Bottleneck:
+      type: object
+      properties:
+        station:
+          type: string
+        utilization:
+          type: number
+        severity:
+          type: string
+          enum: [critical, high, moderate]
+
+    CalibrationRequest:
+      type: object
+      required:
+        - observations
+      properties:
+        solver:
+          type: string
+          default: mva
+        observations:
+          type: array
+          items:
+            $ref: '#/components/schemas/ObservedMetrics'
+        options:
+          $ref: '#/components/schemas/CalibrationOptions'
+
+    ObservedMetrics:
+      type: object
+      required:
+        - station
+      properties:
+        station:
+          type: string
+        className:
+          type: string
+        throughput:
+          type: number
+        utilization:
+          type: number
+        responseTime:
+          type: number
+        queueLength:
+          type: number
+
+    CalibrationOptions:
+      type: object
+      properties:
+        maxIterations:
+          type: integer
+          default: 100
+        tolerance:
+          type: number
+          default: 0.0001
+
+    CalibrationResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        parameters:
+          type: array
+          items:
+            $ref: '#/components/schemas/CalibratedParameter'
+
+    CalibratedParameter:
+      type: object
+      properties:
+        name:
+          type: string
+        fittedValue:
+          type: number
+        confidence:
+          type: number
+
+    TraceImportRequest:
+      type: object
+      required:
+        - format
+        - traces
+      properties:
+        format:
+          type: string
+          enum: [opentelemetry, jaeger, zipkin]
+        traces:
+          type: array
+          items:
+            type: object
+        outputFormat:
+          type: string
+          enum: [jsimg, lqnx]
+          default: jsimg
+
+    TraceImportResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        model:
+          type: object
+          properties:
+            format:
+              type: string
+            content:
+              type: string
+        statistics:
+          type: object
+          properties:
+            spanCount:
+              type: integer
+            serviceCount:
+              type: integer
+            operationCount:
+              type: integer
+
+    MetricsResponse:
+      type: object
+      properties:
+        requests:
+          type: object
+          properties:
+            total:
+              type: integer
+            successful:
+              type: integer
+            failed:
+              type: integer
+        jobs:
+          type: object
+          properties:
+            pending:
+              type: integer
+            running:
+              type: integer
+            completed:
+              type: integer
+        jvm:
+          type: object
+          properties:
+            heapUsedBytes:
+              type: integer
+            heapMaxBytes:
+              type: integer
+            threads:
+              type: integer
+        uptime:
+          type: number
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        details:
+          type: object

@@ -1,0 +1,3190 @@
+{
+    "name": "montage-0",
+    "description": "Trace generated with wrench-pegasus-parser.py from http://wrench-project.org",
+    "createdAt": "2020-04-03T19:59:42.124208Z",
+    "schemaVersion": "1.4",
+    "wms": {
+        "url": "http://pegasus.isi.edu",
+        "version": "4.9.3",
+        "name": "Pegasus"
+    },
+    "author": {
+        "name": "rafsilva",
+        "email": "support@wrench-project.org"
+    },
+    "workflow": {
+        "machines": [
+            {
+                "nodeName": "pegasus-5",
+                "system": "linux",
+                "architecture": "x86_64",
+                "release": "4.15.0-88-generic",
+                "cpu": {
+                    "count": 48,
+                    "vendor": "GenuineIntel",
+                    "speed": 1299
+                },
+                "memoryInBytes": 131795984000
+            }
+        ],
+        "executedAt": "20200403T232446+0000",
+        "tasks": [
+            {
+                "name": "mProject_ID0000001",
+                "type": "compute",
+                "parents": [],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "poss2ukstu_blue_001_001.fits",
+                        "sizeInBytes": 9655399
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_blue_001_001.fits",
+                        "sizeInBytes": 53193600
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_blue_001_001_area.fits",
+                        "sizeInBytes": 53193600
+                    }
+                ],
+                "avgCPU": 97.1885,
+                "machine": "pegasus-5",
+                "priority": 20,
+                "id": "ID0000001",
+                "category": "mProject",
+                "command": {
+                    "program": "mProject",
+                    "arguments": [
+                        "-X",
+                        "poss2ukstu_blue_001_001.fits",
+                        "pposs2ukstu_blue_001_001.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 534.058
+            },
+            {
+                "name": "mProject_ID0000002",
+                "type": "compute",
+                "parents": [],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "poss2ukstu_blue_001_002.fits",
+                        "sizeInBytes": 8587351
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_blue_001_002.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_blue_001_002_area.fits",
+                        "sizeInBytes": 53173440
+                    }
+                ],
+                "avgCPU": 97.4668,
+                "machine": "pegasus-5",
+                "priority": 20,
+                "id": "ID0000002",
+                "category": "mProject",
+                "command": {
+                    "program": "mProject",
+                    "arguments": [
+                        "-X",
+                        "poss2ukstu_blue_001_002.fits",
+                        "pposs2ukstu_blue_001_002.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 543.888
+            },
+            {
+                "name": "mProject_ID0000003",
+                "type": "compute",
+                "parents": [],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "poss2ukstu_blue_002_001.fits",
+                        "sizeInBytes": 8814261
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_blue_002_001_area.fits",
+                        "sizeInBytes": 53153280
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_blue_002_001.fits",
+                        "sizeInBytes": 53153280
+                    }
+                ],
+                "avgCPU": 97.0551,
+                "machine": "pegasus-5",
+                "priority": 20,
+                "id": "ID0000003",
+                "category": "mProject",
+                "command": {
+                    "program": "mProject",
+                    "arguments": [
+                        "-X",
+                        "poss2ukstu_blue_002_001.fits",
+                        "pposs2ukstu_blue_002_001.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 543.136
+            },
+            {
+                "name": "mProject_ID0000004",
+                "type": "compute",
+                "parents": [],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "poss2ukstu_blue_002_002.fits",
+                        "sizeInBytes": 8238778
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_blue_002_002_area.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_blue_002_002.fits",
+                        "sizeInBytes": 53173440
+                    }
+                ],
+                "avgCPU": 97.1054,
+                "machine": "pegasus-5",
+                "priority": 20,
+                "id": "ID0000004",
+                "category": "mProject",
+                "command": {
+                    "program": "mProject",
+                    "arguments": [
+                        "-X",
+                        "poss2ukstu_blue_002_002.fits",
+                        "pposs2ukstu_blue_002_002.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 546.161
+            },
+            {
+                "name": "mDiffFit_ID0000005",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000001",
+                    "mProject_ID0000002"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_001.fits",
+                        "sizeInBytes": 53193600
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_001_area.fits",
+                        "sizeInBytes": 53193600
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_002.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_002_area.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "1-fit.000001.000002.txt",
+                        "sizeInBytes": 286
+                    }
+                ],
+                "avgCPU": 0.1156,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000005",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "1-fit.000001.000002.txt",
+                        "pposs2ukstu_blue_001_001.fits",
+                        "pposs2ukstu_blue_001_002.fits",
+                        "1-diff.000001.000002.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 3.46
+            },
+            {
+                "name": "mDiffFit_ID0000006",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000001",
+                    "mProject_ID0000003"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_001_area.fits",
+                        "sizeInBytes": 53153280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_001.fits",
+                        "sizeInBytes": 53193600
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_001.fits",
+                        "sizeInBytes": 53153280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_001_area.fits",
+                        "sizeInBytes": 53193600
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "1-fit.000001.000003.txt",
+                        "sizeInBytes": 291
+                    }
+                ],
+                "avgCPU": 0.117,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000006",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "1-fit.000001.000003.txt",
+                        "pposs2ukstu_blue_001_001.fits",
+                        "pposs2ukstu_blue_002_001.fits",
+                        "1-diff.000001.000003.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 4.275
+            },
+            {
+                "name": "mDiffFit_ID0000007",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000001",
+                    "mProject_ID0000004"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_001.fits",
+                        "sizeInBytes": 53193600
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_001_area.fits",
+                        "sizeInBytes": 53193600
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_002_area.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_002.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "1-fit.000001.000004.txt",
+                        "sizeInBytes": 285
+                    }
+                ],
+                "avgCPU": 0.3511,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000007",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "1-fit.000001.000004.txt",
+                        "pposs2ukstu_blue_001_001.fits",
+                        "pposs2ukstu_blue_002_002.fits",
+                        "1-diff.000001.000004.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 1.424
+            },
+            {
+                "name": "mDiffFit_ID0000008",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000002",
+                    "mProject_ID0000003"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_001_area.fits",
+                        "sizeInBytes": 53153280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_001.fits",
+                        "sizeInBytes": 53153280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_002.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_002_area.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "1-fit.000002.000003.txt",
+                        "sizeInBytes": 283
+                    }
+                ],
+                "avgCPU": 0.3849,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000008",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "1-fit.000002.000003.txt",
+                        "pposs2ukstu_blue_001_002.fits",
+                        "pposs2ukstu_blue_002_001.fits",
+                        "1-diff.000002.000003.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 1.299
+            },
+            {
+                "name": "mDiffFit_ID0000009",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000002",
+                    "mProject_ID0000004"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_002.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_002.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_002_area.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_002_area.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "1-fit.000002.000004.txt",
+                        "sizeInBytes": 284
+                    }
+                ],
+                "avgCPU": 0.1821,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000009",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "1-fit.000002.000004.txt",
+                        "pposs2ukstu_blue_001_002.fits",
+                        "pposs2ukstu_blue_002_002.fits",
+                        "1-diff.000002.000004.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 2.197
+            },
+            {
+                "name": "mDiffFit_ID0000010",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000003",
+                    "mProject_ID0000004"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_001_area.fits",
+                        "sizeInBytes": 53153280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_001.fits",
+                        "sizeInBytes": 53153280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_002_area.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_002.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "1-fit.000003.000004.txt",
+                        "sizeInBytes": 285
+                    }
+                ],
+                "avgCPU": 0.1787,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000010",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "1-fit.000003.000004.txt",
+                        "pposs2ukstu_blue_002_001.fits",
+                        "pposs2ukstu_blue_002_002.fits",
+                        "1-diff.000003.000004.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 2.239
+            },
+            {
+                "name": "mConcatFit_ID0000011",
+                "type": "compute",
+                "parents": [
+                    "mDiffFit_ID0000009",
+                    "mDiffFit_ID0000008",
+                    "mDiffFit_ID0000007",
+                    "mDiffFit_ID0000006",
+                    "mDiffFit_ID0000005",
+                    "mDiffFit_ID0000010"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "1-stat.tbl",
+                        "sizeInBytes": 1200
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-fit.000002.000003.txt",
+                        "sizeInBytes": 283
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-fit.000001.000004.txt",
+                        "sizeInBytes": 285
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-fit.000001.000003.txt",
+                        "sizeInBytes": 291
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-fit.000002.000004.txt",
+                        "sizeInBytes": 284
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-fit.000003.000004.txt",
+                        "sizeInBytes": 285
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-fit.000001.000002.txt",
+                        "sizeInBytes": 286
+                    },
+                    {
+                        "link": "output",
+                        "name": "1-fits.tbl",
+                        "sizeInBytes": 1457
+                    }
+                ],
+                "avgCPU": 100.0,
+                "machine": "pegasus-5",
+                "priority": 40,
+                "id": "ID0000011",
+                "category": "mConcatFit",
+                "command": {
+                    "program": "mConcatFit",
+                    "arguments": [
+                        "1-stat.tbl",
+                        "1-fits.tbl",
+                        "."
+                    ]
+                },
+                "runtimeInSeconds": 0.181
+            },
+            {
+                "name": "mBgModel_ID0000012",
+                "type": "compute",
+                "parents": [
+                    "mConcatFit_ID0000011"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "1-fits.tbl",
+                        "sizeInBytes": 1457
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-images.tbl",
+                        "sizeInBytes": 2246
+                    },
+                    {
+                        "link": "output",
+                        "name": "1-corrections.tbl",
+                        "sizeInBytes": 276
+                    }
+                ],
+                "avgCPU": 100.0,
+                "machine": "pegasus-5",
+                "priority": 50,
+                "id": "ID0000012",
+                "category": "mBgModel",
+                "command": {
+                    "program": "mBgModel",
+                    "arguments": [
+                        "-i",
+                        "100000",
+                        "1-images.tbl",
+                        "1-fits.tbl",
+                        "1-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 0.563
+            },
+            {
+                "name": "mBackground_ID0000013",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000001",
+                    "mBgModel_ID0000012"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "1-projected.tbl",
+                        "sizeInBytes": 952
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_001.fits",
+                        "sizeInBytes": 53193600
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_001_area.fits",
+                        "sizeInBytes": 53193600
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-corrections.tbl",
+                        "sizeInBytes": 276
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_blue_001_001_area.fits",
+                        "sizeInBytes": 53193600
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_blue_001_001.fits",
+                        "sizeInBytes": 53193600
+                    }
+                ],
+                "avgCPU": 11.5722,
+                "machine": "pegasus-5",
+                "priority": 60,
+                "id": "ID0000013",
+                "category": "mBackground",
+                "command": {
+                    "program": "mBackground",
+                    "arguments": [
+                        "-t",
+                        "pposs2ukstu_blue_001_001.fits",
+                        "cposs2ukstu_blue_001_001.fits",
+                        "1-projected.tbl",
+                        "1-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 5.807
+            },
+            {
+                "name": "mBackground_ID0000014",
+                "type": "compute",
+                "parents": [
+                    "mBgModel_ID0000012",
+                    "mProject_ID0000002"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "1-projected.tbl",
+                        "sizeInBytes": 952
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_002.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-corrections.tbl",
+                        "sizeInBytes": 276
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_001_002_area.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_blue_001_002.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_blue_001_002_area.fits",
+                        "sizeInBytes": 53173440
+                    }
+                ],
+                "avgCPU": 12.4254,
+                "machine": "pegasus-5",
+                "priority": 60,
+                "id": "ID0000014",
+                "category": "mBackground",
+                "command": {
+                    "program": "mBackground",
+                    "arguments": [
+                        "-t",
+                        "pposs2ukstu_blue_001_002.fits",
+                        "cposs2ukstu_blue_001_002.fits",
+                        "1-projected.tbl",
+                        "1-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 5.03
+            },
+            {
+                "name": "mBackground_ID0000015",
+                "type": "compute",
+                "parents": [
+                    "mBgModel_ID0000012",
+                    "mProject_ID0000003"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_001_area.fits",
+                        "sizeInBytes": 53153280
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-projected.tbl",
+                        "sizeInBytes": 952
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_001.fits",
+                        "sizeInBytes": 53153280
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-corrections.tbl",
+                        "sizeInBytes": 276
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_blue_002_001.fits",
+                        "sizeInBytes": 53153280
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_blue_002_001_area.fits",
+                        "sizeInBytes": 53153280
+                    }
+                ],
+                "avgCPU": 13.1678,
+                "machine": "pegasus-5",
+                "priority": 60,
+                "id": "ID0000015",
+                "category": "mBackground",
+                "command": {
+                    "program": "mBackground",
+                    "arguments": [
+                        "-t",
+                        "pposs2ukstu_blue_002_001.fits",
+                        "cposs2ukstu_blue_002_001.fits",
+                        "1-projected.tbl",
+                        "1-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 5.073
+            },
+            {
+                "name": "mBackground_ID0000016",
+                "type": "compute",
+                "parents": [
+                    "mBgModel_ID0000012",
+                    "mProject_ID0000004"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "1-projected.tbl",
+                        "sizeInBytes": 952
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_002_area.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-corrections.tbl",
+                        "sizeInBytes": 276
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_blue_002_002.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_blue_002_002_area.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_blue_002_002.fits",
+                        "sizeInBytes": 53173440
+                    }
+                ],
+                "avgCPU": 12.9242,
+                "machine": "pegasus-5",
+                "priority": 60,
+                "id": "ID0000016",
+                "category": "mBackground",
+                "command": {
+                    "program": "mBackground",
+                    "arguments": [
+                        "-t",
+                        "pposs2ukstu_blue_002_002.fits",
+                        "cposs2ukstu_blue_002_002.fits",
+                        "1-projected.tbl",
+                        "1-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 5.068
+            },
+            {
+                "name": "mImgtbl_ID0000017",
+                "type": "compute",
+                "parents": [
+                    "mBackground_ID0000013",
+                    "mBackground_ID0000016",
+                    "mBackground_ID0000015",
+                    "mBackground_ID0000014"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_blue_002_001.fits",
+                        "sizeInBytes": 53153280
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-corrected.tbl",
+                        "sizeInBytes": 952
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_blue_001_001.fits",
+                        "sizeInBytes": 53193600
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_blue_001_002.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_blue_002_002.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "output",
+                        "name": "1-updated-corrected.tbl",
+                        "sizeInBytes": 2606
+                    }
+                ],
+                "avgCPU": 99.4083,
+                "machine": "pegasus-5",
+                "priority": 70,
+                "id": "ID0000017",
+                "category": "mImgtbl",
+                "command": {
+                    "program": "mImgtbl",
+                    "arguments": [
+                        ".",
+                        "-t",
+                        "1-corrected.tbl",
+                        "1-updated-corrected.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 0.169
+            },
+            {
+                "name": "mAdd_ID0000018",
+                "type": "compute",
+                "parents": [
+                    "mBackground_ID0000013",
+                    "mBackground_ID0000016",
+                    "mBackground_ID0000015",
+                    "mBackground_ID0000014",
+                    "mImgtbl_ID0000017"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "region.hdr",
+                        "sizeInBytes": 275
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_blue_002_001.fits",
+                        "sizeInBytes": 53153280
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_blue_001_001_area.fits",
+                        "sizeInBytes": 53193600
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_blue_001_002_area.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_blue_002_002_area.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_blue_001_001.fits",
+                        "sizeInBytes": 53193600
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_blue_002_001_area.fits",
+                        "sizeInBytes": 53153280
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_blue_001_002.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-updated-corrected.tbl",
+                        "sizeInBytes": 2606
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_blue_002_002.fits",
+                        "sizeInBytes": 53173440
+                    },
+                    {
+                        "link": "output",
+                        "name": "1-mosaic.fits",
+                        "sizeInBytes": 25922880
+                    },
+                    {
+                        "link": "output",
+                        "name": "1-mosaic_area.fits",
+                        "sizeInBytes": 25922880
+                    }
+                ],
+                "avgCPU": 96.5201,
+                "machine": "pegasus-5",
+                "priority": 80,
+                "id": "ID0000018",
+                "category": "mAdd",
+                "command": {
+                    "program": "mAdd",
+                    "arguments": [
+                        "-e",
+                        "1-updated-corrected.tbl",
+                        "region.hdr",
+                        "1-mosaic.fits"
+                    ]
+                },
+                "runtimeInSeconds": 0.546
+            },
+            {
+                "name": "mViewer_ID0000019",
+                "type": "compute",
+                "parents": [
+                    "mAdd_ID0000018"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "1-mosaic.fits",
+                        "sizeInBytes": 25922880
+                    },
+                    {
+                        "link": "output",
+                        "name": "1-mosaic.jpg",
+                        "sizeInBytes": 983389
+                    }
+                ],
+                "avgCPU": 99.9297,
+                "machine": "pegasus-5",
+                "priority": 90,
+                "id": "ID0000019",
+                "category": "mViewer",
+                "command": {
+                    "program": "mViewer",
+                    "arguments": [
+                        "-ct",
+                        "0",
+                        "-gray",
+                        "1-mosaic.fits",
+                        "0s",
+                        "99.999%",
+                        "gaussian",
+                        "-out",
+                        "1-mosaic.jpg"
+                    ]
+                },
+                "runtimeInSeconds": 1.423
+            },
+            {
+                "name": "mProject_ID0000020",
+                "type": "compute",
+                "parents": [],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "poss2ukstu_red_001_001.fits",
+                        "sizeInBytes": 6900714
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_red_001_001_area.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_red_001_001.fits",
+                        "sizeInBytes": 52536960
+                    }
+                ],
+                "avgCPU": 99.8064,
+                "machine": "pegasus-5",
+                "priority": 20,
+                "id": "ID0000020",
+                "category": "mProject",
+                "command": {
+                    "program": "mProject",
+                    "arguments": [
+                        "-X",
+                        "poss2ukstu_red_001_001.fits",
+                        "pposs2ukstu_red_001_001.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 337.772
+            },
+            {
+                "name": "mProject_ID0000021",
+                "type": "compute",
+                "parents": [],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "poss2ukstu_red_001_002.fits",
+                        "sizeInBytes": 6494409
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_red_001_002_area.fits",
+                        "sizeInBytes": 52557120
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_red_001_002.fits",
+                        "sizeInBytes": 52557120
+                    }
+                ],
+                "avgCPU": 99.9116,
+                "machine": "pegasus-5",
+                "priority": 20,
+                "id": "ID0000021",
+                "category": "mProject",
+                "command": {
+                    "program": "mProject",
+                    "arguments": [
+                        "-X",
+                        "poss2ukstu_red_001_002.fits",
+                        "pposs2ukstu_red_001_002.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 350.744
+            },
+            {
+                "name": "mProject_ID0000022",
+                "type": "compute",
+                "parents": [],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "poss2ukstu_red_002_001.fits",
+                        "sizeInBytes": 6570387
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_red_002_001.fits",
+                        "sizeInBytes": 52513920
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_red_002_001_area.fits",
+                        "sizeInBytes": 52513920
+                    }
+                ],
+                "avgCPU": 99.8589,
+                "machine": "pegasus-5",
+                "priority": 20,
+                "id": "ID0000022",
+                "category": "mProject",
+                "command": {
+                    "program": "mProject",
+                    "arguments": [
+                        "-X",
+                        "poss2ukstu_red_002_001.fits",
+                        "pposs2ukstu_red_002_001.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 336.649
+            },
+            {
+                "name": "mProject_ID0000023",
+                "type": "compute",
+                "parents": [],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "poss2ukstu_red_002_002.fits",
+                        "sizeInBytes": 6376872
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_red_002_002.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_red_002_002_area.fits",
+                        "sizeInBytes": 52536960
+                    }
+                ],
+                "avgCPU": 99.861,
+                "machine": "pegasus-5",
+                "priority": 20,
+                "id": "ID0000023",
+                "category": "mProject",
+                "command": {
+                    "program": "mProject",
+                    "arguments": [
+                        "-X",
+                        "poss2ukstu_red_002_002.fits",
+                        "pposs2ukstu_red_002_002.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 348.14
+            },
+            {
+                "name": "mDiffFit_ID0000024",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000020",
+                    "mProject_ID0000021"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_002.fits",
+                        "sizeInBytes": 52557120
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_001_area.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_002_area.fits",
+                        "sizeInBytes": 52557120
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_001.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "2-fit.000001.000002.txt",
+                        "sizeInBytes": 289
+                    }
+                ],
+                "avgCPU": 0.2084,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000024",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "2-fit.000001.000002.txt",
+                        "pposs2ukstu_red_001_001.fits",
+                        "pposs2ukstu_red_001_002.fits",
+                        "2-diff.000001.000002.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 1.919
+            },
+            {
+                "name": "mDiffFit_ID0000025",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000020",
+                    "mProject_ID0000022"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_001_area.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_001_area.fits",
+                        "sizeInBytes": 52513920
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_001.fits",
+                        "sizeInBytes": 52513920
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_001.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "2-fit.000001.000003.txt",
+                        "sizeInBytes": 287
+                    }
+                ],
+                "avgCPU": 0.2735,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000025",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "2-fit.000001.000003.txt",
+                        "pposs2ukstu_red_001_001.fits",
+                        "pposs2ukstu_red_002_001.fits",
+                        "2-diff.000001.000003.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 1.828
+            },
+            {
+                "name": "mDiffFit_ID0000026",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000020",
+                    "mProject_ID0000023"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_002_area.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_001_area.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_002.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_001.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "2-fit.000001.000004.txt",
+                        "sizeInBytes": 281
+                    }
+                ],
+                "avgCPU": 0.3091,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000026",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "2-fit.000001.000004.txt",
+                        "pposs2ukstu_red_001_001.fits",
+                        "pposs2ukstu_red_002_002.fits",
+                        "2-diff.000001.000004.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 1.294
+            },
+            {
+                "name": "mDiffFit_ID0000027",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000021",
+                    "mProject_ID0000022"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_002.fits",
+                        "sizeInBytes": 52557120
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_002_area.fits",
+                        "sizeInBytes": 52557120
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_001_area.fits",
+                        "sizeInBytes": 52513920
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_001.fits",
+                        "sizeInBytes": 52513920
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "2-fit.000002.000003.txt",
+                        "sizeInBytes": 282
+                    }
+                ],
+                "avgCPU": 0.3123,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000027",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "2-fit.000002.000003.txt",
+                        "pposs2ukstu_red_001_002.fits",
+                        "pposs2ukstu_red_002_001.fits",
+                        "2-diff.000002.000003.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 1.281
+            },
+            {
+                "name": "mDiffFit_ID0000028",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000021",
+                    "mProject_ID0000023"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_002_area.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_002.fits",
+                        "sizeInBytes": 52557120
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_002.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_002_area.fits",
+                        "sizeInBytes": 52557120
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "2-fit.000002.000004.txt",
+                        "sizeInBytes": 284
+                    }
+                ],
+                "avgCPU": 0.3014,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000028",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "2-fit.000002.000004.txt",
+                        "pposs2ukstu_red_001_002.fits",
+                        "pposs2ukstu_red_002_002.fits",
+                        "2-diff.000002.000004.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 1.327
+            },
+            {
+                "name": "mDiffFit_ID0000029",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000022",
+                    "mProject_ID0000023"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_002_area.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_002.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_001_area.fits",
+                        "sizeInBytes": 52513920
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_001.fits",
+                        "sizeInBytes": 52513920
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "2-fit.000003.000004.txt",
+                        "sizeInBytes": 283
+                    }
+                ],
+                "avgCPU": 0.1764,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000029",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "2-fit.000003.000004.txt",
+                        "pposs2ukstu_red_002_001.fits",
+                        "pposs2ukstu_red_002_002.fits",
+                        "2-diff.000003.000004.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 2.267
+            },
+            {
+                "name": "mConcatFit_ID0000030",
+                "type": "compute",
+                "parents": [
+                    "mDiffFit_ID0000029",
+                    "mDiffFit_ID0000028",
+                    "mDiffFit_ID0000027",
+                    "mDiffFit_ID0000026",
+                    "mDiffFit_ID0000025",
+                    "mDiffFit_ID0000024"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "2-fit.000001.000002.txt",
+                        "sizeInBytes": 289
+                    },
+                    {
+                        "link": "input",
+                        "name": "2-fit.000003.000004.txt",
+                        "sizeInBytes": 283
+                    },
+                    {
+                        "link": "input",
+                        "name": "2-fit.000001.000003.txt",
+                        "sizeInBytes": 287
+                    },
+                    {
+                        "link": "input",
+                        "name": "2-fit.000002.000003.txt",
+                        "sizeInBytes": 282
+                    },
+                    {
+                        "link": "input",
+                        "name": "2-fit.000002.000004.txt",
+                        "sizeInBytes": 284
+                    },
+                    {
+                        "link": "input",
+                        "name": "2-fit.000001.000004.txt",
+                        "sizeInBytes": 281
+                    },
+                    {
+                        "link": "input",
+                        "name": "2-stat.tbl",
+                        "sizeInBytes": 1180
+                    },
+                    {
+                        "link": "output",
+                        "name": "2-fits.tbl",
+                        "sizeInBytes": 1457
+                    }
+                ],
+                "avgCPU": 100.0,
+                "machine": "pegasus-5",
+                "priority": 40,
+                "id": "ID0000030",
+                "category": "mConcatFit",
+                "command": {
+                    "program": "mConcatFit",
+                    "arguments": [
+                        "2-stat.tbl",
+                        "2-fits.tbl",
+                        "."
+                    ]
+                },
+                "runtimeInSeconds": 0.191
+            },
+            {
+                "name": "mBgModel_ID0000031",
+                "type": "compute",
+                "parents": [
+                    "mConcatFit_ID0000030"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "2-images.tbl",
+                        "sizeInBytes": 2246
+                    },
+                    {
+                        "link": "input",
+                        "name": "2-fits.tbl",
+                        "sizeInBytes": 1457
+                    },
+                    {
+                        "link": "output",
+                        "name": "2-corrections.tbl",
+                        "sizeInBytes": 276
+                    }
+                ],
+                "avgCPU": 100.0,
+                "machine": "pegasus-5",
+                "priority": 50,
+                "id": "ID0000031",
+                "category": "mBgModel",
+                "command": {
+                    "program": "mBgModel",
+                    "arguments": [
+                        "-i",
+                        "100000",
+                        "2-images.tbl",
+                        "2-fits.tbl",
+                        "2-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 0.607
+            },
+            {
+                "name": "mBackground_ID0000032",
+                "type": "compute",
+                "parents": [
+                    "mBgModel_ID0000031",
+                    "mProject_ID0000020"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "2-projected.tbl",
+                        "sizeInBytes": 946
+                    },
+                    {
+                        "link": "input",
+                        "name": "2-corrections.tbl",
+                        "sizeInBytes": 276
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_001_area.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_001.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_red_001_001_area.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_red_001_001.fits",
+                        "sizeInBytes": 52536960
+                    }
+                ],
+                "avgCPU": 14.2198,
+                "machine": "pegasus-5",
+                "priority": 60,
+                "id": "ID0000032",
+                "category": "mBackground",
+                "command": {
+                    "program": "mBackground",
+                    "arguments": [
+                        "-t",
+                        "pposs2ukstu_red_001_001.fits",
+                        "cposs2ukstu_red_001_001.fits",
+                        "2-projected.tbl",
+                        "2-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 4.768
+            },
+            {
+                "name": "mBackground_ID0000033",
+                "type": "compute",
+                "parents": [
+                    "mBgModel_ID0000031",
+                    "mProject_ID0000021"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "2-projected.tbl",
+                        "sizeInBytes": 946
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_002.fits",
+                        "sizeInBytes": 52557120
+                    },
+                    {
+                        "link": "input",
+                        "name": "2-corrections.tbl",
+                        "sizeInBytes": 276
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_001_002_area.fits",
+                        "sizeInBytes": 52557120
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_red_001_002_area.fits",
+                        "sizeInBytes": 52557120
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_red_001_002.fits",
+                        "sizeInBytes": 52557120
+                    }
+                ],
+                "avgCPU": 14.2975,
+                "machine": "pegasus-5",
+                "priority": 60,
+                "id": "ID0000033",
+                "category": "mBackground",
+                "command": {
+                    "program": "mBackground",
+                    "arguments": [
+                        "-t",
+                        "pposs2ukstu_red_001_002.fits",
+                        "cposs2ukstu_red_001_002.fits",
+                        "2-projected.tbl",
+                        "2-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 4.847
+            },
+            {
+                "name": "mBackground_ID0000034",
+                "type": "compute",
+                "parents": [
+                    "mBgModel_ID0000031",
+                    "mProject_ID0000022"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "2-projected.tbl",
+                        "sizeInBytes": 946
+                    },
+                    {
+                        "link": "input",
+                        "name": "2-corrections.tbl",
+                        "sizeInBytes": 276
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_001_area.fits",
+                        "sizeInBytes": 52513920
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_001.fits",
+                        "sizeInBytes": 52513920
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_red_002_001.fits",
+                        "sizeInBytes": 52513920
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_red_002_001_area.fits",
+                        "sizeInBytes": 52513920
+                    }
+                ],
+                "avgCPU": 10.4393,
+                "machine": "pegasus-5",
+                "priority": 60,
+                "id": "ID0000034",
+                "category": "mBackground",
+                "command": {
+                    "program": "mBackground",
+                    "arguments": [
+                        "-t",
+                        "pposs2ukstu_red_002_001.fits",
+                        "cposs2ukstu_red_002_001.fits",
+                        "2-projected.tbl",
+                        "2-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 6.715
+            },
+            {
+                "name": "mBackground_ID0000035",
+                "type": "compute",
+                "parents": [
+                    "mBgModel_ID0000031",
+                    "mProject_ID0000023"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "2-projected.tbl",
+                        "sizeInBytes": 946
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_002_area.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "2-corrections.tbl",
+                        "sizeInBytes": 276
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_red_002_002.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_red_002_002.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_red_002_002_area.fits",
+                        "sizeInBytes": 52536960
+                    }
+                ],
+                "avgCPU": 32.6331,
+                "machine": "pegasus-5",
+                "priority": 60,
+                "id": "ID0000035",
+                "category": "mBackground",
+                "command": {
+                    "program": "mBackground",
+                    "arguments": [
+                        "-t",
+                        "pposs2ukstu_red_002_002.fits",
+                        "cposs2ukstu_red_002_002.fits",
+                        "2-projected.tbl",
+                        "2-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 2.047
+            },
+            {
+                "name": "mImgtbl_ID0000036",
+                "type": "compute",
+                "parents": [
+                    "mBackground_ID0000035",
+                    "mBackground_ID0000034",
+                    "mBackground_ID0000033",
+                    "mBackground_ID0000032"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_red_002_001.fits",
+                        "sizeInBytes": 52513920
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_red_001_002.fits",
+                        "sizeInBytes": 52557120
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_red_002_002.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "2-corrected.tbl",
+                        "sizeInBytes": 946
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_red_001_001.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "output",
+                        "name": "2-updated-corrected.tbl",
+                        "sizeInBytes": 2600
+                    }
+                ],
+                "avgCPU": 100.0,
+                "machine": "pegasus-5",
+                "priority": 70,
+                "id": "ID0000036",
+                "category": "mImgtbl",
+                "command": {
+                    "program": "mImgtbl",
+                    "arguments": [
+                        ".",
+                        "-t",
+                        "2-corrected.tbl",
+                        "2-updated-corrected.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 0.152
+            },
+            {
+                "name": "mAdd_ID0000037",
+                "type": "compute",
+                "parents": [
+                    "mBackground_ID0000035",
+                    "mBackground_ID0000034",
+                    "mBackground_ID0000033",
+                    "mBackground_ID0000032",
+                    "mImgtbl_ID0000036"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "region.hdr",
+                        "sizeInBytes": 275
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_red_001_001_area.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_red_001_002_area.fits",
+                        "sizeInBytes": 52557120
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_red_002_001.fits",
+                        "sizeInBytes": 52513920
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_red_002_001_area.fits",
+                        "sizeInBytes": 52513920
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_red_001_002.fits",
+                        "sizeInBytes": 52557120
+                    },
+                    {
+                        "link": "input",
+                        "name": "2-updated-corrected.tbl",
+                        "sizeInBytes": 2600
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_red_002_002.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_red_001_001.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_red_002_002_area.fits",
+                        "sizeInBytes": 52536960
+                    },
+                    {
+                        "link": "output",
+                        "name": "2-mosaic.fits",
+                        "sizeInBytes": 25922880
+                    },
+                    {
+                        "link": "output",
+                        "name": "2-mosaic_area.fits",
+                        "sizeInBytes": 25922880
+                    }
+                ],
+                "avgCPU": 89.141,
+                "machine": "pegasus-5",
+                "priority": 80,
+                "id": "ID0000037",
+                "category": "mAdd",
+                "command": {
+                    "program": "mAdd",
+                    "arguments": [
+                        "-e",
+                        "2-updated-corrected.tbl",
+                        "region.hdr",
+                        "2-mosaic.fits"
+                    ]
+                },
+                "runtimeInSeconds": 0.617
+            },
+            {
+                "name": "mViewer_ID0000038",
+                "type": "compute",
+                "parents": [
+                    "mAdd_ID0000037"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "2-mosaic.fits",
+                        "sizeInBytes": 25922880
+                    },
+                    {
+                        "link": "output",
+                        "name": "2-mosaic.jpg",
+                        "sizeInBytes": 1141747
+                    }
+                ],
+                "avgCPU": 97.0798,
+                "machine": "pegasus-5",
+                "priority": 90,
+                "id": "ID0000038",
+                "category": "mViewer",
+                "command": {
+                    "program": "mViewer",
+                    "arguments": [
+                        "-ct",
+                        "0",
+                        "-gray",
+                        "2-mosaic.fits",
+                        "0s",
+                        "99.999%",
+                        "gaussian",
+                        "-out",
+                        "2-mosaic.jpg"
+                    ]
+                },
+                "runtimeInSeconds": 1.541
+            },
+            {
+                "name": "mProject_ID0000039",
+                "type": "compute",
+                "parents": [],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "poss2ukstu_ir_001_001.fits",
+                        "sizeInBytes": 7327978
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_ir_001_001_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_ir_001_001.fits",
+                        "sizeInBytes": 53009280
+                    }
+                ],
+                "avgCPU": 99.3986,
+                "machine": "pegasus-5",
+                "priority": 20,
+                "id": "ID0000039",
+                "category": "mProject",
+                "command": {
+                    "program": "mProject",
+                    "arguments": [
+                        "-X",
+                        "poss2ukstu_ir_001_001.fits",
+                        "pposs2ukstu_ir_001_001.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 483.899
+            },
+            {
+                "name": "mProject_ID0000040",
+                "type": "compute",
+                "parents": [],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "poss2ukstu_ir_001_002.fits",
+                        "sizeInBytes": 7167257
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_ir_001_002_area.fits",
+                        "sizeInBytes": 53029440
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_ir_001_002.fits",
+                        "sizeInBytes": 53029440
+                    }
+                ],
+                "avgCPU": 99.6553,
+                "machine": "pegasus-5",
+                "priority": 20,
+                "id": "ID0000040",
+                "category": "mProject",
+                "command": {
+                    "program": "mProject",
+                    "arguments": [
+                        "-X",
+                        "poss2ukstu_ir_001_002.fits",
+                        "pposs2ukstu_ir_001_002.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 478.164
+            },
+            {
+                "name": "mProject_ID0000041",
+                "type": "compute",
+                "parents": [],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "poss2ukstu_ir_002_001.fits",
+                        "sizeInBytes": 7217492
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_ir_002_001.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_ir_002_001_area.fits",
+                        "sizeInBytes": 53009280
+                    }
+                ],
+                "avgCPU": 99.6356,
+                "machine": "pegasus-5",
+                "priority": 20,
+                "id": "ID0000041",
+                "category": "mProject",
+                "command": {
+                    "program": "mProject",
+                    "arguments": [
+                        "-X",
+                        "poss2ukstu_ir_002_001.fits",
+                        "pposs2ukstu_ir_002_001.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 482.175
+            },
+            {
+                "name": "mProject_ID0000042",
+                "type": "compute",
+                "parents": [],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "poss2ukstu_ir_002_002.fits",
+                        "sizeInBytes": 7120723
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_ir_002_002_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "output",
+                        "name": "pposs2ukstu_ir_002_002.fits",
+                        "sizeInBytes": 53009280
+                    }
+                ],
+                "avgCPU": 99.3409,
+                "machine": "pegasus-5",
+                "priority": 20,
+                "id": "ID0000042",
+                "category": "mProject",
+                "command": {
+                    "program": "mProject",
+                    "arguments": [
+                        "-X",
+                        "poss2ukstu_ir_002_002.fits",
+                        "pposs2ukstu_ir_002_002.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 483.975
+            },
+            {
+                "name": "mDiffFit_ID0000043",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000039",
+                    "mProject_ID0000040"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_002.fits",
+                        "sizeInBytes": 53029440
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_002_area.fits",
+                        "sizeInBytes": 53029440
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_001_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_001.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "3-fit.000001.000002.txt",
+                        "sizeInBytes": 287
+                    }
+                ],
+                "avgCPU": 0.2064,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000043",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "3-fit.000001.000002.txt",
+                        "pposs2ukstu_ir_001_001.fits",
+                        "pposs2ukstu_ir_001_002.fits",
+                        "3-diff.000001.000002.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 1.938
+            },
+            {
+                "name": "mDiffFit_ID0000044",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000039",
+                    "mProject_ID0000041"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_001.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_001_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_001_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_001.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "3-fit.000001.000003.txt",
+                        "sizeInBytes": 290
+                    }
+                ],
+                "avgCPU": 0.0687,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000044",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "3-fit.000001.000003.txt",
+                        "pposs2ukstu_ir_001_001.fits",
+                        "pposs2ukstu_ir_002_001.fits",
+                        "3-diff.000001.000003.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 5.821
+            },
+            {
+                "name": "mDiffFit_ID0000045",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000039",
+                    "mProject_ID0000042"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_002.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_001_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_001.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_002_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "3-fit.000001.000004.txt",
+                        "sizeInBytes": 282
+                    }
+                ],
+                "avgCPU": 0.7587,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000045",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "3-fit.000001.000004.txt",
+                        "pposs2ukstu_ir_001_001.fits",
+                        "pposs2ukstu_ir_002_002.fits",
+                        "3-diff.000001.000004.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 0.659
+            },
+            {
+                "name": "mDiffFit_ID0000046",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000040",
+                    "mProject_ID0000041"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_002.fits",
+                        "sizeInBytes": 53029440
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_002_area.fits",
+                        "sizeInBytes": 53029440
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_001_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_001.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "3-fit.000002.000003.txt",
+                        "sizeInBytes": 280
+                    }
+                ],
+                "avgCPU": 0.1986,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000046",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "3-fit.000002.000003.txt",
+                        "pposs2ukstu_ir_001_002.fits",
+                        "pposs2ukstu_ir_002_001.fits",
+                        "3-diff.000002.000003.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 2.014
+            },
+            {
+                "name": "mDiffFit_ID0000047",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000040",
+                    "mProject_ID0000042"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_002.fits",
+                        "sizeInBytes": 53029440
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_002_area.fits",
+                        "sizeInBytes": 53029440
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_002.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_002_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "3-fit.000002.000004.txt",
+                        "sizeInBytes": 286
+                    }
+                ],
+                "avgCPU": 0.0873,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000047",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "3-fit.000002.000004.txt",
+                        "pposs2ukstu_ir_001_002.fits",
+                        "pposs2ukstu_ir_002_002.fits",
+                        "3-diff.000002.000004.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 4.581
+            },
+            {
+                "name": "mDiffFit_ID0000048",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000041",
+                    "mProject_ID0000042"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_002.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_001_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_001.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_002_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "region-oversized.hdr",
+                        "sizeInBytes": 277
+                    },
+                    {
+                        "link": "output",
+                        "name": "3-fit.000003.000004.txt",
+                        "sizeInBytes": 285
+                    }
+                ],
+                "avgCPU": 0.0662,
+                "machine": "pegasus-5",
+                "priority": 30,
+                "id": "ID0000048",
+                "category": "mDiffFit",
+                "command": {
+                    "program": "mDiffFit",
+                    "arguments": [
+                        "-d",
+                        "-s",
+                        "3-fit.000003.000004.txt",
+                        "pposs2ukstu_ir_002_001.fits",
+                        "pposs2ukstu_ir_002_002.fits",
+                        "3-diff.000003.000004.fits",
+                        "region-oversized.hdr"
+                    ]
+                },
+                "runtimeInSeconds": 4.533
+            },
+            {
+                "name": "mConcatFit_ID0000049",
+                "type": "compute",
+                "parents": [
+                    "mDiffFit_ID0000048",
+                    "mDiffFit_ID0000047",
+                    "mDiffFit_ID0000046",
+                    "mDiffFit_ID0000045",
+                    "mDiffFit_ID0000044",
+                    "mDiffFit_ID0000043"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "3-fit.000003.000004.txt",
+                        "sizeInBytes": 285
+                    },
+                    {
+                        "link": "input",
+                        "name": "3-stat.tbl",
+                        "sizeInBytes": 1160
+                    },
+                    {
+                        "link": "input",
+                        "name": "3-fit.000002.000003.txt",
+                        "sizeInBytes": 280
+                    },
+                    {
+                        "link": "input",
+                        "name": "3-fit.000001.000003.txt",
+                        "sizeInBytes": 290
+                    },
+                    {
+                        "link": "input",
+                        "name": "3-fit.000001.000004.txt",
+                        "sizeInBytes": 282
+                    },
+                    {
+                        "link": "input",
+                        "name": "3-fit.000002.000004.txt",
+                        "sizeInBytes": 286
+                    },
+                    {
+                        "link": "input",
+                        "name": "3-fit.000001.000002.txt",
+                        "sizeInBytes": 287
+                    },
+                    {
+                        "link": "output",
+                        "name": "3-fits.tbl",
+                        "sizeInBytes": 1457
+                    }
+                ],
+                "avgCPU": 99.4737,
+                "machine": "pegasus-5",
+                "priority": 40,
+                "id": "ID0000049",
+                "category": "mConcatFit",
+                "command": {
+                    "program": "mConcatFit",
+                    "arguments": [
+                        "3-stat.tbl",
+                        "3-fits.tbl",
+                        "."
+                    ]
+                },
+                "runtimeInSeconds": 0.19
+            },
+            {
+                "name": "mBgModel_ID0000050",
+                "type": "compute",
+                "parents": [
+                    "mConcatFit_ID0000049"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "3-images.tbl",
+                        "sizeInBytes": 2246
+                    },
+                    {
+                        "link": "input",
+                        "name": "3-fits.tbl",
+                        "sizeInBytes": 1457
+                    },
+                    {
+                        "link": "output",
+                        "name": "3-corrections.tbl",
+                        "sizeInBytes": 276
+                    }
+                ],
+                "avgCPU": 100.0,
+                "machine": "pegasus-5",
+                "priority": 50,
+                "id": "ID0000050",
+                "category": "mBgModel",
+                "command": {
+                    "program": "mBgModel",
+                    "arguments": [
+                        "-i",
+                        "100000",
+                        "3-images.tbl",
+                        "3-fits.tbl",
+                        "3-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 0.566
+            },
+            {
+                "name": "mBackground_ID0000051",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000039",
+                    "mBgModel_ID0000050"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "3-projected.tbl",
+                        "sizeInBytes": 940
+                    },
+                    {
+                        "link": "input",
+                        "name": "3-corrections.tbl",
+                        "sizeInBytes": 276
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_001_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_001.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_ir_001_001_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_ir_001_001.fits",
+                        "sizeInBytes": 53009280
+                    }
+                ],
+                "avgCPU": 13.5041,
+                "machine": "pegasus-5",
+                "priority": 60,
+                "id": "ID0000051",
+                "category": "mBackground",
+                "command": {
+                    "program": "mBackground",
+                    "arguments": [
+                        "-t",
+                        "pposs2ukstu_ir_001_001.fits",
+                        "cposs2ukstu_ir_001_001.fits",
+                        "3-projected.tbl",
+                        "3-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 4.88
+            },
+            {
+                "name": "mBackground_ID0000052",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000040",
+                    "mBgModel_ID0000050"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "3-projected.tbl",
+                        "sizeInBytes": 940
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_002.fits",
+                        "sizeInBytes": 53029440
+                    },
+                    {
+                        "link": "input",
+                        "name": "3-corrections.tbl",
+                        "sizeInBytes": 276
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_001_002_area.fits",
+                        "sizeInBytes": 53029440
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_ir_001_002_area.fits",
+                        "sizeInBytes": 53029440
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_ir_001_002.fits",
+                        "sizeInBytes": 53029440
+                    }
+                ],
+                "avgCPU": 13.3958,
+                "machine": "pegasus-5",
+                "priority": 60,
+                "id": "ID0000052",
+                "category": "mBackground",
+                "command": {
+                    "program": "mBackground",
+                    "arguments": [
+                        "-t",
+                        "pposs2ukstu_ir_001_002.fits",
+                        "cposs2ukstu_ir_001_002.fits",
+                        "3-projected.tbl",
+                        "3-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 4.912
+            },
+            {
+                "name": "mBackground_ID0000053",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000041",
+                    "mBgModel_ID0000050"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "3-projected.tbl",
+                        "sizeInBytes": 940
+                    },
+                    {
+                        "link": "input",
+                        "name": "3-corrections.tbl",
+                        "sizeInBytes": 276
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_001_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_001.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_ir_002_001.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_ir_002_001_area.fits",
+                        "sizeInBytes": 53009280
+                    }
+                ],
+                "avgCPU": 13.3523,
+                "machine": "pegasus-5",
+                "priority": 60,
+                "id": "ID0000053",
+                "category": "mBackground",
+                "command": {
+                    "program": "mBackground",
+                    "arguments": [
+                        "-t",
+                        "pposs2ukstu_ir_002_001.fits",
+                        "cposs2ukstu_ir_002_001.fits",
+                        "3-projected.tbl",
+                        "3-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 4.928
+            },
+            {
+                "name": "mBackground_ID0000054",
+                "type": "compute",
+                "parents": [
+                    "mProject_ID0000042",
+                    "mBgModel_ID0000050"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "3-projected.tbl",
+                        "sizeInBytes": 940
+                    },
+                    {
+                        "link": "input",
+                        "name": "3-corrections.tbl",
+                        "sizeInBytes": 276
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_002.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "pposs2ukstu_ir_002_002_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_ir_002_002_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "output",
+                        "name": "cposs2ukstu_ir_002_002.fits",
+                        "sizeInBytes": 53009280
+                    }
+                ],
+                "avgCPU": 12.0184,
+                "machine": "pegasus-5",
+                "priority": 60,
+                "id": "ID0000054",
+                "category": "mBackground",
+                "command": {
+                    "program": "mBackground",
+                    "arguments": [
+                        "-t",
+                        "pposs2ukstu_ir_002_002.fits",
+                        "cposs2ukstu_ir_002_002.fits",
+                        "3-projected.tbl",
+                        "3-corrections.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 5.425
+            },
+            {
+                "name": "mImgtbl_ID0000055",
+                "type": "compute",
+                "parents": [
+                    "mBackground_ID0000054",
+                    "mBackground_ID0000053",
+                    "mBackground_ID0000052",
+                    "mBackground_ID0000051"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "3-corrected.tbl",
+                        "sizeInBytes": 940
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_ir_002_001.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_ir_001_002.fits",
+                        "sizeInBytes": 53029440
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_ir_002_002.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_ir_001_001.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "output",
+                        "name": "3-updated-corrected.tbl",
+                        "sizeInBytes": 2594
+                    }
+                ],
+                "avgCPU": 100.0,
+                "machine": "pegasus-5",
+                "priority": 70,
+                "id": "ID0000055",
+                "category": "mImgtbl",
+                "command": {
+                    "program": "mImgtbl",
+                    "arguments": [
+                        ".",
+                        "-t",
+                        "3-corrected.tbl",
+                        "3-updated-corrected.tbl"
+                    ]
+                },
+                "runtimeInSeconds": 0.165
+            },
+            {
+                "name": "mAdd_ID0000056",
+                "type": "compute",
+                "parents": [
+                    "mImgtbl_ID0000055",
+                    "mBackground_ID0000054",
+                    "mBackground_ID0000053",
+                    "mBackground_ID0000052",
+                    "mBackground_ID0000051"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "region.hdr",
+                        "sizeInBytes": 275
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_ir_002_001.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_ir_001_002_area.fits",
+                        "sizeInBytes": 53029440
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_ir_001_002.fits",
+                        "sizeInBytes": 53029440
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_ir_002_001_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "3-updated-corrected.tbl",
+                        "sizeInBytes": 2594
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_ir_002_002_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_ir_002_002.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_ir_001_001_area.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "input",
+                        "name": "cposs2ukstu_ir_001_001.fits",
+                        "sizeInBytes": 53009280
+                    },
+                    {
+                        "link": "output",
+                        "name": "3-mosaic_area.fits",
+                        "sizeInBytes": 25922880
+                    },
+                    {
+                        "link": "output",
+                        "name": "3-mosaic.fits",
+                        "sizeInBytes": 25922880
+                    }
+                ],
+                "avgCPU": 100.0,
+                "machine": "pegasus-5",
+                "priority": 80,
+                "id": "ID0000056",
+                "category": "mAdd",
+                "command": {
+                    "program": "mAdd",
+                    "arguments": [
+                        "-e",
+                        "3-updated-corrected.tbl",
+                        "region.hdr",
+                        "3-mosaic.fits"
+                    ]
+                },
+                "runtimeInSeconds": 0.523
+            },
+            {
+                "name": "mViewer_ID0000057",
+                "type": "compute",
+                "parents": [
+                    "mAdd_ID0000056"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "3-mosaic.fits",
+                        "sizeInBytes": 25922880
+                    },
+                    {
+                        "link": "output",
+                        "name": "3-mosaic.jpg",
+                        "sizeInBytes": 1691841
+                    }
+                ],
+                "avgCPU": 100.0,
+                "machine": "pegasus-5",
+                "priority": 90,
+                "id": "ID0000057",
+                "category": "mViewer",
+                "command": {
+                    "program": "mViewer",
+                    "arguments": [
+                        "-ct",
+                        "0",
+                        "-gray",
+                        "3-mosaic.fits",
+                        "0s",
+                        "99.999%",
+                        "gaussian",
+                        "-out",
+                        "3-mosaic.jpg"
+                    ]
+                },
+                "runtimeInSeconds": 1.632
+            },
+            {
+                "name": "mViewer_ID0000058",
+                "type": "compute",
+                "parents": [
+                    "mAdd_ID0000056",
+                    "mAdd_ID0000037",
+                    "mAdd_ID0000018"
+                ],
+                "files": [
+                    {
+                        "link": "input",
+                        "name": "3-mosaic.fits",
+                        "sizeInBytes": 25922880
+                    },
+                    {
+                        "link": "input",
+                        "name": "2-mosaic.fits",
+                        "sizeInBytes": 25922880
+                    },
+                    {
+                        "link": "input",
+                        "name": "1-mosaic.fits",
+                        "sizeInBytes": 25922880
+                    },
+                    {
+                        "link": "output",
+                        "name": "mosaic-color.jpg",
+                        "sizeInBytes": 5698193
+                    }
+                ],
+                "avgCPU": 99.9758,
+                "machine": "pegasus-5",
+                "priority": 90,
+                "id": "ID0000058",
+                "category": "mViewer",
+                "command": {
+                    "program": "mViewer",
+                    "arguments": [
+                        "-red",
+                        "3-mosaic.fits",
+                        "-1s",
+                        "99.999%",
+                        "gaussian-log",
+                        "-green",
+                        "2-mosaic.fits",
+                        "-1s",
+                        "99.999%",
+                        "gaussian-log",
+                        "-blue",
+                        "1-mosaic.fits",
+                        "-1s",
+                        "99.999%",
+                        "gaussian-log",
+                        "-out",
+                        "mosaic-color.jpg"
+                    ]
+                },
+                "runtimeInSeconds": 4.128
+            }
+        ],
+        "makespanInSeconds": 870.0
+    }
+}

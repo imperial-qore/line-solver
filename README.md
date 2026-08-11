@@ -1,0 +1,74 @@
+# LINE Solver
+
+[![Download LINE](https://img.shields.io/sourceforge/dt/line-solver.svg)](https://sourceforge.net/projects/line-solver/files/latest/download)
+[![Download LINE](https://a.fsdn.com/con/app/sf-download-button)](https://sourceforge.net/projects/line-solver/files/latest/download)
+
+LINE is an open-source software package to analyze queueing models via analytical methods or simulation. The package is developed by the [QORE lab](https://qore.doc.ic.ac.uk/) at Imperial College London and distributed under the BSD-3 license.
+
+The package offers solution algorithms for queueing systems (e.g., M/M/1, M/M/k, M/G/1, ...), queueing networks, layered queueing networks, and queueing models in random environments. Models are solved in LINE either natively or via external solvers, such as [JMT](http://jmt.sourceforge.net/), [LQNS](http://www.sce.carleton.ca/rads/lqns/), [MAMSolver](https://www.cs.wm.edu/MAMSolver/), [Q-MAM](https://win.uantwerpen.be/~vanhoudt/), [SMCSolver](https://win.uantwerpen.be/~vanhoudt/), and [BuTools](http://webspn.hit.bme.hu/~telek/tools/butools/). Visit the [LINE website](http://line-solver.sf.net) for more information. 
+
+## Available Versions
+
+| Version | Folder                       | Requirements             | Maturity | Manual | API Reference |
+|---------|------------------------------|--------------------------|----------|--------|---------------|
+| [MATLAB](matlab/) | matlab/                      | MATLAB                   | Stable       | [PDF](https://line-solver.sourceforge.net/doc/LINE-matlab.pdf), [Primer](https://line-solver.sourceforge.net/doc/LINE-primer-matlab.pdf) | [Doxygen](https://line-solver.sourceforge.net/doxygen/index.html) |
+| [Java](jar/) | jar/                        | Java SE 8+               | Stable       | [PDF](https://line-solver.sourceforge.net/doc/LINE-java.pdf), [Primer](https://line-solver.sourceforge.net/doc/LINE-primer-java.pdf) | [Javadoc](https://line-solver.sourceforge.net/javadoc/index.html) |
+| [Python Native](python/) | python/ | Python 3.11+             | Stable                    | [PDF](https://line-solver.sourceforge.net/doc/LINE-python.pdf), [Primer](https://line-solver.sourceforge.net/doc/LINE-primer-python.pdf) | [Sphinx](https://line-solver.sourceforge.net/sphinx/index.html) |
+
+The `jar/` folder contains the canonical Java implementation, building `common/jline.jar`, which is callable from any JVM language. A former JPype-based Python Wrapper has been retired; native Python users should use the `python/` folder, and users needing JAR-backed performance can call `common/jline.jar` directly. The JAR implementation offers better performance than the native Python version for large-scale and layered models.
+
+## Command-Line Interface
+
+The `line-cli.py` script provides a standalone command-line interface for solving queueing network models without writing code. It wraps the Java JAR and supports multiple solvers, input formats (Java Modelling Tools's [JSIMG](https://jmt.sourceforge.net/Papers/JMT_system_Manual.pdf#page=7) format; LQNS's [LQNX](https://github.com/layeredqueuing/V6/blob/master/xml/lqn.xsd) format), and output formats (table, JSON, CSV). Run
+```
+python line-cli.py solve example.jsimg --solver mva
+```
+to solve a model,
+```
+python line-cli.py list solvers
+```
+to see available solvers, or
+```
+python line-cli.py info
+```
+for command line options and features. The script can also start WebSocket or REST API servers for integration with other tools.
+
+## MCP Integration (for LLM-based Analysis)
+
+LINE is available as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server, enabling LLM tools such as [Claude Code](https://claude.ai/code) and [Claude Desktop](https://claude.ai/download) to build and solve queueing models through natural language. With MCP, users can analyze queues, sweep parameters, compare solvers, and visualize networks without writing any code.
+
+Install from PyPI:
+```
+pip install line-solver
+```
+Then configure your MCP client to use `line-solver` as a server, see the [MCP Getting Started Guide](https://line-solver.sourceforge.net/doc/LINE-mcp.pdf) for setup instructions and usage examples.
+
+## Symbolic Backend (first-time setup)
+
+The symbolic methods of `SolverCTMC` and `SolverFluid` (exact stationary
+distributions, parametric sensitivities, fluid Jacobians) delegate to a
+SageMath computer algebra system packaged as the Docker image
+[`imperialqore/line-sage-rest`](https://hub.docker.com/r/imperialqore/line-sage-rest).
+The image is not pulled automatically on first use, so obtain it once with:
+```
+docker pull imperialqore/line-sage-rest:latest
+```
+After that, LINE starts and stops a container on its own when a symbolic method
+is requested. An environment check reports whether the image is present and how
+to obtain it: run `lineInstall` (MATLAB), `line-install` or
+`line_solver.line_install()` (Python), or
+`java -cp jline.jar jline.cli.LineInstall` (JAR). MATLAB and Python fall back on
+the Symbolic Math Toolbox and `sympy` respectively when the backend is absent;
+the JAR has no computer algebra system of its own.
+
+## License
+
+LINE is released under the [BSD-3 license](LICENSE). LINE also invokes and
+embeds software written by other groups; see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the attribution, the
+license terms of each component, and the policy on which external solvers are
+redistributed as opposed to installed by the user from their upstream site.
+
+## Acknowledgement
+
+LINE has been partially funded by the European Commission grants FP7-318484 (MODAClouds), H2020-644869 (DICE), H2020-825040 (RADON), and by the EPSRC grant EP/M009211/1 (OptiMAM).

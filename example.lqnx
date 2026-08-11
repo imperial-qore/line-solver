@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<lqn-model name="ClientDBSystem" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="lqn.xsd">
+   <processor name="ClientProcessor" multiplicity="1" scheduling="ps" speed-factor="1">
+      <task name="ClientTask" multiplicity="10" scheduling="ref" think-time="5.0">
+         <entry name="ClientEntry" type="NONE"/>
+         <task-activities>
+            <activity bound-to-entry="ClientEntry" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="1.0" name="ClientActivity">
+               <synch-call calls-mean="2.5" dest="DBEntry"/>
+            </activity>
+         </task-activities>
+      </task>
+   </processor>
+   <processor name="DBProcessor" multiplicity="1" scheduling="ps" speed-factor="1">
+      <task name="DBTask" scheduling="inf">
+         <entry name="DBEntry" type="NONE"/>
+         <task-activities>
+            <activity bound-to-entry="DBEntry" call-order="STOCHASTIC" host-demand-cvsq="1" host-demand-mean="0.8" name="DBActivity"/>
+            <reply-entry name="DBEntry">
+               <reply-activity name="DBActivity"/>
+            </reply-entry>
+         </task-activities>
+      </task>
+   </processor>
+</lqn-model>

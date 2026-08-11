@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<!-- $Id$ -->
+<!-- lqngen -clients=1 -layers=2 -tasks=2 -processors=2 -customers=constant:4 -think-time=1 -service-time=1 -task-multiplicity=constant:1 -processor-multiplicity=constant:1 -request-rate=1 -seed=3 -format=xml -->
+<lqn-model name="/media/ssd/Dropbox/code/line-dev.git/test/testsLN/randomLQNs/models/model_C1_L2_T2_P2_c4_z1_s1_t1_p1_y1_3" description="lqngen 6.2.28 solution for model from: /media/ssd/Dropbox/code/line-dev.git/test/testsLN/randomLQNs/models/model_C1_L2_T2_P2_c4_z1_s1_t1_p1_y1_3.lqnx." xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="/usr/local/share/lqns/lqn.xsd">
+   <solver-params comment="Layers: 2, Customers: 4, Clients: 1, Tasks: 2, (Delay: 0), Processors: 2" conv_val="1e-05" it_limit="50" underrelax_coeff="0.9" print_int="10"/>
+   <processor name="c0" scheduling="inf">
+      <task name="c0" scheduling="ref" multiplicity="4">
+         <entry name="c0" type="PH1PH2">
+            <entry-phase-activities>
+               <activity name="c0_1" phase="1" host-demand-mean="1.15979">
+                  <synch-call dest="e0" calls-mean="2.22274"/>
+               </activity>
+            </entry-phase-activities>
+         </entry>
+      </task>
+   </processor>
+   <processor name="p0" scheduling="ps" quantum="0.1">
+      <task name="t0" scheduling="fcfs">
+         <entry name="e0" type="PH1PH2">
+            <entry-phase-activities>
+               <activity name="e0_1" phase="1" host-demand-mean="1.57335">
+                  <synch-call dest="e1" calls-mean="1.42414"/>
+               </activity>
+            </entry-phase-activities>
+         </entry>
+      </task>
+   </processor>
+   <processor name="p1" scheduling="ps" quantum="0.1">
+      <task name="t1" scheduling="fcfs">
+         <entry name="e1" type="PH1PH2">
+            <entry-phase-activities>
+               <activity name="e1_1" phase="1" host-demand-mean="0.354209"/>
+            </entry-phase-activities>
+         </entry>
+      </task>
+   </processor>
+</lqn-model>
